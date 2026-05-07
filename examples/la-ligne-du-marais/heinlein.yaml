@@ -1,0 +1,22 @@
+manuscript: manuscript.md
+cover: cover.jpg
+imprint: insert-coin
+page:
+  size: digest
+  margins: { top: 0.85in, side: 0.7in }
+metadata:
+  rights: "“La Ligne du Marais” © 2026 Austen Tucker. All rights reserved."
+  publisher: "Insert Coin (a fiction imprint of The Arcades)"
+  language: en-US
+  date: "2026"
+  description: "A gambler chases a rumor through Le Marais and finds the smallest casino in the world."
+  subjects: ["Short Fiction", "Horror", "Gambling"]
+  cover_eyebrow: "Insert Coin · Issue 01 · 2026"
+  issue: "01"
+  year: "2026"
+  colophon:
+    - "“La Ligne du Marais” © 2026 Austen Tucker. All rights reserved."
+    - "Originally published as “La Line du Marais” at austentucker.medium.com."
+    - "Set in Lora, Inter, and JetBrains Mono. Designed for screen and small format."
+formats: [pdf, epub, docx, html, text]
+output: dist/

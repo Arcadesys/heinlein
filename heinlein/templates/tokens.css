@@ -1,0 +1,18 @@
+/* Insert Coin design tokens — print/EPUB subset.
+   Single source of truth, vendored from /tmp/insert_coin_template.html (light variant).
+   Re-sync via `python -m heinlein.scripts.sync_design_tokens`. */
+:root {
+  --paper:        #faf6ee;
+  --ink:          #1a1a2e;
+  --ink-muted:    #6b6b80;
+  --rule:         rgba(0,0,0,0.10);
+  --neon-pink:    #d42e90;
+  --accent:       #e07800;
+  --gold:         #cc8800;
+  --bg-deep:      #0a0a14;
+  --fg-dark:      #e8e8ec;
+  --fg-dark-muted:#9a8e6e;
+  --neon-pink-d:  #ff3cac;
+  --accent-d:     #ff8a00;
+  --gold-d:       #e8c777;
+}

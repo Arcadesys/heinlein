@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="$lang$">
+<head>
+  <meta charset="utf-8">
+  <title>$title$</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --paper: #faf6ee;
+      --ink: #1a1a2e;
+      --ink-muted: #6b6b80;
+      --neon-pink: #d42e90;
+      --accent: #e07800;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Lora', Georgia, serif;
+      color: var(--ink);
+      background: var(--paper);
+      font-size: 17px;
+      line-height: 1.65;
+      max-width: 38rem;
+      margin: 4rem auto;
+      padding: 0 1.25rem 4rem;
+    }
+    .eyebrow {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.32em;
+      color: var(--neon-pink);
+      text-transform: uppercase;
+      margin: 0 0 1rem;
+    }
+    h1 {
+      font-family: 'Inter', sans-serif;
+      font-weight: 300;
+      font-size: 2.4rem;
+      letter-spacing: 0.02em;
+      line-height: 1.1;
+      color: var(--ink);
+      margin: 0 0 0.4em;
+    }
+    .by {
+      font-style: italic;
+      color: var(--ink-muted);
+      margin: 0 0 3rem;
+    }
+    .rule-grad {
+      height: 1px;
+      width: 60pt;
+      margin: 0 0 2.5rem;
+      background: linear-gradient(90deg, transparent, var(--neon-pink), var(--accent), transparent);
+    }
+    p { margin: 0; text-indent: 1.2em; }
+    p:first-of-type { text-indent: 0; }
+    p:first-of-type::first-letter {
+      font-family: 'Inter', sans-serif;
+      font-weight: 300;
+      font-size: 3.2em;
+      line-height: 0.9;
+      float: left;
+      padding: 0.08em 0.16em 0 0;
+      color: var(--neon-pink);
+    }
+    em { font-style: italic; }
+    hr { border: none; height: 1.6em; margin: 1.4em 0; text-align: center; }
+    hr::after { content: "·  ·  ·"; font-family: 'JetBrains Mono', monospace; font-size: 1em; letter-spacing: 0.4em; color: var(--neon-pink); }
+  </style>
+</head>
+<body>
+  $if(subtitle)$<p class="eyebrow">$subtitle$</p>$endif$
+  <h1>$title$</h1>
+  $if(author)$<p class="by">by $for(author)$$author$$sep$, $endfor$</p>$endif$
+  <div class="rule-grad"></div>
+$body$
+</body>
+</html>

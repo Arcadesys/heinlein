@@ -1,0 +1,28 @@
+[project]
+name = "heinlein"
+version = "0.1.0"
+description = "Insert Coin publishing pipeline — markdown manuscript → PDF, EPUB, DOCX, HTML, plain text"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Austen Tucker" }]
+license = { text = "MIT" }
+dependencies = [
+    "jinja2>=3.1",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+heinlein = "heinlein.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["heinlein"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+"heinlein/templates" = "heinlein/templates"

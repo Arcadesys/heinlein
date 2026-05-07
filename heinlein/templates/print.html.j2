@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="{{ language }}"><head>
+<meta charset="utf-8">
+<title>{{ title }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
+<style>
+{{ tokens_css | safe }}
+
+/* -------- Page geometry -------- */
+@page {
+  size: {{ page_w }}in {{ page_h }}in;
+  margin: 0;
+}
+@page body-page {
+  size: {{ page_w }}in {{ page_h }}in;
+  margin: {{ margin_top }} {{ margin_side }} {{ margin_top }} {{ margin_side }};
+  @bottom-center {
+    content: counter(page);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    color: var(--ink-muted);
+    letter-spacing: 0.16em;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: 'Lora', Georgia, serif;
+  color: var(--ink);
+  background: var(--paper);
+  font-size: 11pt;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* -------- Page primitives -------- */
+.page {
+  page-break-after: always;
+  break-after: page;
+  width: {{ page_w }}in;
+  height: {{ page_h }}in;
+  overflow: hidden;
+  position: relative;
+}
+.page:last-of-type { page-break-after: auto; }
+
+/* Cover */
+.cover {
+  background: radial-gradient(circle at 8% 12%, rgba(255,138,0,0.14), transparent 38%),
+              radial-gradient(circle at 92% 88%, rgba(232,199,119,0.12), transparent 38%),
+              linear-gradient(135deg, #0a0a14 0%, #14142a 100%);
+  color: var(--fg-dark);
+  padding: {{ margin_top }} {{ margin_side }};
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.cover-top {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9pt;
+  letter-spacing: 0.28em;
+  color: var(--fg-dark-muted);
+  text-transform: uppercase;
+}
+.cover-rule {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--neon-pink-d), var(--accent-d), transparent);
+  margin: 16pt 0 0;
+  width: 100%;
+}
+.cover-title {
+  font-family: 'Inter', sans-serif;
+  font-weight: 300;
+  font-size: 40pt;
+  letter-spacing: 0.04em;
+  line-height: 1.05;
+  color: #f6e7c8;
+  margin: 0;
+}
+.cover-sub {
+  font-family: 'Lora', serif;
+  font-style: italic;
+  font-size: 13pt;
+  color: var(--gold-d);
+  letter-spacing: 0.02em;
+  margin: 12pt 0 0;
+}
+.cover-author {
+  font-family: 'Inter', sans-serif;
+  font-weight: 400;
+  font-size: 13pt;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-dark);
+}
+.cover-imprint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8pt;
+  letter-spacing: 0.28em;
+  color: var(--fg-dark-muted);
+  text-transform: uppercase;
+}
+.cover-imprint strong { color: var(--gold-d); font-weight: 400; }
+
+/* Colophon (interior) */
+.colophon {
+  background: var(--paper);
+  color: var(--ink);
+  padding: 1.2in 0.8in;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: {{ page_h }}in;
+}
+.colophon p {
+  font-family: 'Inter', sans-serif;
+  font-size: 8.5pt;
+  line-height: 1.55;
+  color: var(--ink-muted);
+  margin: 0 0 8pt;
+  max-width: 30em;
+}
+.colophon .eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8pt;
+  letter-spacing: 0.28em;
+  color: var(--neon-pink);
+  text-transform: uppercase;
+  margin: 0 0 14pt;
+}
+.colophon .imprint {
+  font-family: 'Inter', sans-serif;
+  font-weight: 300;
+  font-size: 14pt;
+  letter-spacing: 0.18em;
+  color: var(--ink);
+  text-transform: uppercase;
+  margin: 0 0 4pt;
+}
+.colophon .imprint-sub {
+  font-family: 'Lora', serif;
+  font-style: italic;
+  font-size: 10pt;
+  color: var(--ink-muted);
+  margin: 0 0 24pt;
+}
+
+/* Title page */
+.title-page {
+  background: var(--paper);
+  color: var(--ink);
+  padding: 1.5in {{ margin_side }};
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+  height: {{ page_h }}in;
+}
+.title-page .eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8.5pt;
+  letter-spacing: 0.32em;
+  color: var(--neon-pink);
+  text-transform: uppercase;
+  margin: 0 0 20pt;
+}
+.title-page h1 {
+  font-family: 'Inter', sans-serif;
+  font-weight: 300;
+  font-size: 28pt;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  color: var(--ink);
+  margin: 0 0 14pt;
+}
+.title-page .by {
+  font-family: 'Lora', serif;
+  font-style: italic;
+  font-size: 12pt;
+  color: var(--ink-muted);
+  margin: 0 0 36pt;
+}
+.title-page .rule {
+  height: 1px;
+  width: 60pt;
+  margin: 0 auto;
+  background: linear-gradient(90deg, transparent, var(--neon-pink), var(--accent), transparent);
+}
+
+/* Body */
+.body-section {
+  page: body-page;
+  background: var(--paper);
+  color: var(--ink);
+}
+.body-section p {
+  font-family: 'Lora', Georgia, serif;
+  font-size: 11pt;
+  line-height: 1.6;
+  margin: 0;
+  text-indent: 1.2em;
+  orphans: 2;
+  widows: 2;
+  hyphens: auto;
+}
+.body-section p + p { margin-top: 0; }
+.body-section p.first { text-indent: 0; }
+.body-section p.first::first-letter {
+  font-family: 'Inter', sans-serif;
+  font-weight: 300;
+  font-size: 44pt;
+  line-height: 0.9;
+  float: left;
+  padding: 6pt 8pt 0 0;
+  color: var(--neon-pink);
+  text-shadow: 0 0 0.5pt var(--neon-pink);
+}
+.body-section hr {
+  border: none;
+  height: 12pt;
+  margin: 14pt 0;
+  text-align: center;
+}
+.body-section hr::after {
+  content: "·  ·  ·";
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11pt;
+  letter-spacing: 0.4em;
+  color: var(--neon-pink);
+}
+.body-section em { font-style: italic; }
+
+/* End-page colophon */
+.end {
+  background: var(--bg-deep);
+  color: var(--fg-dark);
+  padding: 1.5in {{ margin_side }};
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  height: {{ page_h }}in;
+}
+.end .mark {
+  font-family: 'Inter', sans-serif;
+  font-weight: 300;
+  font-size: 20pt;
+  letter-spacing: 0.22em;
+  color: #f6e7c8;
+  margin: 0 0 8pt;
+}
+.end .mark-sub {
+  font-family: 'Lora', serif;
+  font-style: italic;
+  font-size: 10pt;
+  color: var(--fg-dark-muted);
+  margin: 0 0 28pt;
+}
+.end .meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8pt;
+  letter-spacing: 0.24em;
+  color: var(--fg-dark-muted);
+  text-transform: uppercase;
+  line-height: 1.8;
+}
+.end .rule {
+  height: 1px;
+  width: 80pt;
+  margin: 0 0 28pt;
+  background: linear-gradient(90deg, transparent, var(--neon-pink-d), var(--accent-d), transparent);
+}
+</style>
+</head>
+<body>
+
+<!-- COVER -->
+<section class="page cover">
+  <div>
+    <div class="cover-top">{{ cover_eyebrow }}</div>
+    <div class="cover-rule"></div>
+  </div>
+  <div>
+    <h1 class="cover-title">{{ title_html | safe }}</h1>
+    {%- if subtitle %}
+    <p class="cover-sub">{{ subtitle }}</p>
+    {%- endif %}
+  </div>
+  <div>
+    <div class="cover-author">{{ author }}</div>
+    <div style="margin-top: 22pt" class="cover-imprint"><strong>{{ imprint_name }}</strong> · {{ imprint_tagline }}</div>
+  </div>
+</section>
+
+<!-- COLOPHON -->
+<section class="page colophon">
+  <p class="eyebrow">Colophon</p>
+  <p class="imprint">{{ imprint_name }}</p>
+  <p class="imprint-sub">{{ imprint_blurb }}</p>
+  {%- for line in colophon_lines %}
+  <p>{{ line }}</p>
+  {%- endfor %}
+  {%- if genre %}
+  <p style="margin-top:18pt">Genre: {{ genre }}.</p>
+  {%- endif %}
+</section>
+
+<!-- TITLE PAGE -->
+<section class="page title-page">
+  {%- if subtitle %}
+  <p class="eyebrow">{{ subtitle }}</p>
+  {%- endif %}
+  <h1>{{ title_html | safe }}</h1>
+  <p class="by">by {{ author }}</p>
+  <div class="rule"></div>
+</section>
+
+<!-- BODY -->
+<section class="body-section">
+{{ body_html | safe }}
+</section>
+
+<!-- END -->
+<section class="page end">
+  <div class="rule"></div>
+  <div class="mark">{{ imprint_name | upper }}</div>
+  <div class="mark-sub">{{ imprint_tagline_long }}</div>
+  <div class="meta">
+    fin · merci · à bientôt<br>
+    {{ imprint_url }}
+  </div>
+</section>
+
+</body></html>
