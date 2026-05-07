@@ -56,13 +56,10 @@ def _colophon_lines(front: dict[str, Any], cfg_meta: dict[str, Any], title: str,
         return [str(line) for line in override]
 
     rights = cfg_meta.get("rights") or f"“{title}” © {author}. All rights reserved."
-    lines = [rights]
-    source = front.get("source")
-    if source:
-        display = re.sub(r"^https?://", "", str(source))
-        lines.append(f"Originally published at {display}.")
-    lines.append("Set in Lora, Inter, and JetBrains Mono. Designed for screen and small format.")
-    return lines
+    return [
+        rights,
+        "Set in Lora, Inter, and JetBrains Mono. Designed for screen and small format.",
+    ]
 
 
 def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Path]:

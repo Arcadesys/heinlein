@@ -16,7 +16,6 @@ metadata:
   year: "2026"
   colophon:
     - "“La Ligne du Marais” © 2026 Austen Tucker. All rights reserved."
-    - "Originally published as “La Line du Marais” at austentucker.medium.com."
     - "Set in Lora, Inter, and JetBrains Mono. Designed for screen and small format."
 formats: [pdf, epub, docx, html, text]
 output: dist/
