@@ -6,9 +6,12 @@ from pathlib import Path
 from heinlein import pandoc
 
 
-def build(*, body_md: str, output: Path) -> Path:
+def build(*, body_md: str, output: Path, resource_path: Path | None = None) -> Path:
+    args = ["-f", "markdown", "-t", "docx", "-o", str(output)]
+    if resource_path is not None:
+        args += [f"--resource-path={resource_path}"]
     pandoc.run(
-        ["-f", "markdown", "-t", "docx", "-o", str(output)],
+        args,
         input_bytes=body_md.encode("utf-8"),
     )
     return output

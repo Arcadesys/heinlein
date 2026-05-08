@@ -58,6 +58,17 @@ body {
   flex-direction: column;
   justify-content: space-between;
 }
+.cover-image {
+  padding: 0;
+  margin: 0;
+  background: #000;
+}
+.cover-image img {
+  width: {{ page_w }}in;
+  height: {{ page_h }}in;
+  object-fit: cover;
+  display: block;
+}
 .cover-top {
   font-family: 'JetBrains Mono', monospace;
   font-size: 9pt;
@@ -279,6 +290,11 @@ body {
 <body>
 
 <!-- COVER -->
+{%- if cover_uri %}
+<section class="page cover-image">
+  <img src="{{ cover_uri }}" alt="{{ title }} — cover" />
+</section>
+{%- else %}
 <section class="page cover">
   <div>
     <div class="cover-top">{{ cover_eyebrow }}</div>
@@ -295,6 +311,7 @@ body {
     <div style="margin-top: 22pt" class="cover-imprint"><strong>{{ imprint_name }}</strong> · {{ imprint_tagline }}</div>
   </div>
 </section>
+{%- endif %}
 
 <!-- COLOPHON -->
 <section class="page colophon">
