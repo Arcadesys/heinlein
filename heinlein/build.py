@@ -100,6 +100,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         "margin_top": cfg.page.margin_top,
         "margin_side": cfg.page.margin_side,
         "cover_eyebrow": _cover_eyebrow(cfg.metadata),
+        "cover_uri": cover.as_uri() if cover else None,
         "imprint_name": INSERT_COIN_DEFAULTS["imprint_name"],
         "imprint_tagline": INSERT_COIN_DEFAULTS["imprint_tagline"],
         "imprint_tagline_long": INSERT_COIN_DEFAULTS["imprint_tagline_long"],
@@ -129,17 +130,24 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         )
         results["epub"] = out
 
+    resource_path = cover.parent if cover else None
+
     if "docx" in cfg.formats:
         out = cfg.output / f"{slug}.docx"
-        out_docx.build(body_md=_docx_body(body_md, title, author), output=out)
+        out_docx.build(
+            body_md=_docx_body(body_md, title, author, cover),
+            output=out,
+            resource_path=resource_path,
+        )
         results["docx"] = out
 
     if "html" in cfg.formats:
         out = cfg.output / f"{slug}.html"
         out_html.build(
-            body_md=_epub_body(body_md, title, author),
+            body_md=_html_body(body_md, title, author, cover),
             template=templates / "html-preview.html.j2",
             output=out,
+            resource_path=resource_path,
         )
         results["html"] = out
 
@@ -171,5 +179,22 @@ def _epub_body(body_md: str, title: str, author: str) -> str:
     return f"# {title}\n\n*by {author}*\n\n{body_md}"
 
 
-def _docx_body(body_md: str, title: str, author: str) -> str:
-    return _epub_body(body_md, title, author)
+def _html_body(body_md: str, title: str, author: str, cover: Path | None) -> str:
+    """HTML preview gets the cover image as a hero up top, then title + byline."""
+    if cover is None:
+        return _epub_body(body_md, title, author)
+    return (
+        f'![{title} — cover]({cover.name})\n\n'
+        f"# {title}\n\n*by {author}*\n\n{body_md}"
+    )
+
+
+def _docx_body(body_md: str, title: str, author: str, cover: Path | None) -> str:
+    """DOCX gets the cover image first, then a page break, then title + byline."""
+    if cover is None:
+        return _epub_body(body_md, title, author)
+    return (
+        f'![{title} — cover]({cover.name})\n\n'
+        '\\newpage\n\n'
+        f"# {title}\n\n*by {author}*\n\n{body_md}"
+    )
