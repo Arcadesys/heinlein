@@ -9,13 +9,16 @@ license = { text = "MIT" }
 dependencies = [
     "jinja2>=3.1",
     "pyyaml>=6.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "python-multipart>=0.0.9",
 ]
 
 [project.scripts]
 heinlein = "heinlein.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "httpx>=0.27"]
 
 [build-system]
 requires = ["hatchling"]

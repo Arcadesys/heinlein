@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import webbrowser
 from pathlib import Path
 
 from heinlein import config as cfg_mod
@@ -39,6 +40,37 @@ def main(argv: list[str] | None = None) -> int:
         help="Explicit path to heinlein.yaml (default: auto-discover).",
     )
 
+    p_serve = sub.add_parser(
+        "serve",
+        help="Run the local preview + gallery server.",
+    )
+    p_serve.add_argument(
+        "manuscript", nargs="?", type=Path,
+        help="Path to a markdown manuscript. Omit to use heinlein.yaml in cwd.",
+    )
+    p_serve.add_argument("--config", type=Path, default=None, help="Explicit heinlein.yaml path.")
+    p_serve.add_argument("--output", "-o", type=Path, default=None, help="Build output directory.")
+    p_serve.add_argument(
+        "--archive", type=Path, default=None,
+        help="Directory containing other built projects to list in the gallery.",
+    )
+    p_serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1).")
+    p_serve.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765).")
+    p_serve.add_argument("--no-open", action="store_true", help="Don't open the gallery in a browser.")
+    p_serve.add_argument("--no-build", action="store_true", help="Skip the initial build on startup.")
+
+    p_web = sub.add_parser(
+        "web",
+        help="Run the upload/build web app — drop a markdown manuscript and images, get built outputs.",
+    )
+    p_web.add_argument(
+        "--workspace", type=Path, default=None,
+        help="Directory where uploaded projects live (default: ~/heinlein-projects).",
+    )
+    p_web.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1).")
+    p_web.add_argument("--port", type=int, default=8770, help="Bind port (default: 8770).")
+    p_web.add_argument("--no-open", action="store_true", help="Don't open the app in a browser.")
+
     args = parser.parse_args(argv)
 
     if args.cmd is None:
@@ -47,6 +79,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "build":
         return _cmd_build(args)
+    if args.cmd == "serve":
+        return _cmd_serve(args)
+    if args.cmd == "web":
+        return _cmd_web(args)
 
     parser.error(f"Unknown command: {args.cmd}")
     return 2
@@ -78,6 +114,88 @@ def _cmd_build(args: argparse.Namespace) -> int:
     results = run_build(cfg, debug_dir=debug_dir)
     for fmt, path in results.items():
         print(f"  {fmt:5s} → {path}")
+    return 0
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    from heinlein.serve import Server
+
+    project_yaml: Path | None = args.config
+    if project_yaml is None and args.manuscript is None:
+        project_yaml = cfg_mod.discover_project_yaml(Path.cwd())
+        if project_yaml is None:
+            print(
+                "error: no manuscript path given and no heinlein.yaml found in cwd or parents.",
+                file=sys.stderr,
+            )
+            return 2
+
+    cfg = cfg_mod.load(
+        manuscript=args.manuscript,
+        project_yaml=project_yaml,
+        output_override=args.output,
+        archive_override=args.archive,
+    )
+
+    if not cfg.manuscript.exists():
+        print(f"error: manuscript not found: {cfg.manuscript}", file=sys.stderr)
+        return 2
+
+    if args.host != "127.0.0.1" and args.host != "localhost":
+        print(
+            f"warning: binding to {args.host} exposes your filesystem on the network.",
+            file=sys.stderr,
+        )
+
+    server = Server(cfg, host=args.host, port=args.port)
+    if not args.no_build:
+        print(f"[heinlein] initial build → {cfg.output}", file=sys.stderr)
+        try:
+            server.initial_build()
+        except Exception as e:
+            print(f"warning: initial build failed: {e}", file=sys.stderr)
+
+    url = f"http://{args.host}:{args.port}/"
+    print(f"[heinlein] serving on {url}  (Ctrl-C to stop)", file=sys.stderr)
+    if not args.no_open:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[heinlein] stopping.", file=sys.stderr)
+        server.shutdown()
+    return 0
+
+
+def _cmd_web(args: argparse.Namespace) -> int:
+    from heinlein.web import run
+
+    workspace = args.workspace.resolve() if args.workspace else Path.home() / "heinlein-projects"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    if args.host != "127.0.0.1" and args.host != "localhost":
+        print(
+            f"warning: binding to {args.host} exposes your filesystem on the network.",
+            file=sys.stderr,
+        )
+
+    url = f"http://{args.host}:{args.port}/"
+    print(f"[heinlein] web app on {url}", file=sys.stderr)
+    print(f"[heinlein] workspace: {workspace}", file=sys.stderr)
+    if not args.no_open:
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+
+    try:
+        run(workspace=workspace, host=args.host, port=args.port)
+    except KeyboardInterrupt:
+        print("\n[heinlein] stopping.", file=sys.stderr)
     return 0
 
 

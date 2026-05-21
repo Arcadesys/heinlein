@@ -40,6 +40,7 @@ class HeinleinConfig:
     metadata: dict[str, Any] = field(default_factory=dict)
     formats: tuple[str, ...] = ALL_FORMATS
     output: Path = Path("dist")
+    archive: Path | None = None
 
     @property
     def project_dir(self) -> Path:
@@ -82,6 +83,7 @@ def load(
     project_yaml: Path | None = None,
     output_override: Path | None = None,
     formats_override: Any = None,
+    archive_override: Path | None = None,
 ) -> HeinleinConfig:
     """
     Resolve config. Either manuscript or project_yaml must be supplied.
@@ -122,6 +124,12 @@ def load(
     else:
         output = (base_dir / "dist").resolve()
 
+    archive: Path | None = None
+    if archive_override is not None:
+        archive = archive_override.resolve()
+    elif raw.get("archive"):
+        archive = (base_dir / raw["archive"]).resolve()
+
     return HeinleinConfig(
         manuscript=manuscript,
         cover=cover_path,
@@ -130,6 +138,7 @@ def load(
         metadata=raw.get("metadata") or {},
         formats=formats,
         output=output,
+        archive=archive,
     )
 
 

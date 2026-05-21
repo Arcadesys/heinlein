@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title }} — preview</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/tokens.css">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; background: var(--paper); }
+    .topbar {
+      position: fixed; top: 0; left: 0; right: 0; height: 36px;
+      display: flex; align-items: center; gap: 1rem; padding: 0 1rem;
+      background: var(--ink); color: var(--paper); z-index: 10;
+      font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase;
+    }
+    .topbar a { color: var(--paper); text-decoration: none; opacity: 0.75; }
+    .topbar a:hover { opacity: 1; color: var(--neon-pink-d); }
+    .topbar .status { margin-left: auto; opacity: 0.6; }
+    .topbar .status.live { color: var(--neon-pink-d); opacity: 1; }
+    iframe { position: fixed; top: 36px; left: 0; right: 0; bottom: 0; width: 100%; height: calc(100% - 36px); border: 0; background: var(--paper); }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a href="/">← gallery</a>
+    <span>preview · {{ title }}</span>
+    <span id="status" class="status">connecting…</span>
+  </div>
+  <iframe id="preview" src="/preview/raw"></iframe>
+  <script>
+    (function () {
+      var status = document.getElementById('status');
+      var frame = document.getElementById('preview');
+      var es = new EventSource('/events');
+      es.onopen = function () { status.textContent = 'live'; status.className = 'status live'; };
+      es.onerror = function () { status.textContent = 'reconnecting…'; status.className = 'status'; };
+      es.onmessage = function (ev) {
+        try {
+          var msg = JSON.parse(ev.data);
+          if (msg && msg.event === 'reload') {
+            frame.contentWindow.location.reload();
+          }
+        } catch (e) { /* ignore */ }
+      };
+    })();
+  </script>
+</body>
+</html>

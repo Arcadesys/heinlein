@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ p.title }} — Heinlein</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+    header.bar {
+      display: flex; align-items: baseline; gap: 1.2rem;
+      padding: 1.4rem 2rem; border-bottom: 1px solid var(--rule);
+    }
+    header.bar .brand {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem; letter-spacing: 0.32em; text-transform: uppercase;
+      color: var(--neon-pink);
+    }
+    header.bar h1 {
+      margin: 0; font-weight: 300; font-size: 1.4rem; letter-spacing: 0.01em;
+    }
+    header.bar a.back {
+      margin-left: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase;
+      text-decoration: none; color: var(--ink-muted);
+    }
+    header.bar a.back:hover { color: var(--neon-pink); }
+    main { max-width: 64rem; margin: 0 auto; padding: 2rem; }
+    .card {
+      background: white; border: 1px solid var(--rule); border-radius: 4px;
+      padding: 1.5rem 1.6rem;
+    }
+    .eyebrow {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.65rem; letter-spacing: 0.28em; color: var(--neon-pink);
+      text-transform: uppercase; margin: 0 0 0.5rem;
+    }
+    h2 {
+      font-family: 'Lora', Georgia, serif; font-weight: 500;
+      font-size: 1.6rem; margin: 0 0 0.3rem; color: var(--ink);
+    }
+    .by { font-style: italic; color: var(--ink-muted); margin: 0 0 1.4rem; }
+    .links { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .links a {
+      font-family: 'JetBrains Mono', monospace; font-size: 0.72rem;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      padding: 0.4rem 0.8rem; border: 1px solid var(--rule); border-radius: 3px;
+      text-decoration: none; color: var(--ink); background: var(--paper);
+    }
+    .links a:hover { border-color: var(--neon-pink); color: var(--neon-pink); }
+    .links a.primary { border-color: var(--neon-pink); color: var(--neon-pink); }
+    .preview {
+      margin-top: 2rem; border: 1px solid var(--rule); border-radius: 4px;
+      background: white; overflow: hidden;
+    }
+    .preview iframe { width: 100%; height: 80vh; border: 0; display: block; }
+    .empty { color: var(--ink-muted); font-style: italic; }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <span class="brand">Heinlein</span>
+    <h1>{{ p.title }}</h1>
+    <a class="back" href="/">← New upload</a>
+  </header>
+  <main>
+    <div class="card">
+      {% if p.subtitle %}<p class="eyebrow">{{ p.subtitle }}</p>{% endif %}
+      <h2>{{ p.title }}</h2>
+      {% if p.author %}<p class="by">by {{ p.author }}</p>{% endif %}
+
+      <div class="links">
+        {% if 'html' in p.artifacts %}
+          <a class="primary" href="/project/{{ p.name }}/preview" target="_blank">Live preview ↗</a>
+        {% endif %}
+        {% for ext, filename in p.artifacts.items() %}
+          <a href="/project/{{ p.name }}/file/{{ filename }}" download>{{ format_label.get(ext, ext.upper()) }}</a>
+        {% endfor %}
+      </div>
+      {% if not p.artifacts %}
+        <p class="empty">No artifacts found.</p>
+      {% endif %}
+    </div>
+
+    {% if 'html' in p.artifacts %}
+      <div class="preview">
+        <iframe src="/project/{{ p.name }}/preview" title="HTML preview"></iframe>
+      </div>
+    {% endif %}
+  </main>
+</body>
+</html>

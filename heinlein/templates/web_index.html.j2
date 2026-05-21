@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Heinlein — Upload</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+    header.bar {
+      display: flex; align-items: baseline; gap: 1.2rem;
+      padding: 1.4rem 2rem; border-bottom: 1px solid var(--rule);
+    }
+    header.bar .brand {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem; letter-spacing: 0.32em; text-transform: uppercase;
+      color: var(--neon-pink);
+    }
+    header.bar h1 {
+      margin: 0; font-weight: 300; font-size: 1.4rem; letter-spacing: 0.01em;
+    }
+    main { max-width: 64rem; margin: 0 auto; padding: 2rem; }
+    section + section { margin-top: 3rem; }
+    h2 {
+      font-weight: 400; font-size: 0.78rem; letter-spacing: 0.32em;
+      text-transform: uppercase; color: var(--ink-muted);
+      margin: 0 0 1rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .card {
+      background: white; border: 1px solid var(--rule); border-radius: 4px;
+      padding: 1.5rem 1.6rem;
+    }
+    .field { margin-bottom: 1.2rem; }
+    .field:last-child { margin-bottom: 0; }
+    .field label {
+      display: block;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem; letter-spacing: 0.22em;
+      text-transform: uppercase; color: var(--ink-muted);
+      margin-bottom: 0.4rem;
+    }
+    .field .hint {
+      font-size: 0.8rem; color: var(--ink-muted); margin: 0.3rem 0 0;
+    }
+    input[type="file"] {
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 0.9rem;
+      padding: 0.4rem 0;
+      width: 100%;
+    }
+    button {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem; letter-spacing: 0.18em; text-transform: uppercase;
+      padding: 0.6rem 1.4rem; border: 1px solid var(--neon-pink);
+      background: var(--neon-pink); color: white; cursor: pointer;
+      border-radius: 3px;
+    }
+    button:hover { background: white; color: var(--neon-pink); }
+    .grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+      gap: 1.2rem;
+    }
+    .proj {
+      background: white; border: 1px solid var(--rule); border-radius: 4px;
+      padding: 1.25rem 1.4rem;
+      text-decoration: none; color: inherit; display: block;
+    }
+    .proj:hover { border-color: var(--neon-pink); }
+    .proj .eyebrow {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.65rem; letter-spacing: 0.28em; color: var(--neon-pink);
+      text-transform: uppercase; margin: 0 0 0.5rem;
+    }
+    .proj h3 {
+      font-family: 'Lora', Georgia, serif; font-weight: 500;
+      font-size: 1.15rem; margin: 0 0 0.2rem; color: var(--ink);
+    }
+    .proj .by { font-style: italic; color: var(--ink-muted); margin: 0 0 0.8rem; font-size: 0.9rem; }
+    .proj .formats {
+      font-family: 'JetBrains Mono', monospace; font-size: 0.7rem;
+      color: var(--ink-muted); letter-spacing: 0.1em; text-transform: uppercase;
+    }
+    .empty { color: var(--ink-muted); font-style: italic; }
+    code { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; color: var(--ink-muted); }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <span class="brand">Heinlein</span>
+    <h1>Upload manuscript</h1>
+  </header>
+  <main>
+    <section>
+      <div class="card">
+        <form method="post" action="/upload" enctype="multipart/form-data">
+          <div class="field">
+            <label for="manuscript">Manuscript (.md)</label>
+            <input id="manuscript" name="manuscript" type="file" accept=".md,text/markdown" required>
+            <p class="hint">A markdown file with YAML frontmatter (<code>title</code>, <code>author</code>, optional <code>subtitle</code>, <code>genre</code>, <code>cover</code>).</p>
+          </div>
+          <div class="field">
+            <label for="cover">Cover image</label>
+            <input id="cover" name="cover" type="file" accept="image/*">
+            <p class="hint">Optional. Used on the title page (PDF/EPUB/DOCX/HTML).</p>
+          </div>
+          <div class="field">
+            <label for="images">Body images</label>
+            <input id="images" name="images" type="file" accept="image/*" multiple>
+            <p class="hint">Optional. Drop in any images referenced by <code>![alt](filename.jpg)</code> in the manuscript.</p>
+          </div>
+          <button type="submit">Build outputs</button>
+        </form>
+      </div>
+    </section>
+
+    <section>
+      <h2>Recent projects</h2>
+      {% if projects %}
+        <div class="grid">
+          {% for p in projects %}
+            <a class="proj" href="/project/{{ p.name }}">
+              {% if p.subtitle %}<p class="eyebrow">{{ p.subtitle }}</p>{% endif %}
+              <h3>{{ p.title }}</h3>
+              {% if p.author %}<p class="by">by {{ p.author }}</p>{% endif %}
+              <p class="formats">
+                {% if p.artifacts %}{{ p.artifacts.keys()|join(' · ') }}{% else %}(no artifacts){% endif %}
+              </p>
+            </a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty">Nothing built yet. Workspace: <code>{{ workspace }}</code></p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

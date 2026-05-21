@@ -79,6 +79,27 @@ cd path/to/project && heinlein build
 | `--debug-html`      | off         | Keep the rendered `print.html` next to the PDF.    |
 | `--config`          | auto-find   | Explicit path to a `heinlein.yaml`.                |
 
+### Preview server
+
+```sh
+cd path/to/project && heinlein serve
+```
+
+Runs a local server (default `http://127.0.0.1:8765`) with:
+
+- **Gallery** at `/` — current project + every archived project with per-format download links.
+- **Live preview** at `/preview` — the HTML output in an iframe. Edits to `manuscript.md`, the cover, or `heinlein.yaml` trigger a rebuild and the iframe reloads automatically (SSE).
+
+Add an `archive:` line to `heinlein.yaml` (or pass `--archive PATH`) pointing at a parent directory of past builds — each subdirectory is shown as a card with download links for whatever PDF/EPUB/DOCX/HTML/text artifacts are present.
+
+| flag             | default     | meaning                                   |
+| ---------------- | ----------- | ----------------------------------------- |
+| `--archive PATH` | unset       | Parent directory of archived projects.    |
+| `--port`         | `8765`      | Bind port.                                |
+| `--host`         | `127.0.0.1` | Bind host (warns on non-loopback).        |
+| `--no-open`      | off         | Don't open the gallery in a browser.      |
+| `--no-build`     | off         | Skip the initial build on startup.        |
+
 ## Design tokens
 
 The Insert Coin design system is the source of truth for colours and typography. Tokens live in `heinlein/templates/tokens.css`. To re-sync from the design-system HTML:
