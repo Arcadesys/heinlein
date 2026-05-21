@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ page_title }} — heinlein</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/tokens.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+    header.bar {
+      display: flex; align-items: baseline; gap: 1.2rem;
+      padding: 1.4rem 2rem; border-bottom: 1px solid var(--rule);
+    }
+    header.bar .brand {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem; letter-spacing: 0.32em; text-transform: uppercase;
+      color: var(--neon-pink);
+    }
+    header.bar h1 {
+      margin: 0; font-weight: 300; font-size: 1.4rem; letter-spacing: 0.01em;
+    }
+    main { max-width: 64rem; margin: 0 auto; padding: 2rem; }
+    section + section { margin-top: 3rem; }
+    h2 {
+      font-weight: 400; font-size: 0.78rem; letter-spacing: 0.32em;
+      text-transform: uppercase; color: var(--ink-muted);
+      margin: 0 0 1rem;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
+      gap: 1.2rem;
+    }
+    .card {
+      background: white; border: 1px solid var(--rule); border-radius: 4px;
+      padding: 1.25rem 1.4rem;
+    }
+    .card .eyebrow {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.65rem; letter-spacing: 0.28em; color: var(--neon-pink);
+      text-transform: uppercase; margin: 0 0 0.5rem;
+    }
+    .card h3 {
+      font-family: 'Lora', Georgia, serif; font-weight: 500;
+      font-size: 1.15rem; margin: 0 0 0.2rem; color: var(--ink);
+    }
+    .card .by { font-style: italic; color: var(--ink-muted); margin: 0 0 1rem; font-size: 0.9rem; }
+    .card .path { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: var(--ink-muted); word-break: break-all; margin: 0 0 1rem; }
+    .links { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .links a {
+      font-family: 'JetBrains Mono', monospace; font-size: 0.72rem;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      padding: 0.3rem 0.6rem; border: 1px solid var(--rule); border-radius: 3px;
+      text-decoration: none; color: var(--ink); background: var(--paper);
+    }
+    .links a:hover { border-color: var(--neon-pink); color: var(--neon-pink); }
+    .links a.preview { border-color: var(--neon-pink); color: var(--neon-pink); }
+    .empty { color: var(--ink-muted); font-style: italic; }
+    .hint { color: var(--ink-muted); font-size: 0.8rem; margin: 0.5rem 0 0; }
+    code { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <span class="brand">Heinlein</span>
+    <h1>{{ page_title }}</h1>
+  </header>
+  <main>
+    <section>
+      <h2>Active project</h2>
+      {% if current %}
+        <div class="card">
+          {% if current.subtitle %}<p class="eyebrow">{{ current.subtitle }}</p>{% endif %}
+          <h3>{{ current.title }}</h3>
+          {% if current.author %}<p class="by">by {{ current.author }}</p>{% endif %}
+          <p class="path">{{ current.dir }}</p>
+          <div class="links">
+            <a href="/preview" class="preview">Live preview ↗</a>
+            {% for ext, url in current_files.items() %}
+              <a href="{{ url }}">{{ ext }}</a>
+            {% endfor %}
+          </div>
+          {% if not current_files %}
+            <p class="hint">No artifacts yet — the initial build hasn't completed.</p>
+          {% endif %}
+        </div>
+      {% else %}
+        <p class="empty">No active manuscript.</p>
+      {% endif %}
+    </section>
+
+    <section>
+      <h2>Archive</h2>
+      {% if archived %}
+        <div class="grid">
+          {% for entry, files in archived %}
+            <div class="card">
+              {% if entry.subtitle %}<p class="eyebrow">{{ entry.subtitle }}</p>{% endif %}
+              <h3>{{ entry.title }}</h3>
+              {% if entry.author %}<p class="by">by {{ entry.author }}</p>{% endif %}
+              <p class="path">{{ entry.dir }}</p>
+              <div class="links">
+                {% for ext, url in files.items() %}
+                  <a href="{{ url }}">{{ ext }}</a>
+                {% endfor %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% elif archive_root %}
+        <p class="empty">No projects found under <code>{{ archive_root }}</code>.</p>
+      {% else %}
+        <p class="empty">No archive root configured. Pass <code>--archive PATH</code> or set <code>archive:</code> in <code>heinlein.yaml</code>.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>
