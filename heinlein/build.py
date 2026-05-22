@@ -195,7 +195,10 @@ def _strip_hr_before_h2(body_md: str) -> str:
     return _HR_BEFORE_H2_RE.sub("", body_md)
 
 
-_OPENER_RE = re.compile(r"(<h2[^>]*>.*?</h2>\s*)<p(?![^>]*class=)", flags=re.DOTALL)
+_OPENER_RE = re.compile(
+    r"(<h2[^>]*>.*?</h2>\s*)<p\b(?![^>]*class=)([^>]*)>",
+    flags=re.DOTALL | re.IGNORECASE,
+)
 _FIRST_P_RE = re.compile(r"<p\b([^>]*)>", flags=re.IGNORECASE)
 
 
@@ -206,9 +209,10 @@ def _mark_story_openers(body_html: str) -> str:
     first <p> of the body (the case where the manuscript opens with a story
     title or with prose directly), unless it already carries a class — so we
     don't clobber attributes pandoc may emit or double-tag a story opener
-    that the H2 pass already handled.
+    that the H2 pass already handled. Any pre-existing attributes on the
+    paragraph tag are preserved.
     """
-    out = _OPENER_RE.sub(r'\1<p class="first">', body_html)
+    out = _OPENER_RE.sub(r'\1<p class="first"\2>', body_html)
     m = _FIRST_P_RE.search(out)
     if m and "class=" not in m.group(1):
         attrs = m.group(1)

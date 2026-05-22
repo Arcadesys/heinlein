@@ -56,7 +56,6 @@
       page-break-before: always;
     }
     h2:first-of-type { margin-top: 2rem; }
-    h2 + p { text-indent: 0; }
     .by {
       font-style: italic;
       color: var(--ink-muted);
@@ -69,8 +68,8 @@
       background: linear-gradient(90deg, transparent, var(--neon-pink), var(--accent), transparent);
     }
     p { margin: 0; text-indent: 1.2em; }
-    p:first-of-type { text-indent: 0; }
-    p:first-of-type::first-letter {
+    .first > p { text-indent: 0; }
+    .first > p::first-letter {
       font-family: 'Inter', sans-serif;
       font-weight: 300;
       font-size: 3.2em;
@@ -84,7 +83,6 @@
     hr::after { content: "·  ·  ·"; font-family: 'JetBrains Mono', monospace; font-size: 1em; letter-spacing: 0.4em; color: var(--neon-pink); }
     .dedication { text-align: center; font-style: italic; margin: 5rem 0; }
     .dedication p { text-indent: 0; margin: 0 0 0.6em; }
-    .dedication p::first-letter { font-family: inherit; font-weight: inherit; font-size: inherit; line-height: inherit; float: none; padding: 0; color: inherit; }
   </style>
   $for(header-includes)$
   $header-includes$
