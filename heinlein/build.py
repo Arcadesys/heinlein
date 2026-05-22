@@ -140,6 +140,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
                 cover=cover,
                 css=epub_css,
                 output=out,
+                lua_filter=templates / "mark_openers.lua",
             )
         finally:
             if epub_css != templates / "epub.css":
@@ -181,7 +182,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
     return results
 
 
-_HR_BEFORE_H2_RE = re.compile(r"^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*\n+(?=##[^#])", flags=re.MULTILINE)
+_HR_BEFORE_H2_RE = re.compile(r"^[ \t]*([-*_])([ \t]*\1){2,}[ \t]*\n+(?=##[^#])", flags=re.MULTILINE)
 
 
 def _strip_hr_before_h2(body_md: str) -> str:
@@ -194,7 +195,8 @@ def _strip_hr_before_h2(body_md: str) -> str:
     return _HR_BEFORE_H2_RE.sub("", body_md)
 
 
-_OPENER_RE = re.compile(r"(<h2[^>]*>.*?</h2>\s*)<p>", flags=re.DOTALL)
+_OPENER_RE = re.compile(r"(<h2[^>]*>.*?</h2>\s*)<p(?![^>]*class=)", flags=re.DOTALL)
+_FIRST_P_RE = re.compile(r"<p\b([^>]*)>", flags=re.IGNORECASE)
 
 
 def _mark_story_openers(body_html: str) -> str:
@@ -202,13 +204,15 @@ def _mark_story_openers(body_html: str) -> str:
 
     A story opener is the first <p> following any <h2>. Also tags the very
     first <p> of the body (the case where the manuscript opens with a story
-    title or with prose directly).
+    title or with prose directly), unless it already carries a class — so we
+    don't clobber attributes pandoc may emit or double-tag a story opener
+    that the H2 pass already handled.
     """
-    out = _OPENER_RE.sub(lambda m: m.group(1) + '<p class="first">', body_html)
-    if "<p" in out and 'class="first"' not in out.split("<p", 1)[1].split(">", 1)[0]:
-        # No h2 above the first <p> — tag it so the opening paragraph still
-        # gets a drop cap.
-        out = out.replace("<p>", '<p class="first">', 1)
+    out = _OPENER_RE.sub(r'\1<p class="first">', body_html)
+    m = _FIRST_P_RE.search(out)
+    if m and "class=" not in m.group(1):
+        attrs = m.group(1)
+        out = out[: m.start()] + f'<p class="first"{attrs}>' + out[m.end() :]
     return out
 
 
