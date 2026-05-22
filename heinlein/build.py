@@ -15,13 +15,13 @@ from heinlein.outputs import html as out_html
 from heinlein.outputs import pdf as out_pdf
 from heinlein.outputs import text as out_text
 
-# Insert Coin imprint defaults — used in cover/colophon/end pages.
-INSERT_COIN_DEFAULTS = {
-    "imprint_name": "Insert Coin",
+# FREE PLAY Publishing imprint defaults — used in cover/colophon/end pages.
+FREE_PLAY_DEFAULTS = {
+    "imprint_name": "FREE PLAY Publishing",
     "imprint_tagline": "short fiction",
     "imprint_tagline_long": "Pay one coin. Get one story.",
     "imprint_blurb": "A fiction imprint of The Arcades.",
-    "imprint_url": "insertcoin.thearcades.me",
+    "imprint_url": "freeplay.thearcades.me",
 }
 
 
@@ -61,6 +61,53 @@ def _colophon_lines(front: dict[str, Any], cfg_meta: dict[str, Any], title: str,
         rights,
         "Set in Lora, Inter, and JetBrains Mono. Designed for screen and small format.",
     ]
+
+
+def _colophon_intro(title: str) -> str:
+    """Italic Lora intro line that opens the colophon — matches the design
+    system's CopyrightPage."""
+    return (
+        f"<em>{title}</em> is a publication of FREE PLAY Publishing, "
+        "a fiction imprint of The Arcades. Set in Lora and Inter. "
+        "Designed and edited in Chicago."
+    )
+
+
+def _isbn_lines(cfg_meta: dict[str, Any]) -> list[str]:
+    """ISBN block — accepts a string, list, or dict ({ebook, paperback})."""
+    raw = cfg_meta.get("isbn")
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, dict):
+        out: list[str] = []
+        for kind in ("ebook", "paperback", "hardcover"):
+            if raw.get(kind):
+                out.append(f"ISBN {raw[kind]} ({kind})")
+        for k, v in raw.items():
+            if k not in ("ebook", "paperback", "hardcover") and v:
+                out.append(f"ISBN {v} ({k})")
+        return out
+    return [str(line) for line in raw]
+
+
+def _issue_tag(cfg_meta: dict[str, Any]) -> str:
+    """Bottom-of-colophon mono tag, e.g. "IC · 26 · 001". """
+    year = str(cfg_meta.get("year") or cfg_meta.get("date") or "")[:4]
+    yy = year[-2:] if len(year) >= 2 else ""
+    issue = str(cfg_meta.get("issue") or "").strip()
+    if issue:
+        try:
+            issue = f"{int(issue):03d}"
+        except ValueError:
+            pass
+    parts = ["FP"]
+    if yy:
+        parts.append(yy)
+    if issue:
+        parts.append(issue)
+    return " · ".join(parts)
 
 
 def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Path]:
@@ -111,12 +158,15 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         "margin_side": cfg.page.margin_side,
         "cover_eyebrow": _cover_eyebrow(cfg.metadata),
         "cover_uri": cover.as_uri() if cover else None,
-        "imprint_name": INSERT_COIN_DEFAULTS["imprint_name"],
-        "imprint_tagline": INSERT_COIN_DEFAULTS["imprint_tagline"],
-        "imprint_tagline_long": INSERT_COIN_DEFAULTS["imprint_tagline_long"],
-        "imprint_blurb": INSERT_COIN_DEFAULTS["imprint_blurb"],
-        "imprint_url": INSERT_COIN_DEFAULTS["imprint_url"],
+        "imprint_name": FREE_PLAY_DEFAULTS["imprint_name"],
+        "imprint_tagline": FREE_PLAY_DEFAULTS["imprint_tagline"],
+        "imprint_tagline_long": FREE_PLAY_DEFAULTS["imprint_tagline_long"],
+        "imprint_blurb": FREE_PLAY_DEFAULTS["imprint_blurb"],
+        "imprint_url": FREE_PLAY_DEFAULTS["imprint_url"],
         "colophon_lines": _colophon_lines(front, cfg.metadata, title, author),
+        "colophon_intro": _colophon_intro(title),
+        "isbn_lines": _isbn_lines(cfg.metadata),
+        "issue_tag": _issue_tag(cfg.metadata),
         "dedication_lines": dedication_lines,
         "body_html": body_html,
         "tokens_css": tokens_css,
@@ -141,6 +191,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
                 css=epub_css,
                 output=out,
                 lua_filter=templates / "mark_openers.lua",
+                toc=cfg.chapters,
             )
         finally:
             if epub_css != templates / "epub.css":
@@ -155,6 +206,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
             body_md=_docx_body(body_md, title, author, cover, dedication_lines),
             output=out,
             resource_path=resource_path,
+            toc=cfg.chapters,
         )
         results["docx"] = out
 
@@ -168,6 +220,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
                 output=out,
                 resource_path=resource_path,
                 include_in_header=include_header,
+                toc=cfg.chapters,
             )
         finally:
             if include_header is not None:
@@ -273,7 +326,7 @@ def _cover_eyebrow(cfg_meta: dict[str, Any]) -> str:
         return str(eyebrow)
     issue = cfg_meta.get("issue")
     year = cfg_meta.get("year") or cfg_meta.get("date") or ""
-    parts = ["Insert Coin"]
+    parts = ["FREE PLAY Publishing"]
     if issue:
         parts.append(f"Issue {issue}")
     if year:

@@ -13,6 +13,7 @@ def build(
     output: Path,
     resource_path: Path | None = None,
     include_in_header: Path | None = None,
+    toc: bool = False,
 ) -> Path:
     args = [
         "-f", "markdown",
@@ -23,6 +24,8 @@ def build(
         f"--lua-filter={template.parent / 'mark_openers.lua'}",
         "-o", str(output),
     ]
+    if toc:
+        args += ["--toc", "--toc-depth=2"]
     if resource_path is not None:
         args += [f"--resource-path={resource_path}"]
     if include_in_header is not None:

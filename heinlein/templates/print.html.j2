@@ -119,47 +119,80 @@ body {
 }
 .cover-imprint strong { color: var(--gold-d); font-weight: 400; }
 
-/* Colophon (interior) */
+/* Colophon (interior) — mirrors the design system's CopyrightPage:
+   muted mono eyebrow, italic Lora intro, hairline-divided copyright stack,
+   and a foot row pairing the coin mark with the IC · YY · NNN issue tag. */
 .colophon {
   background: var(--paper);
   color: var(--ink);
-  padding: calc({{ bleed_in }}in + 1.2in) calc({{ bleed_in }}in + 0.8in);
+  padding: calc({{ bleed_in }}in + 0.85in) calc({{ bleed_in }}in + 0.7in);
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: space-between;
   height: {{ sheet_h }}in;
-}
-.colophon p {
   font-family: 'Inter', sans-serif;
   font-size: 8.5pt;
   line-height: 1.55;
-  color: var(--ink-muted);
-  margin: 0 0 8pt;
-  max-width: 30em;
+  color: var(--ink);
 }
+.colophon .top { display: block; }
 .colophon .eyebrow {
   font-family: 'JetBrains Mono', monospace;
   font-size: 8pt;
-  letter-spacing: 0.28em;
-  color: var(--neon-pink);
+  letter-spacing: 0.22em;
+  color: var(--ink-muted);
   text-transform: uppercase;
   margin: 0 0 14pt;
 }
-.colophon .imprint {
-  font-family: 'Inter', sans-serif;
-  font-weight: 300;
-  font-size: 14pt;
-  letter-spacing: 0.18em;
-  color: var(--ink);
-  text-transform: uppercase;
-  margin: 0 0 4pt;
-}
-.colophon .imprint-sub {
+.colophon .intro {
   font-family: 'Lora', serif;
   font-style: italic;
-  font-size: 10pt;
+  font-size: 11pt;
+  line-height: 1.55;
+  color: var(--ink);
+  margin: 0 0 18pt;
+  max-width: 30em;
+}
+.colophon .divider {
+  border: none;
+  border-top: 0.5pt solid rgba(0, 0, 0, 0.15);
+  margin: 0 0 14pt;
+  width: 100%;
+}
+.colophon .rights p {
+  margin: 0 0 6pt;
+  max-width: 32em;
+  color: var(--ink);
+}
+.colophon .rights p.muted { color: var(--ink-muted); }
+.colophon .isbn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8pt;
+  letter-spacing: 0.06em;
+  line-height: 1.7;
+  margin: 10pt 0 0;
+  color: var(--ink);
+}
+.colophon .url {
+  margin: 10pt 0 0;
+  font-family: 'Inter', sans-serif;
+  font-size: 8.5pt;
+  color: var(--ink);
+}
+.colophon .foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 0.5pt solid rgba(0, 0, 0, 0.15);
+  padding-top: 12pt;
   color: var(--ink-muted);
-  margin: 0 0 24pt;
+}
+.colophon .foot .mark { color: var(--ink-muted); display: inline-flex; align-items: center; }
+.colophon .foot .tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8pt;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
 }
 
 /* Title page */
@@ -282,11 +315,15 @@ body {
 .body-section h2:first-of-type { padding-top: 0; }
 .body-section h2 + p { text-indent: 0; }
 
-/* End-page colophon */
+/* End-page colophon — dark backmatter signature with the coin mark up top,
+   matching the design system's TitlePage header treatment. */
 .end {
-  background: var(--bg-deep);
+  background:
+    radial-gradient(circle at 50% 18%, rgba(255,138,0,0.10), transparent 55%),
+    radial-gradient(circle at 50% 88%, rgba(232,199,119,0.10), transparent 55%),
+    var(--bg-deep);
   color: var(--fg-dark);
-  padding: calc({{ bleed_in }}in + 1.5in) calc({{ bleed_in }}in + {{ margin_side }});
+  padding: calc({{ bleed_in }}in + 1.3in) calc({{ bleed_in }}in + {{ margin_side }});
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -294,35 +331,49 @@ body {
   text-align: center;
   height: {{ sheet_h }}in;
 }
+.end .coin {
+  display: inline-flex;
+  margin: 0 0 18pt;
+}
+.end .eyebrow {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8.5pt;
+  letter-spacing: 0.32em;
+  color: var(--fg-dark-muted);
+  text-transform: uppercase;
+  margin: 0 0 22pt;
+}
 .end .mark {
   font-family: 'Inter', sans-serif;
   font-weight: 300;
-  font-size: 20pt;
-  letter-spacing: 0.22em;
+  font-size: 24pt;
+  letter-spacing: 0.18em;
   color: #f6e7c8;
-  margin: 0 0 8pt;
+  margin: 0 0 10pt;
+  text-shadow: 0 0 12pt rgba(232,199,119,0.45), 0 0 28pt rgba(255,138,0,0.30);
 }
 .end .mark-sub {
   font-family: 'Lora', serif;
   font-style: italic;
-  font-size: 10pt;
-  color: var(--fg-dark-muted);
-  margin: 0 0 28pt;
+  font-size: 11pt;
+  color: var(--gold-d);
+  margin: 0 0 22pt;
+}
+.end .rule {
+  height: 1px;
+  width: 90pt;
+  margin: 0 0 22pt;
+  background: linear-gradient(90deg, transparent, var(--neon-pink-d), var(--accent-d), transparent);
 }
 .end .meta {
   font-family: 'JetBrains Mono', monospace;
   font-size: 8pt;
-  letter-spacing: 0.24em;
+  letter-spacing: 0.28em;
   color: var(--fg-dark-muted);
   text-transform: uppercase;
-  line-height: 1.8;
+  line-height: 1.9;
 }
-.end .rule {
-  height: 1px;
-  width: 80pt;
-  margin: 0 0 28pt;
-  background: linear-gradient(90deg, transparent, var(--neon-pink-d), var(--accent-d), transparent);
-}
+.end .meta .url { color: var(--fg-dark); letter-spacing: 0.22em; }
 </style>
 </head>
 <body>
@@ -353,15 +404,38 @@ body {
 
 <!-- COLOPHON -->
 <section class="page colophon">
-  <p class="eyebrow">Colophon</p>
-  <p class="imprint">{{ imprint_name }}</p>
-  <p class="imprint-sub">{{ imprint_blurb }}</p>
-  {%- for line in colophon_lines %}
-  <p>{{ line }}</p>
-  {%- endfor %}
-  {%- if genre %}
-  <p style="margin-top:18pt">Genre: {{ genre }}.</p>
-  {%- endif %}
+  <div class="top">
+    <p class="eyebrow">Colophon</p>
+    <p class="intro">{{ colophon_intro | safe }}</p>
+    <hr class="divider">
+    <div class="rights">
+      {%- for line in colophon_lines %}
+      <p>{{ line }}</p>
+      {%- endfor %}
+      {%- if genre %}
+      <p class="muted">Genre: {{ genre }}.</p>
+      {%- endif %}
+    </div>
+    {%- if isbn_lines %}
+    <div class="isbn">
+      {%- for line in isbn_lines %}
+      {{ line }}{% if not loop.last %}<br>{% endif %}
+      {%- endfor %}
+    </div>
+    {%- endif %}
+    <p class="url">{{ imprint_url }}</p>
+  </div>
+  <div class="foot">
+    <span class="mark">
+      <svg viewBox="0 0 130 100" width="28" height="22" aria-hidden="true" style="color: var(--ink-muted); display: block;">
+        <rect x="70" y="10" width="22" height="80" rx="11" fill="none" stroke="currentColor" stroke-width="2.5"/>
+        <rect x="80" y="22" width="2" height="56" rx="1" fill="currentColor"/>
+        <path d="M 81,28 A 22,22 0 1,0 81,72 A 17,17 0 1,1 81,28 Z" fill="none" stroke="currentColor" stroke-width="2.8"/>
+        <circle cx="79" cy="50" r="4" fill="currentColor"/>
+      </svg>
+    </span>
+    <span class="tag">{{ issue_tag }}</span>
+  </div>
 </section>
 
 <!-- TITLE PAGE -->
@@ -392,12 +466,35 @@ body {
 
 <!-- END -->
 <section class="page end">
-  <div class="rule"></div>
+  <span class="coin">
+    <svg viewBox="0 0 130 100" width="104" height="80" aria-hidden="true" style="display: block; overflow: visible;">
+      <defs>
+        <linearGradient id="endCoinGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#ff8a00"/>
+          <stop offset="100%" stop-color="#ff3cac"/>
+        </linearGradient>
+        <linearGradient id="endSlotGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#f5d98a"/>
+          <stop offset="60%" stop-color="#e8c777"/>
+          <stop offset="100%" stop-color="#c89a3e"/>
+        </linearGradient>
+      </defs>
+      <rect x="70" y="10" width="22" height="80" rx="11" fill="#0a0a14" stroke="url(#endSlotGrad)" stroke-width="2.5"/>
+      <rect x="80" y="22" width="2" height="56" rx="1" fill="#000"/>
+      <rect x="80" y="22" width="1" height="56" rx="0.5" fill="#c89a3e" opacity="0.55"/>
+      <path d="M 81,28 A 22,22 0 1,0 81,72 L 81,28 Z" fill="#000"/>
+      <path d="M 81,28 A 22,22 0 1,0 81,72 A 17,17 0 1,1 81,28 Z" fill="none" stroke="url(#endCoinGrad)" stroke-width="2.8" opacity="0.95"/>
+      <path d="M 79,41 A 9,9 0 1,0 79,59 Z" fill="#000"/>
+      <path d="M 79,41 A 9,9 0 1,0 79,59 Z" fill="#ff8a00" opacity="0.78"/>
+    </svg>
+  </span>
+  <div class="eyebrow">{{ imprint_blurb | replace('.', '') | upper }}</div>
   <div class="mark">{{ imprint_name | upper }}</div>
   <div class="mark-sub">{{ imprint_tagline_long }}</div>
+  <div class="rule"></div>
   <div class="meta">
     fin · merci · à bientôt<br>
-    {{ imprint_url }}
+    <span class="url">{{ imprint_url }}</span>
   </div>
 </section>
 
