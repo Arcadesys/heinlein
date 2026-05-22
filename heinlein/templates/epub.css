@@ -9,14 +9,12 @@
 body { font-family: 'Lora', Georgia, serif; line-height: 1.55; color: var(--ink); }
 h1 { font-family: 'Inter', sans-serif; font-weight: 300; font-size: 1.8em; letter-spacing: 0.04em; text-align: center; margin: 2em 0 0.4em; color: var(--ink); }
 h2 { font-family: 'Inter', sans-serif; font-weight: 300; font-size: 1.5em; letter-spacing: 0.04em; text-align: center; margin: 3em 0 1em; color: var(--ink); break-before: page; page-break-before: always; }
-h2 + p { text-indent: 0; }
 h1 + p em { display: block; text-align: center; color: var(--ink-muted); font-style: italic; margin-bottom: 2em; }
 p { margin: 0; text-indent: 1.2em; orphans: 2; widows: 2; }
-p:first-of-type { text-indent: 0; }
-p:first-of-type::first-letter { font-family: 'Inter', sans-serif; font-weight: 300; font-size: 3em; line-height: 0.9; float: left; padding: 0.1em 0.18em 0 0; color: var(--neon-pink); }
+.first > p { text-indent: 0; }
+.first > p::first-letter { font-family: 'Inter', sans-serif; font-weight: 300; font-size: 3em; line-height: 0.9; float: left; padding: 0.1em 0.18em 0 0; color: var(--neon-pink); }
 em { font-style: italic; }
 hr { border: none; height: 1.5em; margin: 1em 0; text-align: center; }
 hr::after { content: "·  ·  ·"; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 1em; letter-spacing: 0.4em; color: var(--neon-pink); }
 .dedication { text-align: center; font-style: italic; margin: 5em 0; break-after: page; page-break-after: always; }
 .dedication p { text-indent: 0; margin: 0 0 0.6em; }
-.dedication p::first-letter { font-family: inherit; font-weight: inherit; font-size: inherit; line-height: inherit; float: none; padding: 0; color: inherit; }

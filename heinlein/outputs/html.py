@@ -20,6 +20,7 @@ def build(
         "--standalone",
         "--embed-resources",
         f"--template={template}",
+        f"--lua-filter={template.parent / 'mark_openers.lua'}",
         "-o", str(output),
     ]
     if resource_path is not None:

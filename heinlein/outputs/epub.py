@@ -51,6 +51,7 @@ def build(
     cover: Path | None,
     css: Path,
     output: Path,
+    lua_filter: Path | None = None,
 ) -> Path:
     """Run pandoc to produce an EPUB."""
     args = [
@@ -59,6 +60,8 @@ def build(
         "-o", str(output),
         "--css", str(css),
     ]
+    if lua_filter is not None:
+        args += [f"--lua-filter={lua_filter}"]
     if cover and cover.exists():
         args += ["--epub-cover-image", str(cover)]
 
