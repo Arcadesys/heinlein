@@ -1,5 +1,5 @@
-/* Insert Coin design tokens — print/EPUB subset.
-   Single source of truth, vendored from /tmp/insert_coin_template.html (light variant).
+/* FREE PLAY Publishing design tokens — print/EPUB subset.
+   Single source of truth, vendored from /tmp/free_play_template.html (light variant).
    Re-sync via `python -m heinlein.scripts.sync_design_tokens`. */
 :root {
   --paper:        #faf6ee;

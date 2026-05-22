@@ -1,6 +1,6 @@
 # Heinlein
 
-Insert Coin's publishing pipeline. Markdown manuscript in, PDF / EPUB / DOCX / HTML / plain text out — all branded in the **Insert Coin** imprint design system.
+FREE PLAY Publishing's pipeline. Markdown manuscript in, PDF / EPUB / DOCX / HTML / plain text out — all branded in the **FREE PLAY** imprint design system.
 
 Named after Heinlein because it's the publishing machine for fiction.
 
@@ -51,18 +51,35 @@ Drop a `heinlein.yaml` next to your manuscript:
 ```yaml
 manuscript: manuscript.md
 cover: cover.jpg
-imprint: insert-coin
+imprint: free-play
 page:
   size: digest             # digest=5.5x8.5, trade=6x9, mass=4.25x6.87
   margins: { top: 0.85in, side: 0.7in }
 metadata:
   rights: "© 2026 Austen Tucker. All rights reserved."
-  publisher: "Insert Coin (a fiction imprint of The Arcades)"
+  publisher: "FREE PLAY Publishing (a fiction imprint of The Arcades)"
   language: en-US
-  cover_eyebrow: "Insert Coin · Issue 01 · 2026"
+  cover_eyebrow: "FREE PLAY Publishing · Issue 01 · 2026"
+chapters: false           # true for book-length works — see below
 formats: [pdf, epub, docx, html, text]
 output: dist/
 ```
+
+### Chapters
+
+Set `chapters: true` in `heinlein.yaml` when the manuscript is a book divided
+into chapters (rather than an issue of stand-alone stories). Each `## h2`
+becomes a chapter:
+
+- **EPUB / HTML / DOCX** get a clickable Table of Contents listing every
+  chapter. In ereaders, the EPUB's depth-2 navigation document drives the
+  side-panel chapter list.
+- **PDF** gets a side-panel outline (PDF bookmarks) — one entry per chapter
+  — generated automatically from the `<h2>` headings by Chrome's print
+  engine.
+
+Leave it `false` (the default) for short-fiction issues where each `## h2`
+is a separate story.
 
 Then:
 
@@ -102,11 +119,11 @@ Add an `archive:` line to `heinlein.yaml` (or pass `--archive PATH`) pointing at
 
 ## Design tokens
 
-The Insert Coin design system is the source of truth for colours and typography. Tokens live in `heinlein/templates/tokens.css`. To re-sync from the design-system HTML:
+The FREE PLAY design system is the source of truth for colours and typography. Tokens live in `heinlein/templates/tokens.css`. To re-sync from the design-system HTML:
 
 ```sh
 python -m heinlein.scripts.sync_design_tokens \
-       --source ~/Downloads/Insert\ Coin\ Design\ System.html
+       --source ~/Downloads/Free\ Play\ Design\ System.html
 ```
 
 ## Tests
@@ -122,4 +139,4 @@ The full pipeline test runs only when both `pandoc` and Chrome are present.
 - MOBI/AZW3 (kindlegen is deprecated; skip).
 - Cover image generation.
 - Multi-title catalog mode.
-- Imprints other than Insert Coin.
+- Imprints other than FREE PLAY.

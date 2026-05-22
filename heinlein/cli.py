@@ -13,7 +13,7 @@ from heinlein.build import build as run_build
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="heinlein",
-        description="Insert Coin publishing pipeline — manuscript → PDF/EPUB/DOCX/HTML/text.",
+        description="FREE PLAY Publishing pipeline — manuscript → PDF/EPUB/DOCX/HTML/text.",
     )
     sub = parser.add_subparsers(dest="cmd", required=False)
 

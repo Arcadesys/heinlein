@@ -55,13 +55,14 @@ class PageConfig:
 class HeinleinConfig:
     manuscript: Path
     cover: Path | None = None
-    imprint: str = "insert-coin"
+    imprint: str = "free-play"
     page: PageConfig = field(default_factory=PageConfig)
     metadata: dict[str, Any] = field(default_factory=dict)
     formats: tuple[str, ...] = ALL_FORMATS
     output: Path = Path("dist")
     archive: Path | None = None
     accents: dict[str, str] = field(default_factory=dict)
+    chapters: bool = False
 
     @property
     def project_dir(self) -> Path:
@@ -156,16 +157,19 @@ def load(
     accents_raw = raw.get("accents") or {}
     accents = {str(k): str(v) for k, v in accents_raw.items()}
 
+    chapters = bool(raw.get("chapters", False))
+
     return HeinleinConfig(
         manuscript=manuscript,
         cover=cover_path,
-        imprint=raw.get("imprint", "insert-coin"),
+        imprint=raw.get("imprint", "free-play"),
         page=page,
         metadata=raw.get("metadata") or {},
         formats=formats,
         output=output,
         archive=archive,
         accents=accents,
+        chapters=chapters,
     )
 
 
