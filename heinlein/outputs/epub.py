@@ -52,14 +52,23 @@ def build(
     css: Path,
     output: Path,
     lua_filter: Path | None = None,
+    toc: bool = False,
 ) -> Path:
-    """Run pandoc to produce an EPUB."""
+    """Run pandoc to produce an EPUB.
+
+    When `toc=True`, generate a clickable Table of Contents listing the
+    `## h2` chapters. The TOC is both inserted into the linear reading order
+    and made depth-2 in the EPUB3 navigation document — the latter is what
+    most ereaders use for their side-panel chapter list.
+    """
     args = [
         "-f", "markdown",
         "-t", "epub",
         "-o", str(output),
         "--css", str(css),
     ]
+    if toc:
+        args += ["--toc", "--toc-depth=2"]
     if lua_filter is not None:
         args += [f"--lua-filter={lua_filter}"]
     if cover and cover.exists():

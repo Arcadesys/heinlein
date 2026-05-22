@@ -83,6 +83,33 @@
     hr::after { content: "·  ·  ·"; font-family: 'JetBrains Mono', monospace; font-size: 1em; letter-spacing: 0.4em; color: var(--neon-pink); }
     .dedication { text-align: center; font-style: italic; margin: 5rem 0; }
     .dedication p { text-indent: 0; margin: 0 0 0.6em; }
+    nav#TOC {
+      margin: 3rem 0 4rem;
+      padding: 1.4rem 0;
+      border-top: 1px solid var(--ink-muted);
+      border-bottom: 1px solid var(--ink-muted);
+    }
+    nav#TOC h2 {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 400;
+      font-size: 0.75rem;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--neon-pink);
+      text-align: left;
+      margin: 0 0 1rem;
+      break-before: auto;
+      page-break-before: auto;
+    }
+    nav#TOC ul { list-style: none; padding: 0; margin: 0; }
+    nav#TOC li { margin: 0.3em 0; }
+    nav#TOC a {
+      font-family: 'Inter', sans-serif;
+      color: var(--ink);
+      text-decoration: none;
+      border-bottom: 1px solid transparent;
+    }
+    nav#TOC a:hover { border-bottom-color: var(--neon-pink); }
   </style>
   $for(header-includes)$
   $header-includes$
@@ -93,6 +120,12 @@
   <h1>$title$</h1>
   $if(author)$<p class="by">by $for(author)$$author$$sep$, $endfor$</p>$endif$
   <div class="rule-grad"></div>
+$if(table-of-contents)$
+<nav id="TOC" role="doc-toc">
+<h2>Contents</h2>
+$table-of-contents$
+</nav>
+$endif$
 $body$
 </body>
 </html>
