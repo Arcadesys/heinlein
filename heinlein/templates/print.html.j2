@@ -8,14 +8,17 @@
 <style>
 {{ tokens_css | safe }}
 
-/* -------- Page geometry -------- */
+/* -------- Page geometry --------
+   Sheet = trim + bleed on every side. Text margins are measured from the
+   trim, so body margins become (bleed + trim margin) on the printed sheet.
+*/
 @page {
-  size: {{ page_w }}in {{ page_h }}in;
+  size: {{ sheet_w }}in {{ sheet_h }}in;
   margin: 0;
 }
 @page body-page {
-  size: {{ page_w }}in {{ page_h }}in;
-  margin: {{ margin_top }} {{ margin_side }} {{ margin_top }} {{ margin_side }};
+  size: {{ sheet_w }}in {{ sheet_h }}in;
+  margin: calc({{ bleed_in }}in + {{ margin_top }}) calc({{ bleed_in }}in + {{ margin_side }});
   @bottom-center {
     content: counter(page);
     font-family: 'JetBrains Mono', monospace;
@@ -40,8 +43,8 @@ body {
 .page {
   page-break-after: always;
   break-after: page;
-  width: {{ page_w }}in;
-  height: {{ page_h }}in;
+  width: {{ sheet_w }}in;
+  height: {{ sheet_h }}in;
   overflow: hidden;
   position: relative;
 }
@@ -53,7 +56,7 @@ body {
               radial-gradient(circle at 92% 88%, rgba(232,199,119,0.12), transparent 38%),
               linear-gradient(135deg, #0a0a14 0%, #14142a 100%);
   color: var(--fg-dark);
-  padding: {{ margin_top }} {{ margin_side }};
+  padding: calc({{ bleed_in }}in + {{ margin_top }}) calc({{ bleed_in }}in + {{ margin_side }});
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -64,8 +67,8 @@ body {
   background: #000;
 }
 .cover-image img {
-  width: {{ page_w }}in;
-  height: {{ page_h }}in;
+  width: {{ sheet_w }}in;
+  height: {{ sheet_h }}in;
   object-fit: cover;
   display: block;
 }
@@ -120,11 +123,11 @@ body {
 .colophon {
   background: var(--paper);
   color: var(--ink);
-  padding: 1.2in 0.8in;
+  padding: calc({{ bleed_in }}in + 1.2in) calc({{ bleed_in }}in + 0.8in);
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  height: {{ page_h }}in;
+  height: {{ sheet_h }}in;
 }
 .colophon p {
   font-family: 'Inter', sans-serif;
@@ -163,12 +166,12 @@ body {
 .title-page {
   background: var(--paper);
   color: var(--ink);
-  padding: 1.5in {{ margin_side }};
+  padding: calc({{ bleed_in }}in + 1.5in) calc({{ bleed_in }}in + {{ margin_side }});
   display: flex;
   flex-direction: column;
   justify-content: center;
   text-align: center;
-  height: {{ page_h }}in;
+  height: {{ sheet_h }}in;
 }
 .title-page .eyebrow {
   font-family: 'JetBrains Mono', monospace;
@@ -201,6 +204,27 @@ body {
   background: linear-gradient(90deg, transparent, var(--neon-pink), var(--accent), transparent);
 }
 
+/* Dedication page */
+.dedication {
+  background: var(--paper);
+  color: var(--ink);
+  padding: calc({{ bleed_in }}in + 1.5in) calc({{ bleed_in }}in + {{ margin_side }});
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+  height: {{ sheet_h }}in;
+}
+.dedication p {
+  font-family: 'Lora', serif;
+  font-style: italic;
+  font-size: 13pt;
+  line-height: 1.6;
+  color: var(--ink);
+  margin: 0 0 0.7em;
+}
+.dedication p:last-child { margin-bottom: 0; }
+
 /* Body */
 .body-section {
   page: body-page;
@@ -221,13 +245,12 @@ body {
 .body-section p.first { text-indent: 0; }
 .body-section p.first::first-letter {
   font-family: 'Inter', sans-serif;
-  font-weight: 300;
+  font-weight: 400;
   font-size: 44pt;
   line-height: 0.9;
   float: left;
   padding: 6pt 8pt 0 0;
   color: var(--neon-pink);
-  text-shadow: 0 0 0.5pt var(--neon-pink);
 }
 .body-section hr {
   border: none;
@@ -243,18 +266,33 @@ body {
   color: var(--neon-pink);
 }
 .body-section em { font-style: italic; }
+.body-section h2 {
+  font-family: 'Inter', sans-serif;
+  font-weight: 300;
+  font-size: 22pt;
+  letter-spacing: 0.04em;
+  line-height: 1.15;
+  color: var(--ink);
+  text-align: center;
+  margin: 0 0 24pt;
+  padding-top: 1.4in;
+  break-before: page;
+  page-break-before: always;
+}
+.body-section h2:first-of-type { padding-top: 0; }
+.body-section h2 + p { text-indent: 0; }
 
 /* End-page colophon */
 .end {
   background: var(--bg-deep);
   color: var(--fg-dark);
-  padding: 1.5in {{ margin_side }};
+  padding: calc({{ bleed_in }}in + 1.5in) calc({{ bleed_in }}in + {{ margin_side }});
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
   text-align: center;
-  height: {{ page_h }}in;
+  height: {{ sheet_h }}in;
 }
 .end .mark {
   font-family: 'Inter', sans-serif;
@@ -335,6 +373,17 @@ body {
   <p class="by">by {{ author }}</p>
   <div class="rule"></div>
 </section>
+
+{%- if dedication_lines %}
+<!-- DEDICATION -->
+<section class="page dedication">
+  <div>
+  {%- for line in dedication_lines %}
+    <p>{{ line }}</p>
+  {%- endfor %}
+  </div>
+</section>
+{%- endif %}
 
 <!-- BODY -->
 <section class="body-section">

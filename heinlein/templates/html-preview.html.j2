@@ -44,6 +44,19 @@
       color: var(--ink);
       margin: 0 0 0.4em;
     }
+    h2 {
+      font-family: 'Inter', sans-serif;
+      font-weight: 300;
+      font-size: 1.8rem;
+      letter-spacing: 0.04em;
+      text-align: center;
+      color: var(--ink);
+      margin: 4rem 0 1.4rem;
+      break-before: page;
+      page-break-before: always;
+    }
+    h2:first-of-type { margin-top: 2rem; }
+    h2 + p { text-indent: 0; }
     .by {
       font-style: italic;
       color: var(--ink-muted);
@@ -69,7 +82,13 @@
     em { font-style: italic; }
     hr { border: none; height: 1.6em; margin: 1.4em 0; text-align: center; }
     hr::after { content: "·  ·  ·"; font-family: 'JetBrains Mono', monospace; font-size: 1em; letter-spacing: 0.4em; color: var(--neon-pink); }
+    .dedication { text-align: center; font-style: italic; margin: 5rem 0; }
+    .dedication p { text-indent: 0; margin: 0 0 0.6em; }
+    .dedication p::first-letter { font-family: inherit; font-weight: inherit; font-size: inherit; line-height: inherit; float: none; padding: 0; color: inherit; }
   </style>
+  $for(header-includes)$
+  $header-includes$
+  $endfor$
 </head>
 <body>
   $if(subtitle)$<p class="eyebrow">$subtitle$</p>$endif$
