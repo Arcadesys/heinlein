@@ -225,6 +225,7 @@ def _do_upload(
         raise HTTPException(status_code=400, detail=f"invalid frontmatter: {e}") from e
 
     title = str(front.get("title") or Path(manuscript.filename).stem)
+    subtitle = str(front.get("subtitle") or "")
     author = str(front.get("author") or "")
     cover_field = front.get("cover")
 
@@ -266,6 +267,10 @@ def _do_upload(
         if cover_filename:
             yaml_doc["cover"] = cover_filename
         meta: dict[str, Any] = {}
+        if title:
+            meta["title"] = title
+        if subtitle:
+            meta["subtitle"] = subtitle
         if author:
             meta["author"] = author
         if meta:

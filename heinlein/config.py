@@ -16,11 +16,27 @@ PAGE_SIZES = {
 }
 
 
+_UNIT_TO_IN = {"in": 1.0, "mm": 1.0 / 25.4, "cm": 1.0 / 2.54, "pt": 1.0 / 72.0}
+
+
+def _length_to_in(value: str) -> float:
+    """Parse a CSS-like length (e.g. '0.125in', '3mm', '0') into inches."""
+    s = str(value).strip().lower()
+    if not s or s in {"0", "0in", "0mm", "0cm", "0pt"}:
+        return 0.0
+    for unit, factor in _UNIT_TO_IN.items():
+        if s.endswith(unit):
+            return float(s[: -len(unit)]) * factor
+    # Bare number — assume inches.
+    return float(s)
+
+
 @dataclass
 class PageConfig:
     size: str = "digest"
     margin_top: str = "0.85in"
     margin_side: str = "0.7in"
+    bleed: str = "0in"
 
     @property
     def width_in(self) -> float:
@@ -29,6 +45,10 @@ class PageConfig:
     @property
     def height_in(self) -> float:
         return PAGE_SIZES[self.size][1]
+
+    @property
+    def bleed_in(self) -> float:
+        return _length_to_in(self.bleed)
 
 
 @dataclass
@@ -41,6 +61,7 @@ class HeinleinConfig:
     formats: tuple[str, ...] = ALL_FORMATS
     output: Path = Path("dist")
     archive: Path | None = None
+    accents: dict[str, str] = field(default_factory=dict)
 
     @property
     def project_dir(self) -> Path:
@@ -58,6 +79,8 @@ def _coerce_page(raw: dict[str, Any]) -> PageConfig:
         p.margin_top = str(margins["top"])
     if "side" in margins:
         p.margin_side = str(margins["side"])
+    if "bleed" in raw:
+        p.bleed = str(raw["bleed"])
     return p
 
 
@@ -130,6 +153,9 @@ def load(
     elif raw.get("archive"):
         archive = (base_dir / raw["archive"]).resolve()
 
+    accents_raw = raw.get("accents") or {}
+    accents = {str(k): str(v) for k, v in accents_raw.items()}
+
     return HeinleinConfig(
         manuscript=manuscript,
         cover=cover_path,
@@ -139,6 +165,7 @@ def load(
         formats=formats,
         output=output,
         archive=archive,
+        accents=accents,
     )
 
 

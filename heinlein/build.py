@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import tempfile
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -68,24 +69,30 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
 
     front, body_md = frontmatter.parse_file(cfg.manuscript)
     body_md = frontmatter.strip_title_block(body_md)
+    body_md = _strip_hr_before_h2(body_md)
 
     cover = cfg.cover
     if cover is None and front.get("cover"):
         cover = (cfg.manuscript.parent / front["cover"]).resolve()
 
-    title = front.get("title", cfg.manuscript.stem)
-    subtitle = front.get("subtitle", "") or ""
-    author = front.get("author", "") or cfg.metadata.get("author", "") or ""
+    title = front.get("title") or cfg.metadata.get("title") or cfg.manuscript.stem
+    subtitle = front.get("subtitle") or cfg.metadata.get("subtitle") or ""
+    author = front.get("author") or cfg.metadata.get("author") or ""
     genre = front.get("genre", "") or ""
     language = cfg.metadata.get("language", "en-US")
     slug = _slug(title)
 
     templates = _templates_dir()
     tokens_css = (templates / "tokens.css").read_text(encoding="utf-8")
+    accents_override = _accents_override_css(cfg.accents)
+    if accents_override:
+        tokens_css = tokens_css + "\n" + accents_override
+
+    dedication_lines = _dedication_lines(front, cfg.metadata)
 
     # HTML body for the print template (drop-cap markup applied)
     body_html = pandoc.md_to_html(body_md)
-    body_html = body_html.replace("<p>", '<p class="first">', 1)
+    body_html = _mark_story_openers(body_html)
 
     pdf_ctx = {
         "templates_dir": templates,
@@ -97,6 +104,9 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         "language": language,
         "page_w": cfg.page.width_in,
         "page_h": cfg.page.height_in,
+        "bleed_in": cfg.page.bleed_in,
+        "sheet_w": cfg.page.width_in + 2 * cfg.page.bleed_in,
+        "sheet_h": cfg.page.height_in + 2 * cfg.page.bleed_in,
         "margin_top": cfg.page.margin_top,
         "margin_side": cfg.page.margin_side,
         "cover_eyebrow": _cover_eyebrow(cfg.metadata),
@@ -107,6 +117,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         "imprint_blurb": INSERT_COIN_DEFAULTS["imprint_blurb"],
         "imprint_url": INSERT_COIN_DEFAULTS["imprint_url"],
         "colophon_lines": _colophon_lines(front, cfg.metadata, title, author),
+        "dedication_lines": dedication_lines,
         "body_html": body_html,
         "tokens_css": tokens_css,
     }
@@ -120,14 +131,19 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
 
     if "epub" in cfg.formats:
         out = cfg.output / f"{slug}.epub"
-        out_epub.build(
-            body_md=_epub_body(body_md, title, author),
-            front=front,
-            cfg_meta=cfg.metadata,
-            cover=cover,
-            css=templates / "epub.css",
-            output=out,
-        )
+        epub_css = _epub_css_for(templates, cfg.accents)
+        try:
+            out_epub.build(
+                body_md=_epub_body(body_md, title, author, dedication_lines),
+                front=front,
+                cfg_meta=cfg.metadata,
+                cover=cover,
+                css=epub_css,
+                output=out,
+            )
+        finally:
+            if epub_css != templates / "epub.css":
+                epub_css.unlink(missing_ok=True)
         results["epub"] = out
 
     resource_path = cover.parent if cover else None
@@ -135,7 +151,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
     if "docx" in cfg.formats:
         out = cfg.output / f"{slug}.docx"
         out_docx.build(
-            body_md=_docx_body(body_md, title, author, cover),
+            body_md=_docx_body(body_md, title, author, cover, dedication_lines),
             output=out,
             resource_path=resource_path,
         )
@@ -143,12 +159,18 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
 
     if "html" in cfg.formats:
         out = cfg.output / f"{slug}.html"
-        out_html.build(
-            body_md=_html_body(body_md, title, author, cover),
-            template=templates / "html-preview.html.j2",
-            output=out,
-            resource_path=resource_path,
-        )
+        include_header = _html_include_header(cfg.accents)
+        try:
+            out_html.build(
+                body_md=_html_body(body_md, title, author, cover, dedication_lines),
+                template=templates / "html-preview.html.j2",
+                output=out,
+                resource_path=resource_path,
+                include_in_header=include_header,
+            )
+        finally:
+            if include_header is not None:
+                include_header.unlink(missing_ok=True)
         results["html"] = out
 
     if "text" in cfg.formats:
@@ -157,6 +179,84 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         results["text"] = out
 
     return results
+
+
+_HR_BEFORE_H2_RE = re.compile(r"^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*\n+(?=##[^#])", flags=re.MULTILINE)
+
+
+def _strip_hr_before_h2(body_md: str) -> str:
+    """Drop horizontal-rule markers that sit immediately before an `## h2`.
+
+    The h2 itself acts as a chapter break, so the scene-break ornament that
+    would otherwise render right before it just dangles at the foot of the
+    previous page.
+    """
+    return _HR_BEFORE_H2_RE.sub("", body_md)
+
+
+_OPENER_RE = re.compile(r"(<h2[^>]*>.*?</h2>\s*)<p>", flags=re.DOTALL)
+
+
+def _mark_story_openers(body_html: str) -> str:
+    """Tag the first <p> of each story with class="first" so it gets a drop cap.
+
+    A story opener is the first <p> following any <h2>. Also tags the very
+    first <p> of the body (the case where the manuscript opens with a story
+    title or with prose directly).
+    """
+    out = _OPENER_RE.sub(lambda m: m.group(1) + '<p class="first">', body_html)
+    if "<p" in out and 'class="first"' not in out.split("<p", 1)[1].split(">", 1)[0]:
+        # No h2 above the first <p> — tag it so the opening paragraph still
+        # gets a drop cap.
+        out = out.replace("<p>", '<p class="first">', 1)
+    return out
+
+
+def _accents_override_css(accents: dict[str, str]) -> str:
+    """Render an :root{} block that overrides token CSS variables.
+
+    Keys are the variable names without the leading `--`. Values are any valid
+    CSS color literal.
+    """
+    if not accents:
+        return ""
+    lines = [f"  --{k}: {v};" for k, v in accents.items()]
+    return "/* per-project accent overrides */\n:root {\n" + "\n".join(lines) + "\n}\n"
+
+
+def _epub_css_for(templates: Path, accents: dict[str, str]) -> Path:
+    """Return a CSS path for the EPUB build, with accent overrides applied.
+
+    If there are no overrides, returns the bundled epub.css path directly.
+    Otherwise writes a temp file containing the base CSS plus an override block
+    and returns its path — the caller is responsible for deleting it.
+    """
+    base = templates / "epub.css"
+    if not accents:
+        return base
+    css = base.read_text(encoding="utf-8") + "\n" + _accents_override_css(accents)
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".css", delete=False, encoding="utf-8"
+    )
+    tmp.write(css)
+    tmp.close()
+    return Path(tmp.name)
+
+
+def _html_include_header(accents: dict[str, str]) -> Path | None:
+    """Write a temp HTML fragment with an accents override <style> block.
+
+    Returns None when there are no overrides. The caller deletes the file.
+    """
+    if not accents:
+        return None
+    block = "<style>\n" + _accents_override_css(accents) + "</style>\n"
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".html", delete=False, encoding="utf-8"
+    )
+    tmp.write(block)
+    tmp.close()
+    return Path(tmp.name)
 
 
 def _cover_eyebrow(cfg_meta: dict[str, Any]) -> str:
@@ -173,28 +273,68 @@ def _cover_eyebrow(cfg_meta: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
-def _epub_body(body_md: str, title: str, author: str) -> str:
+def _dedication_lines(front: dict[str, Any], cfg_meta: dict[str, Any]) -> list[str]:
+    """Pull the dedication text from metadata or frontmatter.
+
+    Accepts a string (single line), a list of strings (one per line), or
+    nothing (returns []).
+    """
+    raw = cfg_meta.get("dedication") or front.get("dedication")
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        return [raw]
+    return [str(line) for line in raw]
+
+
+def _dedication_md(lines: list[str]) -> str:
+    """Render a dedication as a fenced div so pandoc emits
+    `<div class="dedication">…</div>` for EPUB/HTML/DOCX.
+    Returns empty string when there's no dedication."""
+    if not lines:
+        return ""
+    inner = "\n\n".join(f"*{line}*" for line in lines)
+    return f"::: {{.dedication}}\n{inner}\n:::\n"
+
+
+def _epub_body(body_md: str, title: str, author: str, dedication: list[str]) -> str:
     """For pandoc EPUB/HTML, prepend the title + byline as a markdown H1 + italic
     so the EPUB has a nice opening (matches the prototype's source manuscript)."""
-    return f"# {title}\n\n*by {author}*\n\n{body_md}"
+    parts = [f"# {title}", f"*by {author}*"]
+    ded = _dedication_md(dedication)
+    if ded:
+        parts.append(ded)
+    parts.append(body_md)
+    return "\n\n".join(parts)
 
 
-def _html_body(body_md: str, title: str, author: str, cover: Path | None) -> str:
+def _html_body(body_md: str, title: str, author: str, cover: Path | None, dedication: list[str]) -> str:
     """HTML preview gets the cover image as a hero up top, then title + byline."""
     if cover is None:
-        return _epub_body(body_md, title, author)
-    return (
-        f'![{title} — cover]({cover.name})\n\n'
-        f"# {title}\n\n*by {author}*\n\n{body_md}"
-    )
+        return _epub_body(body_md, title, author, dedication)
+    parts = [f'![{title} — cover]({cover.name})', f"# {title}", f"*by {author}*"]
+    ded = _dedication_md(dedication)
+    if ded:
+        parts.append(ded)
+    parts.append(body_md)
+    return "\n\n".join(parts)
 
 
-def _docx_body(body_md: str, title: str, author: str, cover: Path | None) -> str:
-    """DOCX gets the cover image first, then a page break, then title + byline."""
+_H2_BREAK_RE = re.compile(r"^(##[^#])", flags=re.MULTILINE)
+
+
+def _docx_body(body_md: str, title: str, author: str, cover: Path | None, dedication: list[str]) -> str:
+    """DOCX gets the cover image first, then a page break, then title + byline.
+
+    Each `## h2` is treated as a chapter break, so we emit a `\\newpage`
+    before it — pandoc translates that to a Word page break.
+    """
+    body_md = _H2_BREAK_RE.sub(r"\\newpage\n\n\1", body_md)
     if cover is None:
-        return _epub_body(body_md, title, author)
-    return (
-        f'![{title} — cover]({cover.name})\n\n'
-        '\\newpage\n\n'
-        f"# {title}\n\n*by {author}*\n\n{body_md}"
-    )
+        return _epub_body(body_md, title, author, dedication)
+    parts = [f'![{title} — cover]({cover.name})', '\\newpage', f"# {title}", f"*by {author}*"]
+    ded = _dedication_md(dedication)
+    if ded:
+        parts.append(ded)
+    parts.append(body_md)
+    return "\n\n".join(parts)
