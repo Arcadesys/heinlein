@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "heinlein serve (preview + gallery)",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "heinlein", "serve", "--config", "examples/la-ligne-du-marais/heinlein.yaml", "--no-open", "--no-build"],
+      "port": 8765
+    },
+    {
+      "name": "heinlein web (upload/build app)",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "heinlein", "web", "--no-open"],
+      "port": 8770
+    }
+  ]
+}

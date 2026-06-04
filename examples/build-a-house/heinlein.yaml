@@ -1,0 +1,30 @@
+manuscript: manuscript.md
+cover: cover.png
+imprint: free-play
+page:
+  size: digest
+  margins: { top: 0.85in, side: 0.7in }
+  bleed: 0.125in
+metadata:
+  rights: "“Build a House,” She Said © 2026 Austen Tucker. All rights reserved."
+  publisher: "FREE PLAY Publishing (a fiction imprint of The Arcades)"
+  language: en-US
+  date: "2026"
+  description: "An essay on inheritance, witness, and the quiet architecture of trans community."
+  subjects: ["Essay", "Memoir", "LGBTQ"]
+  cover_eyebrow: "FREE PLAY Publishing · Essay · 2026"
+  year: "2026"
+  dedication: "For Mama Estelle"
+  colophon:
+    - "“Build a House,” She Said © 2026 Austen Tucker. All rights reserved."
+    - "Set in Lora, Inter, and JetBrains Mono. Designed for screen and small format."
+accents:
+  paper:       "#FFFFFF"
+  neon-pink:   "#F5A9B8"
+  neon-pink-d: "#F5A9B8"
+  accent:      "#5BCEFA"
+  accent-d:    "#5BCEFA"
+  gold:        "#FFFFFF"
+  gold-d:      "#FFFFFF"
+formats: [pdf]
+output: dist/
