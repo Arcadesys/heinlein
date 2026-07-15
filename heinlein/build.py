@@ -24,6 +24,29 @@ FREE_PLAY_DEFAULTS = {
     "imprint_url": "freeplay.thearcades.me",
 }
 
+# Imprint presets, selected by the `imprint:` slug in heinlein.yaml. Any field
+# can be overridden per-project via the matching `metadata:` key.
+IMPRINTS = {
+    "free-play": FREE_PLAY_DEFAULTS,
+    "insert-coin": {
+        "imprint_name": "Insert Coin",
+        "imprint_tagline": "fiction",
+        "imprint_tagline_long": "Drop a coin. Fall into the story.",
+        "imprint_blurb": "A fiction imprint of The Arcades.",
+        "imprint_url": "thearcades.me",
+    },
+}
+
+
+def _imprint(cfg: HeinleinConfig) -> dict[str, str]:
+    """Resolve the imprint preset for this build, with metadata overrides."""
+    resolved = dict(IMPRINTS.get(cfg.imprint, FREE_PLAY_DEFAULTS))
+    for key in resolved:
+        override = cfg.metadata.get(key)
+        if override:
+            resolved[key] = str(override)
+    return resolved
+
 
 def _templates_dir() -> Path:
     return Path(str(files("heinlein").joinpath("templates")))
@@ -63,12 +86,15 @@ def _colophon_lines(front: dict[str, Any], cfg_meta: dict[str, Any], title: str,
     ]
 
 
-def _colophon_intro(title: str) -> str:
+def _colophon_intro(title: str, imprint_name: str, imprint_blurb: str) -> str:
     """Italic Lora intro line that opens the colophon — matches the design
     system's CopyrightPage."""
+    blurb = imprint_blurb.rstrip(".")
+    if blurb:
+        blurb = blurb[0].lower() + blurb[1:]
     return (
-        f"<em>{title}</em> is a publication of FREE PLAY Publishing, "
-        "a fiction imprint of The Arcades. Set in Lora and Inter. "
+        f"<em>{title}</em> is a publication of {imprint_name}, "
+        f"{blurb}. Set in Lora and Inter. "
         "Designed and edited in Chicago."
     )
 
@@ -128,6 +154,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
     genre = front.get("genre", "") or ""
     language = cfg.metadata.get("language", "en-US")
     slug = _slug(title)
+    imprint = _imprint(cfg)
 
     templates = _templates_dir()
     tokens_css = (templates / "tokens.css").read_text(encoding="utf-8")
@@ -156,15 +183,15 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         "sheet_h": cfg.page.height_in + 2 * cfg.page.bleed_in,
         "margin_top": cfg.page.margin_top,
         "margin_side": cfg.page.margin_side,
-        "cover_eyebrow": _cover_eyebrow(cfg.metadata),
+        "cover_eyebrow": _cover_eyebrow(cfg.metadata, imprint["imprint_name"]),
         "cover_uri": cover.as_uri() if cover else None,
-        "imprint_name": FREE_PLAY_DEFAULTS["imprint_name"],
-        "imprint_tagline": FREE_PLAY_DEFAULTS["imprint_tagline"],
-        "imprint_tagline_long": FREE_PLAY_DEFAULTS["imprint_tagline_long"],
-        "imprint_blurb": FREE_PLAY_DEFAULTS["imprint_blurb"],
-        "imprint_url": FREE_PLAY_DEFAULTS["imprint_url"],
+        "imprint_name": imprint["imprint_name"],
+        "imprint_tagline": imprint["imprint_tagline"],
+        "imprint_tagline_long": imprint["imprint_tagline_long"],
+        "imprint_blurb": imprint["imprint_blurb"],
+        "imprint_url": imprint["imprint_url"],
         "colophon_lines": _colophon_lines(front, cfg.metadata, title, author),
-        "colophon_intro": _colophon_intro(title),
+        "colophon_intro": _colophon_intro(title, imprint["imprint_name"], imprint["imprint_blurb"]),
         "isbn_lines": _isbn_lines(cfg.metadata),
         "issue_tag": _issue_tag(cfg.metadata),
         "dedication_lines": dedication_lines,
@@ -320,13 +347,13 @@ def _html_include_header(accents: dict[str, str]) -> Path | None:
     return Path(tmp.name)
 
 
-def _cover_eyebrow(cfg_meta: dict[str, Any]) -> str:
+def _cover_eyebrow(cfg_meta: dict[str, Any], imprint_name: str = "FREE PLAY Publishing") -> str:
     eyebrow = cfg_meta.get("cover_eyebrow")
     if eyebrow:
         return str(eyebrow)
     issue = cfg_meta.get("issue")
     year = cfg_meta.get("year") or cfg_meta.get("date") or ""
-    parts = ["FREE PLAY Publishing"]
+    parts = [imprint_name]
     if issue:
         parts.append(f"Issue {issue}")
     if year:
