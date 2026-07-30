@@ -9,6 +9,7 @@ import yaml
 
 ALL_FORMATS = ("pdf", "epub", "docx", "html", "text")
 SOURCE_FORMATS = ("markdown", "twine1")
+STYLE_TARGETS = ("print", "epub", "html")
 
 PAGE_SIZES = {
     "digest": (5.5, 8.5),
@@ -73,6 +74,7 @@ class HeinleinConfig:
     output: Path = Path("dist")
     archive: Path | None = None
     accents: dict[str, str] = field(default_factory=dict)
+    styles: dict[str, Path] = field(default_factory=dict)
     chapters: bool = False
     source_format: str = "markdown"
     twine_start: str = "Start"
@@ -129,6 +131,26 @@ def _coerce_formats(raw: Any) -> tuple[str, ...]:
         if f not in ALL_FORMATS:
             raise ValueError(f"Unknown format: {f}. Valid: {list(ALL_FORMATS)}")
     return tuple(items)
+
+
+def _coerce_styles(raw: Any, base_dir: Path) -> dict[str, Path]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("'styles' must map print, epub, or html to a CSS path")
+
+    styles: dict[str, Path] = {}
+    for target, value in raw.items():
+        target = str(target)
+        if target not in STYLE_TARGETS:
+            raise ValueError(
+                f"Unknown style target: {target}. Valid: {list(STYLE_TARGETS)}"
+            )
+        path = (base_dir / str(value)).resolve()
+        if not path.is_file():
+            raise ValueError(f"Style file not found for {target}: {path}")
+        styles[target] = path
+    return styles
 
 
 def load(
@@ -192,6 +214,7 @@ def load(
 
     accents_raw = raw.get("accents") or {}
     accents = {str(k): str(v) for k, v in accents_raw.items()}
+    styles = _coerce_styles(raw.get("styles"), base_dir)
 
     chapters = bool(raw.get("chapters", False))
     source_format = source_format_override or raw.get("source_format", "markdown")
@@ -220,6 +243,7 @@ def load(
         output=output,
         archive=archive,
         accents=accents,
+        styles=styles,
         chapters=chapters,
         source_format=source_format,
         twine_start=twine_start,

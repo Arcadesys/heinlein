@@ -69,6 +69,7 @@ def _render_html(
     dedication_lines: list[str],
     body_html: str,
     tokens_css: str,
+    project_print_css: str,
 ) -> str:
     env = Environment(
         loader=FileSystemLoader(str(templates_dir)),
@@ -109,6 +110,7 @@ def _render_html(
         dedication_lines=dedication_lines,
         body_html=body_html,
         tokens_css=tokens_css,
+        project_print_css=project_print_css,
     )
 
 

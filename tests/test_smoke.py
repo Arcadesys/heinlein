@@ -59,6 +59,49 @@ def test_epub_output(example_dir: Path) -> None:
     assert out.stat().st_size > 5_000  # rough sanity
 
 
+def test_project_styles_resolve_and_validate(tmp_path: Path) -> None:
+    manuscript = tmp_path / "manuscript.md"
+    manuscript.write_text("---\ntitle: Test\n---\n\n# Test\n", encoding="utf-8")
+    print_css = tmp_path / "print.css"
+    print_css.write_text(".body-section { color: black; }\n", encoding="utf-8")
+    epub_css = tmp_path / "epub.css"
+    epub_css.write_text("body { color: black; }\n", encoding="utf-8")
+    project = tmp_path / "heinlein.yaml"
+    project.write_text(
+        "\n".join(
+            [
+                "manuscript: manuscript.md",
+                "styles:",
+                "  print: print.css",
+                "  epub: epub.css",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = cfg_mod.load(project_yaml=project)
+    assert cfg.styles == {"print": print_css, "epub": epub_css}
+
+    project.write_text(
+        "manuscript: manuscript.md\nstyles:\n  kindle: missing.css\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="Unknown style target"):
+        cfg_mod.load(project_yaml=project)
+
+
+def test_missing_project_style_fails_fast(tmp_path: Path) -> None:
+    manuscript = tmp_path / "manuscript.md"
+    manuscript.write_text("---\ntitle: Test\n---\n", encoding="utf-8")
+    project = tmp_path / "heinlein.yaml"
+    project.write_text(
+        "manuscript: manuscript.md\nstyles:\n  print: missing.css\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="Style file not found"):
+        cfg_mod.load(project_yaml=project)
+
+
 @pytest.mark.skipif(
     not (_have_pandoc() and _have_chrome()),
     reason="pandoc or chrome missing",

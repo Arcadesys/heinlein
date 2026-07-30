@@ -169,6 +169,10 @@ page:
   large_print: false       # opt-in PDF prose: 15pt, 1.65 line height
 pdf:
   reproducible: false      # fixed metadata/ID; requires metadata.date
+styles:
+  print: styles/interior-print.css  # appended after built-in print rules
+  epub: styles/interior-epub.css    # appended after built-in EPUB rules
+  html: styles/interior-web.css     # appended in the HTML head
 metadata:
   rights: "© 2026 Austen Tucker. All rights reserved."
   publisher: "FREE PLAY Publishing (a fiction imprint of The Arcades)"
@@ -189,6 +193,12 @@ bundled Inter, Lora, and JetBrains Mono fonts, requires `metadata.date`, and
 normalizes the PDF's title, author, timestamps, Creator (`Heinlein 0.1.0`),
 and deterministic document ID after Chrome renders it. Existing projects keep
 their legacy Google Fonts and output behavior until they opt in.
+
+The optional `styles` paths are resolved relative to `heinlein.yaml`. Keep
+format-specific rules separate: paged-media geometry belongs in `print`, while
+reflow and reader overrides belong in `epub`. Project styles are appended after
+Heinlein's built-in rules so a release can make small, reviewable interior
+changes without forking the templates.
 
 ### Chapters
 
