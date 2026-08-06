@@ -7,7 +7,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
-from heinlein import frontmatter, pandoc
+from heinlein import frontmatter, pandoc, twine
 from heinlein.config import HeinleinConfig
 from heinlein.outputs import docx as out_docx
 from heinlein.outputs import epub as out_epub
@@ -140,21 +140,30 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
     """Run the pipeline. Returns {format: output_path} for each format that was built."""
     cfg.output.mkdir(parents=True, exist_ok=True)
 
-    front, body_md = frontmatter.parse_file(cfg.manuscript)
-    body_md = frontmatter.strip_title_block(body_md)
-    body_md = _strip_hr_before_h2(body_md)
+    if cfg.source_format == "twine1":
+        front, body_md = twine.load_twine1(
+            cfg.manuscript,
+            start=cfg.twine_start,
+            exclude=cfg.twine_exclude,
+            restart_label=cfg.twine_restart_label,
+            back_label=cfg.twine_back_label,
+        )
+    else:
+        front, body_md = frontmatter.parse_file(cfg.manuscript)
+        body_md = frontmatter.strip_title_block(body_md)
 
     cover = cfg.cover
     if cover is None and front.get("cover"):
         cover = (cfg.manuscript.parent / front["cover"]).resolve()
 
-    title = front.get("title") or cfg.metadata.get("title") or cfg.manuscript.stem
-    subtitle = front.get("subtitle") or cfg.metadata.get("subtitle") or ""
-    author = front.get("author") or cfg.metadata.get("author") or ""
+    title = cfg.metadata.get("title") or front.get("title") or cfg.manuscript.stem
+    subtitle = cfg.metadata.get("subtitle") or front.get("subtitle") or ""
+    author = cfg.metadata.get("author") or front.get("author") or ""
     genre = front.get("genre", "") or ""
     language = cfg.metadata.get("language", "en-US")
     slug = _slug(title)
     imprint = _imprint(cfg)
+    edition_front = {**front, "title": title, "author": author}
 
     templates = _templates_dir()
     tokens_css = (templates / "tokens.css").read_text(encoding="utf-8")
@@ -212,7 +221,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         try:
             out_epub.build(
                 body_md=_epub_body(body_md, title, author, dedication_lines),
-                front=front,
+                front=edition_front,
                 cfg_meta=cfg.metadata,
                 cover=cover,
                 css=epub_css,
@@ -260,19 +269,6 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         results["text"] = out
 
     return results
-
-
-_HR_BEFORE_H2_RE = re.compile(r"^[ \t]*([-*_])([ \t]*\1){2,}[ \t]*\n+(?=##[^#])", flags=re.MULTILINE)
-
-
-def _strip_hr_before_h2(body_md: str) -> str:
-    """Drop horizontal-rule markers that sit immediately before an `## h2`.
-
-    The h2 itself acts as a chapter break, so the scene-break ornament that
-    would otherwise render right before it just dangles at the foot of the
-    previous page.
-    """
-    return _HR_BEFORE_H2_RE.sub("", body_md)
 
 
 _OPENER_RE = re.compile(

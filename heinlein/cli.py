@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 import webbrowser
+from importlib.metadata import version
 from pathlib import Path
 
 from heinlein import config as cfg_mod
@@ -15,6 +16,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="heinlein",
         description="FREE PLAY Publishing pipeline — manuscript → PDF/EPUB/DOCX/HTML/text.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version('heinlein')}")
     sub = parser.add_subparsers(dest="cmd", required=False)
 
     p_build = sub.add_parser("build", help="Build outputs from a manuscript or project.")
@@ -38,6 +40,24 @@ def main(argv: list[str] | None = None) -> int:
     p_build.add_argument(
         "--config", type=Path, default=None,
         help="Explicit path to heinlein.yaml (default: auto-discover).",
+    )
+    p_build.add_argument(
+        "--source-format", choices=("markdown", "twine1"), default=None,
+        help="Input format (default: markdown, or source_format in heinlein.yaml).",
+    )
+    p_build.add_argument("--author", default=None, help="Override the edition byline.")
+    p_build.add_argument("--twine-start", default=None, help="Twine 1 start passage.")
+    p_build.add_argument(
+        "--twine-exclude", action="append", default=None,
+        help="Twine 1 passage to exclude; may be repeated.",
+    )
+    p_build.add_argument(
+        "--restart-label", default=None,
+        help="Label for the Twine gamebook restart link.",
+    )
+    p_build.add_argument(
+        "--back-label", default=None,
+        help="Label for the Twine gamebook back link.",
     )
 
     p_serve = sub.add_parser(
@@ -104,6 +124,12 @@ def _cmd_build(args: argparse.Namespace) -> int:
         project_yaml=project_yaml,
         output_override=args.output,
         formats_override=args.formats,
+        source_format_override=args.source_format,
+        twine_start_override=args.twine_start,
+        twine_exclude_override=tuple(args.twine_exclude) if args.twine_exclude else None,
+        twine_restart_label_override=args.restart_label,
+        twine_back_label_override=args.back_label,
+        author_override=args.author,
     )
 
     if not cfg.manuscript.exists():

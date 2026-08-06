@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 ALL_FORMATS = ("pdf", "epub", "docx", "html", "text")
+SOURCE_FORMATS = ("markdown", "twine1")
 
 PAGE_SIZES = {
     "digest": (5.5, 8.5),
@@ -63,6 +64,11 @@ class HeinleinConfig:
     archive: Path | None = None
     accents: dict[str, str] = field(default_factory=dict)
     chapters: bool = False
+    source_format: str = "markdown"
+    twine_start: str = "Start"
+    twine_exclude: tuple[str, ...] = ()
+    twine_restart_label: str = "Start over"
+    twine_back_label: str = "Back"
 
     @property
     def project_dir(self) -> Path:
@@ -108,6 +114,12 @@ def load(
     output_override: Path | None = None,
     formats_override: Any = None,
     archive_override: Path | None = None,
+    source_format_override: str | None = None,
+    twine_start_override: str | None = None,
+    twine_exclude_override: tuple[str, ...] | None = None,
+    twine_restart_label_override: str | None = None,
+    twine_back_label_override: str | None = None,
+    author_override: str | None = None,
 ) -> HeinleinConfig:
     """
     Resolve config. Either manuscript or project_yaml must be supplied.
@@ -115,7 +127,7 @@ def load(
     Project mode: if `project_yaml` points to a heinlein.yaml file, load it.
     Manuscript mode: if only `manuscript` is given, use built-in defaults.
 
-    CLI overrides (output, formats) win over yaml.
+    CLI overrides win over yaml.
     """
     raw: dict[str, Any] = {}
     base_dir = Path.cwd()
@@ -158,18 +170,37 @@ def load(
     accents = {str(k): str(v) for k, v in accents_raw.items()}
 
     chapters = bool(raw.get("chapters", False))
+    source_format = source_format_override or raw.get("source_format", "markdown")
+    if source_format not in SOURCE_FORMATS:
+        raise ValueError(f"Unknown source_format={source_format!r}. Valid: {list(SOURCE_FORMATS)}")
+    twine = raw.get("twine") or {}
+    twine_start = twine_start_override or str(twine.get("start", "Start"))
+    raw_exclude = twine_exclude_override if twine_exclude_override is not None else twine.get("exclude", ())
+    if isinstance(raw_exclude, str):
+        raw_exclude = (raw_exclude,)
+    twine_exclude = tuple(str(value) for value in raw_exclude)
+    twine_restart_label = twine_restart_label_override or str(twine.get("restart_label", "Start over"))
+    twine_back_label = twine_back_label_override or str(twine.get("back_label", "Back"))
+    metadata = dict(raw.get("metadata") or {})
+    if author_override is not None:
+        metadata["author"] = author_override
 
     return HeinleinConfig(
         manuscript=manuscript,
         cover=cover_path,
         imprint=raw.get("imprint", "free-play"),
         page=page,
-        metadata=raw.get("metadata") or {},
+        metadata=metadata,
         formats=formats,
         output=output,
         archive=archive,
         accents=accents,
         chapters=chapters,
+        source_format=source_format,
+        twine_start=twine_start,
+        twine_exclude=twine_exclude,
+        twine_restart_label=twine_restart_label,
+        twine_back_label=twine_back_label,
     )
 
 
