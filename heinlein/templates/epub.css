@@ -14,7 +14,15 @@ p { margin: 0; text-indent: 1.2em; orphans: 2; widows: 2; }
 .first > p { text-indent: 0; }
 .first > p::first-letter { font-family: 'Inter', sans-serif; font-weight: 300; font-size: 3em; line-height: 0.9; float: left; padding: 0.1em 0.18em 0 0; color: var(--neon-pink); }
 em { font-style: italic; }
-hr { border: none; height: 1.5em; margin: 1em 0; text-align: center; }
-hr::after { content: "·  ·  ·"; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 1em; letter-spacing: 0.4em; color: var(--neon-pink); }
+hr { border: 0; height: 1.5em; margin: 1.15em 0; text-align: center; overflow: visible; }
+hr::after { content: ""; display: block; width: 28%; height: 2px; margin: 0.72em auto 0; background: linear-gradient(90deg, transparent 0%, var(--ink) 7%, var(--ink) 93%, transparent 100%); border-radius: 50% 8% 50% 12%; transform: rotate(-0.18deg); }
 .dedication { text-align: center; font-style: italic; margin: 5em 0; break-after: page; page-break-after: always; }
 .dedication p { text-indent: 0; margin: 0 0 0.6em; }
+.twine-passage { color: transparent; font-size: 0.01em; margin: 0 0 0.01em; }
+.twine-choices { margin: 2em 0 0; break-inside: avoid; page-break-inside: avoid; }
+.twine-choices p { text-indent: 0; margin: 0.85em 0; }
+.twine-choice, .twine-back, .twine-restart { display: block; border: 0.15em solid var(--ink); border-radius: 0.25em; padding: 0.8em 1em; color: var(--ink); font-family: 'Inter', sans-serif; font-weight: 700; text-decoration: underline; }
+.twine-choice::before { content: "→  "; }
+.twine-back { border-style: solid; border-color: var(--ink-muted, var(--ink)); color: var(--ink-muted, var(--ink)); font-weight: 400; }
+.twine-back::before { content: "←  "; }
+.twine-restart { border-style: dashed; font-weight: 400; }
