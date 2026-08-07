@@ -9,6 +9,8 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from heinlein.outputs import dests as dests_mod
+
 CHROME_PATHS = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
@@ -95,19 +97,12 @@ def _render_html(
     )
 
 
-def build(*, ctx: dict[str, Any], output: Path, debug_dir: Path | None = None) -> Path:
-    """
-    Build PDF. `ctx` is the shared template context built by build.py.
-    Writes the rendered HTML to a tempfile (or debug_dir if given), then
-    runs Chrome --headless --print-to-pdf.
-    """
-    html = _render_html(**ctx)
-
-    if debug_dir is not None:
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        debug_html = debug_dir / "print.html"
-        debug_html.write_text(html, encoding="utf-8")
-        html_path = debug_html
+def _print_to_pdf(html: str, output: Path, *, keep_html: Path | None = None) -> None:
+    """Run one Chrome print. `keep_html` writes the source next to the PDF."""
+    if keep_html is not None:
+        keep_html.parent.mkdir(parents=True, exist_ok=True)
+        keep_html.write_text(html, encoding="utf-8")
+        html_path = keep_html
         cleanup = False
     else:
         tmp = tempfile.NamedTemporaryFile(
@@ -131,4 +126,28 @@ def build(*, ctx: dict[str, Any], output: Path, debug_dir: Path | None = None) -
     finally:
         if cleanup:
             html_path.unlink(missing_ok=True)
+
+
+def build(*, ctx: dict[str, Any], output: Path, debug_dir: Path | None = None) -> Path:
+    """
+    Build PDF. `ctx` is the shared template context built by build.py.
+    Writes the rendered HTML to a tempfile (or debug_dir if given), then
+    runs Chrome --headless --print-to-pdf.
+
+    Chrome writes internal links but never the destinations they point at, so a
+    document with any `href="#id"` is printed a second time with locator markers
+    planted, and the page numbers that come out of the throwaway copy are
+    written into the real one. See heinlein.outputs.dests.
+    """
+    html = _render_html(**ctx)
+    marked_html, marked = dests_mod.plant_markers(html)
+
+    _print_to_pdf(html, output, keep_html=debug_dir / "print.html" if debug_dir else None)
+
+    if marked:
+        with tempfile.TemporaryDirectory(prefix="heinlein-dests-") as directory:
+            probe = Path(directory) / "marked.pdf"
+            _print_to_pdf(marked_html, probe)
+            destinations = dests_mod.locate(probe, output, expected=marked)
+        dests_mod.write_named_destinations(output, destinations)
     return output
