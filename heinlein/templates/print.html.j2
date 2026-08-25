@@ -2,9 +2,13 @@
 <html lang="{{ language }}"><head>
 <meta charset="utf-8">
 <title>{{ title }}</title>
+{%- if local_fonts %}
+<style>{{ font_css | safe }}</style>
+{%- else %}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
+{%- endif %}
 <style>
 {{ tokens_css | safe }}
 
@@ -39,8 +43,8 @@ body {
   font-family: 'Lora', Georgia, serif;
   color: var(--ink);
   background: var(--paper);
-  font-size: 11pt;
-  line-height: 1.55;
+  font-size: {{ body_font_size }}pt;
+  line-height: {{ body_line_height }};
   -webkit-font-smoothing: antialiased;
 }
 
@@ -271,8 +275,8 @@ body {
 }
 .body-section p {
   font-family: 'Lora', Georgia, serif;
-  font-size: 11pt;
-  line-height: 1.6;
+  font-size: {{ prose_font_size }}pt;
+  line-height: {{ prose_line_height }};
   margin: 0;
   text-indent: 1.2em;
   orphans: 2;

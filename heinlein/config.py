@@ -14,6 +14,7 @@ PAGE_SIZES = {
     "digest": (5.5, 8.5),
     "trade":  (6.0, 9.0),
     "mass":   (4.25, 6.87),
+    "letter": (8.5, 11.0),
 }
 
 
@@ -38,6 +39,7 @@ class PageConfig:
     margin_top: str = "0.85in"
     margin_side: str = "0.7in"
     bleed: str = "0in"
+    large_print: bool = False
 
     @property
     def width_in(self) -> float:
@@ -53,11 +55,19 @@ class PageConfig:
 
 
 @dataclass
+class PdfConfig:
+    """Options that affect only the PDF artifact."""
+
+    reproducible: bool = False
+
+
+@dataclass
 class HeinleinConfig:
     manuscript: Path
     cover: Path | None = None
     imprint: str = "free-play"
     page: PageConfig = field(default_factory=PageConfig)
+    pdf: PdfConfig = field(default_factory=PdfConfig)
     metadata: dict[str, Any] = field(default_factory=dict)
     formats: tuple[str, ...] = ALL_FORMATS
     output: Path = Path("dist")
@@ -88,7 +98,20 @@ def _coerce_page(raw: dict[str, Any]) -> PageConfig:
         p.margin_side = str(margins["side"])
     if "bleed" in raw:
         p.bleed = str(raw["bleed"])
+    if "large_print" in raw:
+        if not isinstance(raw["large_print"], bool):
+            raise ValueError("page.large_print must be true or false")
+        p.large_print = raw["large_print"]
     return p
+
+
+def _coerce_pdf(raw: dict[str, Any]) -> PdfConfig:
+    pdf = PdfConfig()
+    if "reproducible" in raw:
+        if not isinstance(raw["reproducible"], bool):
+            raise ValueError("pdf.reproducible must be true or false")
+        pdf.reproducible = raw["reproducible"]
+    return pdf
 
 
 def _coerce_formats(raw: Any) -> tuple[str, ...]:
@@ -150,6 +173,7 @@ def load(
         cover_path = (base_dir / cover_raw).resolve()
 
     page = _coerce_page(raw.get("page") or {})
+    pdf = _coerce_pdf(raw.get("pdf") or {})
 
     formats = _coerce_formats(formats_override if formats_override is not None else raw.get("formats"))
 
@@ -190,6 +214,7 @@ def load(
         cover=cover_path,
         imprint=raw.get("imprint", "free-play"),
         page=page,
+        pdf=pdf,
         metadata=metadata,
         formats=formats,
         output=output,

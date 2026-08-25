@@ -164,8 +164,11 @@ manuscript: manuscript.md
 cover: cover.jpg
 imprint: free-play
 page:
-  size: digest             # digest=5.5x8.5, trade=6x9, mass=4.25x6.87
+  size: digest             # digest=5.5x8.5, trade=6x9, mass=4.25x6.87, letter=8.5x11
   margins: { top: 0.85in, side: 0.7in }
+  large_print: false       # opt-in PDF prose: 15pt, 1.65 line height
+pdf:
+  reproducible: false      # fixed metadata/ID; requires metadata.date
 metadata:
   rights: "© 2026 Austen Tucker. All rights reserved."
   publisher: "FREE PLAY Publishing (a fiction imprint of The Arcades)"
@@ -175,6 +178,17 @@ chapters: false           # true for book-length works — see below
 formats: [pdf, epub, docx, html, text]
 output: dist/
 ```
+
+`page.large_print` changes only PDF body prose to 15pt with 1.65 line height;
+the cover, title page, colophon, headings, margins, and end page keep the
+standard FREE PLAY treatment. `page.size: letter` is available for 8.5 × 11in
+editions.
+
+`pdf.reproducible: true` makes PDF output hermetic and repeatable. It uses the
+bundled Inter, Lora, and JetBrains Mono fonts, requires `metadata.date`, and
+normalizes the PDF's title, author, timestamps, Creator (`Heinlein 0.1.0`),
+and deterministic document ID after Chrome renders it. Existing projects keep
+their legacy Google Fonts and output behavior until they opt in.
 
 ### Chapters
 

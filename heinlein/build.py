@@ -52,6 +52,35 @@ def _templates_dir() -> Path:
     return Path(str(files("heinlein").joinpath("templates")))
 
 
+def _local_font_css(templates: Path) -> str:
+    """Return @font-face rules for the bundled PDF fonts.
+
+    Reproducible PDFs deliberately use file URLs rather than the legacy Google
+    Fonts stylesheet. That keeps the Chrome input hermetic without changing
+    projects that have not opted into reproducible output.
+    """
+    fonts = templates.parent / "fonts"
+    faces = (
+        ("Inter", "normal", 300, "Inter-Light.ttf"),
+        ("Inter", "normal", 400, "Inter-Regular.ttf"),
+        ("Inter", "normal", 500, "Inter-Medium.ttf"),
+        ("Inter", "normal", 600, "Inter-SemiBold.ttf"),
+        ("JetBrains Mono", "normal", 400, "JetBrainsMono-Regular.ttf"),
+        ("JetBrains Mono", "normal", 500, "JetBrainsMono-Medium.ttf"),
+        ("Lora", "normal", 400, "Lora-Regular.ttf"),
+        ("Lora", "normal", 500, "Lora-Medium.ttf"),
+        ("Lora", "italic", 400, "Lora-Italic.ttf"),
+        ("Lora", "italic", 500, "Lora-MediumItalic.ttf"),
+    )
+    return "\n".join(
+        "@font-face { "
+        f"font-family: '{family}'; font-style: {style}; font-weight: {weight}; "
+        f"src: url('{(fonts / filename).as_uri()}') format('truetype'); "
+        "font-display: block; }"
+        for family, style, weight, filename in faces
+    )
+
+
 def _slug(s: str) -> str:
     s = s.lower().strip()
     s = re.sub(r"[^a-z0-9]+", "-", s)
@@ -193,6 +222,12 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         "sheet_h": cfg.page.height_in + 2 * cfg.page.bleed_in,
         "margin_top": cfg.page.margin_top,
         "margin_side": cfg.page.margin_side,
+        "body_font_size": 15 if cfg.page.large_print else 11,
+        "body_line_height": 1.65 if cfg.page.large_print else 1.55,
+        "prose_font_size": 15 if cfg.page.large_print else 11,
+        "prose_line_height": 1.65 if cfg.page.large_print else 1.6,
+        "local_fonts": cfg.pdf.reproducible,
+        "font_css": _local_font_css(templates) if cfg.pdf.reproducible else "",
         "cover_eyebrow": _cover_eyebrow(cfg.metadata, imprint["imprint_name"]),
         "cover_uri": cover.as_uri() if cover else None,
         "imprint_name": imprint["imprint_name"],
@@ -213,7 +248,13 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
 
     if "pdf" in cfg.formats:
         out = cfg.output / f"{slug}.pdf"
-        out_pdf.build(ctx=pdf_ctx, output=out, debug_dir=debug_dir)
+        out_pdf.build(
+            ctx=pdf_ctx,
+            output=out,
+            debug_dir=debug_dir,
+            reproducible=cfg.pdf.reproducible,
+            metadata_date=cfg.metadata.get("date"),
+        )
         results["pdf"] = out
 
     if "epub" in cfg.formats:
