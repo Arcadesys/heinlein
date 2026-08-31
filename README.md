@@ -81,6 +81,19 @@ becomes a chapter:
 Leave it `false` (the default) for short-fiction issues where each `## h2`
 is a separate story.
 
+### Major section breaks
+
+For an afterword or comparable major end matter in a print edition, mark its
+H1 heading explicitly:
+
+```md
+# Afterword: Pass It On {.major-section-break}
+```
+
+The PDF renderer puts one fully blank, unnumbered leaf before that marked
+section, so the heading begins on the following page. EPUB, HTML, and DOCX
+retain the semantic heading without inserting a blank leaf.
+
 Then:
 
 ```sh

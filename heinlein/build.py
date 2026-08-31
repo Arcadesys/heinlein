@@ -176,6 +176,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
     # HTML body for the print template (drop-cap markup applied)
     body_html = pandoc.md_to_html(body_md)
     body_html = _mark_story_openers(body_html)
+    body_html = _insert_major_section_blank_leaves(body_html)
 
     pdf_ctx = {
         "templates_dir": templates,
@@ -276,6 +277,10 @@ _OPENER_RE = re.compile(
     flags=re.DOTALL | re.IGNORECASE,
 )
 _FIRST_P_RE = re.compile(r"<p\b([^>]*)>", flags=re.IGNORECASE)
+_MAJOR_SECTION_HEADING_RE = re.compile(
+    r'(?P<heading><h1(?=[^>]*\bclass=["\'][^"\']*\bmajor-section-break\b[^"\']*["\'])[^>]*>.*?</h1>)',
+    flags=re.DOTALL | re.IGNORECASE,
+)
 
 
 def _mark_story_openers(body_html: str) -> str:
@@ -294,6 +299,21 @@ def _mark_story_openers(body_html: str) -> str:
         attrs = m.group(1)
         out = out[: m.start()] + f'<p class="first"{attrs}>' + out[m.end() :]
     return out
+
+
+def _insert_major_section_blank_leaves(body_html: str) -> str:
+    """Insert a print-only blank leaf before marked major end matter.
+
+    A Markdown heading such as ``# Afterword {.major-section-break}`` reaches
+    this function as an H1 with that class. The adjacent empty div is styled by
+    the print template to occupy a dedicated, unnumbered page; the heading then
+    begins on the following page. Other output formats retain the semantic H1
+    marker without receiving a blank leaf.
+    """
+    return _MAJOR_SECTION_HEADING_RE.sub(
+        '<div class="major-section-blank" aria-hidden="true">&nbsp;</div>\n\\g<heading>',
+        body_html,
+    )
 
 
 def _accents_override_css(accents: dict[str, str]) -> str:
