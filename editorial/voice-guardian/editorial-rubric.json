@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "dimensions": [
+    {
+      "id": "voice_fidelity",
+      "name": "Voice fidelity",
+      "question": "Does this resemble the author's established style, as shown in the reference passages?",
+      "damage_signals": ["reads like a different writer", "polished-generic surface", "narrator absent or replaced by 'we'/'one'"],
+      "not_damage": ["roughness that matches the references", "profanity", "fragments"]
+    },
+    {
+      "id": "rhetorical_naturalness",
+      "name": "Rhetorical naturalness",
+      "question": "Does emphasis emerge from the material, or feel manufactured?",
+      "damage_signals": ["formulaic 'not X but Y' the author didn't write", "inflated stakes language", "tidy moral appended", "AI lexicon (unlock, transformative, testament, tapestry)"],
+      "not_damage": ["author's own repetition kickers", "author's own 'It's not X. It's Y.' when it is earned by the preceding material"]
+    },
+    {
+      "id": "rhythm",
+      "name": "Rhythm",
+      "question": "Do sentence and paragraph lengths serve the argument or scene?",
+      "damage_signals": ["one-line paragraphs merged", "fragments converted to full sentences", "uniform medium-length sentences", "kicker buried mid-paragraph"],
+      "not_damage": ["long run-on sentence for a spiraling character", "series of short fragments"]
+    },
+    {
+      "id": "specificity",
+      "name": "Specificity",
+      "question": "Does the writing favor concrete observations over generic claims?",
+      "damage_signals": ["specific object/number/name replaced by a category", "sensory detail cut", "anecdote replaced by generalization"],
+      "not_damage": ["cutting a redundant second example"]
+    },
+    {
+      "id": "authorial_personality",
+      "name": "Authorial personality",
+      "question": "Are humor, opinions, asides, self-corrections, political directness, and rough edges preserved?",
+      "damage_signals": ["joke or aside removed", "political claim hedged or 'balanced'", "profanity softened", "queer/trans/furry content sanitized", "self-correction smoothed away"],
+      "not_damage": ["removing a genuinely broken aside the author flagged"]
+    },
+    {
+      "id": "meaning_preservation",
+      "name": "Meaning preservation",
+      "question": "Did the revision change what the author meant, claimed, or intended?",
+      "damage_signals": ["claim strengthened or weakened", "emotional beat changed", "canon/factual detail altered", "ending changed"],
+      "not_damage": ["pure tightening that keeps the claim"],
+      "revision_only": true
+    }
+  ],
+  "ratings": {
+    "comparison": ["improved", "preserved", "damaged", "not-applicable"],
+    "single": ["strong", "adequate", "weak", "not-applicable"]
+  },
+  "severity": {
+    "high": "Changes meaning, removes the narrator, or replaces specific experience with generic rhetoric. Must be looked at.",
+    "medium": "Loses a protected choice (aside, kicker, em-dash, humor) or flattens rhythm noticeably.",
+    "low": "Minor rhythm or wording drift. Worth a glance."
+  },
+  "verdicts": {
+    "original-better": "The revision made it worse. Keeping the original is a legitimate outcome.",
+    "revision-better": "The revision improved it without losing voice.",
+    "equivalent": "Neutral change, or trade-offs cancel out.",
+    "mixed": "Some hunks better, some worse. See findings."
+  },
+  "genre_families": {
+    "essay": ["polemic-essay", "argumentative-essay", "personal-essay", "memoir-essay", "blog"],
+    "fiction": ["fiction-first-person", "fiction-third-person", "fiction-second-person"]
+  },
+  "genre_notes": {
+    "polemic-essay": "Thesis early. Section breaks and kickers expected. Political directness is the point.",
+    "argumentative-essay": "Sources named or linked inline. Short punchy paragraphs.",
+    "personal-essay": "Confession and register shifts are central. Don't tidy vulnerability into a lesson.",
+    "memoir-essay": "Sensory specifics and humor next to pain. Exact objects matter.",
+    "blog": "Can start mid-situation with no preamble. Conversational but tight.",
+    "fiction-first-person": "Character voice, not essay narrator. Humor from character. Clipped dialogue. No headers.",
+    "fiction-third-person": "Atmosphere through smell, texture, weight. No narrator winks. No unnecessary adverbs.",
+    "fiction-second-person": "Present tense immediacy. Clinical detail made visceral."
+  }
+}
