@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0" xmlns="http://www.idpf.org/2007/opf" unique-identifier="epub-id-1" prefix="ibooks: http://vocabulary.itunes.apple.com/rdf/ibooks/vocabulary-extensions-1.0/">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="epub-id-1">urn:uuid:NORMALIZED</dc:identifier>
+    <dc:title id="epub-title-1">La Ligne du Marais</dc:title>
+    <dc:date id="epub-date">2026</dc:date>
+    <dc:language>en-US</dc:language>
+    <dc:creator id="epub-creator-1">Golden Test Author</dc:creator>
+    <meta refines="#epub-creator-1" property="role" scheme="marc:relators">aut</meta>
+    <dc:subject id="subject-1">Short Fiction</dc:subject>
+    <dc:subject id="subject-2">Horror</dc:subject>
+    <dc:subject id="subject-3">Gambling</dc:subject>
+    <dc:description>A gambler chases a rumor through Le Marais and finds the smallest casino in the world.</dc:description>
+    <dc:publisher>FREE PLAY Publishing (a fiction imprint of The Arcades)</dc:publisher>
+    <dc:rights>“La Ligne du Marais” © 2026 Austen Tucker. All rights reserved.</dc:rights>
+    <meta name="cover" content="cover_jpg" />
+    <meta property="dcterms:modified">NORMALIZED</meta>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml" />
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
+    <item id="stylesheet1" href="styles/stylesheet1.css" media-type="text/css" />
+    <item id="cover_xhtml" href="text/cover.xhtml" media-type="application/xhtml+xml" properties="svg" />
+    <item id="title_page_xhtml" href="text/title_page.xhtml" media-type="application/xhtml+xml" />
+    <item id="ch001_xhtml" href="text/ch001.xhtml" media-type="application/xhtml+xml" />
+    <item properties="cover-image" id="cover_jpg" href="media/cover.jpg" media-type="image/jpeg" />
+  </manifest>
+  <spine toc="ncx">
+    <itemref idref="cover_xhtml" />
+    <itemref idref="title_page_xhtml" linear="yes" />
+    <itemref idref="nav" />
+    <itemref idref="ch001_xhtml" />
+  </spine>
+  <guide>
+    <reference type="toc" title="La Ligne du Marais" href="nav.xhtml" />
+    <reference type="cover" title="Cover" href="text/cover.xhtml" />
+  </guide>
+</package>
