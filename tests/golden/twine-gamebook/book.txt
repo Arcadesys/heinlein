@@ -1,0 +1,44 @@
+Passage
+
+You stand at a door.
+
+Open it
+Walk away
+
+Open it
+
+Walk away
+
+Start over
+
+Passage
+
+Dust and a lamp.
+
+Take the lamp
+
+Take the lamp
+
+Back
+
+Start over
+
+Passage
+
+Rain, mostly.
+
+Go back
+
+Go back
+
+Back
+
+Start over
+
+Passage
+
+The lamp is warm. The end.
+
+Back
+
+Start over
