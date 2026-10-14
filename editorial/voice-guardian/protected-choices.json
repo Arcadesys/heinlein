@@ -1,0 +1,20 @@
+{
+  "_about": "Stylistic choices Voice Guardian must never flag as problems on their own. A revision that REMOVES one of these is a finding. An original that USES one is not. Add entries here when you reject a finding as 'deliberate' and want it to stick everywhere.",
+  "choices": [
+    {"id": "em-dash", "choice": "Em-dashes for asides and interruptions, including a trailing em-dash cut off by dialogue.", "genres": "all"},
+    {"id": "fragments", "choice": "Sentence fragments and fragment triplets (Not intelligence. Not creativity. Not taste.).", "genres": "all"},
+    {"id": "one-line-paragraphs", "choice": "One-line paragraphs, especially as kickers or turns. Don't merge them into neighbors.", "genres": "all"},
+    {"id": "deliberate-repetition", "choice": "Anaphora, repeated sentence frames, and repetition kickers (Both are subscriptions. Both are billing you.).", "genres": "all"},
+    {"id": "italic-emphasis", "choice": "Italics on a single word or phrase for spoken emphasis.", "genres": "all"},
+    {"id": "profanity", "choice": "Profanity and crude humor (weird sons of bitches, shitgoblins).", "genres": "all"},
+    {"id": "and-but-openers", "choice": "Sentences starting with And or But.", "genres": "all"},
+    {"id": "self-correction", "choice": "The narrator catching and correcting herself mid-thought (Or at least one of us does.).", "genres": "essay"},
+    {"id": "political-directness", "choice": "Political claims stated without hedging, qualification, or 'balance'.", "genres": "all"},
+    {"id": "queer-trans-furry-explicit", "choice": "Queer, trans, kink, and furry content stated plainly. No softening, no caveats.", "genres": "all"},
+    {"id": "own-contrast-frame", "choice": "The author's own 'It's not X. It's Y.' contrasts. Flag only contrasts a revision introduced, and only if unearned.", "genres": "essay"},
+    {"id": "headers-and-breaks", "choice": "Headers, --- breaks, and bold subheads in essays and blog posts.", "genres": "essay"},
+    {"id": "spiral-sentence", "choice": "A long, run-on, comma-spliced sentence when a character is spiraling or rationalizing.", "genres": "fiction"},
+    {"id": "parenthetical-aside", "choice": "Parenthetical asides that carry character voice or a joke.", "genres": "all"},
+    {"id": "unfinished-dialogue", "choice": "Dialogue that interrupts itself or trails off. Nobody gives speeches.", "genres": "fiction"}
+  ]
+}
