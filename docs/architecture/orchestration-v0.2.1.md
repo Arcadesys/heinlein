@@ -1,6 +1,6 @@
 # Heinlein: Orchestration Architecture v0.2.1
 
-**Status:** FROZEN DESIGN BASELINE (proposed architecture, not implemented)  
+**Status:** ACCEPTED DIRECTION (architecture under adversarial review; not implemented)  
 **Date:** 2026-10-14  
 **Next design milestone:** v0.3 Protocol and Contract Specification  
 **Scope:** local-first drafting, hybrid editorial orchestration, persistent findings, explicit author approval, MCP, and publishing provenance.
@@ -13,7 +13,7 @@
 
 Heinlein currently ships a **Python** Markdown-to-publication pipeline, local preview server, editorial hooks, and voice-protection guidance. This specification describes a **future architecture**. Rust is a candidate for native orchestration infrastructure; TypeScript is a candidate for browser UI. Neither is mandated as a rewrite of working code. Preserve the existing publishing behavior using characterization/integration tests if implementing a new core. No code changes are authorized by this document.
 
-## 1. Frozen decisions
+## 1. Accepted architectural direction
 
 | Concern | Contract |
 | --- | --- |
@@ -342,8 +342,11 @@ stateDiagram-v2
   [*] --> Queued
   Queued --> Leased: scheduler assigns bounded lease
   Leased --> Succeeded: validated result committed
+  Leased --> Leased: authenticated heartbeat renews bounded lease
+  Leased --> Cancelled: cancellation signal / terminate or expire attempt
   Leased --> Retryable: timeout / transient failure
   Retryable --> Queued: permitted retry with same identity
+  Retryable --> Failed: maximum attempts or budget exhausted
   Leased --> Failed: permanent invalid output
   Queued --> Cancelled: campaign cancelled
   Retryable --> Cancelled: campaign cancelled
@@ -366,7 +369,17 @@ A late result after lease expiration must not blindly overwrite the winning atte
 
 **Exit gate:** current build and preview behavior is understood and testable; no new service is required. **Non-goals:** rewrite to Rust, new editor, agent swarms.
 
-### Slice 1: Scene library + fast local Draft Mode
+### Slice 1a: Scene model and manuscript round-trip
+
+**User value:** portable scene-by-scene Markdown without an editor dependency.
+
+**Scope:** stable scene IDs, chapter/scene manifest, source metadata, import/export adapter to the existing Python publishing CLI, reversible ordering and identity preservation.
+
+**Demo:** split one story into scenes, reorder, reassemble, publish using existing pipeline and compare normalized content.
+
+**Exit gate:** unchanged regions round-trip losslessly; stable identity, ordering and baseline builds verified. **Non-goals:** editing UI, autosave, worker execution.
+
+### Slice 1b: Plain-text editor and fast local Draft Mode
 
 **User value:** create/open/reorder scenes as small Markdown segments, edit without inference or cloud connectivity, and recover saves.
 
@@ -392,7 +405,7 @@ A late result after lease expiration must not blindly overwrite the winning atte
 
 **Scope:** SQLite-backed findings, provenance, conversation threads, issue/intentional dispositions, versioned authorial policy, read-only reviewer role; import results from a fixture or a single bounded worker.
 
-**Demo:** run a continuity critic on Scene 18, compare evidence to Scene 23, discuss the issue, store “intentional” explanation, restart and verify the decision persists.
+**Demo:** import a fixture finding claiming Scene 18 conflicts with Scene 23, compare cited evidence, discuss the issue, store “intentional” explanation, restart and verify the decision persists.
 
 **Exit gate:** no critic can modify canonical text; rejection is durable but appropriately scoped; erroneous agent claims are never automatically promoted to canon. **Non-goals:** large swarm, automatic patching.
 
@@ -489,3 +502,27 @@ flowchart TD
 12. **Backward-compatible migration:** can the current Python CLI remain first-class while a new orchestration core is introduced incrementally?
 
 **v0.3 deliverable:** resolve these questions in protocol/state-transition contracts and example payloads, plus test cases. ADR-001 records the selected authority direction, not proof that its enforcement is implemented. Do not build the worker runtime or editor until the contracts are reviewed.
+
+## A8. Second-review amendments: mandatory v0.3 contracts
+
+**Approval terminology:** follow [ADR-001](adr-001-manuscript-authority.md). A working draft is mutable and not editorially approved; patch approval is a one-time authenticated **action**, not an enduring text state; release approval freezes an exact publishable snapshot. External MCP sessions may receive revocable draft-write grants, but only the authenticated Studio approval channel can authorize a patch. MCP may create a **pending approval** request, never an approval itself. The Publishing Cockpit owns release approval. Neither chat text nor worker output carries these permissions.
+
+**Single writer:** the local Core is Heinlein's sole application writer for canonical files. Both draft saves and patch application reach the Core; the OS or external editors may still alter files, so Core detects unexpected revisions and fails closed. Before patch application the Studio flushes its dirty buffer without blocking typing; any resulting base-hash change makes the patch stale.
+
+**Approval binding:** a displayed proposal is identified by patch ID, selected hunk IDs, expected source revision, **base content hash, canonical diff hash and single-use approval nonce** bound to an authenticated Studio session. Verify all at apply; consume or invalidate nonce atomically in the durable approval journal. A refreshed diff demands fresh author approval. Release authorization independently binds source commit, edition settings, toolchain/font hashes and artifact hashes.
+
+**Untrusted content:** manuscript text, editorial notes, context bundles, model responses and MCP resource bodies are *data*, never executable instructions or authority. The Core enforces tool permissions outside model prompts; context includes explicit provenance/data boundaries; workers cannot elevate permissions or obey embedded instructions that request tool calls, exfiltration, policy changes, or new jobs. Treat retrieved facts as claims until validated. Run deterministic secret scanning on remote bundles and show a human-readable manifest before first remote disclosure.
+
+**Persisted schemas:** every serialized/persisted entity, including snapshot, scene metadata, role/policy, campaign, job, finding, conversation, patch, approval, review event and release manifest, carries explicit `schema_version` and stable identity. v0.3 defines minimum readers/writers, supported migrations, unknown-version behavior (fail closed for mutating operations), and rollback/backup policy.
+
+**Protected-pattern patch gate:** an author-specific rule (including protection of em dashes in the current profile) is checked against *proposed and actually applied diff hunks*, not just critic findings. A patch that removes a protected element is rejected at the policy gate unless the Studio presents a specific, explicit author override bound to that exact diff. Ordinary editorial approvals do not silently waive protected choices. Protect text through before/after comparisons, not regex lint alone; non-lossy source editing remains the first editor choice.
+
+**Crash safety:** patch journal records operation ID, base hash, intended target hash and approval binding first. Prepare a same-filesystem temp file, sync, rename, sync parent directory, then mark applied. At restart reconcile base/target/unknown actual hashes; unknown content creates a manual-conflict state, never blind overwrite. These steps require platform-specific verification; do not claim Git and SQLite share an atomic transaction.
+
+**Budget accounting:** reserve per dispatch; reconcile actual usage upon completion; account pessimistically for timed-out workers until provider reconciliation. Prompt/model diversity may improve error detection but model agreement cannot prove independent correctness or increase severity by vote count.
+
+**Cache correctness:** key against context bundle hash and versioned fact-index entries *actually retrieved*, plus the dependency graph and role/policy/model versions. On retrieval changes or uncertain dependencies, invalidate conservatively.
+
+**Slice ordering amendment:** Slice 1a is file layout and round-trip only; Slice 1b is plain-text Markdown editing, autosave, offline recovery and benchmarks. Slice 3 operates on **fixture-imported findings**, not live critics; live workers arrive in Slice 5. The dependency graph should be read as Slice 0 → Slice 1a → Slice 1b → Slice 2, with Slice 3 requiring the state contract from 1a but not actual workers.
+
+**Protocol acceptance cases:** Studio impersonation through MCP fails; reused nonce fails; stale diff/base fails; an assistant-authored working draft is visible but not patch-approved; protected-character removal fails without scoped override; malicious in-manuscript “ignore previous instructions” text causes no new tools/permissions; old schema versions migrate predictably and future versions fail closed; in-flight cancellation and poison-pill retries terminate; dirty editor buffer invalidates stale patch rather than blocking typing.
