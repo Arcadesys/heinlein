@@ -108,10 +108,54 @@ def _case_twine(tmp: Path) -> Path:
     return dest / "heinlein.yaml"
 
 
+def _write_project(tmp: Path, manuscript: str, yaml_text: str) -> Path:
+    dest = tmp / "project"
+    dest.mkdir()
+    (dest / "manuscript.md").write_text(manuscript, encoding="utf-8")
+    (dest / "heinlein.yaml").write_text(yaml_text, encoding="utf-8")
+    return dest / "heinlein.yaml"
+
+
+_MIN_YAML = "manuscript: manuscript.md\nmetadata:\n  language: en-US\n  date: \"2026\"\n"
+
+
+def _case_no_cover(tmp: Path) -> Path:
+    """No cover anywhere: exercises the cover-is-None branches in build.py."""
+    manuscript = (
+        "---\ntitle: Quiet Door\nauthor: Golden Test Author\ngenre: short fiction\n---\n\n"
+        "# Quiet Door\n\n*by Golden Test Author*\n\n"
+        "The door had no sign. Nobody knocked.\n\n"
+        "Inside, a lamp burned low.\n"
+    )
+    return _write_project(tmp, manuscript, _MIN_YAML)
+
+
+def _case_scene_breaks_emdash(tmp: Path) -> Path:
+    """Scene breaks, em dashes, chapter headings, fragments: author style stays intact."""
+    manuscript = (
+        "---\ntitle: Dashes and Breaks\nauthor: Golden Test Author\ngenre: short fiction\n---\n\n"
+        "# Dashes and Breaks\n\n*by Golden Test Author*\n\n"
+        "## One\n\n"
+        "She said it once\u2014then twice\u2014then not at all.\n\n"
+        "Fine.\n\n"
+        "No.\n\n"
+        "* * *\n\n"
+        "Later, the rain stopped. It always does\u2014eventually.\n\n"
+        "> A quoted line, with *emphasis* and a dash\u2014here.\n\n"
+        "## Two\n\n"
+        "Damn it, Marcus. Damn it all.\n\n"
+        "* * *\n\n"
+        "The end\u2014for now.\n"
+    )
+    return _write_project(tmp, manuscript, _MIN_YAML + "chapters: true\n")
+
+
 CASES = {
     "example-default": _case_default,
     "example-variants": _case_variants,
     "twine-gamebook": _case_twine,
+    "no-cover": _case_no_cover,
+    "scene-breaks-emdash": _case_scene_breaks_emdash,
 }
 
 # ---------------------------------------------------------- normalizers
