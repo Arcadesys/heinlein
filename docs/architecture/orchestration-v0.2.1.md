@@ -11,7 +11,7 @@
 
 ## Compatibility with the current repository
 
-Heinlein currently ships a **Python** Markdown-to-publication pipeline, local preview server, editorial hooks, and voice-protection guidance. This specification describes a **future architecture**. Rust is a candidate for native orchestration infrastructure; TypeScript is a candidate for browser UI. Neither is mandated as a rewrite of working code. Preserve the existing publishing behavior using characterization/integration tests if implementing a new core. No code changes are authorized by this document.
+Heinlein currently ships a **Python** Markdown-to-publication pipeline, local preview server, editorial hooks, and voice-protection guidance. This specification describes a **future architecture**. Rust is a candidate for native orchestration infrastructure; TypeScript is a candidate for the Studio/Cockpit renderer, hosted inside a trusted native shell (section 2.2); a standalone browser deployment is not an approved author-command surface. Neither is mandated as a rewrite of working code. Preserve the existing publishing behavior using characterization/integration tests if implementing a new core. No code changes are authorized by this document.
 
 ## 1. Accepted architectural direction
 
@@ -65,6 +65,8 @@ flowchart TD
 
 The author explicitly mints a Core-issued `DraftGrant` in Studio. Its versioned record names the project, allowed stable scene IDs, authenticated MCP client/session, expiry and revocation state. Core validates these fields, the token type and expected revision on every save; grant validation and write acceptance are serialized with revocation. Expired or revoked grants cannot admit new saves. Already durably accepted operations retain their operation IDs for recovery, not reusable permission for later writes. Renewal or broader scope requires another Studio author action.
 
+**Pairing flow (provisional values; v0.3 fixes them).** Studio shows a single-use pairing code beside the scene list the author is about to grant. The MCP client presents the code on its own session. Core binds the grant to that authenticated client/session and consumes the code in the same step. A pairing code expires after a short TTL (provisional: 5 minutes), works once, and is bound to the grant request that displayed it. An expired, reused or wrong-client code binds nothing and mints nothing; the author starts again in Studio. The code proves presence at pairing time and is not a bearer credential: afterward only the session-bound grant is accepted. The author chooses grant expiry in Studio, within a bounded maximum that v0.3 sets. Pairing codes never appear in MCP responses, context bundles, worker input or logs.
+
 `DraftGrant`, `WorkerGrant` and the private author-channel credential are distinct capability types with separate Core validators and audiences, not caller-supplied role strings. A worker credential cannot authorize a draft save, request a draft grant, or exchange itself for one. The scheduler never supplies draft grants or author-channel material to workers or context bundles. Draft grants are bound to the authenticated client/session, so copying an identifier or claiming to be that client is insufficient. Editorial workers remain proposal-only; granting an interactive MCP drafting session does not upgrade campaign workers.
 
 Every revision records its actor and client ID, derived from the authenticated session rather than supplied as trusted request text, plus its content origin and separate authorization provenance. Approving an agent proposal does not relabel its origin as author-written. Granted draft saves need no per-save approval, but retain inspectable before/after diffs. Studio visibly lists agent-authored revisions and provides one-click revert as a new, revision-checked change. When later edits make that inverse unsafe, show a conflict instead of overwriting intervening work. Revert never erases the original revision or its provenance.
@@ -74,6 +76,8 @@ Every revision records its actor and client ID, derived from the authenticated s
 Author commands use a dedicated local IPC channel between Core and Studio/Cockpit's trusted native host, separate from the MCP listener. A trusted launcher bootstraps a private connected socket/pipe handle and a fresh 256-bit per-launch secret only into those trusted processes. The native host keeps them out of renderer JavaScript, command-line arguments, environment variables, logs, shared files and MCP responses, and does not inherit them into workers or other child processes.
 
 Core authenticates the channel/session and commands, including their arguments, with the per-launch secret and replay protection; v0.3 must specify the canonical authenticated envelope. Patch approvals additionally bind the exact diff, base and one-time approval nonce. Disconnect/relaunch invalidates the old session. A client label, local address, shared OS user or text claiming “Studio” is not authentication. MCP exposes no route to mint/revoke grants or approve patches/releases, and rejects author-channel credentials on its own routes.
+
+**Approval nonce lifecycle (provisional values; v0.3 fixes them).** Core issues a nonce only when Studio displays a specific diff. The nonce binds the patch ID, selected hunk IDs, expected source revision, base hash, diff hash and the authenticated Studio session, and Core records it as `issued` in the durable approval journal. A short TTL (provisional: 10 minutes) stops an abandoned approval dialog from being completed later. The nonce moves to `consumed` atomically with the intent record at apply, and never works twice. It moves to `invalidated` when the TTL lapses, the diff is refreshed, the Studio session disconnects or relaunches, an external change touches the affected scene, or the patch is withdrawn. Expired, consumed and invalidated nonces all fail closed, and the author sees a refreshed diff and approves again. A crash after consume and before completion is resolved by operation-ID reconciliation, never by issuing a second nonce for the same logical operation.
 
 The trusted native host owns author confirmation for granting draft access, approving the displayed patch, and approving a release manifest. A browser renderer alone cannot authorize these actions. A browser-only deployment must fail closed on author-only operations until an equivalent trusted approval bridge is specified and tested.
 
@@ -90,6 +94,8 @@ External changes invalidate affected expected revisions and pending approvals. P
 Typing, scene navigation and local persistence **must not await model inference, network calls, cloud identity, remote queues or editorial campaigns**. Make drafts usable offline. Loading small, relevant context is optional and should be cached or computed locally. Agent help is opt-in and scoped.
 
 Provisional measurable targets (not measurements): p95 editor input response <= 50 ms; p95 cached scene switch <= 150 ms; default provider inference cost per ordinary draft edit/save/switch = **$0**. Define platform and test conditions in v0.3. Autosave durability and error reporting require explicit tests. Active review swarms must yield resources to draft mode or pause.
+
+**Autosave durability cost.** Draft saves, whether the author's or a granted client's, use a lightweight revision record: write a temp file on the same filesystem, sync, rename, then append revision metadata. They do not run the full patch intent/apply/reconcile protocol; that protocol belongs to patch application and release. Autosave runs off the input path and coalesces keystrokes, so neither journal writes nor fsync wait time can block typing. After a crash, startup reconciles leftover temp files and file hashes against the last recorded revision, using the same hash reconciliation that detects external changes. If durable saves fall behind (slow or full disk), Studio shows an explicit unsaved/behind state, keeps accepting typing, and never drops buffered text silently. v0.3 must measure fsync and revision-record cost per save and set p95 autosave-completion targets beside the editor-latency targets.
 
 An MCP tool for local reading/saving may itself be inference-free inside Heinlein, although the external AI client may incur model charges. Grant checks, attribution and history are local operations; they must not introduce an inference or network dependency.
 
@@ -179,7 +185,7 @@ MCP capabilities include reader/critic, proposer and explicitly granted working-
 
 ## 10. Release and production boundaries
 
-Preview builds may consume a pinned working-draft snapshot without patch or release approval. A release additionally requires an explicit author action in authenticated Cockpit, after the candidate edition is built and its artifacts verified. Before approval, Cockpit displays the **count of non-author revisions since the previous release**, with agent/external breakdown and inspectable history. Count known non-author-origin changes even when their application was author-approved; reverted revisions remain in the history with their reverted status. For the first release use recorded project history; missing provenance is shown as unknown, never silently reported as zero. Bind the displayed summary to the candidate revision so a later change requires refresh.
+Preview builds may consume a pinned working-draft snapshot without patch or release approval. A release additionally requires an explicit author action in authenticated Cockpit, after the candidate edition is built and its artifacts verified. Before approval, Cockpit displays the **count of non-author revisions since the previous release and the distinct scenes they touched**, with agent/external breakdown, per-scene counts and inspectable history. A scene touched only by since-reverted revisions stays listed and is marked reverted. Count known non-author-origin changes even when their application was author-approved; reverted revisions remain in the history with their reverted status. For the first release use recorded project history; missing provenance is shown as unknown, never silently reported as zero. Bind the displayed summary to the candidate revision so a later change requires refresh.
 
 An annotated Git release tag targets the exact source commit. Its versioned manifest binds edition configuration, build-tool versions and verified PDF/EPUB/etc. hashes. Core records the authenticated approval and tag **object ID**, not only the mutable tag name. Tag creation, Git author metadata, an imported tag or an agent assertion cannot substitute for the approval record. Reject missing/mismatched records, moved or substituted tags and altered artifacts; never reuse a release name within Heinlein. Source, configuration or artifact changes require a new manifest, tag and approval, even when the source commit itself is unchanged.
 
@@ -199,11 +205,14 @@ Subsequent drafting leaves historical release snapshots intact. Patch approval i
 | Source or diff changed after display | Reject stale approval; produce new visible diff |
 | Draft grant expires, is revoked or names another scene/client | Deny new save before mutation |
 | Worker presents WorkerGrant to draft-save or approval route | Reject by capability type and authenticated audience |
+| Pairing code expires, is reused, or is presented by another client | Bind nothing, mint nothing; author restarts in Studio |
+| Approval nonce expires, is reused, or its Studio session disconnects | Reject apply; require a fresh displayed diff and new nonce |
+| Autosave falls behind a slow or full disk | Typing continues; Studio shows unsaved/behind state; no buffered text dropped silently |
 | MCP claims Studio identity or replays an old launch credential | Deny author command; no approval/grant route through MCP |
 | Agent revision is reverted after intervening edits | Preserve history; inverse is revision-guarded and cannot overwrite newer work |
 | Git pull or external editor changes a manuscript | Record observed external working-draft revision; never infer approval |
 | Crash between intent, file/Git update and SQLite completion | Reconcile operation ID and before/after hashes; no blind replay or lost provenance |
-| Agent/external changes exist before release | Show candidate-bound non-author revision count before author confirmation |
+| Agent/external changes exist before release | Show candidate-bound non-author revision count and touched scenes before author confirmation |
 | Tag exists without matching approval, moves, or artifacts change | Block release; tag name or creation is not consent |
 | Role/policy changes | New version; no reinterpretation of past campaigns |
 | Verification finds regression | Report finding; never silently roll back or overwrite authorial text |
@@ -241,11 +250,11 @@ Produce language-agnostic, reviewable contracts with example JSON messages **but
 
 1. Schemas and identifiers for snapshots, draft grants/revisions, author approval events, release manifests, campaigns, jobs, findings, conversations, patches and role/policy versions.
 2. Event names, persistence semantics, journal/reconciliation ordering, state-transition guards and idempotency.
-3. MCP tool/resource/prompt definitions, sessions, typed capabilities and error contracts; private author-channel bootstrap, authenticated envelopes, replay guards and secret isolation.
+3. MCP tool/resource/prompt definitions, sessions, typed capabilities and error contracts; private author-channel bootstrap, authenticated envelopes, replay guards and secret isolation; grant pairing flow, pairing-code and grant TTLs.
 4. Worker input/output, leasing, cancellation, heartbeats, retries and remote privacy policy.
-5. Exact diff, base-hash/stale-revision checks, hunk approval, one-time nonce reservation and journaled logical application rules.
+5. Exact diff, base-hash/stale-revision checks, hunk approval, one-time nonce lifecycle (issue, TTL, invalidation, atomic consumption) and journaled logical application rules.
 6. Budget accounting, coverage reporting, cache invalidation and escalation thresholds.
-7. Offline draft-mode performance benchmarks and write/durability guarantees, including external-change detection and attribution.
+7. Offline draft-mode performance benchmarks and write/durability guarantees, including autosave fsync and revision-record cost, external-change detection and attribution.
 8. Contract tests and a full sequence diagram from review request through verified patch and reproducible build/release approval.
 
 **Review request for Claude:** challenge trust boundaries, races between draft saves and patch approvals, schema evolution, failure recovery, cache correctness, the cost of local Draft Mode, and how v0.3 should formalize the contracts. Distinguish actual repo behavior from planned future architecture. Do not write implementation code until the author accepts the protocol design.
@@ -317,7 +326,7 @@ sequenceDiagram
   Editor--xEditor: Exit
   Core->>DB: Store patch and exact diff
   Core-->>Studio: Display contextual before/after diff
-  Author->>Studio: Save/reconcile affected buffer; approve exact patch/hunks
+  Author->>Studio: Save/reconcile affected buffer, then approve exact patch/hunks
   Studio->>Core: Private authenticated channel: revision + base hash + diff hash + nonce
   alt expected source/hashes match and channel/nonce valid
     Core->>DB: Durably journal operation ID, intent and reserved nonce
@@ -327,7 +336,7 @@ sequenceDiagram
   else source/diff changed or auth invalid
     Core-->>Studio: Reject / mark stale / require new diff and approval
   end
-  Note over Core,Files: Startup reconciles unfinished intent; no shared Git/SQLite transaction
+  Note over Core,Files: Startup reconciles unfinished intent, with no shared Git/SQLite transaction
   Sched-->>Core: Verified findings / regression results
   Core->>DB: Record outcome and coverage
   Core-->>Studio: Show working-draft revision and verification status
@@ -383,21 +392,31 @@ A late result after lease expiration must not blindly overwrite the winning atte
 
 **User value:** create/open/reorder scenes as small Markdown segments, edit without inference or cloud connectivity, and recover saves.
 
-**Scope:** stable scene IDs, manifest and scene metadata, filesystem import/export to existing manuscript builds, local editor or minimal UI, autosave, conflict detection and crash-recovery rules; external file modifications are recognized and attributed as external working-draft revisions. Every revision carries actor/client identity or explicit unknown attribution.
+**Scope:** stable scene IDs, manifest and scene metadata, filesystem import/export to existing manuscript builds, local editor or minimal UI, autosave using the lightweight revision record (no patch journal on the input path), conflict detection and crash-recovery rules; external file modifications are recognized and attributed as external working-draft revisions. Every revision carries actor/client identity or explicit unknown attribution.
 
 **Demo:** import one story; split into scenes; reorder scenes without renaming all files; write offline; restart; produce the same publication as pre-split source (allowing defined normalization). Edit outside Heinlein and show the external revision without an approval event.
 
-**Exit gate:** no provider calls for type/save/switch; benchmark p95 latency; crash test with unsaved changes and obvious recovery UI; preserve Markdown without lossy round-trip; external changes cannot silently overwrite dirty buffers or acquire approval. **Non-goals:** full custom publishing cockpit, swarm engine.
+**Exit gate:** no provider calls for type/save/switch; benchmark p95 input, scene-switch and autosave-completion latency including fsync cost; crash test with unsaved changes and obvious recovery UI; preserve Markdown without lossy round-trip; external changes cannot silently overwrite dirty buffers or acquire approval. **Non-goals:** full custom publishing cockpit, swarm engine.
 
-### Slice 2: MCP-first draft access
+### Slice 2a: Trusted author channel and draft grants
+
+**User value:** the author can grant, pair, scope and revoke a client's right to save drafts, with a channel no agent can impersonate.
+
+**Scope:** trusted Studio/Core author-channel bootstrap with launch-secret and handle isolation; authenticated command envelope and replay guard; author-minted `DraftGrant` with project/scene/client/session scope, expiry and revocation; single-use pairing flow with TTL; distinct non-convertible `WorkerGrant` validators; typed capability denial and error contracts. No MCP server yet: a stub client exercises the validators.
+
+**Demo:** mint a grant in Studio and pair a stub client. Deny a reused or expired pairing code, a stale or wrong-scene or wrong-client save, an expired or revoked grant, a worker credential, a replayed launch credential and a forged Studio label. Revoke a grant while a save races it and show serialized behavior.
+
+**Exit gate:** grant validation and write acceptance serialize with revocation; capability types never convert; launch secret and handle never reach renderer, environment, arguments, logs, workers or MCP; a browser-only deployment fails closed on author-only commands. **Non-goals:** MCP tools, scene context, remote exposure or protection from a compromised trusted host.
+
+### Slice 2b: MCP-first draft access
 
 **User value:** an explicitly authorized external assistant can find, read and save a scoped working scene without loading the whole book.
 
-**Scope:** local MCP discovery/session/context and expected-revision draft-save tools; trusted Studio/Core author-channel bootstrap; author-minted `DraftGrant` with project/scene/client/session scope, expiry and revocation; distinct non-convertible `WorkerGrant` validators; attributed revision history and one-click safe revert; capability denial and error contracts. MCP has no author-approval or grant-minting route.
+**Scope:** local MCP discovery, sessions and bounded scene context; expected-revision draft-save tools that use the 2a grant validators; attributed revision history and one-click safe revert; MCP error contracts. MCP has no author-approval or grant-minting route.
 
-**Demo:** mint a grant in Studio; read and save a named scene through its bound MCP client; inspect and revert the agent revision. Deny a stale save, another scene/client, an expired/revoked grant and a worker credential. Attempt to impersonate Studio through MCP and verify rejection; use the editor offline.
+**Demo:** read and save a named scene through a client paired in 2a; inspect and revert the agent revision; deny a stale save and a save outside the granted scene; attempt to impersonate Studio through MCP and verify rejection; use the editor offline.
 
-**Exit gate:** UI and MCP observe identical local state and revision/privacy guards without sharing approval authority; no AI required inside Heinlein for MCP file operations; unauthorized clients cannot read other projects; launch-secret/handle isolation and provenance/revert behavior are tested. **Non-goals:** remote public MCP exposure or protection from a compromised trusted host.
+**Exit gate:** UI and MCP observe identical local state and revision/privacy guards without sharing approval authority; no AI required inside Heinlein for MCP file operations; unauthorized clients cannot read other projects; provenance and revert behavior are tested. **Non-goals:** remote public MCP exposure, patch proposals or approval.
 
 ### Slice 3: Durable editorial findings and discussion
 
@@ -443,9 +462,9 @@ A late result after lease expiration must not blindly overwrite the winning atte
 
 **User value:** preview a pinned draft and explicitly release a print or ebook edition with traceable source and artifacts.
 
-**Scope:** reuse existing Python publishing pipeline initially; edition settings, build identity, EPUB/PDF QA, layout diagnostics, candidate-bound non-author revision count/history, versioned release manifest, authenticated Cockpit approval, annotated tag object ID and matching Core record.
+**Scope:** reuse existing Python publishing pipeline initially; edition settings, build identity, EPUB/PDF QA, layout diagnostics, candidate-bound non-author revision count, touched-scene list and history, versioned release manifest, authenticated Cockpit approval, annotated tag object ID and matching Core record.
 
-**Demo:** build PDF and EPUB from a pinned draft, inspect the non-author revision count, fix a layout/preflight defect without rewriting prose, rebuild and approve the exact artifacts. Record a release tag/manifest, continue drafting, and show that the prior release remains unchanged. An imported or moved tag cannot create approval.
+**Demo:** build PDF and EPUB from a pinned draft, inspect the non-author revision count and touched scenes, fix a layout/preflight defect without rewriting prose, rebuild and approve the exact artifacts. Record a release tag/manifest, continue drafting, and show that the prior release remains unchanged. An imported or moved tag cannot create approval.
 
 **Exit gate:** release build is reproducible as far as toolchain permits; failures do not mutate manuscript; author waivers for editorial warnings are logged; release approval binds source/configuration/tools/artifacts and tag object ID; interrupted tag/record writes reconcile without treating a partial release as approved. **Non-goals:** replacing working rendering stack without demonstrated need.
 
@@ -454,19 +473,20 @@ A late result after lease expiration must not blindly overwrite the winning atte
 ```mermaid
 flowchart TD
   S0["0: Baseline characterization"] --> S1["1: Scene library and Draft Mode"]
-  S1 --> S2["2: MCP draft operations and trusted author channel"]
+  S1 --> S2A["2a: Trusted author channel and draft grants"]
+  S2A --> S2B["2b: MCP draft access"]
   S1 --> S3["3: Finding inbox and conversations"]
-  S2 --> S4["4: Exact diff and patch approval"]
+  S2A --> S4["4: Exact diff and patch approval"]
   S3 --> S4
   S3 --> S5["5: Ephemeral reviewer and evals"]
   S5 --> S6["6: Budget-aware swarm"]
-  S2 --> S7["7: Publishing Cockpit and releases"]
+  S2A --> S7["7: Publishing Cockpit and releases"]
   S4 --> S7
   S0 --> S7
   S6 -. "advanced review integration" .-> S7
 ```
 
-**Pragmatic sequencing note:** establish end-to-end vertical value early. A basic publication build already exists; Slice 7 enhances, rather than delays, that function. MCP draft access may be implemented in parallel with the findings UI once Slice 1's scene and revision contracts are stable. The trusted author-channel foundation in Slice 2 is required before author patch/release commands, even in a UI-only deployment.
+**Pragmatic sequencing note:** establish end-to-end vertical value early. A basic publication build already exists; Slice 7 enhances, rather than delays, that function. MCP draft access (2b) may be implemented in parallel with the findings UI once Slice 1's scene and revision contracts are stable. The trusted author-channel foundation in Slice 2a is required before author patch/release commands, even in a UI-only deployment. Slices 4 and 7 depend on 2a, not on 2b; MCP propose tools may arrive with 2b or later, and Slice 4 can run on fixture patches.
 
 ## A6. Cross-slice contract table
 
@@ -474,17 +494,20 @@ flowchart TD
 | --- | --- | --- |
 | Stable scene IDs and ordering | Slice 1 | Reorder does not invalidate identity |
 | Local revision preconditions and external attribution | Slice 1 | Stale write rejects; external edit never approves |
-| MCP auth, typed draft grants and bounded scene context | Slice 2 | Wrong scope/client/type and expired/revoked grant denied |
-| Private author channel and secret isolation | Slice 2 | MCP/worker impersonation and launch replay denied |
-| Agent revision history and safe revert | Slice 2 | Attribution persists; inverse cannot overwrite newer work |
+| Autosave durability cost | Slice 1b | p95 autosave completion measured with fsync; typing never waits on journal or sync |
+| Typed draft grants and pairing flow | Slice 2a | Wrong scope/client/type, expired/revoked grant, and expired/reused pairing code denied |
+| Private author channel and secret isolation | Slice 2a | MCP/worker impersonation and launch replay denied |
+| MCP session auth and bounded scene context | Slice 2b | Unauthorized client cannot read other projects |
+| Agent revision history and safe revert | Slice 2b | Attribution persists; inverse cannot overwrite newer work |
 | Durable finding provenance | Slice 3 | Restart maintains anchored claims |
 | Authorial decision memory | Slice 3 | Rejection not silently elevated to global rule |
 | Exact diff and approval event | Slice 4 | Revision/base/diff/nonce bound; no blanket approved-text state |
+| Approval nonce lifecycle | Slice 4 | Expired, consumed or invalidated nonce fails closed; refresh demands fresh approval |
 | Journaled logical patch application | Slice 4 | Per-step crash/replay reconciles without double application |
 | Worker boundary / role contracts | Slice 5 | WorkerGrant cannot authorize draft saves or approval |
 | Idempotent job execution | Slice 5 → 6 | Crash/retry duplicate-free |
 | Coverage, budgets, adaptive escalation | Slice 6 | Hard spend cap, honest incomplete review |
-| Release snapshot, manifest and tag object identity | Slice 7 | Non-author count shown; bare/moved tag cannot approve |
+| Release snapshot, manifest and tag object identity | Slice 7 | Non-author count and touched scenes shown; bare/moved tag cannot approve |
 
 ## A7. What Claude should try to break
 
@@ -495,7 +518,7 @@ flowchart TD
 5. **Privacy envelope:** does a remote context bundle disclose the character bible, confidential unpublished drafts, or embedded credentials beyond necessity?
 6. **Semantic De-Slopifier exceptions:** can a broad author rule wrongly suppress genuine narrative defects? How are exceptions scoped and audited?
 7. **Budget accounting:** provider timeouts and retries can incur charges despite no result. How are reserved, estimated and actual spend reconciled?
-8. **MCP permission confusion:** try a WorkerGrant on draft-save, another client's DraftGrant, a forged Studio label, a leaked renderer value, an expired launch session, or conversational “yes.” None may mint a grant or approve a patch/release; test secret/handle exclusion rather than relying on policy text.
+8. **MCP permission confusion:** try a WorkerGrant on draft-save, another client's DraftGrant, a forged Studio label, a leaked renderer value, an expired launch session, an expired or reused pairing code, an expired approval nonce, or conversational “yes.” None may mint a grant or approve a patch/release; test secret/handle exclusion rather than relying on policy text.
 9. **Markup preservation:** does rich-text round-tripping mutate Markdown extensions, emphasis, punctuation or intentional formatting?
 10. **Desktop responsiveness:** can background Rust/Python parsing, Git operations or local model inference starve the editor process?
 11. **Release consistency:** try hiding agent/external revisions, moving a release tag, changing artifacts after approval, or interrupting tag/record persistence. The candidate-bound summary and exact manifest/tag object/approval binding must fail closed.
@@ -509,7 +532,7 @@ flowchart TD
 
 **Single writer:** the local Core is Heinlein's sole application writer for canonical files. Both draft saves and patch application reach the Core; the OS or external editors may still alter files, so Core detects unexpected revisions and fails closed. Before patch application the Studio flushes its dirty buffer without blocking typing; any resulting base-hash change makes the patch stale.
 
-**Approval binding:** a displayed proposal is identified by patch ID, selected hunk IDs, expected source revision, **base content hash, canonical diff hash and single-use approval nonce** bound to an authenticated Studio session. Verify all at apply; consume or invalidate nonce atomically in the durable approval journal. A refreshed diff demands fresh author approval. Release authorization independently binds source commit, edition settings, toolchain/font hashes and artifact hashes.
+**Approval binding:** a displayed proposal is identified by patch ID, selected hunk IDs, expected source revision, **base content hash, canonical diff hash and single-use approval nonce** bound to an authenticated Studio session. Verify all at apply; consume or invalidate nonce atomically in the durable approval journal. A refreshed diff demands fresh author approval. Nonce issue, TTL, invalidation and consumption follow the lifecycle in section 2.2. Release authorization independently binds source commit, edition settings, toolchain/font hashes and artifact hashes.
 
 **Untrusted content:** manuscript text, editorial notes, context bundles, model responses and MCP resource bodies are *data*, never executable instructions or authority. The Core enforces tool permissions outside model prompts; context includes explicit provenance/data boundaries; workers cannot elevate permissions or obey embedded instructions that request tool calls, exfiltration, policy changes, or new jobs. Treat retrieved facts as claims until validated. Run deterministic secret scanning on remote bundles and show a human-readable manifest before first remote disclosure.
 
@@ -523,6 +546,6 @@ flowchart TD
 
 **Cache correctness:** key against context bundle hash and versioned fact-index entries *actually retrieved*, plus the dependency graph and role/policy/model versions. On retrieval changes or uncertain dependencies, invalidate conservatively.
 
-**Slice ordering amendment:** Slice 1a is file layout and round-trip only; Slice 1b is plain-text Markdown editing, autosave, offline recovery and benchmarks. Slice 3 operates on **fixture-imported findings**, not live critics; live workers arrive in Slice 5. The dependency graph should be read as Slice 0 → Slice 1a → Slice 1b → Slice 2, with Slice 3 requiring the state contract from 1a but not actual workers.
+**Slice ordering amendment:** Slice 1a is file layout and round-trip only; Slice 1b is plain-text Markdown editing, autosave, offline recovery and benchmarks. Slice 3 operates on **fixture-imported findings**, not live critics; live workers arrive in Slice 5. The dependency graph should be read as Slice 0 → Slice 1a → Slice 1b → Slice 2a → Slice 2b, with Slice 3 requiring the state contract from 1a but not actual workers.
 
 **Protocol acceptance cases:** Studio impersonation through MCP fails; reused nonce fails; stale diff/base fails; an assistant-authored working draft is visible but not patch-approved; protected-character removal fails without scoped override; malicious in-manuscript “ignore previous instructions” text causes no new tools/permissions; old schema versions migrate predictably and future versions fail closed; in-flight cancellation and poison-pill retries terminate; dirty editor buffer invalidates stale patch rather than blocking typing.
