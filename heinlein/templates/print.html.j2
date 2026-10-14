@@ -27,6 +27,11 @@
     letter-spacing: 0.16em;
   }
 }
+@page major-section-blank {
+  size: {{ sheet_w }}in {{ sheet_h }}in;
+  margin: 0;
+  @bottom-center { content: none; }
+}
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -303,6 +308,19 @@ body {
   transform: rotate(-0.18deg);
 }
 .body-section em { font-style: italic; }
+.body-section .major-section-blank {
+  page: major-section-blank;
+  break-before: page;
+  break-after: page;
+  page-break-before: always;
+  page-break-after: always;
+  min-height: 1pt;
+  color: transparent;
+  font-size: 1pt;
+  line-height: 1;
+  margin: 0;
+  padding: 0;
+}
 .body-section h2 {
   font-family: 'Inter', sans-serif;
   font-weight: 300;

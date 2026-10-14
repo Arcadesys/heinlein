@@ -29,6 +29,6 @@ def parse_file(path: Path) -> tuple[dict[str, Any], str]:
 
 def strip_title_block(body_md: str) -> str:
     """Strip leading H1 and italic byline (matches prototype behavior)."""
-    body_md = re.sub(r"^# .*\n", "", body_md, count=1, flags=re.M)
-    body_md = re.sub(r"^\*by .*\*\n", "", body_md, count=1, flags=re.M)
+    body_md = re.sub(r"\A(\s*)# .*\n", r"\1", body_md, count=1)
+    body_md = re.sub(r"\A(\s*)\*by .*\*\n", r"\1", body_md, count=1)
     return body_md

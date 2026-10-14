@@ -1,0 +1,9 @@
+manuscript: manuscript.md
+page:
+  size: trade
+  margins: { top: 0.85in, side: 0.7in }
+metadata:
+  title: "Major Section Fixture"
+  author: "Austen Tucker"
+formats: [pdf]
+output: dist/

@@ -31,3 +31,13 @@ def test_strip_title_block():
     assert "# Hello" not in out
     assert "*by Austen*" not in out
     assert "First paragraph." in out
+
+
+def test_strip_title_block_preserves_later_h1_sections():
+    body = "\n# Hello\n\n*by Austen*\n\nStory.\n\n# Afterword\n\nAfterword.\n"
+
+    out = frontmatter.strip_title_block(body)
+
+    assert "# Hello" not in out
+    assert "*by Austen*" not in out
+    assert "# Afterword" in out
