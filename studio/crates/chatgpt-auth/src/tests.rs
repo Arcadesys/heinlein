@@ -76,7 +76,9 @@ fn token(nonce: &str, scopes: &str) -> Value {
     json!({"access_token":"synthetic-access-token","refresh_token":"synthetic-refresh-token","id_token":jwt(claims(nonce)),"token_type":"Bearer","expires_in":3600,"scope":scopes})
 }
 fn fixture() -> (tempfile::TempDir, Arc<AuthService>, Arc<FakeHttp>) {
-    let temp = tempfile::tempdir().unwrap();
+    // macOS may expose the temporary base through /var -> /private/var. Resolve
+    // only this test-owned base; production credential paths still reject links.
+    let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
     let fake = Arc::new(FakeHttp::default());
     let path = temp.path().join("auth");
     *fake.registration_path.lock().unwrap() = Some(path.clone());

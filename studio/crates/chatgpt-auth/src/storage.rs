@@ -502,14 +502,20 @@ mod unix {
             let path = temp.path().join("auth");
             let store = Store::open(path.clone()).unwrap();
             let _guard = store.lock().unwrap();
-            rustix::fs::mknodat(
-                &store.directory,
-                RECORD,
-                rustix::fs::FileType::Fifo,
-                Mode::from_bits_truncate(0o600),
-                0,
-            )
-            .unwrap();
+            // rustix's *at FIFO constructors are unavailable on macOS. The
+            // POSIX utility creates the same synthetic fixture on both tested
+            // platforms, without unsafe FFI or changing production opens.
+            let status = std::process::Command::new("mkfifo")
+                .args(["-m", "600"])
+                .arg(path.join(RECORD))
+                .status()
+                .expect("POSIX mkfifo must be available for the FIFO rejection test");
+            assert!(status.success(), "could not create the synthetic FIFO");
+            let metadata = fs::symlink_metadata(path.join(RECORD)).unwrap();
+            assert!(std::os::unix::fs::FileTypeExt::is_fifo(
+                &metadata.file_type()
+            ));
+            assert_eq!(metadata.mode() & 0o7777, 0o600);
             storage_error(store.load::<Synthetic>());
             storage_error(store.save(&record(1)));
             fs::remove_file(path.join(RECORD)).unwrap();
