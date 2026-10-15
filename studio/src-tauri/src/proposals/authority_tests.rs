@@ -18,7 +18,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        // macOS temp_dir can traverse /var -> /private/var. The Core
+        // deliberately rejects symlink ancestors, so use the real temp root.
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let root = dir.path().join("repository");
         fs::create_dir(&root).unwrap();
         fs::write(root.join("scene.md"), BEFORE).unwrap();
