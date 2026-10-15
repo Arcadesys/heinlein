@@ -26,6 +26,9 @@ Live consent, account eligibility, and end-to-end inference require native testi
 - 10-second connect timeout; 60-second total request timeout
 - At most 1,000,000 stream bytes and 256,000 bytes per event/response
 - At most 32,000 answer UTF-8 bytes, displayed as inert plain text
+- SSE requires a terminal event; deltas alone never become an answer. A bounded
+  JSON Responses object is accepted only at EOF with an explicit terminal status.
+  Missing or nonstandard Content-Type headers do not bypass wire/schema checks.
 - Only a terminal response is returned. In Ask mode an explicitly incomplete
   answer is marked `incomplete: true`; interrupted/failed streams return safe errors
 - One in-flight request, including native credential preflight. Cancellation drops the HTTP future and prevents a late
@@ -72,7 +75,7 @@ ID. Existing native Review/Apply remains the separate manuscript-write authority
 creating a pending proposal never saves the manuscript or grants approval.
 
 No provider error body, request text, or key is logged or reflected in errors.
-Errors preserve only documented machine codes, recognized parameter paths,
+Errors preserve fixed protocol diagnostic categories, documented machine codes, recognized parameter paths,
 bounded provider request IDs, and observed HTTP status for safe diagnosis.
 Credentials remain native-only and are marked sensitive in HTTP headers. The
 payload excludes conversation IDs, previous response IDs, files, and attachments.
@@ -98,3 +101,6 @@ Protocol references:
 - https://developers.openai.com/api/docs/guides/structured-outputs
 - https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference
 
+
+Connection fuzz campaigns and native smoke-test limits are recorded in
+[`docs/testing/chatgpt-connection.md`](../../../docs/testing/chatgpt-connection.md).

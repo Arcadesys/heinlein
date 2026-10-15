@@ -788,3 +788,6 @@ async fn cancelled_refresh_still_persists_rotation_without_returning_stale_lease
     );
     assert!(!service.is_current(generation));
 }
+
+#[path = "connection_fuzz.rs"]
+mod connection_fuzz;

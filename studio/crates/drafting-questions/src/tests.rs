@@ -2,7 +2,7 @@ use super::*;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-fn request(id: &str) -> QuestionRequest {
+pub(super) fn request(id: &str) -> QuestionRequest {
     QuestionRequest {
         request_id: id.into(),
         question: "What could happen next?".into(),
@@ -11,12 +11,12 @@ fn request(id: &str) -> QuestionRequest {
     }
 }
 
-fn config() -> Configuration {
+pub(super) fn config() -> Configuration {
     // Deliberately fake credentials. Tests never read the environment or connect.
     Configuration::new("unit-test-not-a-credential", "test-model").unwrap()
 }
 
-fn answer_value() -> Value {
+pub(super) fn answer_value() -> Value {
     json!({
         "id": "resp_ignored", "status": "completed", "model": "test-model-2026",
         "output": [{"type":"message", "role":"assistant", "content":[
@@ -26,11 +26,11 @@ fn answer_value() -> Value {
     })
 }
 
-fn answer_bytes() -> Vec<u8> {
+pub(super) fn answer_bytes() -> Vec<u8> {
     serde_json::to_vec(&answer_value()).unwrap()
 }
 
-fn event(kind: &str, response: Value) -> Vec<u8> {
+pub(super) fn event(kind: &str, response: Value) -> Vec<u8> {
     format!(
         "event: {kind}\r\ndata: {}\r\n\r\n",
         json!({"type":kind,"response":response})
@@ -1147,4 +1147,164 @@ async fn committing_revision_does_not_block_status_or_accept_cancellation() {
     );
     resume.send(()).unwrap();
     assert_eq!(worker.join().unwrap().unwrap().2, "proposal-id");
+}
+
+#[test]
+fn complete_json_response_is_not_rejected_by_the_stream_request_header() {
+    let mut value = answer_value();
+    value["object"] = json!("response");
+    let bytes = serde_json::to_vec(&value).unwrap();
+    for media in ["application/json", "Application/JSON; charset=utf-8"] {
+        for split in 0..=bytes.len() {
+            let mut body = ResponseBody::new(Some(media)).unwrap();
+            body.push(&bytes[..split]).unwrap();
+            assert!(!body.terminal()); // JSON must reach EOF, never early success.
+            body.push(&bytes[split..]).unwrap();
+            let answer = parse_response("test", &body.finish().unwrap()).unwrap();
+            assert_eq!(answer.text, "Keep the door open—literally.");
+        }
+    }
+    for status in ["queued", "in_progress", "failed", "cancelled"] {
+        value["status"] = json!(status);
+        let mut body = ResponseBody::new(Some("application/json")).unwrap();
+        body.push(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(
+            body.finish().unwrap_err().diagnostic,
+            Some(ProtocolDiagnostic::TerminalStatus)
+        );
+    }
+}
+
+#[test]
+fn json_errors_truncation_and_wrong_shapes_never_become_answers() {
+    for bytes in [
+        b"{\"object\":\"response\"".as_slice(),
+        b"{}",
+        b"[]",
+        b"null",
+        b"{\"text\":\"not a response\"}",
+    ] {
+        let mut body = ResponseBody::new(Some("application/json")).unwrap();
+        let result = body.push(bytes).and_then(|_| body.finish());
+        assert!(result.is_err());
+    }
+    let mut body = ResponseBody::new(Some("application/json")).unwrap();
+    body.push(br#"{"error":{"code":"subscription_sharing_usage_limit_exceeded","message":"synthetic-secret"}}"#).unwrap();
+    let error = body.finish().unwrap_err().with_http(200, Some("req_safe"));
+    assert!(error.is_usage_limit());
+    assert_eq!(error.provider_request_id.as_deref(), Some("req_safe"));
+    assert!(!serde_json::to_string(&error)
+        .unwrap()
+        .contains("synthetic-secret"));
+    let mut body = ResponseBody::new(Some("application/json")).unwrap();
+    assert_eq!(
+        body.push(&vec![b' '; MAX_RESPONSE_BYTES + 1])
+            .unwrap_err()
+            .code,
+        "responseTooLarge"
+    );
+    for media in [
+        None,
+        Some("text/html"),
+        Some("application/octet-stream"),
+        Some("text/event-stream-malicious"),
+    ] {
+        let mut body = ResponseBody::new(media).unwrap();
+        assert!(body.push(b"<html>not a response</html>").is_err());
+    }
+}
+
+#[test]
+fn missing_or_nonstandard_mime_keeps_terminal_and_schema_checks() {
+    for media in [
+        None,
+        Some("text/plain"),
+        Some("application/octet-stream"),
+        Some("text/html"),
+        Some("application/json"),
+    ] {
+        let bytes = event("response.completed", answer_value());
+        for size in [1, 2, 3, 7, bytes.len()] {
+            let mut body = ResponseBody::new(media).unwrap();
+            for chunk in bytes.chunks(size) {
+                body.push(chunk).unwrap();
+            }
+            assert!(body.terminal());
+            assert_eq!(
+                parse_response("synthetic", &body.finish().unwrap())
+                    .unwrap()
+                    .text,
+                "Keep the door open—literally."
+            );
+        }
+        let mut body = ResponseBody::new(media).unwrap();
+        body.push(b"data: {\"type\":\"response.output_text.delta\",\"delta\":\"unfinished\"}\n\n")
+            .unwrap();
+        assert_eq!(body.finish().unwrap_err().code, "interrupted");
+    }
+}
+
+#[test]
+fn sse_cr_lines_bom_and_large_first_chunk_are_fragmentation_invariant() {
+    let event = event("response.completed", answer_value());
+    for ending in ["\n", "\r", "\r\n"] {
+        let mut bytes = vec![0xef, 0xbb, 0xbf];
+        bytes.extend(
+            String::from_utf8(event.clone())
+                .unwrap()
+                .replace("\r\n", ending)
+                .as_bytes(),
+        );
+        for size in [1, 2, 3, 7, bytes.len()] {
+            let mut body = ResponseBody::new(None).unwrap();
+            for chunk in bytes.chunks(size) {
+                body.push(chunk).unwrap();
+            }
+            assert!(parse_response("test", &body.finish().unwrap()).is_ok());
+        }
+    }
+    let mut bytes = b": heartbeat\n\n".repeat(MAX_RESPONSE_BYTES / 13 + 1);
+    bytes.extend(event);
+    assert!(bytes.len() > MAX_RESPONSE_BYTES && bytes.len() < MAX_STREAM_BYTES);
+    let mut body = ResponseBody::new(None).unwrap();
+    body.push(&bytes).unwrap();
+    assert!(parse_response("test", &body.finish().unwrap()).is_ok());
+}
+
+#[test]
+fn no_text_distinguishes_output_limit_from_empty_completed_response() {
+    let mut response = answer_value();
+    response["output"] = json!([{"type":"reasoning","summary":[]}]);
+    let error = parse_response("test", &serde_json::to_vec(&response).unwrap()).unwrap_err();
+    assert_eq!(error.code, "emptyResponse");
+    assert_eq!(error.diagnostic, Some(ProtocolDiagnostic::AnswerContent));
+    response["status"] = json!("incomplete");
+    response["incomplete_details"] = json!({"reason":"max_output_tokens"});
+    assert_eq!(
+        parse_response("test", &serde_json::to_vec(&response).unwrap())
+            .unwrap_err()
+            .code,
+        "outputLimit"
+    );
+    response["incomplete_details"] = json!({"reason":"synthetic-private-reason"});
+    let error = parse_response("test", &serde_json::to_vec(&response).unwrap()).unwrap_err();
+    assert_eq!(error.code, "incompleteNoText");
+    assert!(!serde_json::to_string(&error)
+        .unwrap()
+        .contains("synthetic-private"));
+    assert!(parse_revision("test", &serde_json::to_vec(&response).unwrap()).is_err());
+}
+
+#[test]
+fn contradictory_terminal_fields_cannot_publish_answer_text() {
+    for (field, value) in [
+        ("error", json!({"message":"private"})),
+        ("incomplete_details", json!({"reason":"max_output_tokens"})),
+    ] {
+        let mut response = answer_value();
+        response[field] = value;
+        let error = parse_response("test", &serde_json::to_vec(&response).unwrap()).unwrap_err();
+        assert_eq!(error.diagnostic, Some(ProtocolDiagnostic::TerminalStatus));
+        assert!(!serde_json::to_string(&error).unwrap().contains("private"));
+    }
 }
