@@ -461,6 +461,10 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       if (canceled) status.textContent = `Previous request stopped locally; it may still count toward plan usage.${wasRevision ? ' A pending suggestion may already exist; check Revision proposals.' : ''} Selection captured. Write your question, then explicitly choose Send.`;
       return true;
     },
+    visible: () => !element.hidden,
+    close: () => close(true),
+    /** Switches Ask / Suggest revision exactly as choosing it from the Response mode menu. */
+    setMode(value: 'ask' | 'revision') { if (mode.value !== value && !mode.disabled) { mode.value = value; mode.dispatchEvent(new Event('change')); } },
     clear: () => close(), destroy: () => {close(); disposed = true; element.remove();},
   };
 }

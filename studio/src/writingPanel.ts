@@ -1,7 +1,8 @@
 import type {LocalCore, Manuscript, RepositorySession} from './localCore';
 import {createDailyGoalTracker, createTypewriterSound, wordCount} from './writingFeedback';
 
-export function createWritingPanel() {
+export interface WritingSummary { sceneWords: number | null; credited: number; goal: number }
+export function createWritingPanel(rendered?: (summary: WritingSummary) => void) {
   const element = document.createElement('section'); element.className = 'writing-panel'; element.setAttribute('aria-label', 'Writing progress');
   const scene = document.createElement('span'); const manuscript = document.createElement('span');
   const progressLabel = document.createElement('span');
@@ -24,13 +25,14 @@ export function createWritingPanel() {
     const state = tracker.snapshot(); goalInput.value = String(state.goal); progress.max=state.goal; progress.value=Math.min(state.words,state.goal);
     progressLabel.textContent = `${state.words.toLocaleString()} / ${state.goal.toLocaleString()} daily growth credited`;
     if (!state.persistenceAvailable) error.textContent = 'Goal progress is session-only: local storage unavailable.';
+    rendered?.({sceneWords: active ? active.count : null, credited: state.words, goal: state.goal});
   }
   goalInput.addEventListener('change',()=>{const value=Number(goalInput.value); if(Number.isInteger(value)&&value>=1&&value<=1000000)tracker.setGoal(value); render();});
   soundButton.addEventListener('click',()=>{void sound.setEnabled(!sound.enabled()).then(enabled=>{if(destroyed)return; soundButton.textContent=`Typewriter sound: ${enabled?'on':'off'}`; soundButton.setAttribute('aria-pressed',String(enabled)); if(!enabled) return; sound.play();}).catch(()=>{error.textContent='Audio unavailable; writing still works.';});});
   const timer = setInterval(render,60000);
   render();
   return {
-    element,
+    element, focusGoal() { goalInput.focus(); goalInput.select(); },
     clearScene() { active=null; render(); },
     clearManuscript() { generation++; paths=new Set(); counts.clear(); loading=false; failed=0; bookKey=''; render(); },
     openScene(projectKey:string, path:string, text:string, sceneId?:string) {

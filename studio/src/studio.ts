@@ -1,7 +1,7 @@
 import {StateEffect} from '@codemirror/state';
 import {EditorView} from '@codemirror/view';
 import { createProposalPanel } from './proposalPanel';
-import { createWritingPanel } from './writingPanel';
+import { createWritingPanel, type WritingSummary } from './writingPanel';
 import { createEditor, rawOffset } from './editor';
 import { captureSelectionQuestion, createSelectionQuestionPanel, selectionQuestionAvailability, selectionQuestionProblem, type SelectionQuestionState } from './selectionQuestion';
 import { createQuestionPanel, questionBytes, QUESTION_LIMITS } from './questionPanel';
@@ -9,7 +9,10 @@ import { createSelectionAskAction } from './selectionAsk';
 import { createDraftingPanel, REPOSITORY_DRAG_TYPE } from './draftingPanel';
 import type { DraftingFileChange, DraftingState } from './localCore';
 import type { LocalCore, RepositorySession, Manuscript, Document, RecoveryDraft } from './localCore';
-import { FONT_ROLES, applyChoices, cleanFamily, loadChoices, saveChoices, type FontChoices } from './fonts';
+import { BUNDLED_FONTS, FONT_PRESETS, FONT_ROLES, applyChoices, cleanFamily, familyValue, loadChoices, saveChoices, type FontChoices } from './fonts';
+import { ACCENTS, LEADINGS, THEMES, WIDTHS, accentColor, applyAppearance, loadAppearance, saveAppearance, type Appearance } from './appearance';
+import { createPalette, type PaletteItem, type PaletteScope } from './palette';
+import { formatKeys, shortcutSheet } from './shortcuts';
 import { ZOOM_STEPS, loadZoom, saveZoom, nextZoom, shortcutAction, type ZoomAction } from './zoom';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = ''): HTMLElementTagNameMap[K] {
@@ -48,12 +51,16 @@ function splitBodyStart(source: string): number | null {
 }
 
 let zoomKeyHandler: ((event: KeyboardEvent) => void) | null = null;
+const SAMPLE_TEXT = 'The mist hung heavy, clinging to his skin and muffling the distant hum of late-night traffic. He had been walking along the Seine, the fog hiding the river’s dark waters, his fingers threaded through his short, curly hair.';
+const typingTarget = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
 export const AUTOSAVE_DELAY_MS = 600;
 export const AUTOSAVE_MAX_WAIT_MS = 5000;
 
 export function mountStudio(root: HTMLElement, core: LocalCore) {
-  const writing = createWritingPanel();
+  // The status pill mirrors the writing panel; it is built further down, so render only once it exists.
+  let chromeReady = false; let writingSummary: WritingSummary | null = null;
+  const writing = createWritingPanel(summary => { writingSummary = summary; if (chromeReady) renderPill(); });
   let generation = 0;
   let opened: Document | null = null;
   let editor: ReturnType<typeof createEditor> | null = null;
@@ -90,7 +97,12 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let closeUnlisten: (() => void) | null = null;
   let dirtySync = Promise.resolve();
   function updateSaveState() {
-    if (dirtyBadge) dirtyBadge.textContent = recoveryPending ? 'Recovery available' : saving ? 'Saving locally…' : dirty ? (writePaused ? 'Unsaved · autosave paused' : 'Unsaved changes') : 'Saved locally';
+    const label = recoveryPending ? 'Recovery available' : saving ? 'Saving locally…' : dirty ? (writePaused ? 'Unsaved · autosave paused' : 'Unsaved changes') : 'Saved locally';
+    if (dirtyBadge) dirtyBadge.textContent = label;
+    if (chromeReady) {
+      pillSaveLabel.textContent = dirtyBadge ? label : opened ? 'Read-only' : 'Nothing open';
+      pillSave.dataset.state = !dirtyBadge ? 'idle' : recoveryPending || writePaused ? 'error' : saving ? 'saving' : dirty ? 'dirty' : 'saved';
+    }
     if (saveButton) saveButton.disabled = saving || recoveryPending || !dirty;
     draftingQuestions?.stateChanged();
   }
@@ -281,10 +293,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let directoryRequest = 0;
   let documentRequest = 0;
   let manuscriptRequest = 0;
-  const header = el('header', '', 'topbar');
-  const brand = el('div');
-  brand.append(el('p', 'HEINLEIN', 'eyebrow'), el('h1', 'Studio'), el('p', 'Your manuscript, close at hand.', 'muted'));
+  root.classList.add('studio');
+  const glow = el('div', '', 'stage-glow'); glow.setAttribute('aria-hidden', 'true');
   const open = button('Open Folder…', () => { void selectRepository(() => core.pickRepository()); }, 'primary');
+  open.setAttribute('aria-keyshortcuts', 'Control+O Meta+O');
   const zoomLevel = button('100%', () => setZoom('reset'), 'zoom-level');
   zoomLevel.title = 'Reset text size (Cmd/Ctrl+0)';
   const zoomGroup = el('div', '', 'zoom');
@@ -297,20 +309,54 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   larger.title = 'Larger text (Cmd/Ctrl++)';
   larger.setAttribute('aria-label', 'Larger text');
   zoomGroup.append(smaller, zoomLevel, larger);
-  const actions = el('div', '', 'actions');
-  const appearance = button('Appearance', () => openAppearance(), 'appearance');
-  appearance.title = 'Fonts and text size (Cmd/Ctrl+,)';
+  const appearance = button('Appearance', () => { void openAppearance(); }, 'appearance');
+  appearance.append(el('kbd', formatKeys('⌘,')));
+  appearance.title = 'Theme, fonts, text size and spacing (Cmd/Ctrl+,)';
   appearance.setAttribute('aria-haspopup', 'dialog');
   const proposalsEntry = button('Revision proposals', () => { void proposals.open(); });
   proposalsEntry.hidden = true;
-  actions.append(zoomGroup, appearance, proposalsEntry, open);
-  header.append(brand, actions);
-  const banner = el('p', 'LOCAL DRAFTING · Autosave & local recovery · No AI or network required', 'safety-banner');
+
+  // Floating status pill: where you are, what you've written, and the way into everything else.
+  const pill = el('header', '', 'status-pill chrome');
+  pill.setAttribute('aria-label', 'Writing status');
+  const pillProject = el('span', 'Heinlein Studio', 'pill-muted pill-project');
+  const pillScene = el('span', 'No scene open', 'pill-scene');
+  const pillWords = el('span', '', 'pill-mono pill-words');
+  const pillSave = el('span', '', 'pill-save'); const pillSaveLabel = el('span', 'Nothing open');
+  const pillDot = el('span', '', 'pill-dot'); pillDot.setAttribute('aria-hidden', 'true');
+  pillSave.append(pillDot, pillSaveLabel);
+  const goalFill = el('span', '', 'pill-bar-fill'); const goalBar = el('span', '', 'pill-bar'); goalBar.setAttribute('aria-hidden', 'true'); goalBar.append(goalFill);
+  const goalText = el('span', '', 'pill-mono');
+  const goalButton = el('button', '', 'pill-goal'); goalButton.type = 'button'; goalButton.append(goalBar, goalText);
+  goalButton.setAttribute('aria-haspopup', 'dialog'); goalButton.setAttribute('aria-expanded', 'false');
+  goalButton.addEventListener('click', () => toggleGoal());
+  const paletteButton = button(formatKeys('⌘K'), () => openPalette('scenes'), 'pill-key');
+  paletteButton.setAttribute('aria-label', 'Open command palette'); paletteButton.title = 'Jump to a scene, file or command (Cmd/Ctrl+K)';
+  pill.append(pillProject, el('span', '/', 'pill-muted'), pillScene, el('span', '', 'pill-rule'), pillWords, pillSave, goalButton, proposalsEntry, paletteButton);
   const status = el('p', 'Choose a repository folder to begin.', 'status');
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
   const recent = el('section', '', 'recent');
   recent.setAttribute('aria-label', 'Recent folders');
+
+  // Daily goal: the full writing panel, opened from the pill's progress bar.
+  const goalCard = el('section', '', 'floating-card goal-card');
+  goalCard.setAttribute('role', 'dialog'); goalCard.setAttribute('aria-label', 'Daily goal'); goalCard.hidden = true;
+  const goalHead = el('div', '', 'card-head');
+  const goalClose = button('esc', () => toggleGoal(false), 'card-close'); goalClose.setAttribute('aria-label', 'Close daily goal');
+  goalHead.append(el('h2', 'Daily goal'), goalClose);
+  goalCard.append(goalHead, writing.element);
+  goalCard.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); toggleGoal(false); } });
+  function toggleGoal(show = goalCard.hidden) {
+    goalCard.hidden = !show; goalButton.setAttribute('aria-expanded', String(show));
+    if (show) writing.focusGoal(); else if (goalCard.contains(document.activeElement) || document.activeElement === document.body) focusEditor();
+  }
+
+  const corner = el('div', '', 'corner-actions chrome');
+  const helpButton = button('shortcuts', () => toggleHelp(), 'ghost');
+  helpButton.prepend(el('kbd', formatKeys('⌘/')), ' '); helpButton.setAttribute('aria-haspopup', 'dialog');
+  corner.append(appearance, helpButton);
+
   const layout = el('main', '', 'workspace');
   // Collapsible side panels (file browser, manuscript outline); remembered between launches.
   const collapsed: Record<string, boolean> = (() => { try { const v = JSON.parse(localStorage.getItem('heinlein-studio-collapsed-v1') ?? '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } })();
@@ -335,15 +381,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     head.append(heading, toggle);
     return head;
   }
-  const files = el('section', '', 'panel files');
+  const files = el('section', '', 'panel files floating-card');
   files.setAttribute('aria-label', 'Repository files');
   const repoName = el('h2', 'Repository');
   const directoryPath = el('p', 'No folder selected', 'path');
   const listing = el('div', '', 'file-list');
   const filesBody = el('div', '', 'panel-body');
-  filesBody.append(directoryPath, listing);
+  filesBody.append(open, recent, directoryPath, listing);
   files.append(panelHead(repoName, 'files', 'file browser'), filesBody);
-  const manuscriptPane = el('section', '', 'panel manuscript');
+  const manuscriptPane = el('section', '', 'panel manuscript floating-card');
   manuscriptPane.setAttribute('aria-label', 'Manuscript order');
   const manifests = el('div', '', 'manifest-picker');
   const draftingEntry = button('ms drafting', () => { void openDrafting(); }, 'drafting-entry');
@@ -355,12 +401,14 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   manuscriptPane.append(panelHead(el('h2', 'Manuscript'), 'manuscript', 'manuscript outline'), manuscriptBody);
   const preview = el('section', '', 'panel preview');
   preview.setAttribute('aria-label', 'Document preview');
+  const navigator = el('nav', '', 'navigator'); navigator.setAttribute('aria-label', 'Files and manuscript');
+  navigator.append(files, manuscriptPane);
+  layout.append(navigator, preview);
+  chromeReady = true;
   resetPreview();
-  layout.append(files, manuscriptPane, preview);
   setCollapsed('files', Boolean(collapsed.files));
   setCollapsed('manuscript', Boolean(collapsed.manuscript));
-  const footer = el('footer', 'Local Markdown drafting · Autosaves locally · Save now with Cmd/Ctrl+S');
-  root.replaceChildren(header, banner, writing.element, recent, status, layout, footer);
+  root.replaceChildren(glow, layout, pill, status, goalCard, corner);
   const drafting = createDraftingPanel(core, {
     root, repository: () => repository, run: runStructural, verify: verifyStructuralBuffer,
     show: () => { outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
@@ -584,19 +632,84 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   const zoomAnnounce = el('p', '', 'sr-only');
   zoomAnnounce.setAttribute('aria-live', 'polite');
-  header.append(zoomAnnounce);
-  // Appearance: interface, text, and monospace font families, saved between launches.
+  root.append(zoomAnnounce);
+
+  // Appearance: a settings window with a live preview. Theme, accent, fonts, size, measure and
+  // writing modes all apply instantly and are saved on this device.
+  let look: Appearance = loadAppearance();
+  applyAppearance(look);
   let fontChoices: FontChoices = loadChoices();
   applyChoices(fontChoices);
   let installedFonts: string[] | null = null;
-  const dialog = el('dialog', '', 'appearance-dialog');
+  const lookControls: (() => void)[] = [];
+  function setLook(patch: Partial<Appearance>) { look = {...look, ...patch}; saveAppearance(look); applyAppearance(look); lookControls.forEach(sync => sync()); }
+  function pressed(node: HTMLElement, on: boolean) { node.setAttribute('aria-pressed', String(on)); }
+  const dialog = el('dialog', '', 'appearance-dialog settings-window');
   dialog.setAttribute('aria-labelledby', 'appearance-title');
+  const sidebar = el('div', '', 'settings-sidebar');
   const dialogTitle = el('h2', 'Appearance');
   dialogTitle.id = 'appearance-title';
-  dialog.append(dialogTitle);
+  sidebar.append(dialogTitle);
+  const settingsMain = el('div', '', 'settings-main');
+  const sample = el('p', SAMPLE_TEXT, 'settings-sample');
+  const samplePane = el('div', '', 'settings-preview'); samplePane.append(el('p', 'Preview', 'overline'), sample);
+  const settingsBody = el('div', '', 'settings-body');
+  settingsMain.append(samplePane, settingsBody);
+  dialog.append(sidebar, settingsMain);
+  const sections = new Map<string, HTMLElement>(); const categoryButtons = new Map<string, HTMLButtonElement>();
+  let category = 'theme';
+  function showCategory(key: string) {
+    category = key;
+    sections.forEach((section, name) => { section.hidden = name !== key; });
+    categoryButtons.forEach((node, name) => node.setAttribute('aria-current', String(name === key)));
+  }
+  for (const [key, label] of [['theme', 'Theme'], ['type', 'Typography'], ['editor', 'Editor'], ['keys', 'Shortcuts']]) {
+    const node = button(label, () => showCategory(key), 'settings-category'); categoryButtons.set(key, node); sidebar.append(node);
+    const section = el('section', '', 'settings-section'); section.setAttribute('aria-label', label); sections.set(key, section); settingsBody.append(section);
+  }
+  sidebar.append(el('span', '', 'settings-spacer'), el('p', 'Saved on this device · esc to close', 'settings-note'));
+  function group(section: string, title: string) {
+    const node = el('div', '', 'settings-group'); node.append(el('p', title, 'overline')); sections.get(section)!.append(node); return node;
+  }
+  function segmented<T extends {id: string; label: string}>(label: string, items: readonly T[], current: () => string, choose: (id: T['id']) => void) {
+    const row = el('div', '', 'segmented'); row.setAttribute('role', 'group'); row.setAttribute('aria-label', label);
+    const nodes = items.map(item => { const node = button(item.label, () => choose(item.id)); row.append(node); return [item.id, node] as const; });
+    lookControls.push(() => nodes.forEach(([id, node]) => pressed(node, id === current())));
+    return row;
+  }
+  function settingRow(label: string, control: HTMLElement) { const row = el('div', '', 'setting-row'); row.append(el('span', label), control); return row; }
+
+  // Theme: four base themes and four accents.
+  const themeGrid = el('div', '', 'theme-grid');
+  for (const theme of THEMES) {
+    const card = el('button', '', 'theme-card'); card.type = 'button';
+    for (const [name, value] of [['--card-bg', theme.bg], ['--card-fg', theme.fg], ['--card-muted', theme.muted], ['--card-border', theme.border]]) card.style.setProperty(name, value);
+    const swatch = el('span', '', 'theme-swatch'); swatch.setAttribute('aria-hidden', 'true'); swatch.append(el('span'), el('span'), el('span'));
+    card.append(swatch, el('span', theme.name, 'theme-name'));
+    card.addEventListener('click', () => setLook({theme: theme.id}));
+    lookControls.push(() => { pressed(card, look.theme === theme.id); card.style.setProperty('--card-accent', accentColor({theme: theme.id, accent: look.accent})); });
+    themeGrid.append(card);
+  }
+  group('theme', 'Base theme').append(themeGrid);
+  const accentRow = el('div', '', 'accent-row'); accentRow.setAttribute('role', 'group'); accentRow.setAttribute('aria-label', 'Accent colour');
+  for (const accent of ACCENTS) {
+    const swatch = el('button', '', 'accent-swatch'); swatch.type = 'button'; swatch.setAttribute('aria-label', accent.name); swatch.title = accent.name;
+    swatch.addEventListener('click', () => setLook({accent: accent.id}));
+    lookControls.push(() => { pressed(swatch, look.accent === accent.id); swatch.style.setProperty('--swatch', accentColor({theme: look.theme, accent: accent.id})); });
+    accentRow.append(swatch);
+  }
+  group('theme', 'Accent').append(accentRow);
+
+  // Typography: the three font roles (with one-click presets), text size and line spacing.
   const fontList = el('datalist');
   fontList.id = 'installed-fonts';
   dialog.append(fontList);
+  const fontGroup = group('type', 'Fonts');
+  const presetNames = [...new Set(Object.values(FONT_PRESETS).flat())];
+  function listFonts() {
+    fontList.replaceChildren(...[...new Set([...presetNames, ...(installedFonts ?? [])])].map(name => { const option = el('option'); option.value = name; return option; }));
+  }
+  listFonts();
   for (const role of FONT_ROLES) {
     const row = el('div', '', 'font-row');
     const id = `font-${role.key}`;
@@ -613,6 +726,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const note = el('p', role.hint, 'muted');
     note.id = `${id}-note`;
     field.setAttribute('aria-describedby', note.id);
+    const presets = el('div', '', 'font-presets'); presets.setAttribute('role', 'group'); presets.setAttribute('aria-label', `${role.label} presets`);
+    const chips = FONT_PRESETS[role.key].map(name => {
+      const chip = button(name, () => { field.value = name; commit(); }, 'font-chip');
+      chip.style.fontFamily = familyValue(name, 'inherit'); presets.append(chip); return chip;
+    });
     const commit = () => {
       const name = cleanFamily(field.value);
       if (name) fontChoices = { ...fontChoices, [role.key]: name };
@@ -620,40 +738,202 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       field.value = name ?? '';
       saveChoices(fontChoices);
       applyChoices(fontChoices);
-      const missing = name && installedFonts && !installedFonts.some(f => f.toLowerCase() === name.toLowerCase());
+      const known = (font: string) => font.toLowerCase() === name?.toLowerCase();
+      const missing = name && installedFonts && !installedFonts.some(known) && !BUNDLED_FONTS.some(known);
       note.textContent = missing ? `“${name}” isn't installed on this computer, so the default is used.` : role.hint;
       note.classList.toggle('warn', Boolean(missing));
+      chips.forEach(chip => pressed(chip, chip.textContent === (name ?? '')));
     };
+    chips.forEach(chip => pressed(chip, chip.textContent === (fontChoices[role.key] ?? '')));
     field.addEventListener('change', commit);
     const reset = button('Default', () => { field.value = ''; commit(); field.focus(); }, 'font-reset');
     reset.setAttribute('aria-label', `Reset ${role.label.toLowerCase()} to default`);
-    row.append(label, field, reset, note);
-    dialog.append(row);
+    row.append(label, field, reset, presets, note);
+    fontGroup.append(row);
   }
-  dialog.append(el('p', 'Changes apply immediately. Text size lives in the top bar.', 'muted'));
-  dialog.append(button('Done', () => dialog.close ? dialog.close() : dialog.removeAttribute('open'), 'primary'));
+  const sizeGroup = group('type', 'Text size');
+  sizeGroup.append(zoomGroup, el('p', `${formatKeys('⌘=')} larger · ${formatKeys('⌘−')} smaller · ${formatKeys('⌘0')} reset. Scales the whole window.`, 'settings-hint'));
+  group('type', 'Line spacing').append(segmented('Line spacing', LEADINGS, () => look.leading, leading => setLook({leading})));
+
+  // Editor: line width and the two writing modes.
+  sections.get('editor')!.append(settingRow('Line width', segmented('Line width', WIDTHS, () => look.width, width => setLook({width}))));
+  const modes = group('editor', 'While writing');
+  for (const [key, label] of [['fade', 'Fade the status pill while typing'], ['focus', 'Dim all but the current paragraph']] as const) {
+    const row = el('div', '', 'toggle-row'); const toggle = el('button', '', 'switch'); toggle.type = 'button';
+    toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-label', label);
+    toggle.addEventListener('click', () => setLook({[key]: !look[key]}));
+    lookControls.push(() => toggle.setAttribute('aria-checked', String(look[key])));
+    row.append(el('span', label), toggle); modes.append(row);
+  }
+  sections.get('keys')!.append(shortcutSheet());
+
+  sidebar.append(button('Done', () => dialog.close ? dialog.close() : dialog.removeAttribute('open'), 'primary'));
   root.append(dialog);
-  async function openAppearance() {
-    if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
-    dialog.querySelector('input')?.focus();
+  lookControls.forEach(sync => sync());
+  showCategory(category);
+  async function openAppearance(section?: string) {
+    if (section) showCategory(section);
+    const passage = editor?.text().slice(splitBodyStart(editor.text()) ?? 0).split(/\r?\n\s*\r?\n/).map(part => part.replace(/^#+\s.*$/m, '').trim()).find(part => part.length > 40);
+    sample.textContent = passage ? (passage.length > 320 ? `${passage.slice(0, 320)}…` : passage) : SAMPLE_TEXT;
+    if (!dialog.open) { if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', ''); }
+    categoryButtons.get(category)?.focus();
     if (installedFonts) return;
     try {
       installedFonts = await core.listSystemFonts();
-      fontList.replaceChildren(...installedFonts.map(name => { const option = el('option'); option.value = name; return option; }));
+      listFonts();
     } catch { /* typing a family name still works without the list */ }
   }
 
-  // One live handler per document, so remounting never stacks listeners.
-  if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler);
+  // Keyboard cheat sheet (Cmd/Ctrl+/ or ?).
+  let helpLayer: HTMLElement | null = null; let helpReturn: HTMLElement | null = null;
+  function toggleHelp(show = !helpLayer) {
+    if (!show) {
+      helpLayer?.remove(); helpLayer = null;
+      if (helpReturn?.isConnected) helpReturn.focus({preventScroll: true}); else focusEditor();
+      return;
+    }
+    if (helpLayer) return;
+    helpReturn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    helpLayer = el('div', '', 'overlay-layer');
+    const backdrop = el('div', '', 'overlay-backdrop'); backdrop.addEventListener('mousedown', () => toggleHelp(false));
+    const sheet = el('div', '', 'help-sheet'); sheet.setAttribute('role', 'dialog'); sheet.setAttribute('aria-modal', 'true'); sheet.setAttribute('aria-labelledby', 'shortcuts-title');
+    const head = el('div', '', 'card-head'); const heading = el('h2', 'Keyboard shortcuts'); heading.id = 'shortcuts-title';
+    const close = button('esc', () => toggleHelp(false), 'card-close'); close.setAttribute('aria-label', 'Close keyboard shortcuts');
+    head.append(heading, close);
+    sheet.append(head, shortcutSheet(), el('p', 'Local drafting · Autosaves locally · Nothing goes to an AI provider until you choose Send in Questions.', 'help-foot'));
+    sheet.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); toggleHelp(false); } });
+    helpLayer.append(backdrop, sheet); root.append(helpLayer);
+    close.focus();
+  }
+
+  // Command palette: scenes, files and commands in one fuzzy finder.
+  let directoryEntries: {path: string; name: string; kind: 'file' | 'directory'}[] = [];
+  let currentBook: Manuscript | null = null;
+  const palette = createPalette(root, {
+    items: paletteItems,
+    reorder: async (key, direction) => {
+      const before = drafting.state?.scenes.map(scene => scene.id).join('\n');
+      if (!before) return false;
+      await drafting.reorderScene(key, direction);
+      return drafting.state?.scenes.map(scene => scene.id).join('\n') !== before;
+    },
+    closed: () => focusEditor(),
+  });
+  function focusEditor() { if (editor && !document.querySelector('dialog[open]')) editor.view.focus(); }
+  function openPalette(scope: PaletteScope, query = '') {
+    if (!core.available()) return;
+    toggleGoal(false); if (helpLayer) toggleHelp(false);
+    palette.open(scope, query);
+  }
+  function paletteItems(scope: PaletteScope): PaletteItem[] {
+    if (scope === 'scenes') {
+      if (drafting.state?.revision) return drafting.state.scenes.map((scene, index) => ({
+        key: scene.id, num: String(index + 1).padStart(2, '0'), label: scene.title || basename(scene.path), sub: scene.path,
+        right: opened?.path === scene.path ? 'open' : drafting.state!.groups.find(item => item.id === scene.groupId)?.title ?? '',
+        run: () => { void showDocument(scene.path); },
+      }));
+      if (currentBook) {
+        let index = 0;
+        return currentBook.volumes.flatMap(volume => volume.chapters.flatMap(chapter => chapter.scenes.map(scene => ({
+          key: scene.path, num: String(++index).padStart(2, '0'), label: basename(scene.path), sub: `${chapter.number}. ${chapter.title} · ${scene.path}`,
+          right: opened?.path === scene.path ? 'open' : '', run: () => { void showDocument(scene.path); },
+        }))));
+      }
+      return [];
+    }
+    if (scope === 'files') {
+      const here = directoryPath.textContent === '/' ? '' : directoryPath.textContent ?? '';
+      const items: PaletteItem[] = here ? [{key: '..', label: '↑ Parent folder', sub: parentPath(here) || '/', run: () => { void showDirectory(parentPath(here)).then(() => openPalette('files')); }}] : [];
+      return items.concat(directoryEntries.map(entry => ({
+        key: entry.path, label: entry.kind === 'directory' ? `${entry.name}/` : entry.name, sub: entry.path,
+        right: entry.kind === 'directory' ? 'folder' : opened?.path === entry.path ? 'open' : /\.(md|markdown)$/i.test(entry.path) ? 'md' : 'read-only',
+        run: () => { if (entry.kind === 'directory') void showDirectory(entry.path).then(() => openPalette('files')); else void showDocument(entry.path); },
+      })));
+    }
+    const commands: (PaletteItem | false)[] = [
+      Boolean(editor) && {key: 'ask', label: 'Ask Heinlein about selection', sub: 'Opens Questions with the highlighted passage', right: formatKeys('⌘J'), run: () => askShortcut()},
+      Boolean(editor) && {key: 'split', label: 'Split scene at cursor', sub: 'Previews before anything moves', right: formatKeys('⌘⇧↵'), run: splitAtCursor},
+      Boolean(drafting.state?.revision) && {key: 'new-scene', label: 'New scene', sub: 'Creates Markdown under ms/', run: () => drafting.newScene()},
+      proposals.supported && Boolean(repository) && {key: 'proposals', label: 'Revision proposals', sub: 'Review pending MCP proposals and receipts', run: () => { void proposals.open(); }},
+      {key: 'appearance', label: 'Appearance', sub: 'Theme, accent, fonts, size, spacing', right: formatKeys('⌘,'), run: () => { void openAppearance(); }},
+      {key: 'larger', label: 'Larger text', right: formatKeys('⌘='), run: () => setZoom('in')},
+      {key: 'smaller', label: 'Smaller text', right: formatKeys('⌘−'), run: () => setZoom('out')},
+      {key: 'reset-size', label: 'Reset text size', right: formatKeys('⌘0'), run: () => setZoom('reset')},
+      Boolean(editor) && {key: 'save', label: 'Save now', sub: 'Autosave runs after a short pause', right: formatKeys('⌘S'), run: () => { void saveCurrent(); }},
+      Boolean(editor) && {key: 'find', label: 'Find in scene', right: formatKeys('⌘F'), run: () => editor?.find()},
+      {key: 'open', label: 'Open folder…', sub: 'Native folder picker', right: formatKeys('⌘O'), run: () => { if (!open.disabled) open.click(); }},
+      Boolean(drafting.state?.revision) && {key: 'import', label: 'Import files…', sub: 'Copy Markdown files into ms/', run: () => { void drafting.importExternal(); }},
+      Boolean(drafting.state?.revision) && {key: 'import-repo', label: 'Import repository files…', sub: 'Move Markdown files into ms/', run: () => drafting.importRepository('move')},
+      Boolean(drafting.state?.revision) && {key: 'legacy', label: 'Copy legacy scenes…', sub: 'Independent copies; the old manuscript is unchanged', run: () => drafting.importRepository('copy')},
+      drafting.canUndo && {key: 'undo-structure', label: 'Undo last manuscript change', run: () => drafting.undoLastChange()},
+      !draftingEntry.hidden && {key: 'drafting', label: 'Show ms drafting manuscript', run: () => { setCollapsed('manuscript', false); void openDrafting(); }},
+      {key: 'goal', label: 'Set daily goal…', sub: writingSummary ? `Currently ${writingSummary.goal.toLocaleString()} words` : '', run: () => toggleGoal(true)},
+      {key: 'files', label: collapsed.files ? 'Show file browser' : 'Hide file browser', right: formatKeys('⌘\\'), run: () => setCollapsed('files', !collapsed.files)},
+      {key: 'outline', label: collapsed.manuscript ? 'Show manuscript outline' : 'Hide manuscript outline', run: () => setCollapsed('manuscript', !collapsed.manuscript)},
+      {key: 'shortcuts', label: 'Keyboard shortcuts', right: formatKeys('⌘/'), run: () => toggleHelp(true)},
+    ];
+    return commands.filter((item): item is PaletteItem => Boolean(item));
+  }
+  // Cmd/Ctrl+J: capture a highlighted passage, otherwise open or close Questions.
+  function askShortcut() {
+    if (!editor || !draftingQuestions) { status.textContent = 'Open a Markdown scene to ask about it.'; return; }
+    const selection = editor.view.state.selection;
+    if (selection.ranges.length === 1 && !selection.main.empty) { void askDraftingSelection(); return; }
+    if (draftingQuestions.visible()) draftingQuestions.close(); else draftingQuestions.open();
+  }
+  function renderPill() {
+    pillProject.textContent = repository?.name ?? 'Heinlein Studio';
+    const scene = opened && drafting.state?.scenes.find(item => item.path === opened!.path);
+    pillScene.textContent = opened ? (scene && scene.title) || basename(opened.path) : 'No scene open';
+    const words = writingSummary?.sceneWords;
+    pillWords.textContent = words == null ? '— words' : `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'}`;
+    if (writingSummary) {
+      goalText.textContent = `${writingSummary.credited.toLocaleString()} / ${writingSummary.goal.toLocaleString()}`;
+      goalFill.style.width = `${Math.min(100, (writingSummary.credited / Math.max(1, writingSummary.goal)) * 100)}%`;
+      goalButton.setAttribute('aria-label', `Daily goal: ${goalText.textContent} words credited today`);
+    }
+  }
+  renderPill();
+
+  // One live handler per document, so remounting never stacks listeners. Capture phase, so
+  // app shortcuts win over editor defaults (Cmd/Ctrl+/ would otherwise toggle a comment).
+  if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true);
   zoomKeyHandler = (event: KeyboardEvent) => {
-    if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key === ',') { event.preventDefault(); void openAppearance(); return; }
-    if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key === '\\') { event.preventDefault(); setCollapsed('files', !collapsed.files); return; }
+    if (disposed || event.isComposing) return;
     const action = shortcutAction(event);
-    if (!action) return;
-    event.preventDefault();
-    setZoom(action);
+    if (action) { event.preventDefault(); setZoom(action); return; }
+    const otherModal = [...document.querySelectorAll('dialog[open]')].some(node => node !== dialog);
+    if (root.inert || otherModal) return;
+    const mod = event.metaKey || event.ctrlKey;
+    if (!mod) {
+      if (event.key === '?' && !event.altKey && !typingTarget(event.target) && !dialog.open && !palette.isOpen()) { event.preventDefault(); toggleHelp(true); }
+      return;
+    }
+    if (event.altKey) return;
+    const key = event.key.toLowerCase();
+    const run = (task: () => void) => { event.preventDefault(); event.stopPropagation(); task(); };
+    if (key === ',') { run(() => { if (dialog.open) dialog.close(); else void openAppearance(); }); return; }
+    if (dialog.open) return;
+    if (key === 'k') run(() => openPalette('scenes'));
+    else if (key === 'p') run(() => openPalette(event.shiftKey ? 'commands' : 'files'));
+    else if (key === '\\') run(() => setCollapsed('files', !collapsed.files));
+    else if (key === '/' || (key === '?' && event.shiftKey)) run(() => toggleHelp());
+    else if (key === 'j' && !event.shiftKey) run(askShortcut);
+    else if (key === 'o' && !event.shiftKey) run(() => { if (!open.disabled) open.click(); });
   };
-  document.addEventListener('keydown', zoomKeyHandler);
+  document.addEventListener('keydown', zoomKeyHandler, true);
+  // Chrome fades while typing and returns as soon as the pointer moves.
+  const wake = () => { if (root.classList.contains('typing')) root.classList.remove('typing'); };
+  document.addEventListener('mousemove', wake);
+  // Routine status messages fade after a few seconds (text stays for assistive tech); errors stay put.
+  let statusTimer: ReturnType<typeof setTimeout> | null = null;
+  // Watches text only (never the class it toggles), so it cannot retrigger itself.
+  const statusQuiet = new MutationObserver(() => {
+    if (status.classList.contains('quiet')) status.classList.remove('quiet');
+    if (statusTimer) clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => { statusTimer = null; if (!status.classList.contains('error')) status.classList.add('quiet'); }, 4000);
+  });
+  statusQuiet.observe(status, {childList: true, characterData: true, subtree: true});
   applyZoom(false);
 
   function resetPreview() {
@@ -663,7 +943,18 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     writing.clearScene();
     cancelAutosave(); documentEpoch++; recoveryErrorMessage = null; recovery = null; recoveryPending = false; writePaused = null;
     editor?.destroy(); editor = null; opened = null; saveButton = null; dirtyBadge = null; setDirty(false);
-    preview.replaceChildren(el('p', 'SOURCE PREVIEW', 'eyebrow'), el('h2', 'A quiet place to read'), el('p', 'Select a scene or file. Source text is displayed exactly as stored, including Markdown and frontmatter.', 'empty'));
+    const welcome = el('div', '', 'welcome');
+    welcome.append(el('p', repository ? repository.name : 'Heinlein Studio', 'eyebrow'), el('h2', repository ? 'A quiet place to write' : 'A quiet place to read'),
+      el('p', repository ? 'Pick a scene to start writing. Source text is displayed exactly as stored, including Markdown and frontmatter.' : 'Select a scene or file. Source text is displayed exactly as stored, including Markdown and frontmatter.', 'empty'));
+    if (!repository && core.available()) welcome.append(button('Open a folder…', () => { void selectRepository(() => core.pickRepository()); }, 'primary'));
+    const keys = el('dl', '', 'welcome-keys');
+    for (const [shortcut, label] of [['⌘K', 'Jump to a scene'], ['⌘P', 'Browse files'], ['⌘⇧P', 'Every command'], ['⌘,', 'Theme, fonts and size'], ['⌘/', 'All shortcuts']]) {
+      const term = el('dt'); term.append(el('kbd', formatKeys(shortcut))); keys.append(term, el('dd', label));
+    }
+    welcome.append(keys);
+    const page = el('div', '', 'page'); page.append(welcome);
+    preview.replaceChildren(page);
+    if (chromeReady) { renderPill(); updateSaveState(); }
   }
   function reportError(error: unknown) {
     status.textContent = `Unable to open: ${typeof error === 'string' ? error : error instanceof Error ? error.message : 'The local host rejected this request.'}`;
@@ -721,7 +1012,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       listing.replaceChildren();
       outline.replaceChildren();
       manifests.replaceChildren();
-      repoName.textContent = selected.name;
+      repoName.textContent = selected.name; currentBook = null; directoryEntries = []; renderPill();
       directoryPath.textContent = '/';
       for (const path of selected.manifests) {
         manifests.append(button(path, () => { void showManuscript(path); }, 'manifest-button'));
@@ -748,6 +1039,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       const entries = await core.listDirectory(repository!.id, path);
       if (disposed || current !== generation || request !== directoryRequest) return;
       directoryPath.textContent = path || '/';
+      directoryEntries = entries.map(({path, name, kind}) => ({path, name, kind}));
+      if (palette.scope() === 'files') palette.refresh();
       listing.replaceChildren();
       if (path) listing.append(button('↑ Parent folder', () => { void showDirectory(parentPath(path)); }, 'file-entry parent'));
       for (const entry of entries) {
@@ -799,7 +1092,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     writing.openScene(repository?.projectKey ?? '', doc.path, doc.text, drafting.state?.scenes.find(scene => scene.path === doc.path)?.id);
     cancelAutosave(); documentEpoch++; recoveryErrorMessage = null; recovery = draft; recoveryPending = Boolean(draft && draft.text !== doc.text); writePaused = null; writeBaseHash = doc.contentHash;
     editor?.destroy(); editor = null; opened = doc; saveButton = null; dirtyBadge = null; setDirty(false);
-    const title = el('h2', basename(doc.path));
+    const sceneInfo = drafting.state?.scenes.find(scene => scene.path === doc.path);
+    const sceneIndex = sceneInfo ? drafting.state!.scenes.indexOf(sceneInfo) : -1;
+    const title = el('h2', sceneInfo?.title || basename(doc.path), 'page-title');
     title.tabIndex = -1;
     const source = el('p', doc.path, 'path');
     const badge = el('p', doc.generatedCompatibility ? 'Generated compatibility file · Read-only' : 'Source file · Read-only', 'badge');
@@ -809,7 +1104,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     text.tabIndex = 0;
     text.setAttribute('aria-label', 'Read-only raw source');
     // Never interpret manuscript HTML, scripts, links, or embedded instructions.
-    preview.replaceChildren(el('p', 'SOURCE PREVIEW', 'eyebrow'), title, source, badge, metadata, text);
+    const meta = el('div', '', 'page-meta'); meta.append(source, badge);
+    const page = el('div', '', 'page');
+    page.append(el('p', sceneIndex >= 0 ? `Scene ${sceneIndex + 1} of ${drafting.state!.scenes.length}` : 'Source preview', 'eyebrow'), title, meta, metadata, text);
+    preview.replaceChildren(page);
     if (!doc.generatedCompatibility && /\.(md|markdown)$/i.test(doc.path)) {
       badge.textContent = 'Local working draft · Plain Markdown';
       const toolbar = el('div', '', 'editor-toolbar');
@@ -841,17 +1139,20 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       let previousText = doc.text;
       editor = createEditor(host, doc.text, (raw, origin) => {
         writing.changed(previousText, raw, origin); previousText = raw;
+        if (origin === 'user' && !root.classList.contains('typing')) root.classList.add('typing');
         edits++;
         if (writePaused === 'discard' && !repositoryDetached) writePaused = null;
         setDirty(raw !== opened?.text);
         scheduleAutosave();
       }, () => { void saveCurrent(); });
       editor.view.dispatch({effects: StateEffect.appendConfig.of(EditorView.updateListener.of(update => {if (update.docChanged || update.selectionSet) draftingQuestions?.stateChanged();}))});
-      selectionAsk = createSelectionAskAction(editor.view, {current: draftingSelectionState, fallback: askDrafting,
+      selectionAsk = createSelectionAskAction(editor.view, {current: draftingSelectionState, fallback: askDrafting, keys: formatKeys('⌘J'),
+        revise: () => { if (!draftingQuestions) return; draftingQuestions.open(); draftingQuestions.setMode('revision'); },
         ask: snapshot => {void askDraftingSelection(snapshot);}, stale: () => {status.textContent = 'The selection changed. Highlight the passage again before asking.';}});
       if (recoveryPending && draft) showRecoveryChoice(doc, draft, host);
       updateSaveState();
     }
+    renderPill(); updateSaveState();
     title.focus({ preventScroll: true });
   }
   function showRecoveryReadFailure(doc: Document, error: unknown) {
@@ -912,6 +1213,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     } catch (error) { if (!disposed && current === generation && request === manuscriptRequest) { outline.replaceChildren(el('p', 'Manuscript could not be loaded. Browse files or choose another manifest.', 'empty')); reportError(error); } }
   }
   function renderManuscript(book: Manuscript) {
+    currentBook = book;
     outline.replaceChildren(el('h3', book.project), el('p', `Manifest order · Schema ${book.schemaVersion}`, 'muted'));
     for (const volume of book.volumes) {
       const group = el('details', '', 'volume');
@@ -957,6 +1259,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler); }
+    destroy: () => { questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

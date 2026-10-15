@@ -45,6 +45,30 @@ be reopened through an opaque recent ID. Missing folders give an error; use Open
 folder to locate their new location. The renderer cannot submit an arbitrary root.
 No Git commit, pull, checkout or push is performed.
 
+## Layout and keyboard
+
+The page fills the window. Everything else floats: a status pill at the top
+(project, scene, word count, save state, daily goal, proposals), the file browser
+and manuscript outline as collapsible cards on the left (Cmd/Ctrl+\ hides the
+file browser), and Questions as a card docked right while the page stays full
+width behind it. The pill fades while you type and returns when the pointer moves.
+
+- **Cmd/Ctrl+K** jumps to a scene, **Cmd/Ctrl+P** browses files and
+  **Cmd/Ctrl+Shift+P** lists every command. Type `/` or `>` to switch scope, Tab
+  cycles scopes, and Alt+↑/↓ reorders the highlighted ms/ scene through the usual
+  previewed change.
+- **Cmd/Ctrl+J** captures the highlighted passage into Questions, or opens and
+  closes Questions when nothing is highlighted. Highlighting text also shows a
+  small toolbar: Ask Heinlein, Suggest revision, and the selection's word count.
+  Nothing is sent until you press Send.
+- **Cmd/Ctrl+,** opens Appearance: four themes (Arcades, Midnight, Paper, High
+  contrast), four accents, interface/text/monospace fonts with one-click presets
+  (including Courier New), text size, line width, line spacing, fading chrome, and
+  dimming all but the current paragraph. Changes apply instantly and are saved on
+  this device. Lora, Inter, JetBrains Mono, Atkinson Hyperlegible and OpenDyslexic
+  ship with Studio, so they work offline.
+- **Cmd/Ctrl+/** or **?** shows every shortcut.
+
 ## Local MCP proposals
 
 The **MCP proposals** button lists pending proposals for the selected repository

@@ -3,6 +3,7 @@ import { EditorView, keymap, drawSelection } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, invertedEffects, undo, redo } from '@codemirror/commands';
 import { search, searchKeymap, openSearchPanel } from '@codemirror/search';
 import { markdown } from '@codemirror/lang-markdown';
+import { focusMode } from './focusMode';
 
 // CodeMirror uses LF positions internally. Preserve every untouched source byte,
 // including mixed newline styles, instead of serializing a parsed manuscript.
@@ -94,12 +95,18 @@ export function createEditor(parent: HTMLElement, source: string, changed: (raw:
           : update.transactions.some(transaction => transaction.isUserEvent('input') || transaction.isUserEvent('delete') || transaction.isUserEvent('move')) ? 'user' : 'programmatic');
         changed(raw, origin);
       }),
+      focusMode,
+      // Colors and type come from Appearance tokens on :root, so themes restyle the editor live.
       EditorView.theme({
-        '&': {color: '#f4f2ec', backgroundColor: '#121714', minHeight: '24rem'},
-        '.cm-content': {fontFamily: 'var(--font-text, var(--font-mono, ui-monospace, monospace))', fontSize: '1rem', lineHeight: '1.85', padding: '1rem'},
-        '.cm-cursor': {borderLeftColor: '#fff'}, '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {backgroundColor: '#415840'},
-        '.cm-panels': {backgroundColor: '#222c25', color: '#fff'}, '.cm-searchMatch': {backgroundColor: '#79601b'},
-      }, {dark: true}),
+        '&': {color: 'var(--fg)', backgroundColor: 'transparent', minHeight: '24rem'},
+        '.cm-content': {fontFamily: 'var(--font-text, var(--text-fallback))', fontSize: 'var(--type-body)', lineHeight: 'var(--leading-body)', padding: '0 0 40vh', caretColor: 'var(--accent)'},
+        '.cm-line': {padding: '0', transition: 'opacity .3s'},
+        '.cm-cursor, .cm-dropCursor': {borderLeftColor: 'var(--accent)', borderLeftWidth: '2px'},
+        // Matches CodeMirror's own focused-selection specificity so the base light theme can't win.
+        '.cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, & .cm-content ::selection': {backgroundColor: 'var(--selection)'},
+        '.cm-panels': {backgroundColor: 'var(--surface)', color: 'var(--fg)', borderColor: 'var(--border-strong)'},
+        '.cm-searchMatch': {backgroundColor: 'var(--selection)', outline: '1px solid var(--accent)'},
+      }),
     ],
   }) });
   return { view,
