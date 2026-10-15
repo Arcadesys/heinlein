@@ -68,6 +68,23 @@ describe('writing progress panel',()=>{
     panel.changed('one','one two','user');
     expect(panel.element.textContent).toContain('1 / 1,000 daily growth credited');
   });
+  it('does not credit existing words when splitting or undoing a scene',()=>{
+    panel.openScene('stable','ms/original.md','one','original-id');
+    panel.changed('one','one two three','user');
+    expect(panel.element.textContent).toContain('2 / 1,000 daily growth credited');
+    // Structural refresh loads both retained prefix and new suffix as baselines.
+    panel.openScene('stable','ms/original.md','one','original-id');
+    panel.openScene('stable','ms/suffix.md','two three','suffix-id');
+    expect(panel.element.textContent).toContain('2 / 1,000 daily growth credited');
+    // Guarded structural undo reloads the original rather than a user insertion.
+    panel.openScene('stable','ms/original.md','one two three','original-id');
+    expect(panel.element.textContent).toContain('2 / 1,000 daily growth credited');
+    panel.openScene('stable','ms/suffix-again.md','two three','another-suffix-id');
+    expect(panel.element.textContent).toContain('2 / 1,000 daily growth credited');
+    panel.changed('two three','two three four','user');
+    expect(panel.element.textContent).toContain('3 / 1,000 daily growth credited');
+  });
+
   it('counts a flat drafting manifest',async()=>{
     const core={readDocument:vi.fn(async()=>({text:'one two'}))} as unknown as LocalCore;
     await panel.setManuscript(core,repo,{scenes:[{path:'ms/a.md'},{path:'ms/b.md'}]});

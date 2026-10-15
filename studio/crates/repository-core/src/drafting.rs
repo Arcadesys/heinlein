@@ -76,6 +76,13 @@ pub enum DraftingChange {
         group_id: Option<String>,
         before_id: Option<String>,
     },
+    SplitScene {
+        scene_id: String,
+        path: String,
+        title: String,
+        expected_hash: String,
+        byte_offset: usize,
+    },
     CreateGroup {
         title: String,
     },
@@ -371,6 +378,126 @@ fn insert_scene(
     manifest.scenes.insert(index, scene);
     Ok(())
 }
+// Offsets are measured in the persisted UTF-8 bytes, including frontmatter.
+// Leading metadata stays on the original scene; malformed metadata fails closed.
+fn validate_split_offset(text: &str, offset: usize) -> Result<()> {
+    if offset == 0
+        || offset >= text.len()
+        || !text.is_char_boundary(offset)
+        || (text.as_bytes()[offset - 1] == b'\r' && text.as_bytes()[offset] == b'\n')
+    {
+        return Err(Error::InvalidManifest);
+    }
+    let mut position = 0;
+    let mut opening = true;
+    let mut metadata = false;
+    while position < text.len() {
+        let start = position;
+        while position < text.len() && !matches!(text.as_bytes()[position], b'\r' | b'\n') {
+            position += 1;
+        }
+        let line = &text[start..position];
+        if position < text.len() {
+            let cr = text.as_bytes()[position] == b'\r';
+            position += 1;
+            if cr && text.as_bytes().get(position) == Some(&b'\n') {
+                position += 1;
+            }
+        }
+        if opening {
+            opening = false;
+            metadata = line
+                .trim_start_matches('\u{feff}')
+                .trim_end_matches([' ', '\t'])
+                == "---";
+            if !metadata {
+                break;
+            }
+        } else if matches!(line.trim_end_matches([' ', '\t']), "---" | "...") {
+            if offset <= position {
+                return Err(Error::InvalidManifest);
+            }
+            metadata = false;
+            break;
+        }
+    }
+    if metadata {
+        return Err(Error::InvalidManifest);
+    }
+    Ok(())
+}
+
+// Existing journals only create/delete Markdown. Permit replacement exclusively
+// for a lossless split (or its inverse), tied to the matching index transition.
+fn validate_split_journal(journal: &Journal) -> Result<()> {
+    let invalid = || Error::UntrustedTransaction;
+    if journal.edits.len() != 3 {
+        return Err(invalid());
+    }
+    let index = journal
+        .edits
+        .iter()
+        .find(|e| e.path == MANIFEST)
+        .ok_or_else(invalid)?;
+    let mut before: Manifest =
+        serde_json::from_str(&index.before.as_ref().ok_or_else(invalid)?.text)
+            .map_err(|_| invalid())?;
+    let mut after: Manifest = serde_json::from_str(&index.after.as_ref().ok_or_else(invalid)?.text)
+        .map_err(|_| invalid())?;
+    let inverse = before.scenes.len() > after.scenes.len();
+    if inverse {
+        std::mem::swap(&mut before, &mut after);
+    }
+    let source = journal
+        .edits
+        .iter()
+        .find(|e| e.path != MANIFEST && e.before.is_some() && e.after.is_some())
+        .ok_or_else(invalid)?;
+    let target = journal
+        .edits
+        .iter()
+        .find(|e| e.path != MANIFEST && e.path != source.path)
+        .ok_or_else(invalid)?;
+    let (whole, prefix, absent, suffix) = if inverse {
+        (&source.after, &source.before, &target.after, &target.before)
+    } else {
+        (&source.before, &source.after, &target.before, &target.after)
+    };
+    let whole = whole.as_ref().ok_or_else(invalid)?;
+    let prefix = prefix.as_ref().ok_or_else(invalid)?;
+    let suffix = suffix.as_ref().ok_or_else(invalid)?;
+    if absent.is_some()
+        || whole.mode != prefix.mode
+        || suffix.mode != whole.mode
+        || whole.text.len() != prefix.text.len() + suffix.text.len()
+        || !whole.text.starts_with(&prefix.text)
+        || !whole.text.ends_with(&suffix.text)
+        || validate_split_offset(&whole.text, prefix.text.len()).is_err()
+    {
+        return Err(invalid());
+    }
+    let position = before
+        .scenes
+        .iter()
+        .position(|s| s.path == source.path)
+        .ok_or_else(invalid)?;
+    let new = after.scenes.get(position + 1).ok_or_else(invalid)?;
+    if new.path != target.path
+        || new.group_id != before.scenes[position].group_id
+        || before.scenes.iter().any(|s| s.id == new.id)
+    {
+        return Err(invalid());
+    }
+    after.scenes.remove(position + 1);
+    if before.scenes != after.scenes
+        || before.groups != after.groups
+        || before.id != after.id
+        || before.project != after.project
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
 fn validate_journal(journal: &Journal, repository_key: &str) -> Result<()> {
     if journal.schema_version != 1
         || journal.repository_key != repository_key
@@ -378,6 +505,13 @@ fn validate_journal(journal: &Journal, repository_key: &str) -> Result<()> {
         || journal.edits.len() > MAX_BATCH_FILES * 2 + 1
     {
         return Err(Error::UntrustedTransaction);
+    }
+    if journal
+        .edits
+        .iter()
+        .any(|e| e.path != MANIFEST && e.before.is_some() && e.after.is_some())
+    {
+        validate_split_journal(journal)?;
     }
     let mut paths = HashSet::new();
     let mut total = 0usize;
@@ -392,7 +526,7 @@ fn validate_journal(journal: &Journal, repository_key: &str) -> Result<()> {
             }
         } else {
             validate_markdown(&edit.path)?;
-            if edit.before.is_some() == edit.after.is_some() {
+            if edit.before.is_none() && edit.after.is_none() {
                 return Err(Error::UntrustedTransaction);
             }
         }
@@ -607,6 +741,73 @@ impl Repository {
                     &before_id,
                 )?;
                 plan.preview.summary = "Create an empty Markdown scene".into();
+            }
+            DraftingChange::SplitScene {
+                scene_id,
+                path,
+                title: name,
+                expected_hash,
+                byte_offset,
+            } => {
+                title(&name)?;
+                scene_path(&path)?;
+                let index = manifest
+                    .scenes
+                    .iter()
+                    .position(|s| s.id == scene_id)
+                    .ok_or(Error::DraftingChanged)?;
+                let scene = manifest.scenes[index].clone();
+                self.allowed(&scene.path, false)?;
+                self.check_write_manifests(&scene.path)?;
+                self.refuse_legacy_scene_move(&scene.path)?;
+                let before = self.snapshot(&scene.path)?.ok_or(Error::NotFound)?;
+                if content_hash(&before.text) != expected_hash {
+                    return Err(Error::DraftingChanged);
+                }
+                if before.mode & 0o222 == 0 {
+                    return Err(Error::Denied);
+                }
+                validate_split_offset(&before.text, byte_offset)?;
+                if parent(&scene.path) != parent(&path) && reference_bearing(&before.text) {
+                    return Err(Error::AssetReferences);
+                }
+                let prefix = before.text[..byte_offset].to_owned();
+                let suffix = before.text[byte_offset..].to_owned();
+                self.add_new_file(&mut plan, &path, suffix, None)?;
+                plan.edits
+                    .last_mut()
+                    .ok_or(Error::Io)?
+                    .after
+                    .as_mut()
+                    .ok_or(Error::Io)?
+                    .mode = before.mode;
+                plan.edits.push(Edit {
+                    path: scene.path.clone(),
+                    after: Some(Bytes {
+                        text: prefix,
+                        mode: before.mode,
+                    }),
+                    before: Some(before),
+                });
+                plan.recovery_paths.push(scene.path.clone());
+                plan.preview.changes.push(DraftingChangeView {
+                    kind: "split".into(),
+                    source: Some(scene.path),
+                    destination: Some(path.clone()),
+                });
+                manifest.scenes.insert(
+                    index + 1,
+                    DraftingScene {
+                        id: uuid(),
+                        title: name,
+                        path,
+                        group_id: scene.group_id,
+                    },
+                );
+                plan.preview.summary =
+                    "Split a scene at the selected byte boundary, preserving every source byte"
+                        .into();
+                plan.preview.warnings.push("Frontmatter stays on the original scene and is not copied. The new scene contains the exact suffix. Review Markdown fences, reference definitions, and links across the split; they are not rewritten.".into());
             }
             DraftingChange::CreateGroup { title: name } => {
                 title(&name)?;
@@ -1066,7 +1267,7 @@ impl Repository {
             if edit.path != MANIFEST {
                 self.check_write_manifests(&edit.path)?;
             }
-            if edit.before.is_some() && edit.after.is_none() {
+            if edit.path != MANIFEST && edit.before.is_some() {
                 self.refuse_legacy_scene_move(&edit.path)?;
             }
         }
@@ -1492,6 +1693,359 @@ mod tests {
             });
         }
     }
+    fn split_change(f: &Fixture, text: &str, offset: usize) -> DraftingChange {
+        DraftingChange::SplitScene {
+            scene_id: f.repo.load_drafting().unwrap().scenes[0].id.clone(),
+            path: "ms/suffix.md".into(),
+            title: "Second scene".into(),
+            expected_hash: content_hash(text),
+            byte_offset: offset,
+        }
+    }
+
+    #[test]
+    fn split_preserves_exact_bytes_metadata_identity_group_order_and_undo() {
+        let f = Fixture::new();
+        let text = "---\r\ntitle: Original\r\n---\r\nFirst—é.\r\nSecond 🐾.\r\n";
+        f.put("ms/original.md", text);
+        f.initialize();
+        f.apply(DraftingChange::CreateGroup {
+            title: "Act one".into(),
+        });
+        let state = f.repo.load_drafting().unwrap();
+        f.apply(DraftingChange::ReorderScene {
+            scene_id: state.scenes[0].id.clone(),
+            before_id: None,
+            group_id: Some(state.groups[0].id.clone()),
+        });
+        f.create("ms/later.md");
+        let before = f.repo.load_drafting().unwrap();
+        let original_index = fs::read(f.repo.root().join(MANIFEST)).unwrap();
+        let offset = text.find("Second").unwrap();
+        let plan = f.preview(split_change(&f, text, offset)).unwrap();
+        assert_eq!(
+            fs::read_to_string(f.repo.root().join("ms/original.md")).unwrap(),
+            text
+        );
+        assert!(!f.repo.root().join("ms/suffix.md").exists());
+        let undo = f.repo.apply_drafting(&plan, &f.recovery).unwrap();
+        let after = f.repo.load_drafting().unwrap();
+        assert_eq!(after.scenes[0], before.scenes[0]);
+        assert_eq!(after.scenes[2], before.scenes[1]);
+        assert_ne!(after.scenes[1].id, before.scenes[0].id);
+        assert_eq!(after.scenes[1].group_id, before.scenes[0].group_id);
+        assert_eq!(after.scenes[1].title, "Second scene");
+        assert_eq!(
+            fs::read_to_string(f.repo.root().join("ms/original.md")).unwrap(),
+            &text[..offset]
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.root().join("ms/suffix.md")).unwrap(),
+            &text[offset..]
+        );
+        f.repo.undo_drafting(&undo, &f.recovery).unwrap();
+        assert_eq!(
+            fs::read(f.repo.root().join(MANIFEST)).unwrap(),
+            original_index
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.root().join("ms/original.md")).unwrap(),
+            text
+        );
+        assert!(!f.repo.root().join("ms/suffix.md").exists());
+    }
+
+    #[test]
+    fn split_rejects_endpoints_unicode_crlf_and_frontmatter_boundaries() {
+        for (text, offset) in [
+            ("abc", 0),
+            ("abc", 3),
+            ("abc", usize::MAX),
+            ("éx", 1),
+            ("a\r\nb", 2),
+            ("---\ntitle: One\n---\nbody", 8),
+            ("---\ntitle: One\nbody", 18),
+            ("\u{feff}--- \rtitle: One\r...\rbody", 10),
+            ("---\t\rtitle: One\rbody", 8),
+            ("--- \ntitle: One\n... \nbody", 14),
+        ] {
+            let f = Fixture::new();
+            f.put("ms/original.md", text);
+            f.initialize();
+            assert_eq!(
+                f.preview(split_change(&f, text, offset)).unwrap_err(),
+                Error::InvalidManifest
+            );
+        }
+        assert!(validate_split_offset("aé🐾b", 3).is_ok());
+        let metadata = "\u{feff}--- \rtitle: One\r...\r";
+        let text = format!("{metadata}first second");
+        assert!(validate_split_offset(&text, metadata.len()).is_err());
+        assert!(validate_split_offset(&text, metadata.len() + 6).is_ok());
+    }
+
+    #[test]
+    fn split_stale_hash_source_race_pending_recovery_and_edited_undo_fail_closed() {
+        let f = Fixture::new();
+        f.put("ms/original.md", "first second");
+        f.initialize();
+        assert_eq!(
+            f.preview(split_change(&f, "stale", 5)).unwrap_err(),
+            Error::DraftingChanged
+        );
+        let plan = f.preview(split_change(&f, "first second", 6)).unwrap();
+        f.put("ms/original.md", "changed");
+        assert_eq!(
+            f.repo.apply_drafting(&plan, &f.recovery).unwrap_err(),
+            Error::DraftingChanged
+        );
+        f.put("ms/original.md", "first second");
+        f.recovery
+            .stage(
+                &f.repo,
+                "ms/original.md",
+                &content_hash("first second"),
+                "pending",
+            )
+            .unwrap();
+        assert_eq!(
+            f.preview(split_change(&f, "first second", 6)).unwrap_err(),
+            Error::PendingRecovery
+        );
+        // Another fixture avoids discarding any pending recovery without review.
+        let f = Fixture::new();
+        f.put("ms/original.md", "first second");
+        f.initialize();
+        let undo = f.apply(split_change(&f, "first second", 6));
+        f.put("ms/suffix.md", "edited suffix");
+        assert_eq!(
+            f.repo.undo_drafting(&undo, &f.recovery).unwrap_err(),
+            Error::DraftingChanged
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.root().join("ms/suffix.md")).unwrap(),
+            "edited suffix"
+        );
+    }
+
+    #[test]
+    fn split_rejects_bad_paths_collisions_and_cross_directory_references() {
+        let f = Fixture::new();
+        let text = "first [link](asset.png) second";
+        f.put("ms/original.md", text);
+        f.initialize();
+        for path in [
+            "../escape.md",
+            "outside.md",
+            "ms/original.md",
+            "ms/ORIGINAL.md",
+            "ms/sub/suffix.md",
+        ] {
+            let mut change = split_change(&f, text, 6);
+            if let DraftingChange::SplitScene {
+                path: destination, ..
+            } = &mut change
+            {
+                *destination = path.into();
+            }
+            assert!(f.preview(change).is_err(), "accepted {path}");
+        }
+    }
+
+    #[test]
+    fn repeated_nested_splits_and_reverse_undos_preserve_the_manuscript() {
+        let f = Fixture::new();
+        let text = "First—é🐾\r\nsecond third fourth";
+        f.put("ms/original.md", text);
+        f.initialize();
+        let original_manifest = fs::read(f.repo.root().join(MANIFEST)).unwrap();
+        let mut undos = Vec::new();
+        for step in 0..12 {
+            let current = fs::read_to_string(f.repo.root().join("ms/original.md")).unwrap();
+            let offset = current.char_indices().last().unwrap().0;
+            let mut change = split_change(&f, &current, offset);
+            if let DraftingChange::SplitScene { path, .. } = &mut change {
+                *path = format!("ms/suffix-{step}.md");
+            }
+            undos.push(f.apply(change));
+            let state = f.repo.load_drafting().unwrap();
+            let assembled: String = state
+                .scenes
+                .iter()
+                .map(|scene| fs::read_to_string(f.repo.root().join(&scene.path)).unwrap())
+                .collect();
+            assert_eq!(assembled, text);
+        }
+        let state = f.repo.load_drafting().unwrap();
+        let reorder_undo = f.apply(DraftingChange::ReorderScene {
+            scene_id: state.scenes[0].id.clone(),
+            before_id: None,
+            group_id: None,
+        });
+        assert_eq!(
+            f.repo
+                .undo_drafting(undos.last().unwrap(), &f.recovery)
+                .unwrap_err(),
+            Error::DraftingChanged
+        );
+        f.repo.undo_drafting(&reorder_undo, &f.recovery).unwrap();
+        for undo in undos.iter().rev() {
+            f.repo.undo_drafting(undo, &f.recovery).unwrap();
+        }
+        assert_eq!(
+            fs::read_to_string(f.repo.root().join("ms/original.md")).unwrap(),
+            text
+        );
+        assert_eq!(
+            fs::read(f.repo.root().join(MANIFEST)).unwrap(),
+            original_manifest
+        );
+    }
+
+    #[test]
+    fn split_generated_and_legacy_authority_is_rechecked_at_apply() {
+        for (authority, error) in [
+            (
+                r#"{"schema_version":1,"project":"Old","volumes":[],"sources":[{"path":"original.md"}]}"#,
+                Error::ReadOnly,
+            ),
+            (
+                r#"{"schema_version":1,"project":"Old","volumes":[{"number":1,"title":"Volume","directory":"v","chapters":[{"number":1,"title":"Chapter","directory":"v/c","source":"generated.md","scenes":["original.md"]}]}]}"#,
+                Error::LegacySceneMove,
+            ),
+        ] {
+            let f = Fixture::new();
+            let text = "first second";
+            f.put("ms/original.md", text);
+            f.initialize();
+            let plan = f.preview(split_change(&f, text, 6)).unwrap();
+            let change = split_change(&f, text, 6);
+            f.put("ms/scene-manifest.json", authority);
+            assert_eq!(f.preview(change).unwrap_err(), error);
+            assert_eq!(
+                f.repo.apply_drafting(&plan, &f.recovery).unwrap_err(),
+                error
+            );
+            assert_eq!(
+                fs::read_to_string(f.repo.root().join("ms/original.md")).unwrap(),
+                text
+            );
+            assert!(!f.repo.root().join("ms/suffix.md").exists());
+        }
+    }
+
+    #[test]
+    fn split_undo_failure_and_interruption_preserve_post_split_state() {
+        for completed in 1..=3 {
+            let f = Fixture::new();
+            f.put("ms/original.md", "first second");
+            f.initialize();
+            let undo = f.apply(split_change(&f, "first second", 6));
+            FAIL_AFTER_EDIT.with(|slot| slot.set(Some(completed)));
+            let result = f.repo.undo_drafting(&undo, &f.recovery);
+            FAIL_AFTER_EDIT.with(|slot| slot.set(None));
+            assert_eq!(result.unwrap_err(), Error::Io);
+            assert_eq!(
+                fs::read_to_string(f.repo.root().join("ms/original.md")).unwrap(),
+                "first "
+            );
+            assert_eq!(
+                fs::read_to_string(f.repo.root().join("ms/suffix.md")).unwrap(),
+                "second"
+            );
+            let plan = &undo.plan;
+            let journal = Journal {
+                schema_version: 1,
+                repository_key: f.repo.project_key(),
+                id: plan.preview.id.clone(),
+                edits: plan.edits.clone(),
+            };
+            f.recovery
+                .with_clean_paths(&f.repo, &plan.recovery_paths, || {
+                    f.repo.write_journal(&journal, &f.recovery)
+                })
+                .unwrap();
+            for edit in plan.edits.iter().take(completed) {
+                f.repo.write_transition(edit).unwrap();
+            }
+            let rollback = f.preview(DraftingChange::RecoverInterrupted {}).unwrap();
+            f.repo.apply_drafting(&rollback, &f.recovery).unwrap();
+            assert_eq!(
+                fs::read_to_string(f.repo.root().join("ms/original.md")).unwrap(),
+                "first "
+            );
+            assert_eq!(
+                fs::read_to_string(f.repo.root().join("ms/suffix.md")).unwrap(),
+                "second"
+            );
+            assert_eq!(f.repo.load_drafting().unwrap().scenes.len(), 2);
+        }
+    }
+
+    #[test]
+    fn split_failure_rolls_back_each_transition_and_index() {
+        for after in 1..=3 {
+            let f = Fixture::new();
+            let text = "first—\r\nsecond🐾";
+            f.put("ms/original.md", text);
+            f.initialize();
+            let index = fs::read(f.repo.root().join(MANIFEST)).unwrap();
+            let plan = f
+                .preview(split_change(&f, text, text.find("second").unwrap()))
+                .unwrap();
+            FAIL_AFTER_EDIT.with(|slot| slot.set(Some(after)));
+            let result = f.repo.apply_drafting(&plan, &f.recovery);
+            FAIL_AFTER_EDIT.with(|slot| slot.set(None));
+            assert_eq!(result.unwrap_err(), Error::Io);
+            assert_eq!(
+                fs::read_to_string(f.repo.root().join("ms/original.md")).unwrap(),
+                text
+            );
+            assert_eq!(fs::read(f.repo.root().join(MANIFEST)).unwrap(), index);
+            assert!(!f.repo.root().join("ms/suffix.md").exists());
+            assert!(!f.repo.root().join(JOURNAL).exists());
+        }
+    }
+
+    #[test]
+    fn split_interruption_rolls_back_and_journal_rejects_non_lossless_replacement() {
+        for completed in 1..=3 {
+            let f = Fixture::new();
+            let text = "first second";
+            f.put("ms/original.md", text);
+            f.initialize();
+            let plan = f.preview(split_change(&f, text, 6)).unwrap();
+            let journal = Journal {
+                schema_version: 1,
+                repository_key: f.repo.project_key(),
+                id: plan.preview.id.clone(),
+                edits: plan.edits.clone(),
+            };
+            validate_journal(&journal, &f.repo.project_key()).unwrap();
+            let mut tampered = journal.clone();
+            tampered.edits[1].after.as_mut().unwrap().text = "rewritten".into();
+            assert_eq!(
+                validate_journal(&tampered, &f.repo.project_key()),
+                Err(Error::UntrustedTransaction)
+            );
+            f.recovery
+                .with_clean_paths(&f.repo, &plan.recovery_paths, || {
+                    f.repo.write_journal(&journal, &f.recovery)
+                })
+                .unwrap();
+            for edit in plan.edits.iter().take(completed) {
+                f.repo.write_transition(edit).unwrap();
+            }
+            let rollback = f.preview(DraftingChange::RecoverInterrupted {}).unwrap();
+            f.repo.apply_drafting(&rollback, &f.recovery).unwrap();
+            assert_eq!(
+                fs::read_to_string(f.repo.root().join("ms/original.md")).unwrap(),
+                text
+            );
+            assert!(!f.repo.root().join("ms/suffix.md").exists());
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn portable_permission_bits_preserve_every_allowed_mode() {
