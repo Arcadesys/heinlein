@@ -28,3 +28,29 @@ Before promoting from draft: complete native CI/build, then open an actual local
 checkout on macOS, cancel/reopen the picker, select a recent folder, browse both
 views, open each Consequences scene, and verify keyboard/VoiceOver behavior.
 Writing/editing and save-recovery remain outside this pass.
+
+# Pass 2 validation
+
+2026-10-15 UTC, fresh cloud checkout based on main `16d88b6` (PR15).
+
+- Rust repository-core: 21 tests passed, one private fixture check ignored;
+  strict core clippy and formatting passed
+- Renderer: 35 tests passed across five files; TypeScript and production Vite
+  build passed. Vite reports a non-failing 545.75 kB chunk-size warning
+- Tests exercise expected-hash saves, no-op bytes, stale/external revisions,
+  failed writes, repeated saves, generated-source protection, dirty navigation,
+  save-and-continue double actions, typing during save, close synchronization,
+  undo/redo/find, and exact saved mixed-newline restoration
+- Existing Python suite: 33 passed, 5 skipped, same four Chromium failures as
+  pass-1/base evidence above. No Python publisher or private manuscript changed
+- Native cargo check remains blocked before host compilation by missing
+  `gobject-2.0` >= 2.70 pkg-config development package
+- Actual Chromium renderer preview attempted; browser failed at startup with
+  `socket() failed: Operation not permitted`. No new screenshot was produced
+- Native macOS/Linux runtime, production CSP/visual layout, actual keyboard,
+  screen reader, picker, and OS close interactions remain unverified
+
+Independent review found and repaired save/dialog navigation and close-IPC races,
+CodeMirror production style policy, saved newline restoration, and PR15 font
+fallback wiring. Final source review found no remaining blocking code findings.
+All save tests use synthetic/temp fixtures. No source manuscripts are included.

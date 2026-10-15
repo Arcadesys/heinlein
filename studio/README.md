@@ -1,6 +1,6 @@
-# Heinlein Studio: repository browser (pass 1)
+# Heinlein Studio: local Markdown editing (pass 2)
 
-An additive **read-only** native desktop foundation. Open a local checkout or
+An additive native desktop editor with explicit local saves. Open a local checkout or
 folder, browse its files, and use a scene manifest to navigate the manuscript.
 The existing Python publisher and its CLI remain unchanged.
 
@@ -32,7 +32,7 @@ supported. Unsupported or invalid manifests produce an error, never a migration.
 
 Click a document to preview its exact UTF-8 source. YAML frontmatter is shown
 separately as source metadata, without parsing/reformatting it or executing tags.
-Generated compatibility sources are labeled. Every preview is read-only.
+Markdown scenes open in a plain-source editor with Undo, Redo, Find and explicit Save (Cmd/Ctrl+S). Generated compatibility sources remain read-only. Unsaved changes prompt before navigation and close. Conflicts and write errors retain your buffer.
 Large type, visible keyboard focus, semantic controls, and a high-contrast palette
 are provided. Nothing is sent to an AI provider or remote service.
 
@@ -59,8 +59,8 @@ macOS accessibility, or physical keyboard/screen-reader behavior.
 
 ## Boundaries
 
-See [the pass-1 decision](../docs/architecture/studio-pass-1.md). There is no
-editor, autosave, agent grant, approval, publication command, MCP server, or
-release machinery in this milestone. Read-only browsing does not implement the
+See [pass 2](../docs/architecture/studio-pass-2.md) and [the pass-1 decision](../docs/architecture/studio-pass-1.md). There is no
+autosave, crash recovery, agent grant, publication command, MCP server, or
+release machinery in this milestone. Local editing does not implement the
 future authenticated author-command protocol. Windows fails closed pending a
 handle-based filesystem implementation and equivalent tests.

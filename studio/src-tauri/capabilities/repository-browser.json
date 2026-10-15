@@ -1,6 +1,21 @@
 {
   "identifier": "repository-browser",
-  "description": "Bundled main window can request native folder selection and bounded read-only browsing. It may also list installed font family names for the appearance settings. No filesystem, shell, network, or author-write plugin permissions.",
-  "windows": ["main"],
-  "permissions": ["allow-pick-repository", "allow-recent-repositories", "allow-open-recent-repository", "allow-list-directory", "allow-read-document", "allow-load-manuscript", "allow-list-system-fonts"]
+  "description": "Bundled main window: bounded repository browsing, explicit revision-guarded Markdown saves, unsaved-change close protection and appearance fonts. No generic filesystem, shell, network or editorial approval permissions.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "allow-pick-repository",
+    "allow-recent-repositories",
+    "allow-open-recent-repository",
+    "allow-list-directory",
+    "allow-read-document",
+    "allow-load-manuscript",
+    "allow-list-system-fonts",
+    "allow-save-document",
+    "allow-set-unsaved-changes",
+    "allow-request-close",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
 }

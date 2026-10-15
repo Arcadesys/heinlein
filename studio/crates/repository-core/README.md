@@ -1,7 +1,7 @@
-# Read-only repository core (pass 1)
+# Repository core (explicit scene saves)
 
-`repository-core` is a native-host library. It has no write, patch, approval, grant,
-release, publishing, network, shell, Git mutation, or model-provider API. Selecting
+`repository-core` is a native-host library. It supports explicit revision-guarded Markdown draft saves, but has no patch,
+approval, grant, release, publishing, network, shell, Git mutation, or model-provider API. Selecting
 a repository does not import, copy, or alter its manuscript files.
 
 ## API
@@ -11,7 +11,9 @@ a repository does not import, copy, or alter its manuscript files.
 - `list(relative_directory)` returns directory-first sorted `Entry` values; `""`
   denotes the root
 - `read(relative_document)` returns exact UTF-8 text and byte count, raw frontmatter
-  interior (JSON or YAML, without interpretation), and a compatibility-source flag
+  interior (JSON or YAML, without interpretation), SHA-256 `contentHash`, and a compatibility-source flag
+- `save(relative_document, expected_hash, text)` atomically replaces an existing
+  non-generated Markdown file after checking the loaded revision
 - `discover()` returns sorted repository-relative `scene-manifest.json` paths
 - `manuscript(relative_manifest)` validates schema version 1, preserves volume,
   chapter and scene array order, and returns repository-relative paths
@@ -82,3 +84,31 @@ frontmatter availability and source classification. The fixture is not bundled.
 Synthetic tests cover raw CRLF/Unicode preservation, traversal, excluded paths,
 nested ignores, symlinks, a concurrent symlink replacement, FIFO rejection,
 binary/oversize reads, bounded listings/depth and manifest ordering/validation.
+
+## Save contract and limits
+
+Saves accept `.md` and `.markdown` only, apply all browsing path/content guards,
+and never create missing source documents. Generated compatibility sources are
+protected by both `sources[].path` and chapter `source` declarations. Ancestor
+manifests are checked even if ignored; malformed or unknown schemas deny writes.
+No frontmatter parsing, Markdown serialization, newline normalization, BOM removal,
+or editorial transformation occurs. Unchanged text returns without writing or
+changing file metadata. Stale hashes fail even for otherwise unchanged requests.
+
+The Core serializes its saves, stages exact UTF-8 bytes in an exclusive, mode-0600
+same-directory temporary through a held no-follow directory descriptor, restores
+the original permission bits, syncs the file, rechecks source hash and inode,
+then renames and syncs the parent. Read-only source modes are respected. A failure
+before rename leaves the source untouched and cleans the temporary. An error
+syncing the directory after rename is reported distinctly as durability uncertain:
+the replacement has occurred and the user must reload before retrying. No backup,
+crash-recovery journal, autosave, revision history, ACL/xattr preservation or Windows
+write support is claimed. Interrupted processes may leave a hidden temporary.
+
+The final hash/inode check detects observed external edits, including edits during
+staging. This is not an OS-wide compare-and-swap: another process can write between
+the final check and rename. No protection against a malicious process controlling
+the same OS account or moving held directories is claimed. No-op, repeated CRLF
+and frontmatter saves, stale bases, generated sources, unsafe paths, read-only
+files, injected staging failure, and staging-time external edits are tested with
+synthetic files only; private manuscript fixtures are never written by tests.

@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Heinlein Studio \u00b7 Read-only repository browser",
+        "title": "Heinlein Studio \u00b7 Local Markdown editor",
         "width": 1200,
         "height": 850,
         "minWidth": 650,
@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'",
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'",
       "capabilities": [
         "repository-browser"
       ],

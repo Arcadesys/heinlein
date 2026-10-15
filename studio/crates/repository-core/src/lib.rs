@@ -1,4 +1,4 @@
-//! Read-only repository access. Native hosts choose roots; renderers receive relative paths only.
+//! Bounded repository access and explicit, revision-guarded Markdown saves. Native hosts choose roots; renderers receive relative paths only.
 //! Unix descriptor-relative opens reject every symlink component, including concurrent swaps.
 #[cfg(unix)]
 use rustix::{
@@ -6,10 +6,12 @@ use rustix::{
     fs::{open, openat, Mode, OFlags},
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     fmt,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 pub const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -33,6 +35,9 @@ pub enum Error {
     InvalidManifest,
     Io,
     UnsupportedPlatform,
+    Conflict,
+    ReadOnly,
+    SaveUncertain,
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -46,10 +51,13 @@ impl fmt::Display for Error {
             Self::TooLarge => "File exceeds the read limit",
             Self::LimitExceeded => "Repository browsing limit exceeded",
             Self::InvalidManifest => "Scene manifest is invalid or unsupported",
-            Self::Io => "Repository could not be read",
-            Self::UnsupportedPlatform => {
-                "Read-only repository access currently requires macOS or Linux"
+            Self::Io => "Repository I/O failed; the draft was not saved",
+            Self::Conflict => "Document changed on disk; reload before saving",
+            Self::ReadOnly => "Only non-generated Markdown documents can be saved",
+            Self::SaveUncertain => {
+                "Document replaced, but durability could not be confirmed; reload before retrying"
             }
+            Self::UnsupportedPlatform => "Repository access currently requires macOS or Linux",
         })
     }
 }
@@ -68,6 +76,7 @@ pub struct Entry {
 pub struct Document {
     pub path: String,
     pub text: String,
+    pub content_hash: String,
     pub size_bytes: u64,
     pub frontmatter: Option<String>,
     pub generated_compatibility: bool,
@@ -132,6 +141,7 @@ struct RawSource {
 
 pub struct Repository {
     root: PathBuf,
+    save_gate: Mutex<()>,
     #[cfg(unix)]
     fd: OwnedFd,
 }
@@ -263,7 +273,11 @@ impl Repository {
             }
         }
         let root = path.to_path_buf();
-        Ok(Self { root, fd })
+        Ok(Self {
+            root,
+            fd,
+            save_gate: Mutex::new(()),
+        })
     }
     #[cfg(not(unix))]
     pub fn open(_path: impl AsRef<Path>) -> Result<Self> {
@@ -409,10 +423,177 @@ impl Repository {
         Ok(Document {
             path: path.into(),
             size_bytes: text.len() as u64,
+            content_hash: content_hash(&text),
             text,
             frontmatter,
             generated_compatibility,
         })
+    }
+    /// Save only the exact author-provided UTF-8 bytes. No Markdown/YAML reserialization.
+    /// The native host serializes access; the mutex additionally serializes callers of this core.
+    pub fn save(&self, path: &str, expected_hash: &str, text: &str) -> Result<Document> {
+        let _save = self.save_gate.lock().map_err(|_| Error::Io)?;
+        self.save_inner(path, expected_hash, text, || Ok(()))
+    }
+    fn save_inner(
+        &self,
+        path: &str,
+        expected_hash: &str,
+        text: &str,
+        before_commit: impl FnOnce() -> Result<()>,
+    ) -> Result<Document> {
+        self.allowed(path, false)?;
+        if !matches!(
+            Path::new(path)
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("md" | "markdown")
+        ) {
+            return Err(Error::ReadOnly);
+        }
+        if text.len() as u64 > MAX_FILE_BYTES {
+            return Err(Error::TooLarge);
+        }
+        if text
+            .bytes()
+            .any(|b| b == 0 || (b < 32 && !matches!(b, 9 | 10 | 13)))
+        {
+            return Err(Error::UnsupportedText);
+        }
+        // Unknown or malformed nearby manifest metadata is not permission to mutate.
+        self.check_write_manifests(path)?;
+        let current = self.read(path)?;
+        if current.generated_compatibility {
+            return Err(Error::ReadOnly);
+        }
+        if current.content_hash != expected_hash {
+            return Err(Error::Conflict);
+        }
+        if current.text == text {
+            return Ok(current);
+        }
+        self.replace(path, expected_hash, text, before_commit)?;
+        Ok(Document {
+            path: path.into(),
+            text: text.into(),
+            content_hash: content_hash(text),
+            size_bytes: text.len() as u64,
+            frontmatter: frontmatter(text),
+            generated_compatibility: false,
+        })
+    }
+    fn check_write_manifests(&self, path: &str) -> Result<()> {
+        let mut base = parent(path);
+        loop {
+            let manifest = join(base, "scene-manifest.json")?;
+            // Ignore rules cannot hide authority metadata from the write boundary.
+            match self.raw(&manifest, MAX_MANIFEST_BYTES, true) {
+                Ok(text) => {
+                    let raw: RawManifest =
+                        serde_json::from_str(&text).map_err(|_| Error::InvalidManifest)?;
+                    if raw.schema_version != 1 {
+                        return Err(Error::InvalidManifest);
+                    }
+                    if raw
+                        .sources
+                        .iter()
+                        .any(|s| join(base, &s.path).as_deref() == Ok(path))
+                        || raw
+                            .volumes
+                            .iter()
+                            .flat_map(|v| &v.chapters)
+                            .any(|c| join(base, &c.source).as_deref() == Ok(path))
+                    {
+                        return Err(Error::ReadOnly);
+                    }
+                }
+                Err(Error::NotFound) => {}
+                Err(e) => return Err(e),
+            }
+            if base.is_empty() {
+                break;
+            }
+            base = parent(base);
+        }
+        Ok(())
+    }
+    #[cfg(unix)]
+    fn replace(
+        &self,
+        path: &str,
+        expected_hash: &str,
+        text: &str,
+        before_commit: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        use rustix::fs::{fchmod, renameat, unlinkat, AtFlags};
+        use std::os::unix::fs::MetadataExt;
+        let directory = self.handle(parent(path), false)?;
+        let name = parts(path)?.pop().ok_or(Error::InvalidPath)?;
+        let original = self.handle(path, false)?;
+        let metadata = original.metadata().map_err(|_| Error::Io)?;
+        if !metadata.is_file() {
+            return Err(Error::NotFile);
+        }
+        // Do not let atomic rename silently bypass the original file's read-only mode.
+        if metadata.mode() & 0o222 == 0 {
+            return Err(Error::Denied);
+        }
+        let temporary = format!(".heinlein-save-{}.tmp", uuid::Uuid::new_v4());
+        let fd = openat(
+            &directory,
+            temporary.as_str(),
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_bits_truncate(0o600),
+        )
+        .map_err(errno)?;
+        let mut file = std::fs::File::from(fd);
+        let result = (|| {
+            file.write_all(text.as_bytes()).map_err(|_| Error::Io)?;
+            fchmod(&file, Mode::from_bits_truncate(metadata.mode() & 0o777)).map_err(errno)?;
+            file.sync_all().map_err(|_| Error::Io)?;
+            before_commit()?;
+            self.allowed(path, false)?;
+            self.check_write_manifests(path)?;
+            let resolved_directory = self
+                .handle(parent(path), false)?
+                .metadata()
+                .map_err(|_| Error::Io)?;
+            let held_directory = directory.metadata().map_err(|_| Error::Io)?;
+            if (resolved_directory.dev(), resolved_directory.ino())
+                != (held_directory.dev(), held_directory.ino())
+            {
+                return Err(Error::Conflict);
+            }
+            // Recheck after staging, immediately before the atomic replacement.
+            let latest = self.read(path)?;
+            let latest_meta = self
+                .handle(path, false)?
+                .metadata()
+                .map_err(|_| Error::Io)?;
+            if latest.content_hash != expected_hash
+                || (latest_meta.dev(), latest_meta.ino()) != (metadata.dev(), metadata.ino())
+            {
+                return Err(Error::Conflict);
+            }
+            renameat(&directory, temporary.as_str(), &directory, name).map_err(errno)?;
+            directory.sync_all().map_err(|_| Error::SaveUncertain)?;
+            Ok(())
+        })();
+        // After rename this name is absent. Before rename, failures never touch the original.
+        let _ = unlinkat(&directory, temporary.as_str(), AtFlags::empty());
+        result
+    }
+    #[cfg(not(unix))]
+    fn replace(
+        &self,
+        _path: &str,
+        _expected_hash: &str,
+        _text: &str,
+        _before_commit: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        Err(Error::UnsupportedPlatform)
     }
     fn is_generated(&self, path: &str) -> Result<bool> {
         let mut base = parent(path);
@@ -560,4 +741,43 @@ fn frontmatter(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn content_hash(text: &str) -> String {
+    format!("{:x}", Sha256::digest(text.as_bytes()))
+}
+
+#[cfg(all(test, unix))]
+mod save_failure_tests {
+    use super::*;
+    #[test]
+    fn staged_write_failure_leaves_original_and_cleans_temporary() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let path = dir.path().join("scene.md");
+        std::fs::write(&path, "Original—safe.\r\n").unwrap();
+        let repo = Repository::open(dir.path()).unwrap();
+        let doc = repo.read("scene.md").unwrap();
+        assert_eq!(
+            repo.save_inner("scene.md", &doc.content_hash, "Edited", || Err(Error::Io))
+                .unwrap_err(),
+            Error::Io
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), doc.text);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+    #[test]
+    fn external_edit_during_staging_is_not_overwritten() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let path = dir.path().join("scene.md");
+        std::fs::write(&path, "Original").unwrap();
+        let repo = Repository::open(dir.path()).unwrap();
+        let doc = repo.read("scene.md").unwrap();
+        let result = repo.save_inner("scene.md", &doc.content_hash, "Edited", || {
+            std::fs::write(&path, "External").unwrap();
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err(), Error::Conflict);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "External");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 }
