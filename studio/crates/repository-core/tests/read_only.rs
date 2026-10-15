@@ -208,16 +208,12 @@ fn real_archive_acceptance() {
 
 #[test]
 fn rejects_fifo_without_blocking() {
-    use rustix::fs::{mknodat, FileType, Mode, CWD};
     let t = fixture();
-    mknodat(
-        CWD,
-        t.path().join("pipe.md"),
-        FileType::Fifo,
-        Mode::RUSR | Mode::WUSR,
-        0,
-    )
-    .unwrap();
+    assert!(std::process::Command::new("mkfifo")
+        .arg(t.path().join("pipe.md"))
+        .status()
+        .unwrap()
+        .success());
     let r = repo(&t);
     assert_eq!(r.read("pipe.md").unwrap_err(), Error::NotFile);
     assert!(!r.list("").unwrap().iter().any(|e| e.name == "pipe.md"));
