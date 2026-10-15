@@ -5,9 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
 };
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -43,6 +46,8 @@ struct Selected {
 }
 #[derive(Default)]
 struct BrowserState {
+    unsaved_changes: AtomicBool,
+    close_authorized: AtomicBool,
     selection_gate: Mutex<()>,
     selected: Mutex<Option<Selected>>,
     recents: Mutex<RecentStore>,
@@ -264,6 +269,55 @@ async fn read_document(
     .map_err(|e| e.to_string())?
 }
 #[tauri::command]
+async fn save_document(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    relative_path: String,
+    expected_hash: String,
+    text: String,
+) -> Result<Document, String> {
+    check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        with_repository(&app, &repository_id, |r| {
+            r.save(&relative_path, &expected_hash, &text)
+                .map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn set_unsaved_changes(
+    window: tauri::WebviewWindow,
+    state: State<'_, BrowserState>,
+    dirty: bool,
+) -> Result<(), String> {
+    check_window(&window)?;
+    state.unsaved_changes.store(dirty, Ordering::SeqCst);
+    Ok(())
+}
+#[tauri::command]
+fn request_close(
+    window: tauri::WebviewWindow,
+    state: State<'_, BrowserState>,
+    discard: bool,
+) -> Result<(), String> {
+    check_window(&window)?;
+    if discard {
+        state.unsaved_changes.store(false, Ordering::SeqCst);
+    }
+    if state.unsaved_changes.load(Ordering::SeqCst) {
+        return Err("Save or discard changes before closing".into());
+    }
+    state.close_authorized.store(true, Ordering::SeqCst);
+    if let Err(error) = window.close() {
+        state.close_authorized.store(false, Ordering::SeqCst);
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+#[tauri::command]
 async fn load_manuscript(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
@@ -309,12 +363,30 @@ fn main() {
                 load_recents(&path);
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Every OS close goes through the renderer guard, even if its most
+                // recent dirty notification is still queued. Only request_close
+                // grants a one-shot bypass after that guard completes.
+                if !window
+                    .state::<BrowserState>()
+                    .close_authorized
+                    .swap(false, Ordering::SeqCst)
+                {
+                    api.prevent_close();
+                    let _ = window.emit("close-requested", ());
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             pick_repository,
             recent_repositories,
             open_recent_repository,
             list_directory,
             read_document,
+            save_document,
+            set_unsaved_changes,
+            request_close,
             load_manuscript,
             list_system_fonts
         ])

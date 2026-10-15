@@ -1,3 +1,4 @@
+import { createEditor } from './editor';
 import type { LocalCore, RepositorySession, Manuscript, Document } from './localCore';
 import { FONT_ROLES, applyChoices, cleanFamily, loadChoices, saveChoices, type FontChoices } from './fonts';
 import { ZOOM_STEPS, loadZoom, saveZoom, nextZoom, shortcutAction, type ZoomAction } from './zoom';
@@ -21,6 +22,70 @@ let zoomKeyHandler: ((event: KeyboardEvent) => void) | null = null;
 
 export function mountStudio(root: HTMLElement, core: LocalCore) {
   let generation = 0;
+  let opened: Document | null = null;
+  let editor: ReturnType<typeof createEditor> | null = null;
+  let dirty = false;
+  let saving = false;
+  let edits = 0;
+  let saveButton: HTMLButtonElement | null = null;
+  let dirtyBadge: HTMLElement | null = null;
+  let guardPending: Promise<boolean> | null = null;
+  let closeUnlisten: (() => void) | null = null;
+  let dirtySync = Promise.resolve();
+  function setDirty(value: boolean) {
+    dirty = value;
+    if (dirtyBadge) dirtyBadge.textContent = value ? 'Unsaved changes' : 'Saved locally';
+    if (saveButton) saveButton.disabled = saving || !dirty;
+    dirtySync = dirtySync.then(() => core.setUnsavedChanges(value)).catch(error => {
+      status.textContent = `Close protection unavailable: ${String(error)}. Keep this window open until you save.`;
+      status.classList.add('error');
+    });
+  }
+  function allowLeave(): Promise<boolean> {
+    if (saving) { status.textContent = 'Wait for the current save to finish.'; return Promise.resolve(false); }
+    if (!dirty) return Promise.resolve(true);
+    if (guardPending) return Promise.resolve(false);
+    const prompt = el('dialog', '', 'appearance-dialog');
+    prompt.setAttribute('aria-label', 'Unsaved changes');
+    prompt.append(el('h2', 'Keep your changes?'), el('p', 'This scene has unsaved changes. Save them before leaving, or discard them.'));
+    guardPending = new Promise(resolve => {
+      let settled = false;
+      let committing = false;
+      const finish = (allowed: boolean) => { if (settled || committing) return; settled = true; prompt.remove(); guardPending = null; resolve(allowed); };
+      prompt.append(button('Keep editing', () => finish(false)), button('Discard changes', () => finish(true)), button('Save and continue', () => { if (committing || settled) return; committing = true; prompt.querySelectorAll('button').forEach(control => { control.disabled = true; }); void saveCurrent().then(ok => { committing = false; finish(ok); }); }, 'primary'));
+      prompt.addEventListener('cancel', event => { event.preventDefault(); finish(false); });
+      root.append(prompt);
+      if (prompt.showModal) prompt.showModal(); else prompt.setAttribute('open', '');
+      prompt.querySelector('button')?.focus();
+    });
+    return guardPending;
+  }
+  async function saveCurrent(): Promise<boolean> {
+    if (!opened || !editor || !repository || saving) return false;
+    if (!dirty) return true;
+    saving = true;
+    saveButton!.disabled = true;
+    const activeEditor = editor;
+    const activeRepository = repository;
+    const text = editor.text();
+    const doc = opened;
+    status.classList.remove('error'); status.textContent = `Saving ${doc.path}…`;
+    try {
+      const saved = await core.saveDocument(repository.id, doc.path, doc.contentHash, text);
+      if (editor !== activeEditor || opened !== doc || repository !== activeRepository) return false;
+      opened = saved;
+      editor.markSaved(saved.text);
+      setDirty(editor.text() !== saved.text);
+      status.textContent = dirty ? 'Saved the submitted revision. Newer edits are still unsaved.' : `Saved ${saved.path} locally`;
+      return !dirty;
+    } catch (error) {
+      status.textContent = `Save failed: ${String(error)}. Your edits remain here. Compare the file on disk before retrying a conflict.`;
+      status.classList.add('error');
+      return false;
+    } finally { saving = false; if (saveButton) saveButton.disabled = !dirty; }
+  }
+  const unload = (event: BeforeUnloadEvent) => { if (dirty || saving) { event.preventDefault(); event.returnValue = ''; } };
+  window.addEventListener('beforeunload', unload);
   let selecting = false;
   let repository: RepositorySession | null = null;
   let directoryRequest = 0;
@@ -48,7 +113,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   appearance.setAttribute('aria-haspopup', 'dialog');
   actions.append(zoomGroup, appearance, open);
   header.append(brand, actions);
-  const banner = el('p', 'READ-ONLY PREVIEW · Local files stay on your computer', 'safety-banner');
+  const banner = el('p', 'LOCAL DRAFTING · Save explicitly · No AI or network required', 'safety-banner');
   const status = el('p', 'Choose a repository folder to begin.', 'status');
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
@@ -100,7 +165,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   layout.append(files, manuscriptPane, preview);
   setCollapsed('files', Boolean(collapsed.files));
   setCollapsed('manuscript', Boolean(collapsed.manuscript));
-  const footer = el('footer', 'Pass 1 · Repository browser · No editing, publishing, or AI actions');
+  const footer = el('footer', 'Pass 2 · Local Markdown editing · Save with Cmd/Ctrl+S');
   root.replaceChildren(header, banner, recent, status, layout, footer);
 
   let zoom = loadZoom();
@@ -191,6 +256,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   applyZoom(false);
 
   function resetPreview() {
+    editor?.destroy(); editor = null; opened = null; setDirty(false);
     preview.replaceChildren(el('p', 'SOURCE PREVIEW', 'eyebrow'), el('h2', 'A quiet place to read'), el('p', 'Select a scene or file. Source text is displayed exactly as stored, including Markdown and frontmatter.', 'empty'));
   }
   function reportError(error: unknown) {
@@ -210,7 +276,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     } catch (error) { reportError(error); }
   }
   async function selectRepository(select: () => Promise<RepositorySession | null>) {
-    if (selecting) return;
+    if (selecting || !await allowLeave() || selecting) return;
     selecting = true;
     const current = ++generation;
     open.disabled = true;
@@ -259,19 +325,22 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     } catch (error) { if (current === generation && request === directoryRequest) reportError(error); }
   }
   async function showDocument(path: string) {
+    if (!await allowLeave()) return;
+    const editRevision = edits;
     const current = generation;
     const request = ++documentRequest;
     status.classList.remove('error');
     status.textContent = `Reading ${path}…`;
-    preview.replaceChildren(el('p', 'SOURCE PREVIEW', 'eyebrow'), el('h2', 'Reading source…'), el('p', path, 'path'));
+    // Keep the current buffer visible until a successful replacement read.
     try {
       const doc = await core.readDocument(repository!.id, path);
-      if (current !== generation || request !== documentRequest) return;
+      if (current !== generation || request !== documentRequest || editRevision !== edits) return;
       renderDocument(doc);
       status.textContent = `Read ${doc.path} · ${doc.sizeBytes.toLocaleString()} bytes`;
     } catch (error) { if (current === generation && request === documentRequest) reportError(error); }
   }
   function renderDocument(doc: Document) {
+    editor?.destroy(); editor = null; opened = doc; saveButton = null; dirtyBadge = null; setDirty(false);
     const title = el('h2', basename(doc.path));
     title.tabIndex = -1;
     const source = el('p', doc.path, 'path');
@@ -283,6 +352,16 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     text.setAttribute('aria-label', 'Read-only raw source');
     // Never interpret manuscript HTML, scripts, links, or embedded instructions.
     preview.replaceChildren(el('p', 'SOURCE PREVIEW', 'eyebrow'), title, source, badge, metadata, text);
+    if (!doc.generatedCompatibility && /\.(md|markdown)$/i.test(doc.path)) {
+      badge.textContent = 'Local working draft · Plain Markdown';
+      const toolbar = el('div', '', 'editor-toolbar');
+      saveButton = button('Save', () => { void saveCurrent(); }, 'primary'); saveButton.disabled = true;
+      dirtyBadge = el('span', 'Saved locally', 'badge'); dirtyBadge.setAttribute('role', 'status');
+      toolbar.append(saveButton, button('Undo', () => editor?.undo()), button('Redo', () => editor?.redo()), button('Find', () => editor?.find()), dirtyBadge);
+      const host = el('div', '', 'markdown-editor');
+      text.replaceWith(toolbar, host);
+      editor = createEditor(host, doc.text, raw => { edits++; setDirty(raw !== opened?.text); }, () => { void saveCurrent(); });
+    }
     title.focus({ preventScroll: true });
   }
   async function showManuscript(path: string) {
@@ -317,10 +396,23 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       outline.append(group);
     }
   }
-  if (core.available()) void refreshRecent();
+  if (core.available()) {
+    void refreshRecent();
+    void core.onCloseRequested(() => {
+      const revision = edits;
+      void allowLeave().then(async allowed => {
+        if (!allowed || revision !== edits || saving) return;
+        root.inert = true;
+        try { await dirtySync; if (revision === edits && !saving) await core.requestClose(true); }
+        finally { root.inert = false; }
+      }).catch(reportError);
+    }).then(unlisten => { closeUnlisten = unlisten; }).catch(reportError);
+  }
   else {
     open.disabled = true;
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
-  return { showDirectory, showDocument, showManuscript, selectRepository };
+  return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
+    destroy: () => { editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler); }
+  };
 }

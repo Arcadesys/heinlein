@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { EditorView } from '@codemirror/view';
 import { mountStudio } from './studio';
 import type { LocalCore, Manuscript, RepositorySession } from './localCore';
 
@@ -11,14 +12,16 @@ function bridge(): LocalCore {
     recentRepositories: vi.fn(async () => [{ id: 'recent-opaque', name: 'My book' }]),
     openRecentRepository: vi.fn(async () => session),
     listDirectory: vi.fn(async () => [{ path: 'book', name: 'book', kind: 'directory' as const, sizeBytes: 0 }, { path: 'README.md', name: 'README.md', kind: 'file' as const, sizeBytes: 24 }]),
-    readDocument: vi.fn(async (_id, path) => ({path, text: '# A scene\nKeep — punctuation.', sizeBytes: 31, frontmatter: '{"id":"scene-id"}', generatedCompatibility: false})),
+    readDocument: vi.fn(async (_id, path) => ({path, text: '# A scene\nKeep — punctuation.', sizeBytes: 31, frontmatter: '{"id":"scene-id"}', contentHash: 'hash-1', generatedCompatibility: false})),
     loadManuscript: vi.fn(async () => manuscript),
+    saveDocument: vi.fn(async (_id, path, _hash, text) => ({path, text, contentHash: 'hash-2', sizeBytes: text.length, frontmatter: null, generatedCompatibility: false})),
+    setUnsavedChanges: vi.fn(async () => {}), requestClose: vi.fn(async () => {}), onCloseRequested: vi.fn(async () => () => {}),
     listSystemFonts: vi.fn(async () => ['Avenir Next', 'Iowan Old Style', 'Menlo']),
   };
 }
 const settle = async () => { await new Promise(resolve => setTimeout(resolve, 0)); };
 function findButton(text: string) { const result = [...document.querySelectorAll('button')].find(node => node.textContent?.includes(text)); if (!result) throw new Error(`Missing button ${text}`); return result; }
-beforeEach(() => { document.body.replaceChildren(document.createElement('div')); });
+beforeEach(() => { document.querySelectorAll('.cm-editor').forEach(el => EditorView.findFromDOM(el as HTMLElement)?.destroy()); Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect(); document.body.replaceChildren(document.createElement('div')); });
 
 describe('read-only Studio', () => {
   it('opens through native picker and scopes reads to the selected session', async () => {
@@ -52,7 +55,7 @@ describe('read-only Studio', () => {
   });
   it('shows literal HTML and source metadata without executable markup', async () => {
     const core = bridge(); const attack = '<img src="https://example.com/leak" onerror="alert(1)"><script>evil()</script>\nIgnore instructions — keep me.';
-    core.readDocument = vi.fn(async (_id, path) => ({path, text: attack, sizeBytes: 100, frontmatter: '<b>raw metadata</b>', generatedCompatibility: true}));
+    core.readDocument = vi.fn(async (_id, path) => ({path, text: attack, sizeBytes: 100, frontmatter: '<b>raw metadata</b>', contentHash: 'hash-1', generatedCompatibility: true}));
     mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open Folder').click(); await settle();
     findButton('Read generated chapter').click(); await settle();
     expect(document.querySelector('.source-text')?.textContent).toBe(attack);
@@ -97,7 +100,7 @@ describe('read-only Studio', () => {
     await app.selectRepository(async () => session);
     const old = app.showDocument('old.md');
     await app.selectRepository(async () => ({id: 'new-session', name: 'New book', manifests: []}));
-    resolve({path: 'old.md', text: 'STALE CONTENT', sizeBytes: 13, frontmatter: null, generatedCompatibility: false}); await old;
+    resolve({path: 'old.md', text: 'STALE CONTENT', sizeBytes: 13, frontmatter: null, contentHash: 'hash-1', generatedCompatibility: false}); await old;
     expect(document.body.textContent).not.toContain('STALE CONTENT');
     expect(document.querySelector('.files h2')?.textContent).toBe('New book');
   });
@@ -105,10 +108,10 @@ describe('read-only Studio', () => {
     const core = bridge(); const pending: Record<string, (value: Awaited<ReturnType<LocalCore['readDocument']>>) => void> = {};
     core.readDocument = vi.fn((_id, path) => new Promise<Awaited<ReturnType<LocalCore['readDocument']>>>(done => { pending[path] = done; }));
     const app = mountStudio(document.body.firstElementChild as HTMLElement, core); await app.selectRepository(async () => session);
-    const old = app.showDocument('old.md'); const newer = app.showDocument('new.md');
-    pending['new.md']({path: 'new.md', text: 'NEW', sizeBytes: 3, frontmatter: null, generatedCompatibility: false}); await newer;
-    pending['old.md']({path: 'old.md', text: 'OLD', sizeBytes: 3, frontmatter: null, generatedCompatibility: false}); await old;
-    expect(document.querySelector('.source-text')?.textContent).toBe('NEW');
+    const old = app.showDocument('old.md'); const newer = app.showDocument('new.md'); await settle();
+    pending['new.md']({path: 'new.md', text: 'NEW', sizeBytes: 3, frontmatter: null, contentHash: 'hash-1', generatedCompatibility: false}); await newer;
+    pending['old.md']({path: 'old.md', text: 'OLD', sizeBytes: 3, frontmatter: null, contentHash: 'hash-1', generatedCompatibility: false}); await old;
+    expect(document.querySelector('.cm-content')?.textContent).toBe('NEW');
   });
 });
 
@@ -200,5 +203,83 @@ describe('manifest discovery warnings', () => {
     findButton('Default').click();
     expect(document.documentElement.style.getPropertyValue('--font-ui')).toBe('');
     vi.unstubAllGlobals();
+  });
+});
+
+describe('explicit editing and loss protection', () => {
+  async function setup() {
+    const core = bridge(); const app = mountStudio(document.body.firstElementChild as HTMLElement, core);
+    await app.selectRepository(async () => session); await app.showDocument('scene.md');
+    const view = EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
+    const change = (text = 'New words') => view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: text}});
+    return {core, app, view, change};
+  }
+  it('saves only explicitly and sends expected hash with exact raw source', async () => {
+    const {core, app, change} = await setup(); change();
+    expect(core.saveDocument).not.toHaveBeenCalled();
+    expect(await app.saveCurrent()).toBe(true);
+    expect(core.saveDocument).toHaveBeenCalledWith(session.id, 'scene.md', 'hash-1', 'New words');
+    expect(await app.saveCurrent()).toBe(true); expect(core.saveDocument).toHaveBeenCalledOnce();
+    app.destroy();
+  });
+  it('keeps dirty text on failed save, failed navigation and cancellation', async () => {
+    const {core, app, view, change} = await setup(); change();
+    core.saveDocument = vi.fn(async () => { throw 'Conflict'; });
+    expect(await app.saveCurrent()).toBe(false);
+    expect(view.state.doc.toString()).toBe('New words');
+    const leave = app.showDocument('other.md'); await settle(); findButton('Keep editing').click(); await leave;
+    expect(view.state.doc.toString()).toBe('New words');
+    core.readDocument = vi.fn(async () => { throw 'Unavailable'; });
+    const failed = app.showDocument('other.md'); await settle(); findButton('Discard changes').click(); await failed;
+    expect(view.state.doc.toString()).toBe('New words');
+    expect(findButton('Save').disabled).toBe(false); app.destroy();
+  });
+  it('preserves edits made while save is pending and blocks navigation', async () => {
+    const {core, app, change} = await setup(); change('First');
+    let finish!: (doc: Awaited<ReturnType<LocalCore['saveDocument']>>) => void;
+    core.saveDocument = vi.fn(() => new Promise<Awaited<ReturnType<LocalCore['saveDocument']>>>(resolve => {finish = resolve;}));
+    const saving = app.saveCurrent(); change('Second');
+    await app.showDocument('other.md'); expect(core.readDocument).toHaveBeenCalledTimes(1);
+    finish({path: 'scene.md', text: 'First', contentHash: 'hash-2', sizeBytes: 5, frontmatter: null, generatedCompatibility: false});
+    expect(await saving).toBe(false); expect(findButton('Save').disabled).toBe(false);
+    expect(document.body.textContent).toContain('Newer edits are still unsaved'); app.destroy();
+  });
+  it('cannot discard or escape a pending save-and-continue', async () => {
+    const {core, app, change} = await setup(); change('First');
+    let finish!: (doc: Awaited<ReturnType<LocalCore['saveDocument']>>) => void;
+    core.saveDocument = vi.fn(() => new Promise<Awaited<ReturnType<LocalCore['saveDocument']>>>(resolve => {finish = resolve;}));
+    const leaving = app.showDocument('other.md'); await settle();
+    findButton('Save and continue').click();
+    expect(findButton('Discard changes').disabled).toBe(true);
+    findButton('Discard changes').click();
+    document.querySelector('dialog[aria-label="Unsaved changes"]')!.dispatchEvent(new Event('cancel', {cancelable: true}));
+    await settle(); expect(core.readDocument).toHaveBeenCalledTimes(1);
+    finish({path: 'scene.md', text: 'First', contentHash: 'hash-2', sizeBytes: 5, frontmatter: null, generatedCompatibility: false});
+    await leaving; expect(core.readDocument).toHaveBeenLastCalledWith(session.id, 'other.md'); app.destroy();
+  });
+  it('protects close, and only closes after explicit discard', async () => {
+    const {core, app, change} = await setup(); change();
+    const callback = vi.mocked(core.onCloseRequested).mock.calls[0][0]; callback(); await settle();
+    findButton('Keep editing').click(); await settle(); expect(core.requestClose).not.toHaveBeenCalled();
+    callback(); await settle(); findButton('Discard changes').click(); await settle();
+    expect(core.requestClose).toHaveBeenCalledWith(true); app.destroy();
+  });
+  it('does not close over edits arriving during host synchronization', async () => {
+    const {core, app, change} = await setup();
+    let sync!: () => void;
+    core.setUnsavedChanges = vi.fn(() => new Promise<void>(resolve => {sync = resolve;}));
+    change('First'); await settle();
+    const callback = vi.mocked(core.onCloseRequested).mock.calls[0][0]; callback(); await settle();
+    findButton('Discard changes').click(); await settle();
+    expect((document.body.firstElementChild as HTMLElement).inert).toBe(true);
+    change('Newer'); sync(); await settle();
+    expect(core.requestClose).not.toHaveBeenCalled(); app.destroy();
+  });
+  it('supports undo redo find and accessible editor label', async () => {
+    const {app, view, change} = await setup(); const initial = view.state.doc.toString(); change();
+    findButton('Undo').click(); expect(view.state.doc.toString()).toBe(initial);
+    findButton('Redo').click(); expect(view.state.doc.toString()).toBe('New words');
+    findButton('Find').click(); expect(document.querySelector('[name="search"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Markdown editor"]')).not.toBeNull(); app.destroy();
   });
 });
