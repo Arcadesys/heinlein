@@ -7,6 +7,7 @@ fn main() {
             "list_directory",
             "read_document",
             "load_manuscript",
+            "list_system_fonts",
         ]),
     ))
     .expect("Tauri configuration must be valid");

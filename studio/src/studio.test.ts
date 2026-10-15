@@ -13,6 +13,7 @@ function bridge(): LocalCore {
     listDirectory: vi.fn(async () => [{ path: 'book', name: 'book', kind: 'directory' as const, sizeBytes: 0 }, { path: 'README.md', name: 'README.md', kind: 'file' as const, sizeBytes: 24 }]),
     readDocument: vi.fn(async (_id, path) => ({path, text: '# A scene\nKeep — punctuation.', sizeBytes: 31, frontmatter: '{"id":"scene-id"}', generatedCompatibility: false})),
     loadManuscript: vi.fn(async () => manuscript),
+    listSystemFonts: vi.fn(async () => ['Avenir Next', 'Iowan Old Style', 'Menlo']),
   };
 }
 const settle = async () => { await new Promise(resolve => setTimeout(resolve, 0)); };
@@ -58,7 +59,7 @@ describe('read-only Studio', () => {
     expect(document.querySelector('.frontmatter')?.textContent).toBe('<b>raw metadata</b>');
     expect(document.querySelector('.preview img, .preview script, .preview b, .preview a')).toBeNull();
     expect(document.querySelector('.badge')?.textContent).toBe('Generated compatibility file · Read-only');
-    expect(document.querySelector('textarea, input, [contenteditable]')).toBeNull();
+    expect(document.querySelector('.workspace textarea, .workspace input, [contenteditable]')).toBeNull();
   });
   it('works without a manifest and shows empty folders', async () => {
     const core = bridge(); core.pickRepository = vi.fn(async () => ({...session, manifests: []})); core.listDirectory = vi.fn(async () => []);
@@ -144,5 +145,60 @@ describe('manifest discovery warnings', () => {
     expect(folder.disabled).toBe(false);
     folder.click(); await settle();
     expect(core.listDirectory).toHaveBeenLastCalledWith('opaque-session', 'book');
+  });
+  it('zooms text with buttons and Cmd/Ctrl shortcuts, and remembers it', async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
+    delete document.documentElement.dataset.zoom;
+    mountStudio(document.body.firstElementChild as HTMLElement, bridge());
+    expect(document.documentElement.dataset.zoom).toBe('100');
+    findButton('A+').click();
+    expect(document.documentElement.dataset.zoom).toBe('115');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '=', ctrlKey: true, cancelable: true }));
+    expect(document.documentElement.dataset.zoom).toBe('130');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '-', metaKey: true }));
+    expect(document.documentElement.dataset.zoom).toBe('115');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '-' }));
+    expect(document.documentElement.dataset.zoom).toBe('115');
+    expect(store.get('heinlein-studio-zoom-v1')).toBe('115');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '0', ctrlKey: true }));
+    expect(document.documentElement.dataset.zoom).toBe('100');
+    expect(document.querySelector('.zoom-level')?.textContent).toBe('100%');
+    vi.unstubAllGlobals();
+  });
+  it('collapses the file browser and manuscript panels and remembers it', async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
+    mountStudio(document.body.firstElementChild as HTMLElement, bridge());
+    const layout = document.querySelector('.workspace')!;
+    const toggle = document.querySelector<HTMLButtonElement>('.files .panel-toggle')!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    toggle.click();
+    expect(layout.classList.contains('files-collapsed')).toBe(true);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: '\\', ctrlKey: true }));
+    expect(layout.classList.contains('files-collapsed')).toBe(false);
+    document.querySelector<HTMLButtonElement>('.manuscript .panel-toggle')!.click();
+    expect(JSON.parse(store.get('heinlein-studio-collapsed-v1')!)).toEqual({ files: false, manuscript: true });
+    mountStudio(document.body.firstElementChild as HTMLElement, bridge());
+    expect(document.querySelector('.workspace')!.classList.contains('manuscript-collapsed')).toBe(true);
+    vi.unstubAllGlobals();
+  });
+  it('lists installed fonts in Appearance and applies a chosen family', async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
+    document.documentElement.removeAttribute('style');
+    const core = bridge(); mountStudio(document.body.firstElementChild as HTMLElement, core);
+    findButton('Appearance').click(); await settle();
+    expect(core.listSystemFonts).toHaveBeenCalledOnce();
+    expect([...document.querySelectorAll('#installed-fonts option')].map(o => (o as HTMLOptionElement).value)).toContain('Menlo');
+    const input = document.querySelector<HTMLInputElement>('#font-ui')!;
+    input.value = 'Avenir Next'; input.dispatchEvent(new Event('change'));
+    expect(document.documentElement.style.getPropertyValue('--font-ui')).toContain('"Avenir Next"');
+    input.value = 'Nope Sans'; input.dispatchEvent(new Event('change'));
+    expect(document.querySelector('#font-ui-note')?.textContent).toContain("isn't installed");
+    findButton('Default').click();
+    expect(document.documentElement.style.getPropertyValue('--font-ui')).toBe('');
+    vi.unstubAllGlobals();
   });
 });

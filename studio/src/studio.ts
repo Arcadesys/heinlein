@@ -1,4 +1,6 @@
 import type { LocalCore, RepositorySession, Manuscript, Document } from './localCore';
+import { FONT_ROLES, applyChoices, cleanFamily, loadChoices, saveChoices, type FontChoices } from './fonts';
+import { ZOOM_STEPS, loadZoom, saveZoom, nextZoom, shortcutAction, type ZoomAction } from './zoom';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = ''): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -15,6 +17,8 @@ function button(label: string, action: () => void, className = '') {
 const basename = (path: string) => path.split('/').pop() || path;
 const parentPath = (path: string) => path.split('/').slice(0, -1).join('/');
 
+let zoomKeyHandler: ((event: KeyboardEvent) => void) | null = null;
+
 export function mountStudio(root: HTMLElement, core: LocalCore) {
   let generation = 0;
   let selecting = false;
@@ -26,7 +30,24 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const brand = el('div');
   brand.append(el('p', 'HEINLEIN', 'eyebrow'), el('h1', 'Studio'), el('p', 'Your manuscript, close at hand.', 'muted'));
   const open = button('Open Folder…', () => { void selectRepository(() => core.pickRepository()); }, 'primary');
-  header.append(brand, open);
+  const zoomLevel = button('100%', () => setZoom('reset'), 'zoom-level');
+  zoomLevel.title = 'Reset text size (Cmd/Ctrl+0)';
+  const zoomGroup = el('div', '', 'zoom');
+  zoomGroup.setAttribute('role', 'group');
+  zoomGroup.setAttribute('aria-label', 'Text size');
+  const smaller = button('A−', () => setZoom('out'), 'zoom-step');
+  smaller.title = 'Smaller text (Cmd/Ctrl+−)';
+  smaller.setAttribute('aria-label', 'Smaller text');
+  const larger = button('A+', () => setZoom('in'), 'zoom-step');
+  larger.title = 'Larger text (Cmd/Ctrl++)';
+  larger.setAttribute('aria-label', 'Larger text');
+  zoomGroup.append(smaller, zoomLevel, larger);
+  const actions = el('div', '', 'actions');
+  const appearance = button('Appearance', () => openAppearance(), 'appearance');
+  appearance.title = 'Fonts and text size (Cmd/Ctrl+,)';
+  appearance.setAttribute('aria-haspopup', 'dialog');
+  actions.append(zoomGroup, appearance, open);
+  header.append(brand, actions);
   const banner = el('p', 'READ-ONLY PREVIEW · Local files stay on your computer', 'safety-banner');
   const status = el('p', 'Choose a repository folder to begin.', 'status');
   status.setAttribute('role', 'status');
@@ -34,24 +55,140 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const recent = el('section', '', 'recent');
   recent.setAttribute('aria-label', 'Recent folders');
   const layout = el('main', '', 'workspace');
+  // Collapsible side panels (file browser, manuscript outline); remembered between launches.
+  const collapsed: Record<string, boolean> = (() => { try { const v = JSON.parse(localStorage.getItem('heinlein-studio-collapsed-v1') ?? '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } })();
+  const toggles = new Map<string, HTMLButtonElement>();
+  function setCollapsed(key: string, value: boolean) {
+    collapsed[key] = value;
+    try { localStorage.setItem('heinlein-studio-collapsed-v1', JSON.stringify(collapsed)); } catch { /* convenience only */ }
+    layout.classList.toggle(`${key}-collapsed`, value);
+    const toggle = toggles.get(key);
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', String(!value));
+      toggle.textContent = value ? '▸' : '◂';
+      toggle.title = `${value ? 'Show' : 'Hide'} ${toggle.dataset.what}${key === 'files' ? ' (Cmd/Ctrl+\\)' : ''}`;
+      toggle.setAttribute('aria-label', toggle.title);
+    }
+  }
+  function panelHead(heading: HTMLElement, key: string, what: string) {
+    const head = el('div', '', 'panel-head');
+    const toggle = button('◂', () => setCollapsed(key, !collapsed[key]), 'panel-toggle');
+    toggle.dataset.what = what;
+    toggles.set(key, toggle);
+    head.append(heading, toggle);
+    return head;
+  }
   const files = el('section', '', 'panel files');
   files.setAttribute('aria-label', 'Repository files');
   const repoName = el('h2', 'Repository');
   const directoryPath = el('p', 'No folder selected', 'path');
   const listing = el('div', '', 'file-list');
-  files.append(repoName, directoryPath, listing);
+  const filesBody = el('div', '', 'panel-body');
+  filesBody.append(directoryPath, listing);
+  files.append(panelHead(repoName, 'files', 'file browser'), filesBody);
   const manuscriptPane = el('section', '', 'panel manuscript');
   manuscriptPane.setAttribute('aria-label', 'Manuscript order');
   const manifests = el('div', '', 'manifest-picker');
   const outline = el('div');
   outline.append(el('p', 'Open a folder with a scene-manifest.json to browse manuscript order.', 'empty'));
-  manuscriptPane.append(el('h2', 'Manuscript'), manifests, outline);
+  const manuscriptBody = el('div', '', 'panel-body');
+  manuscriptBody.append(manifests, outline);
+  manuscriptPane.append(panelHead(el('h2', 'Manuscript'), 'manuscript', 'manuscript outline'), manuscriptBody);
   const preview = el('section', '', 'panel preview');
   preview.setAttribute('aria-label', 'Document preview');
   resetPreview();
   layout.append(files, manuscriptPane, preview);
+  setCollapsed('files', Boolean(collapsed.files));
+  setCollapsed('manuscript', Boolean(collapsed.manuscript));
   const footer = el('footer', 'Pass 1 · Repository browser · No editing, publishing, or AI actions');
   root.replaceChildren(header, banner, recent, status, layout, footer);
+
+  let zoom = loadZoom();
+  function applyZoom(announce: boolean) {
+    document.documentElement.dataset.zoom = String(zoom);
+    zoomLevel.textContent = `${zoom}%`;
+    smaller.disabled = zoom === ZOOM_STEPS[0];
+    larger.disabled = zoom === ZOOM_STEPS[ZOOM_STEPS.length - 1];
+    if (announce) { zoomAnnounce.textContent = `Text size ${zoom}%`; }
+  }
+  function setZoom(action: ZoomAction) {
+    zoom = nextZoom(zoom, action);
+    saveZoom(zoom);
+    applyZoom(true);
+  }
+  const zoomAnnounce = el('p', '', 'sr-only');
+  zoomAnnounce.setAttribute('aria-live', 'polite');
+  header.append(zoomAnnounce);
+  // Appearance: interface, text, and monospace font families, saved between launches.
+  let fontChoices: FontChoices = loadChoices();
+  applyChoices(fontChoices);
+  let installedFonts: string[] | null = null;
+  const dialog = el('dialog', '', 'appearance-dialog');
+  dialog.setAttribute('aria-labelledby', 'appearance-title');
+  const dialogTitle = el('h2', 'Appearance');
+  dialogTitle.id = 'appearance-title';
+  dialog.append(dialogTitle);
+  const fontList = el('datalist');
+  fontList.id = 'installed-fonts';
+  dialog.append(fontList);
+  for (const role of FONT_ROLES) {
+    const row = el('div', '', 'font-row');
+    const id = `font-${role.key}`;
+    const label = el('label', role.label);
+    label.htmlFor = id;
+    const field = el('input');
+    field.id = id;
+    field.type = 'text';
+    field.setAttribute('list', fontList.id);
+    field.setAttribute('autocomplete', 'off');
+    field.setAttribute('spellcheck', 'false');
+    field.placeholder = 'Default';
+    field.value = fontChoices[role.key] ?? '';
+    const note = el('p', role.hint, 'muted');
+    note.id = `${id}-note`;
+    field.setAttribute('aria-describedby', note.id);
+    const commit = () => {
+      const name = cleanFamily(field.value);
+      if (name) fontChoices = { ...fontChoices, [role.key]: name };
+      else { const { [role.key]: _gone, ...rest } = fontChoices; fontChoices = rest; }
+      field.value = name ?? '';
+      saveChoices(fontChoices);
+      applyChoices(fontChoices);
+      const missing = name && installedFonts && !installedFonts.some(f => f.toLowerCase() === name.toLowerCase());
+      note.textContent = missing ? `“${name}” isn't installed on this computer, so the default is used.` : role.hint;
+      note.classList.toggle('warn', Boolean(missing));
+    };
+    field.addEventListener('change', commit);
+    const reset = button('Default', () => { field.value = ''; commit(); field.focus(); }, 'font-reset');
+    reset.setAttribute('aria-label', `Reset ${role.label.toLowerCase()} to default`);
+    row.append(label, field, reset, note);
+    dialog.append(row);
+  }
+  dialog.append(el('p', 'Changes apply immediately. Text size lives in the top bar.', 'muted'));
+  dialog.append(button('Done', () => dialog.close ? dialog.close() : dialog.removeAttribute('open'), 'primary'));
+  root.append(dialog);
+  async function openAppearance() {
+    if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', '');
+    dialog.querySelector('input')?.focus();
+    if (installedFonts) return;
+    try {
+      installedFonts = await core.listSystemFonts();
+      fontList.replaceChildren(...installedFonts.map(name => { const option = el('option'); option.value = name; return option; }));
+    } catch { /* typing a family name still works without the list */ }
+  }
+
+  // One live handler per document, so remounting never stacks listeners.
+  if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler);
+  zoomKeyHandler = (event: KeyboardEvent) => {
+    if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key === ',') { event.preventDefault(); void openAppearance(); return; }
+    if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key === '\\') { event.preventDefault(); setCollapsed('files', !collapsed.files); return; }
+    const action = shortcutAction(event);
+    if (!action) return;
+    event.preventDefault();
+    setZoom(action);
+  };
+  document.addEventListener('keydown', zoomKeyHandler);
+  applyZoom(false);
 
   function resetPreview() {
     preview.replaceChildren(el('p', 'SOURCE PREVIEW', 'eyebrow'), el('h2', 'A quiet place to read'), el('p', 'Select a scene or file. Source text is displayed exactly as stored, including Markdown and frontmatter.', 'empty'));

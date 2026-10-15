@@ -13,6 +13,7 @@ export interface LocalCore {
   listDirectory(repositoryId: string, relativePath: string): Promise<Entry[]>;
   readDocument(repositoryId: string, relativePath: string): Promise<Document>;
   loadManuscript(repositoryId: string, relativePath: string): Promise<Manuscript>;
+  listSystemFonts(): Promise<string[]>;
 }
 // This bridge contains only read operations. Root selection belongs to the native host;
 // no credentials, filesystem handles, or absolute root paths enter the renderer.
@@ -24,4 +25,5 @@ export const localCore: LocalCore = {
   listDirectory: (repositoryId, relativePath) => invoke('list_directory', { repositoryId, relativePath }),
   readDocument: (repositoryId, relativePath) => invoke('read_document', { repositoryId, relativePath }),
   loadManuscript: (repositoryId, relativePath) => invoke('load_manuscript', { repositoryId, relativePath }),
+  listSystemFonts: () => invoke('list_system_fonts'),
 };
