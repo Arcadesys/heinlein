@@ -13,6 +13,7 @@ function button(label: string, action: () => void, className = '') {
 interface DraftingHooks {
   root: HTMLElement;
   repository(): RepositorySession | null;
+  verify?(): void;
   run(action: () => Promise<void>): Promise<void>;
   show(): void;
   open(path: string): void;
@@ -104,17 +105,21 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       display(node, () => finish(false));
     });
   }
-  async function changeManuscript(change: DraftingChange, focusPath?: string) {
+  async function changeManuscript(change: DraftingChange, focusPath?: string, prepare?: () => DraftingChange) {
     const before = state; const repositoryId = hooks.repository()?.id;
     if (!before || !repositoryId) return;
     loadRequest++;
     await hooks.run(async () => {
       let applied = false;
       try {
+        if (prepare) change = prepare();
+        hooks.verify?.();
         const preview = await core.previewDraftingChange!(repositoryId, before.revision, change);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
         if (!await confirmPreview(preview)) { hooks.report('Change canceled.'); return; }
         if (disposed || repositoryId !== hooks.repository()?.id) return;
+        hooks.verify?.();
+        if (prepare) prepare();
         const result = await core.applyDraftingChange!(repositoryId, preview.id);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
         applied = true; state = result.state; undo = result.undoId ? {id: result.undoId, changes: preview.changes, summary: preview.summary} : null; render(); hooks.show();
@@ -142,6 +147,23 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const group = groupField(body); const before = beforeField(body);
       submitButton(body, 'Preview new scene', () => submit({kind: 'createScene', title: title.value.trim(), path: path.value.trim(), groupId: group.value || null, beforeId: before.value || null}, path.value.trim()));
     });
+  }
+  function splitScene(sceneId: string, prepare: () => {expectedHash: string; byteOffset: number}) {
+    if (dialogs.size || !state?.revision || state.recoveryRequired) return;
+    const scene = state.scenes.find(item => item.id === sceneId);
+    if (!scene) return;
+    const revision = state.revision;
+    const node = dialog('Split scene at cursor'); const body = el('form');
+    const cancel = () => remove(node);
+    body.append(el('p', 'The text before the cursor keeps this scene’s identity. The remaining text becomes a new scene immediately after it, in the same group. Existing text earns no daily growth credit; the original scene retains its earlier peak.', 'muted'));
+    const title = field(body, 'New scene title', `${scene.title || 'Scene'} continued`);
+    const path = field(body, 'New scene file', scene.path.replace(/\.(md|markdown)$/i, '-continued.md'), 'Use a new Markdown path inside ms/.');
+    submitButton(body, 'Preview split', () => {
+      cancel();
+      const change = {kind: 'splitScene' as const, sceneId, title: title.value.trim(), path: path.value.trim(), expectedHash: '', byteOffset: 0};
+      void changeManuscript(change, change.path, () => { if (state?.revision !== revision) throw new Error('The manuscript changed. Start a new split'); return {...change, ...prepare()}; });
+    });
+    body.append(button('Cancel', cancel)); node.append(body); display(node, cancel);
   }
   function moveScene(scene: DraftingScene) {
     form(`Move ${scene.title || basename(scene.path)}`, (body, submit) => {
@@ -232,6 +254,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       if (disposed || repositoryId !== hooks.repository()?.id) return;
       let applied = false;
       try {
+        hooks.verify?.();
         const restored = await core.undoDraftingChange!(repositoryId, entry.id);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
         applied = true; state = restored; undo = null; render(); hooks.show();
@@ -307,5 +330,5 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     dropTarget(dropEnd); element.append(dropEnd);
     if (state.groups.length) { const groups = el('p', `Groups: ${state.groups.map(group => group.title).join(' · ')}`, 'drafting-help'); element.append(groups); }
   }
-  return { element, supported, clear, load, initialize, importExternal, get state() { return state; }, destroy() { disposed = true; clear(); } };
+  return { element, supported, clear, load, initialize, importExternal, splitScene, get state() { return state; }, destroy() { disposed = true; clear(); } };
 }

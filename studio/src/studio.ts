@@ -23,6 +23,26 @@ function button(label: string, action: () => void, className = '') {
 const basename = (path: string) => path.split('/').pop() || path;
 const parentPath = (path: string) => path.split('/').slice(0, -1).join('/');
 
+// Scan raw lines once: unfinished CRLF metadata must not trigger regex
+// backtracking. null means an opening fence without a closing fence.
+function splitBodyStart(source: string): number | null {
+  let start = source.startsWith('\uFEFF') ? 1 : 0;
+  let first = true;
+  while (start <= source.length) {
+    let end = start;
+    while (end < source.length && source[end] !== '\r' && source[end] !== '\n') end++;
+    const line = source.slice(start, end).trimEnd();
+    const next = end < source.length ? end + (source[end] === '\r' && source[end + 1] === '\n' ? 2 : 1) : end;
+    if (first) {
+      if (line !== '---') return 0;
+      first = false;
+    } else if (line === '---' || line === '...') return next;
+    if (end === source.length) return null;
+    start = next;
+  }
+  return null;
+}
+
 let zoomKeyHandler: ((event: KeyboardEvent) => void) | null = null;
 
 export const AUTOSAVE_DELAY_MS = 600;
@@ -41,6 +61,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let disposed = false;
   let repositoryDetached = false;
   let structuralBusy = false;
+  let structuralEditRevision = 0;
   let proposalBusy = false;
   let proposalEditRevision = 0;
   let dropUnlisten: (() => void) | null = null;
@@ -332,7 +353,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const footer = el('footer', 'Local Markdown drafting · Autosaves locally · Save now with Cmd/Ctrl+S');
   root.replaceChildren(header, banner, writing.element, recent, status, layout, footer);
   const drafting = createDraftingPanel(core, {
-    root, repository: () => repository, run: runStructural,
+    root, repository: () => repository, run: runStructural, verify: verifyStructuralBuffer,
     show: () => { outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
     open: path => { void showDocument(path); }, changed: draftingChanged,
     report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
@@ -399,13 +420,43 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       }
     }
   }
+  function verifyStructuralBuffer() {
+    if (dirty || recovery || recoveryPending || edits !== structuralEditRevision) {
+      writePaused = 'conflict'; updateSaveState();
+      throw new Error('The editor changed during the manuscript change. Newer text is preserved; compare the source before saving');
+    }
+  }
+  function splitAtCursor() {
+    if (!editor || !opened || !repository || structuralBusy || selecting || repositoryDetached || recoveryPending || guardPending || editor.view.state.readOnly) return;
+    const scene = drafting.state?.scenes.find(item => item.path === opened!.path);
+    if (!scene || !drafting.state?.revision || drafting.state.recoveryRequired) {
+      status.textContent = 'Open a scene in the ms manuscript before splitting.'; return;
+    }
+    const ranges = editor.view.state.selection.ranges; const range = editor.view.state.selection.main;
+    const source = editor.text(); const offset = rawOffset(source, range.from);
+    // Raw offsets are UTF-16. Refuse a surrogate midpoint before encoding UTF-8.
+    const midpoint = offset > 0 && /[\uD800-\uDBFF]/.test(source[offset - 1]) && /[\uDC00-\uDFFF]/.test(source[offset] ?? '');
+    const bodyStart = splitBodyStart(source);
+    const invalidUnicode = new TextDecoder('utf-8', {ignoreBOM: true}).decode(new TextEncoder().encode(source)) !== source;
+    if (bodyStart === null || invalidUnicode || ranges.length !== 1 || !range.empty || offset <= (bodyStart ?? 0) || offset >= source.length || midpoint) {
+      status.textContent = 'Place one cursor inside the scene body, with text on both sides; clear any selection first.'; status.classList.add('error'); return;
+    }
+    const epoch = documentEpoch; const revision = edits; const repositoryId = repository.id; const path = opened.path;
+    const byteOffset = new TextEncoder().encode(source.slice(0, offset)).length;
+    drafting.splitScene(scene.id, () => {
+      if (!editor || !opened || repository?.id !== repositoryId || documentEpoch !== epoch || edits !== revision || opened.path !== path || editor.text() !== source || drafting.state?.scenes.find(item => item.id === scene.id)?.path !== path || editor.view.state.selection.ranges.length !== 1 || !editor.view.state.selection.main.empty || rawOffset(source, editor.view.state.selection.main.from) !== offset) {
+        throw new Error('The scene or cursor changed. Place the cursor again and start a new split');
+      }
+      return {expectedHash: opened.contentHash, byteOffset};
+    });
+  }
   async function runStructural(action: () => Promise<void>) {
     if (disposed || structuralBusy || selecting || !repository) return;
     if (repositoryDetached) { reportDetachedRepository(); return; }
     if (recoveryPending || guardPending) {
       status.textContent = 'Resolve the open recovery draft or save dialog before changing manuscript structure. Your recovery has been kept.'; status.classList.add('error'); return;
     }
-    structuralBusy = true;
+    structuralBusy = true; structuralEditRevision = edits;
     // Invalidate reads begun before a move so their old paths cannot become active.
     documentRequest++; manuscriptRequest++; directoryRequest++;
     cancelAutosave(); editor?.setEditable(false); layout.inert = true; open.disabled = true;
@@ -421,6 +472,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       // Native drafting routes require the actual editor dirty flag to be clear.
       // OS closes always pass through allowLeave, which independently checks structuralBusy.
       await dirtySync;
+      verifyStructuralBuffer();
       await action();
     } catch (error) { status.textContent = `Manuscript change stopped: ${String(error)}`; status.classList.add('error'); }
     finally {
@@ -433,6 +485,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     }
   }
   async function draftingChanged(state: DraftingState, previous: DraftingState | null, changes: DraftingFileChange[], focusPath?: string) {
+    verifyStructuralBuffer();
     const oldPath = opened?.path;
     const oldScene = previous?.scenes.find(scene => scene.path === oldPath);
     const sameScene = oldScene ? state.scenes.find(scene => scene.id === oldScene.id) : undefined;
@@ -697,8 +750,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       const askSelection = button('Ask about selection', () => { void questions?.open(); });
       askSelection.setAttribute('aria-haspopup', 'dialog');
       askSelection.title = 'Prepare a question for manual copy/paste into ChatGPT or another assistant';
-      toolbar.append(askSelection, saveButton, button('Undo', () => editor?.undo()), button('Redo', () => editor?.redo()), button('Find', () => editor?.find()), dirtyBadge);
+      const split = button('Split scene at cursor', splitAtCursor);
+      split.setAttribute('aria-haspopup', 'dialog'); split.setAttribute('aria-keyshortcuts', 'Control+Shift+Enter Meta+Shift+Enter');
+      split.title = 'Split scene at cursor (Cmd/Ctrl+Shift+Enter)';
+      split.disabled = !drafting.state?.scenes.some(scene => scene.path === doc.path);
+      toolbar.append(askSelection, split, saveButton, button('Undo', () => editor?.undo()), button('Redo', () => editor?.redo()), button('Find', () => editor?.find()), dirtyBadge);
       const host = el('div', '', 'markdown-editor');
+      host.addEventListener('keydown', event => {
+        if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); splitAtCursor(); }
+      }, true);
       text.replaceWith(toolbar, host);
       let previousText = doc.text;
       editor = createEditor(host, doc.text, (raw, origin) => {
