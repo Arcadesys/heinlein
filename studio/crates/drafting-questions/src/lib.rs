@@ -70,6 +70,8 @@ pub struct QuestionAnswer {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuestionError {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic: Option<ProtocolDiagnostic>,
     pub code: &'static str,
     pub message: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -84,9 +86,22 @@ pub struct QuestionError {
     pub usage_url: Option<&'static str>,
 }
 
+/// Fixed categories only: never derived from provider-controlled strings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProtocolDiagnostic {
+    ContentType,
+    StreamFraming,
+    EventJson,
+    TerminalStatus,
+    ResponseSchema,
+    AnswerContent,
+}
+
 impl QuestionError {
     fn new(code: &'static str, message: &'static str) -> Self {
         Self {
+            diagnostic: None,
             code,
             message,
             provider_code: None,
@@ -160,6 +175,17 @@ impl QuestionError {
 
     fn timeout() -> Self {
         Self::new("timeout", "OpenAI did not answer in time; the request was not retried and may have incurred usage")
+    }
+
+    fn at(mut self, stage: ProtocolDiagnostic) -> Self {
+        self.diagnostic = Some(stage);
+        self
+    }
+
+    fn with_http(mut self, status: u16, request_id: Option<&str>) -> Self {
+        self.http_status = Some(status);
+        self.provider_request_id = safe_request_id(request_id);
+        self
     }
 
     fn invalid_response() -> Self {
@@ -634,7 +660,7 @@ impl QuestionService {
             selected,
             config,
             permit,
-            send_request,
+            send_revision_request,
             REQUEST_TIMEOUT,
         )
         .await
@@ -942,6 +968,7 @@ fn append_bounded(bytes: &mut Vec<u8>, chunk: &[u8]) -> Result<(), QuestionError
 #[derive(Default)]
 struct ResponseStream {
     line: Vec<u8>,
+    previous_cr: bool,
     data: Vec<u8>,
     total: usize,
     terminal: Option<Vec<u8>>,
@@ -960,10 +987,12 @@ impl ResponseStream {
             if self.terminal.is_some() {
                 break;
             }
-            if *byte == b'\n' {
-                if self.line.last() == Some(&b'\r') {
-                    self.line.pop();
-                }
+            if self.previous_cr && *byte == b'\n' {
+                self.previous_cr = false;
+                continue;
+            }
+            self.previous_cr = *byte == b'\r';
+            if matches!(*byte, b'\n' | b'\r') {
                 if self.line.is_empty() {
                     self.event()?;
                 } else if let Some(mut data) = self.line.strip_prefix(b"data:") {
@@ -988,23 +1017,26 @@ impl ResponseStream {
             return Ok(());
         }
         let data = std::mem::take(&mut self.data);
-        let event: serde_json::Value =
-            serde_json::from_slice(&data).map_err(|_| QuestionError::invalid_response())?;
+        let event: serde_json::Value = serde_json::from_slice(&data)
+            .map_err(|_| QuestionError::invalid_response().at(ProtocolDiagnostic::EventJson))?;
         match event.get("type").and_then(serde_json::Value::as_str) {
             Some(kind @ ("response.completed" | "response.incomplete")) => {
-                let response = event
-                    .get("response")
-                    .ok_or_else(QuestionError::invalid_response)?;
+                let response = event.get("response").ok_or_else(|| {
+                    QuestionError::invalid_response().at(ProtocolDiagnostic::ResponseSchema)
+                })?;
                 let expected = if kind == "response.completed" {
                     "completed"
                 } else {
                     "incomplete"
                 };
                 if response.get("status").and_then(serde_json::Value::as_str) != Some(expected) {
-                    return Err(QuestionError::invalid_response());
+                    return Err(
+                        QuestionError::invalid_response().at(ProtocolDiagnostic::TerminalStatus)
+                    );
                 }
-                let bytes =
-                    serde_json::to_vec(response).map_err(|_| QuestionError::invalid_response())?;
+                let bytes = serde_json::to_vec(response).map_err(|_| {
+                    QuestionError::invalid_response().at(ProtocolDiagnostic::EventJson)
+                })?;
                 if bytes.len() > MAX_RESPONSE_BYTES {
                     return Err(QuestionError::response_too_large());
                 }
@@ -1018,17 +1050,121 @@ impl ResponseStream {
                 return Err(provider_error(200, Some(&wrapper), None));
             }
             Some(_) => {} // Nonterminal deltas and lifecycle metadata are not surfaced.
-            None => return Err(QuestionError::invalid_response()),
+            None => return Err(QuestionError::invalid_response().at(ProtocolDiagnostic::EventJson)),
         }
         Ok(())
     }
 
     fn finish(self) -> Result<Vec<u8>, QuestionError> {
-        self.terminal.ok_or_else(|| QuestionError::new("interrupted", "The OpenAI answer was interrupted; the request was not retried and may have incurred usage"))
+        self.terminal.ok_or_else(|| QuestionError::new("interrupted", "The OpenAI answer was interrupted; the request was not retried and may have incurred usage").at(ProtocolDiagnostic::StreamFraming))
+    }
+}
+
+/// Streaming responses require an explicit terminal event. A complete JSON
+/// Responses object is also a documented wire representation; read it to EOF
+/// before validating its terminal status. Never turn deltas into an answer.
+enum ResponseBody {
+    Undecided(Vec<u8>),
+    Events(ResponseStream),
+    Json(Vec<u8>),
+}
+impl ResponseBody {
+    fn new(_content_type: Option<&str>) -> Result<Self, QuestionError> {
+        // Some successful plan-usage responses have a missing/nonstandard MIME
+        // header. It is a hint, not an authority to execute anything. Identify
+        // the bounded wire format and apply exactly the same terminal checks.
+        Ok(Self::Undecided(Vec::new()))
+    }
+    fn push(&mut self, chunk: &[u8]) -> Result<(), QuestionError> {
+        match self {
+            Self::Undecided(prefix) => {
+                for (index, byte) in chunk.iter().enumerate() {
+                    append_bounded(prefix, &[*byte])?;
+                    if prefix.len() < 3 && [0xef, 0xbb, 0xbf].starts_with(prefix) {
+                        continue;
+                    }
+                    let start = usize::from(prefix.starts_with(&[0xef, 0xbb, 0xbf])) * 3;
+                    if prefix.len() == start {
+                        continue;
+                    }
+                    let first = if prefix[0] == 0xef && start == 0 {
+                        prefix[0]
+                    } else {
+                        *byte
+                    };
+                    if first.is_ascii_whitespace() {
+                        continue;
+                    }
+                    let mut body = match first {
+                        b'{' => Self::Json(Vec::new()),
+                        b':' | b'd' | b'e' | b'i' | b'r' => Self::Events(ResponseStream::default()),
+                        _ => {
+                            return Err(QuestionError::invalid_response()
+                                .at(ProtocolDiagnostic::ContentType))
+                        }
+                    };
+                    body.push(&prefix[start..])?;
+                    body.push(&chunk[index + 1..])?;
+                    *self = body;
+                    return Ok(());
+                }
+                Ok(())
+            }
+            Self::Events(stream) => stream.push(chunk),
+            Self::Json(bytes) => append_bounded(bytes, chunk),
+        }
+    }
+    fn terminal(&self) -> bool {
+        matches!(self, Self::Events(stream) if stream.terminal.is_some())
+    }
+    fn finish(self) -> Result<Vec<u8>, QuestionError> {
+        match self {
+            Self::Undecided(_) => {
+                Err(QuestionError::invalid_response().at(ProtocolDiagnostic::StreamFraming))
+            }
+            Self::Events(stream) => stream.finish(),
+            Self::Json(bytes) => {
+                let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| {
+                    QuestionError::invalid_response().at(ProtocolDiagnostic::ResponseSchema)
+                })?;
+                if value.get("error").is_some_and(|error| !error.is_null()) {
+                    return Err(provider_error(200, Some(&value), None));
+                }
+                if value.get("object").and_then(serde_json::Value::as_str) != Some("response") {
+                    return Err(
+                        QuestionError::invalid_response().at(ProtocolDiagnostic::ResponseSchema)
+                    );
+                }
+                if !matches!(
+                    value.get("status").and_then(serde_json::Value::as_str),
+                    Some("completed" | "incomplete")
+                ) {
+                    return Err(
+                        QuestionError::invalid_response().at(ProtocolDiagnostic::TerminalStatus)
+                    );
+                }
+                Ok(bytes)
+            }
+        }
     }
 }
 
 async fn send_request(config: Configuration, body: Vec<u8>) -> Result<Vec<u8>, QuestionError> {
+    send_decoded_request(config, body, false).await
+}
+
+async fn send_revision_request(
+    config: Configuration,
+    body: Vec<u8>,
+) -> Result<Vec<u8>, QuestionError> {
+    send_decoded_request(config, body, true).await
+}
+
+async fn send_decoded_request(
+    config: Configuration,
+    body: Vec<u8>,
+    revision: bool,
+) -> Result<Vec<u8>, QuestionError> {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .retry(reqwest::retry::never())
@@ -1076,30 +1212,38 @@ async fn send_request(config: Configuration, body: Vec<u8>) -> Result<Vec<u8>, Q
         .content_length()
         .is_some_and(|size| size > MAX_STREAM_BYTES as u64)
     {
-        return Err(QuestionError::response_too_large());
+        return Err(QuestionError::response_too_large().with_http(status, request_id.as_deref()));
     }
-    if response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(';').next())
-        .map(str::trim)
-        != Some("text/event-stream")
+    let mut body = ResponseBody::new(
+        response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+    )
+    .map_err(|error| error.with_http(status, request_id.as_deref()))?;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| network_error(error).with_http(status, request_id.as_deref()))?
     {
-        return Err(QuestionError::invalid_response());
-    }
-    let mut stream = ResponseStream::default();
-    while let Some(chunk) = response.chunk().await.map_err(network_error)? {
-        stream.push(&chunk).map_err(|mut error| {
-            error.provider_request_id = request_id.clone();
-            error.http_status = Some(status);
-            error
-        })?;
-        if stream.terminal.is_some() {
+        body.push(&chunk)
+            .map_err(|error| error.with_http(status, request_id.as_deref()))?;
+        if body.terminal() {
             break;
         }
     }
-    stream.finish()
+    let bytes = body
+        .finish()
+        .map_err(|error| error.with_http(status, request_id.as_deref()))?;
+    // Validate while HTTP metadata is still available. The service validates again
+    // after its cancellation barrier; mocked transports share that same barrier.
+    let validation = if revision {
+        parse_revision("transport", &bytes).map(|_| ())
+    } else {
+        parse_response("transport", &bytes).map(|_| ())
+    };
+    validation.map_err(|error| error.with_http(status, request_id.as_deref()))?;
+    Ok(bytes)
 }
 
 #[derive(Deserialize)]
@@ -1139,12 +1283,16 @@ fn parse_response(id: &str, bytes: &[u8]) -> Result<QuestionAnswer, QuestionErro
     if bytes.len() > MAX_RESPONSE_BYTES {
         return Err(QuestionError::response_too_large());
     }
-    let response: ApiResponse =
-        serde_json::from_slice(bytes).map_err(|_| QuestionError::invalid_response())?;
+    let response: ApiResponse = serde_json::from_slice(bytes)
+        .map_err(|_| QuestionError::invalid_response().at(ProtocolDiagnostic::ResponseSchema))?;
     if !matches!(response.status.as_str(), "completed" | "incomplete")
-        || !valid_model(&response.model)
+        || response.error.is_some()
+        || (response.status == "completed" && response.incomplete_details.is_some())
     {
-        return Err(QuestionError::invalid_response());
+        return Err(QuestionError::invalid_response().at(ProtocolDiagnostic::TerminalStatus));
+    }
+    if !valid_model(&response.model) {
+        return Err(QuestionError::invalid_response().at(ProtocolDiagnostic::ResponseSchema));
     }
     let mut text = String::new();
     for item in response.output {
@@ -1152,15 +1300,25 @@ fn parse_response(id: &str, bytes: &[u8]) -> Result<QuestionAnswer, QuestionErro
             "reasoning" => continue,
             "message" if item.role.as_deref() == Some("assistant") => {}
             // No tool calls, unexpected roles, or other output objects are executed.
-            _ => return Err(QuestionError::invalid_response()),
+            _ => {
+                return Err(QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent))
+            }
         }
-        for part in item.content.ok_or_else(QuestionError::invalid_response)? {
+        for part in item.content.ok_or_else(|| {
+            QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent)
+        })? {
             let value = match part.kind.as_str() {
                 "output_text" => part.text,
                 "refusal" => part.refusal,
-                _ => return Err(QuestionError::invalid_response()),
+                _ => {
+                    return Err(
+                        QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent)
+                    )
+                }
             }
-            .ok_or_else(QuestionError::invalid_response)?;
+            .ok_or_else(|| {
+                QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent)
+            })?;
             let separator = usize::from(!text.is_empty());
             if value.len().saturating_add(separator) > MAX_ANSWER_BYTES.saturating_sub(text.len()) {
                 return Err(QuestionError::response_too_large());
@@ -1172,10 +1330,25 @@ fn parse_response(id: &str, bytes: &[u8]) -> Result<QuestionAnswer, QuestionErro
         }
     }
     if text.trim().is_empty() {
-        return Err(QuestionError::new(
-            "emptyResponse",
-            "OpenAI returned no answer text; the request was not retried",
-        ));
+        let (code, message) = if response.status == "incomplete" {
+            if response
+                .incomplete_details
+                .as_ref()
+                .and_then(|details| details.get("reason"))
+                .and_then(serde_json::Value::as_str)
+                == Some("max_output_tokens")
+            {
+                ("outputLimit", "OpenAI reached the 2,000-token output limit before producing answer text; the request was not retried")
+            } else {
+                ("incompleteNoText", "OpenAI returned an incomplete response without answer text; the request was not retried")
+            }
+        } else {
+            (
+                "emptyResponse",
+                "OpenAI completed the request without answer text; the request was not retried",
+            )
+        };
+        return Err(QuestionError::new(code, message).at(ProtocolDiagnostic::AnswerContent));
     }
     Ok(QuestionAnswer {
         request_id: id.to_owned(),
@@ -1201,14 +1374,14 @@ fn parse_revision(id: &str, bytes: &[u8]) -> Result<(QuestionAnswer, String), Qu
     if bytes.len() > MAX_RESPONSE_BYTES {
         return Err(QuestionError::response_too_large());
     }
-    let response: ApiResponse =
-        serde_json::from_slice(bytes).map_err(|_| QuestionError::invalid_response())?;
+    let response: ApiResponse = serde_json::from_slice(bytes)
+        .map_err(|_| QuestionError::invalid_response().at(ProtocolDiagnostic::ResponseSchema))?;
     if response.status != "completed"
         || !valid_model(&response.model)
         || response.incomplete_details.is_some()
         || response.error.is_some()
     {
-        return Err(QuestionError::invalid_response());
+        return Err(QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent));
     }
     let mut output = None;
     for item in response.output {
@@ -1223,32 +1396,39 @@ fn parse_revision(id: &str, bytes: &[u8]) -> Result<(QuestionAnswer, String), Qu
                 .as_deref()
                 .is_some_and(|status| status != "completed")
         {
-            return Err(QuestionError::invalid_response());
+            return Err(QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent));
         }
-        let mut parts = item.content.ok_or_else(QuestionError::invalid_response)?;
+        let mut parts = item.content.ok_or_else(|| {
+            QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent)
+        })?;
         if parts.len() != 1 {
-            return Err(QuestionError::invalid_response());
+            return Err(QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent));
         }
-        let part = parts.pop().ok_or_else(QuestionError::invalid_response)?;
+        let part = parts.pop().ok_or_else(|| {
+            QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent)
+        })?;
         if part.kind != "output_text" || part.refusal.is_some() {
-            return Err(QuestionError::invalid_response());
+            return Err(QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent));
         }
-        let text = part.text.ok_or_else(QuestionError::invalid_response)?;
+        let text = part.text.ok_or_else(|| {
+            QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent)
+        })?;
         if text.len() > MAX_ANSWER_BYTES {
             return Err(QuestionError::response_too_large());
         }
         // Struct deserialization rejects unknown AND duplicate fields. No fence
         // stripping, substring extraction, or repair can turn advice into edits.
-        let value: RevisionOutput =
-            serde_json::from_str(&text).map_err(|_| QuestionError::invalid_response())?;
+        let value: RevisionOutput = serde_json::from_str(&text)
+            .map_err(|_| QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent))?;
         if value.explanation.trim().is_empty()
             || value.explanation.len() + value.replacement.len() > MAX_ANSWER_BYTES
         {
-            return Err(QuestionError::invalid_response());
+            return Err(QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent));
         }
         output = Some(value);
     }
-    let output = output.ok_or_else(QuestionError::invalid_response)?;
+    let output = output
+        .ok_or_else(|| QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent))?;
     Ok((
         QuestionAnswer {
             request_id: id.into(),
@@ -1267,3 +1447,6 @@ fn parse_revision(id: &str, bytes: &[u8]) -> Result<(QuestionAnswer, String), Qu
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod connection_fuzz;

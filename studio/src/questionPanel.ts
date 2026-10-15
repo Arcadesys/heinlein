@@ -51,7 +51,15 @@ function preview(text: string, label: string) {
 }
 function errorMessage(error: unknown): string {
   // Native errors are sanitized and never contain response bodies or credentials.
-  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') return error.message;
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    const detail = error as {diagnostic?: unknown; httpStatus?: unknown; providerRequestId?: unknown};
+    const labels: Record<string, string> = {contentType: 'HTTP content type', streamFraming: 'stream framing', eventJson: 'event JSON', terminalStatus: 'terminal status', responseSchema: 'response schema', answerContent: 'answer content'};
+    const parts: string[] = [];
+    if (typeof detail.diagnostic === 'string' && Object.hasOwn(labels, detail.diagnostic)) parts.push(labels[detail.diagnostic]);
+    if (typeof detail.httpStatus === 'number' && Number.isInteger(detail.httpStatus) && detail.httpStatus >= 100 && detail.httpStatus <= 599) parts.push(`HTTP ${detail.httpStatus}`);
+    if (typeof detail.providerRequestId === 'string' && /^req_[a-zA-Z0-9_-]{1,124}$/.test(detail.providerRequestId)) parts.push(detail.providerRequestId);
+    return error.message + (parts.length ? ` Details: ${parts.join(' · ')}.` : '');
+  }
   return 'The request failed. Check your OpenAI connection and try again. Nothing was retried automatically.';
 }
 export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) {
