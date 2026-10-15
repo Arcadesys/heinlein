@@ -551,7 +551,11 @@ impl Repository {
         let mut file = std::fs::File::from(fd);
         let result = (|| {
             file.write_all(text.as_bytes()).map_err(|_| Error::Io)?;
-            fchmod(&file, Mode::from_bits_truncate(metadata.mode() & 0o777)).map_err(errno)?;
+            fchmod(
+                &file,
+                Mode::from_bits_truncate((metadata.mode() & 0o777) as _),
+            )
+            .map_err(errno)?;
             file.sync_all().map_err(|_| Error::Io)?;
             before_commit()?;
             self.allowed(path, false)?;
