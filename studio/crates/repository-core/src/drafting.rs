@@ -1340,7 +1340,10 @@ impl Repository {
             let result = (|| {
                 file.write_all(after.text.as_bytes())
                     .map_err(|_| Error::Io)?;
-                rustix::fs::fchmod(&file, Mode::from_bits_truncate(after.mode)).map_err(errno)?;
+                // Journal validation restricts these bits to 0o777. mode_t is
+                // u16 on macOS and u32 on Linux; both preserve every allowed bit.
+                rustix::fs::fchmod(&file, Mode::from_bits_truncate(after.mode as _))
+                    .map_err(errno)?;
                 file.sync_all().map_err(|_| Error::Io)?;
                 self.check_directory_identity(parent(&edit.path), &directory)?;
                 if self.snapshot(&edit.path)? != edit.before {
@@ -1489,6 +1492,15 @@ mod tests {
             });
         }
     }
+    #[cfg(unix)]
+    #[test]
+    fn portable_permission_bits_preserve_every_allowed_mode() {
+        for mode in 0u32..=0o777 {
+            let native = rustix::fs::Mode::from_bits_truncate(mode as _);
+            assert_eq!(u64::from(native.bits()), u64::from(mode));
+        }
+    }
+
     #[test]
     fn initialize_empty_create_order_move_identity_and_undo() {
         let f = Fixture::new();
