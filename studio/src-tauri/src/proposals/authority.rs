@@ -56,6 +56,7 @@ pub struct Binding {
     pub diff_hash: String,
 }
 impl Review {
+    #[cfg(test)]
     pub fn binding(&self) -> Binding {
         Binding {
             review_id: self.id.clone(),
