@@ -1,13 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use repository_core::{Document, Entry, Manuscript, Repository};
+mod drafting;
+mod proposals;
+
+use repository_core::{Document, Entry, Manuscript, RecoveryDraft, RecoveryStore, Repository};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
 };
 use tauri::{Emitter, Manager, State};
@@ -36,21 +39,26 @@ struct RecentView {
 #[serde(rename_all = "camelCase")]
 struct Session {
     id: String,
+    project_key: String,
     name: String,
     manifests: Vec<String>,
     warning: Option<String>,
 }
 struct Selected {
     id: String,
-    repo: Repository,
+    repo: Arc<Repository>,
 }
 #[derive(Default)]
 struct BrowserState {
     unsaved_changes: AtomicBool,
     close_authorized: AtomicBool,
     selection_gate: Mutex<()>,
+    mutation_gate: proposals::authority::MutationGate,
+    proposals: Mutex<proposals::ProposalHost>,
     selected: Mutex<Option<Selected>>,
     recents: Mutex<RecentStore>,
+    recovery: Mutex<Option<Arc<RecoveryStore>>>,
+    drafting: Mutex<drafting::DraftingHost>,
 }
 
 fn id() -> String {
@@ -115,6 +123,7 @@ fn select(app: &tauri::AppHandle, path: PathBuf) -> Result<Session, String> {
     let state = app.state::<BrowserState>();
     let session = Session {
         id: id(),
+        project_key: repo.project_key(),
         name: name.clone(),
         manifests,
         warning,
@@ -142,7 +151,7 @@ fn select(app: &tauri::AppHandle, path: PathBuf) -> Result<Session, String> {
         .lock()
         .map_err(|_| "Repository unavailable")? = Some(Selected {
         id: session.id.clone(),
-        repo,
+        repo: Arc::new(repo),
     });
     Ok(session)
 }
@@ -226,15 +235,20 @@ fn with_repository<T>(
     operation: impl FnOnce(&Repository) -> Result<T, String>,
 ) -> Result<T, String> {
     let state = app.state::<BrowserState>();
-    let guard = state
-        .selected
-        .lock()
-        .map_err(|_| "Repository unavailable")?;
-    let selected = guard.as_ref().ok_or("Open a repository first")?;
-    if selected.id != repository_id {
-        return Err("Repository changed; refresh the view".into());
-    }
-    operation(&selected.repo)
+    let repo = {
+        let guard = state
+            .selected
+            .lock()
+            .map_err(|_| "Repository unavailable")?;
+        let selected = guard.as_ref().ok_or("Open a repository first")?;
+        if selected.id != repository_id {
+            return Err("Repository changed; refresh the view".into());
+        }
+        Arc::clone(&selected.repo)
+    };
+    // Keep authorization/root bound to this operation, but release selection state
+    // before filesystem I/O. A slow manuscript fsync cannot block recovery staging.
+    operation(&repo)
 }
 #[tauri::command]
 async fn list_directory(
@@ -279,9 +293,100 @@ async fn save_document(
 ) -> Result<Document, String> {
     check_window(&window)?;
     tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<BrowserState>();
+        let _mutation = state.mutation_gate.edit()?;
+        state.mutation_gate.invalidate();
         with_repository(&app, &repository_id, |r| {
-            r.save(&relative_path, &expected_hash, &text)
-                .map_err(|e| e.to_string())
+            with_recovery(&app, |store| {
+                r.save_with_recovery(&relative_path, &expected_hash, &text, store)
+            })
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+fn with_recovery<T>(
+    app: &tauri::AppHandle,
+    operation: impl FnOnce(&RecoveryStore) -> Result<T, repository_core::Error>,
+) -> Result<T, String> {
+    let store = recovery_store(app)?;
+    operation(&store).map_err(|e| e.to_string())
+}
+fn recovery_store(app: &tauri::AppHandle) -> Result<Arc<RecoveryStore>, String> {
+    let state = app.state::<BrowserState>();
+    let mut recovery = state
+        .recovery
+        .lock()
+        .map_err(|_| "Recovery storage unavailable")?;
+    if recovery.is_none() {
+        let path = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| "Recovery storage unavailable")?;
+        *recovery = Some(Arc::new(
+            RecoveryStore::open(path.join("draft-recovery-v1")).map_err(|e| e.to_string())?,
+        ));
+    }
+    let store = Arc::clone(recovery.as_ref().ok_or("Recovery storage unavailable")?);
+    drop(recovery);
+    Ok(store)
+}
+#[tauri::command]
+async fn read_recovery(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    relative_path: String,
+) -> Result<Option<RecoveryDraft>, String> {
+    check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        with_repository(&app, &repository_id, |repo| {
+            with_recovery(&app, |store| store.read(repo, &relative_path))
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn stage_recovery(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    relative_path: String,
+    expected_hash: String,
+    text: String,
+) -> Result<RecoveryDraft, String> {
+    check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<BrowserState>();
+        let _mutation = state.mutation_gate.edit()?;
+        state.mutation_gate.invalidate();
+        with_repository(&app, &repository_id, |repo| {
+            with_recovery(&app, |store| {
+                store.stage(repo, &relative_path, &expected_hash, &text)
+            })
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn discard_recovery(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    relative_path: String,
+    recovery_id: String,
+) -> Result<(), String> {
+    check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<BrowserState>();
+        let _mutation = state.mutation_gate.edit()?;
+        state.mutation_gate.invalidate();
+        with_repository(&app, &repository_id, |repo| {
+            with_recovery(&app, |store| {
+                store.discard(repo, &relative_path, &recovery_id)
+            })
         })
     })
     .await
@@ -295,6 +400,9 @@ fn set_unsaved_changes(
 ) -> Result<(), String> {
     check_window(&window)?;
     state.unsaved_changes.store(dirty, Ordering::SeqCst);
+    if dirty {
+        state.mutation_gate.invalidate();
+    }
     Ok(())
 }
 #[tauri::command]
@@ -364,6 +472,13 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) =
+                    event
+                {
+                    drafting::handle_drop(window.app_handle().clone(), paths.clone());
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // Every OS close goes through the renderer guard, even if its most
                 // recent dirty notification is still queued. Only request_close
@@ -379,12 +494,25 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            proposals::list_proposals,
+            proposals::review_proposal,
+            proposals::review_proposal_revert,
+            proposals::apply_proposal_review,
+            proposals::cancel_proposal_review,
+            drafting::load_drafting,
+            drafting::preview_drafting_change,
+            drafting::apply_drafting_change,
+            drafting::undo_drafting_change,
+            drafting::pick_drafting_import,
             pick_repository,
             recent_repositories,
             open_recent_repository,
             list_directory,
             read_document,
             save_document,
+            read_recovery,
+            stage_recovery,
+            discard_recovery,
             set_unsaved_changes,
             request_close,
             load_manuscript,

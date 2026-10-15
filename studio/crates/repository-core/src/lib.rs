@@ -1,5 +1,14 @@
 //! Bounded repository access and explicit, revision-guarded Markdown saves. Native hosts choose roots; renderers receive relative paths only.
 //! Unix descriptor-relative opens reject every symlink component, including concurrent swaps.
+mod drafting;
+#[cfg(all(test, unix))]
+mod fuzz_support;
+mod recovery;
+pub use drafting::{
+    DraftingChange, DraftingChangeView, DraftingExternalFile, DraftingGroup, DraftingPlan,
+    DraftingPreview, DraftingScene, DraftingState, DraftingUndo,
+};
+pub use recovery::{RecoveryDraft, RecoveryStore};
 #[cfg(unix)]
 use rustix::{
     fd::OwnedFd,
@@ -38,6 +47,20 @@ pub enum Error {
     Conflict,
     ReadOnly,
     SaveUncertain,
+    InvalidRecovery,
+    RecoveryIo,
+    RecoveryUncertain,
+    RecoveryChanged,
+    RecoveryBusy,
+    DraftingCollision,
+    DraftingChanged,
+    DraftingPending,
+    DraftingUncertain,
+    PendingRecovery,
+    EditorChanged,
+    LegacySceneMove,
+    AssetReferences,
+    UntrustedTransaction,
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -57,6 +80,28 @@ impl fmt::Display for Error {
             Self::SaveUncertain => {
                 "Document replaced, but durability could not be confirmed; reload before retrying"
             }
+            Self::InvalidRecovery => "Recovery draft is invalid or unsupported; it was not changed",
+            Self::RecoveryIo => {
+                "Recovery storage is unavailable; the latest edits are not protected"
+            }
+            Self::RecoveryUncertain => {
+                "Recovery storage changed, but durability could not be confirmed"
+            }
+            Self::RecoveryBusy => {
+                "This scene is being edited in another Studio instance; close it before saving here"
+            }
+            Self::RecoveryChanged => {
+                "Recovery draft needs review; reload recovery before saving or discarding"
+            }
+            Self::DraftingCollision => "A destination already exists; choose a different name or folder",
+            Self::DraftingChanged => "The manuscript or files changed; refresh and preview the change again",
+            Self::DraftingPending => "An interrupted manuscript change needs explicit rollback before continuing",
+            Self::DraftingUncertain => "The manuscript structure may have changed, but completion or rollback durability is uncertain. Refresh before retrying; preserve any remaining transaction journal for recovery",
+            Self::UntrustedTransaction => "This transaction journal has no matching private Studio receipt. Automatic rollback is unsafe; preserve the files and journal for manual recovery",
+            Self::AssetReferences => "This scene contains link or asset-reference syntax. Copy or reorganize it and its assets manually; Studio will not change its directory or rewrite its bytes",
+            Self::LegacySceneMove => "This scene belongs to a legacy manuscript. Copy it or use explicit legacy import; moving it would break the original manifest",
+            Self::PendingRecovery => "A scene has a pending recovery draft. Restore or discard it before moving or changing manuscript structure",
+            Self::EditorChanged => "The editor changed during author confirmation; preserve its text and review again",
             Self::UnsupportedPlatform => "Repository access currently requires macOS or Linux",
         })
     }
@@ -243,6 +288,14 @@ impl Repository {
             .to_string_lossy()
             .into_owned()
     }
+    /// Stable opaque identity for local preferences/recovery, never an authorization token.
+    pub fn project_key(&self) -> String {
+        // Root paths are absolute, normalized and opened without following symlinks.
+        format!(
+            "{:x}",
+            Sha256::digest(self.root.as_os_str().as_encoded_bytes())
+        )
+    }
     #[cfg(unix)]
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -272,7 +325,17 @@ impl Repository {
                 _ => return Err(Error::InvalidPath),
             }
         }
-        let root = path.to_path_buf();
+        let root = path.canonicalize().map_err(|_| Error::Io)?;
+        // Keep durable identity canonical as well as descriptor-bound. A concurrent
+        // root replacement must not associate the held repository with another path.
+        let held = std::fs::File::from(rustix::io::dup(&fd).map_err(errno)?)
+            .metadata()
+            .map_err(|_| Error::Io)?;
+        let resolved = std::fs::metadata(&root).map_err(|_| Error::Io)?;
+        use std::os::unix::fs::MetadataExt;
+        if (held.dev(), held.ino()) != (resolved.dev(), resolved.ino()) {
+            return Err(Error::Conflict);
+        }
         Ok(Self {
             root,
             fd,
@@ -435,6 +498,57 @@ impl Repository {
         let _save = self.save_gate.lock().map_err(|_| Error::Io)?;
         self.save_inner(path, expected_hash, text, || Ok(()))
     }
+    /// Author-confirmed whole-scene operations must reject all pending recovery.
+    /// Keep the normal lock order: repository save gate, then recovery gate. Never
+    /// call `save` from inside `RecoveryStore::with_clean_paths` (lock inversion).
+    /// Ordinary typing still uses `save_with_recovery` so staging stays concurrent.
+    pub fn save_with_clean_recovery(
+        &self,
+        path: &str,
+        expected_hash: &str,
+        text: &str,
+        recovery: &RecoveryStore,
+    ) -> Result<Document> {
+        self.save_with_clean_recovery_checked(path, expected_hash, text, recovery, || Ok(()))
+    }
+    /// Recheck live native editor authority after temporary-file fsync and before
+    /// commit, while retaining the same repository-then-recovery lock order.
+    pub fn save_with_clean_recovery_checked(
+        &self,
+        path: &str,
+        expected_hash: &str,
+        text: &str,
+        recovery: &RecoveryStore,
+        before_commit: impl FnOnce() -> Result<()>,
+    ) -> Result<Document> {
+        let _save = self.save_gate.lock().map_err(|_| Error::Io)?;
+        recovery.with_clean_paths(self, &[path.to_owned()], || {
+            self.save_inner(path, expected_hash, text, before_commit)
+        })
+    }
+    /// Native save route also observes process-lifetime scene ownership.
+    pub fn save_with_recovery(
+        &self,
+        path: &str,
+        expected_hash: &str,
+        text: &str,
+        recovery: &RecoveryStore,
+    ) -> Result<Document> {
+        self.save_with_recovery_inner(path, expected_hash, text, recovery, || Ok(()))
+    }
+    fn save_with_recovery_inner(
+        &self,
+        path: &str,
+        expected_hash: &str,
+        text: &str,
+        recovery: &RecoveryStore,
+        before_commit: impl FnOnce() -> Result<()>,
+    ) -> Result<Document> {
+        let _save = self.save_gate.lock().map_err(|_| Error::Io)?;
+        recovery.with_owned_scene(self, path, || {
+            self.save_inner(path, expected_hash, text, before_commit)
+        })
+    }
     fn save_inner(
         &self,
         path: &str,
@@ -442,6 +556,7 @@ impl Repository {
         text: &str,
         before_commit: impl FnOnce() -> Result<()>,
     ) -> Result<Document> {
+        self.require_clean_structure()?;
         self.allowed(path, false)?;
         if !matches!(
             Path::new(path)
@@ -603,23 +718,27 @@ impl Repository {
         let mut base = parent(path);
         loop {
             let manifest = join(base, "scene-manifest.json")?;
-            if self.allowed(&manifest, false).is_ok() {
-                match self.raw(&manifest, MAX_MANIFEST_BYTES, false) {
-                    Ok(text) => {
-                        if let Ok(raw) = serde_json::from_str::<RawManifest>(&text) {
-                            if raw.schema_version == 1
-                                && raw
-                                    .sources
+            // Authority metadata remains relevant even when hidden from browsing.
+            match self.raw(&manifest, MAX_MANIFEST_BYTES, true) {
+                Ok(text) => {
+                    if let Ok(raw) = serde_json::from_str::<RawManifest>(&text) {
+                        if raw.schema_version == 1
+                            && (raw
+                                .sources
+                                .iter()
+                                .any(|s| join(base, &s.path).as_deref() == Ok(path))
+                                || raw
+                                    .volumes
                                     .iter()
-                                    .any(|s| join(base, &s.path).as_deref() == Ok(path))
-                            {
-                                return Ok(true);
-                            }
+                                    .flat_map(|v| &v.chapters)
+                                    .any(|c| join(base, &c.source).as_deref() == Ok(path)))
+                        {
+                            return Ok(true);
                         }
                     }
-                    Err(Error::NotFound) => {}
-                    Err(e) => return Err(e),
                 }
+                Err(Error::NotFound) => {}
+                Err(e) => return Err(e),
             }
             if base.is_empty() {
                 break;
@@ -768,6 +887,31 @@ mod save_failure_tests {
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), doc.text);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+    #[test]
+    fn newer_recovery_can_stage_while_manuscript_save_is_pending() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root = temp.path().join("repository");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("scene.md"), "Original").unwrap();
+        let repo = Repository::open(&root).unwrap();
+        let store = RecoveryStore::open(temp.path().join("recovery")).unwrap();
+        let hash = repo.read("scene.md").unwrap().content_hash;
+        let first = store.stage(&repo, "scene.md", &hash, "First edit").unwrap();
+        repo.save_with_recovery_inner("scene.md", &hash, &first.text, &store, || {
+            store.stage(&repo, "scene.md", &hash, "Second edit while save pending")?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(repo.read("scene.md").unwrap().text, "First edit");
+        assert_eq!(
+            store.discard(&repo, "scene.md", &first.id).unwrap_err(),
+            Error::RecoveryChanged
+        );
+        assert_eq!(
+            store.read(&repo, "scene.md").unwrap().unwrap().text,
+            "Second edit while save pending"
+        );
     }
     #[test]
     fn external_edit_during_staging_is_not_overwritten() {

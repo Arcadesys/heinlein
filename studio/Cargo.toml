@@ -1,4 +1,4 @@
 [workspace]
-members = ["crates/repository-core", "src-tauri"]
+members = ["crates/repository-core", "crates/proposal-store", "crates/local-mcp", "src-tauri"]
 default-members = ["crates/repository-core"]
 resolver = "2"

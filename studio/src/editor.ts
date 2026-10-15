@@ -1,6 +1,6 @@
-import { EditorState } from '@codemirror/state';
+import { Annotation, Compartment, EditorState, StateEffect, StateField } from '@codemirror/state';
 import { EditorView, keymap, drawSelection } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, invertedEffects, undo, redo } from '@codemirror/commands';
 import { search, searchKeymap, openSearchPanel } from '@codemirror/search';
 import { markdown } from '@codemirror/lang-markdown';
 
@@ -15,26 +15,84 @@ export function rawOffset(text: string, position: number): number {
 }
 export function applyRawChanges(text: string, changes: {from: number; to: number; insert: string}[]): string {
   const newline = text.match(/\r\n|\r|\n/)?.[0] ?? '\n';
-  for (const change of [...changes].reverse()) {
-    text = text.slice(0, rawOffset(text, change.from)) + change.insert.replace(/\n/g, newline) + text.slice(rawOffset(text, change.to));
+  let result = ''; let cursor = 0;
+  const append = (part: string) => {
+    // Deleting text between a lone CR and an LF (or inserting CR-style lines
+    // before an LF) must not fuse two visible line breaks into one CRLF. Add
+    // only the boundary separator; untouched source spans retain their bytes.
+    if (result.endsWith('\r') && part.startsWith('\n')) result += '\n';
+    result += part;
+  };
+  for (const change of changes) {
+    const from = rawOffset(text, change.from); const to = rawOffset(text, change.to);
+    append(text.slice(cursor, from));
+    append(change.insert.replace(/\n/g, newline));
+    cursor = to;
   }
-  return text;
+  append(text.slice(cursor));
+  return result;
 }
-export function createEditor(parent: HTMLElement, source: string, changed: (raw: string) => void, save: () => void) {
+export type EditorChangeOrigin = 'user' | 'history' | 'programmatic' | 'recovery';
+const replacement = Annotation.define<{text: string; origin: EditorChangeOrigin}>();
+type RawHistory = {length: number; breaks: number; endings: {position: number; text: string}[]};
+// Only newline metadata belongs in history, not a full manuscript copy per
+// keystroke. Dropping mapped metadata keeps the earliest snapshot when typing
+// groups merge, and invalidates snapshots changed by non-history transactions.
+const rawHistory = StateEffect.define<RawHistory>({map: () => undefined});
+function historyEndings(text: string): RawHistory {
+  let removed = 0; let breaks = 0;
+  const endings: RawHistory['endings'] = [];
+  for (const match of text.matchAll(/\r\n|\r|\n/g)) {
+    breaks++;
+    if (match[0] !== '\n') endings.push({position: match.index! - removed, text: match[0]});
+    if (match[0] === '\r\n') removed++;
+  }
+  return {length: text.length - removed, breaks, endings};
+}
+export function createEditor(parent: HTMLElement, source: string, changed: (raw: string, origin: EditorChangeOrigin) => void, save: () => void) {
   let raw = source;
   let savedSource = source;
+  const editable = new Compartment();
+  const normalize = (text: string) => text.replace(/\r\n|\r/g, '\n');
+  const rawSource = StateField.define<string>({
+    create: () => source,
+    update: (before, transaction) => {
+      if (!transaction.docChanged) return before;
+      const exact = transaction.annotation(replacement);
+      if (exact) return exact.text;
+      const visible = transaction.newDoc.toString();
+      // History changes restore characters; these unmapped snapshots restore
+      // only their exact newline bytes. Never apply incompatible metadata.
+      for (let index = transaction.effects.length - 1; index >= 0; index--) {
+        const effect = transaction.effects[index];
+        if (!effect.is(rawHistory)) continue;
+        const snapshot = effect.value;
+        if (snapshot.length !== visible.length || snapshot.breaks !== transaction.newDoc.lines - 1 || snapshot.endings.some(ending => visible[ending.position] !== '\n')) continue;
+        let restored = ''; let cursor = 0;
+        for (const ending of snapshot.endings) {restored += visible.slice(cursor, ending.position) + ending.text; cursor = ending.position + 1;}
+        return restored + visible.slice(cursor);
+      }
+      if (visible === normalize(savedSource)) return savedSource;
+      if (visible === normalize(source)) return source;
+      const changes: {from: number; to: number; insert: string}[] = [];
+      transaction.changes.iterChanges((from, to, _a, _b, insert) => changes.push({from, to, insert: insert.toString()}));
+      return applyRawChanges(before, changes);
+    },
+  });
   const view = new EditorView({ parent, state: EditorState.create({
-    doc: source.replace(/\r\n|\r/g, '\n'),
-    extensions: [history(), drawSelection(), markdown(), search({top: true}), EditorView.lineWrapping,
+    doc: normalize(source),
+    extensions: [editable.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), rawSource,
+      invertedEffects.of(transaction => transaction.docChanged ? [rawHistory.of(historyEndings(transaction.startState.field(rawSource)))] : []),
+      history(), drawSelection(), markdown(), search({top: true}), EditorView.lineWrapping,
       EditorView.contentAttributes.of({'aria-label': 'Markdown editor', 'spellcheck': 'true'}),
       keymap.of([{key: 'Mod-s', run: () => { save(); return true; }}, ...defaultKeymap, ...historyKeymap, ...searchKeymap]),
       EditorView.updateListener.of(update => {
         if (!update.docChanged) return;
-        const changes: {from: number; to: number; insert: string}[] = [];
-        update.changes.iterChanges((from, to, _a, _b, insert) => changes.push({from, to, insert: insert.toString()}));
-        const visible = update.state.doc.toString();
-        raw = visible === savedSource.replace(/\r\n|\r/g, '\n') ? savedSource : visible === source.replace(/\r\n|\r/g, '\n') ? source : applyRawChanges(raw, changes);
-        changed(raw);
+        const exact = update.transactions.map(transaction => transaction.annotation(replacement)).find(Boolean);
+        raw = update.state.field(rawSource);
+        const origin = exact?.origin ?? (update.transactions.some(transaction => transaction.isUserEvent('undo') || transaction.isUserEvent('redo')) ? 'history'
+          : update.transactions.some(transaction => transaction.isUserEvent('input') || transaction.isUserEvent('delete') || transaction.isUserEvent('move')) ? 'user' : 'programmatic');
+        changed(raw, origin);
       }),
       EditorView.theme({
         '&': {color: '#f4f2ec', backgroundColor: '#121714', minHeight: '24rem'},
@@ -44,5 +102,10 @@ export function createEditor(parent: HTMLElement, source: string, changed: (raw:
       }, {dark: true}),
     ],
   }) });
-  return { view, markSaved: (text: string) => { savedSource = text; }, text: () => raw, destroy: () => view.destroy(), undo: () => undo(view), redo: () => redo(view), find: () => openSearchPanel(view) };
+  return { view,
+    replaceText: (text: string, origin: EditorChangeOrigin = 'programmatic') => {
+      view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: text.replace(/\r\n|\r/g, '\n')}, annotations: replacement.of({text, origin})});
+    },
+    setEditable: (value: boolean) => view.dispatch({effects: editable.reconfigure([EditorState.readOnly.of(!value), EditorView.editable.of(value)])}),
+    markSaved: (text: string) => { savedSource = text; }, text: () => raw, destroy: () => view.destroy(), undo: () => undo(view), redo: () => redo(view), find: () => openSearchPanel(view) };
 }
