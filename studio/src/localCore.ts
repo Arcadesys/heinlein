@@ -37,8 +37,29 @@ export interface ProposalBinding { reviewId: string; proposalId: string; baseHas
 export interface ProposalReceipt { id: string; kind: 'apply' | 'revert'; proposalId: string; path: string; baseHash: string; replacementHash: string; diffHash: string; origin: ProposalOrigin; parentReceiptId: string | null; status: 'completed' | 'failed' | 'uncertain'; message: string | null; createdAtMs: number; revertAvailable: boolean }
 export interface ProposalListing { pending: ProposalSummary[]; receipts: ProposalReceipt[] }
 export interface ProposalOutcome { receipt: ProposalReceipt; warning: string | null }
+export interface QuestionAccount { id: string; label: string; signedIn: boolean; planEnabled: boolean }
+export interface QuestionModel { slug: string; displayName: string }
+export interface QuestionStatus {
+  configured: boolean; model: string | null; message: string;
+  accounts: QuestionAccount[]; activeAccountId: string | null; models: QuestionModel[];
+  selectedModel: string | null; signInPending: boolean; generation: number; usageLimited: boolean;
+}
+export interface QuestionConnection { generation: number; accountId: string; model: string }
+export interface QuestionMessage { role: 'user' | 'assistant'; text: string }
+export interface QuestionRequest { requestId: string; question: string; context: string; history: QuestionMessage[] }
+export interface QuestionAnswer { requestId: string; text: string; model: string; inputTokens?: number | null; outputTokens?: number | null; incomplete: boolean }
 export interface LocalCore {
   available(): boolean;
+  questionStatus?(): Promise<QuestionStatus>;
+  askQuestion?(request: QuestionRequest, connection: QuestionConnection): Promise<QuestionAnswer>;
+  cancelQuestion?(requestId: string): Promise<boolean>;
+  connectQuestionAccount?(options: {allowChatgptPlan: boolean; accountId?: string}): Promise<QuestionStatus>;
+  cancelQuestionSignIn?(): Promise<void>;
+  selectQuestionAccount?(accountId: string): Promise<QuestionStatus>;
+  selectQuestionModel?(slug: string): Promise<QuestionStatus>;
+  refreshQuestionConnection?(): Promise<QuestionStatus>;
+  signOutQuestionAccount?(accountId?: string): Promise<QuestionStatus>;
+  openQuestionUsage?(): Promise<void>;
   listProposals?(repositoryId: string): Promise<ProposalListing>;
   reviewProposal?(repositoryId: string, proposalId: string): Promise<ProposalReview>;
   reviewProposalRevert?(repositoryId: string, receiptId: string): Promise<ProposalReview>;
@@ -70,6 +91,16 @@ export interface LocalCore {
 // no credentials, filesystem handles, or absolute root paths enter the renderer.
 export const localCore: LocalCore = {
   available: isTauri,
+  questionStatus: () => invoke('question_status'),
+  askQuestion: (request, connection) => invoke('ask_question', {request, connection}),
+  cancelQuestion: requestId => invoke('cancel_question', {requestId}),
+  connectQuestionAccount: options => invoke('connect_question_account', options),
+  cancelQuestionSignIn: () => invoke('cancel_question_sign_in'),
+  selectQuestionAccount: accountId => invoke('select_question_account', {accountId}),
+  selectQuestionModel: slug => invoke('select_question_model', {slug}),
+  refreshQuestionConnection: () => invoke('refresh_question_connection'),
+  signOutQuestionAccount: accountId => invoke('sign_out_question_account', {accountId: accountId ?? null}),
+  openQuestionUsage: () => invoke('open_question_usage'),
   listProposals: repositoryId => invoke('list_proposals', {repositoryId}),
   reviewProposal: (repositoryId, proposalId) => invoke('review_proposal', {repositoryId, proposalId}),
   reviewProposalRevert: (repositoryId, receiptId) => invoke('review_proposal_revert', {repositoryId, receiptId}),

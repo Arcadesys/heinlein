@@ -1,6 +1,6 @@
 {
   "identifier": "repository-browser",
-  "description": "Bundled main window: bounded repository browsing, revision-guarded Markdown saves, host-private bounded recovery snapshots, unsaved-change close protection and appearance fonts. No generic filesystem, shell, network, renderer-only approval, or release approval permissions. Native-confirmed, exact whole-scene MCP proposal review and guarded revert; no MCP approval route.",
+  "description": "Bundled main window: bounded repository browsing, revision-guarded Markdown saves, host-private bounded recovery snapshots, unsaved-change close protection and appearance fonts. No generic filesystem, shell, network, renderer-only approval, or release approval permissions. Native-confirmed, exact whole-scene MCP proposal review and guarded revert; no MCP approval route. Explicit bounded read-only drafting questions through native OpenAI transport; no renderer credentials or generic network access.",
   "windows": [
     "main"
   ],
@@ -29,6 +29,16 @@
     "allow-review-proposal",
     "allow-review-proposal-revert",
     "allow-apply-proposal-review",
-    "allow-cancel-proposal-review"
+    "allow-cancel-proposal-review",
+    "allow-question-status",
+    "allow-ask-question",
+    "allow-cancel-question",
+    "allow-connect-question-account",
+    "allow-cancel-question-sign-in",
+    "allow-select-question-account",
+    "allow-select-question-model",
+    "allow-refresh-question-connection",
+    "allow-sign-out-question-account",
+    "allow-open-question-usage"
   ]
 }

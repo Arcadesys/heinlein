@@ -1,0 +1,481 @@
+//! Main-window-only read-only questions and native ChatGPT account controls.
+//! No manuscript access, renderer credentials/URLs, or API-key billing fallback.
+
+use drafting_questions::{
+    Configuration, QuestionAnswer, QuestionError, QuestionRequest, QuestionService,
+};
+use heinlein_chatgpt_auth::{AccountView, AuthError, AuthService, AuthStatus, ModelView};
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
+use tauri::State;
+use tauri_plugin_opener::OpenerExt;
+
+const USAGE_URL: &str = "https://chatgpt.com/settings/usage";
+
+#[derive(Default)]
+pub(crate) struct QuestionHost {
+    questions: QuestionService,
+    auth: Mutex<Option<Arc<AuthService>>>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub(crate) enum NativeError {
+    Question(QuestionError),
+    Auth { code: &'static str, message: String },
+}
+
+impl From<QuestionError> for NativeError {
+    fn from(error: QuestionError) -> Self {
+        Self::Question(error)
+    }
+}
+impl From<AuthError> for NativeError {
+    fn from(error: AuthError) -> Self {
+        // AuthError's Display and code are deliberately static safe categories.
+        Self::Auth {
+            code: error.code(),
+            message: error.to_string(),
+        }
+    }
+}
+impl NativeError {
+    fn unavailable() -> Self {
+        Self::Auth {
+            code: "unavailable",
+            message:
+                "ChatGPT account controls are unavailable. The manuscript editor remains usable."
+                    .into(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QuestionStatus {
+    configured: bool,
+    model: Option<String>,
+    message: String,
+    accounts: Vec<AccountView>,
+    active_account_id: Option<String>,
+    models: Vec<ModelView>,
+    selected_model: Option<String>,
+    sign_in_pending: bool,
+    generation: u64,
+    usage_limited: bool,
+}
+
+/// The visible native connection snapshot at the author's explicit Send.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct QuestionConnection {
+    generation: u64,
+    account_id: String,
+    model: String,
+}
+
+fn main_window(window: &tauri::WebviewWindow) -> Result<(), NativeError> {
+    if window.label() != "main" {
+        return Err(QuestionError::unsupported_window().into());
+    }
+    Ok(())
+}
+
+impl QuestionHost {
+    fn auth(&self, app: &tauri::AppHandle) -> Result<Arc<AuthService>, NativeError> {
+        let mut slot = self.auth.lock().map_err(|_| NativeError::unavailable())?;
+        if let Some(service) = slot.as_ref() {
+            return Ok(service.clone());
+        }
+        let path =
+            super::private_question_auth_path(app).map_err(|_| NativeError::unavailable())?;
+        let service = Arc::new(AuthService::open(path)?);
+        *slot = Some(service.clone());
+        Ok(service)
+    }
+
+    fn status(&self, auth: AuthStatus) -> Result<QuestionStatus, NativeError> {
+        let usage_limited = match auth.active_account_id.as_deref() {
+            Some(id) => self.questions.is_usage_limited(id)?,
+            None => false,
+        };
+        let active = auth
+            .accounts
+            .iter()
+            .find(|account| Some(&account.id) == auth.active_account_id.as_ref());
+        let model_valid = auth
+            .selected_model
+            .as_ref()
+            .is_some_and(|slug| auth.models.iter().any(|model| &model.slug == slug));
+        let configured = !auth.sign_in_pending
+            && !usage_limited
+            && model_valid
+            && active.is_some_and(|account| account.signed_in && account.plan_enabled);
+        let message = if usage_limited {
+            QuestionError::usage_limited().message.to_owned()
+        } else if let Some(message) = auth.message {
+            message
+        } else if auth.sign_in_pending {
+            "Finish Continue with ChatGPT in your system browser, or cancel sign-in.".into()
+        } else if configured {
+            "Connected to ChatGPT. Send uses the selected account's plan and model; no API-key fallback is used.".into()
+        } else if active.is_some_and(|account| account.signed_in && !account.plan_enabled) {
+            "Signed in, but ChatGPT plan usage was not granted. Enable it with Continue with ChatGPT before sending.".into()
+        } else if active.is_some_and(|account| account.signed_in) {
+            "Choose an available ChatGPT model before sending. Recheck the connection if the model list is empty.".into()
+        } else {
+            "Continue with ChatGPT to connect your account and choose a model.".into()
+        };
+        Ok(QuestionStatus {
+            configured,
+            model: auth.selected_model.clone(),
+            message,
+            accounts: auth.accounts,
+            active_account_id: auth.active_account_id,
+            models: auth.models,
+            selected_model: auth.selected_model,
+            sign_in_pending: auth.sign_in_pending,
+            generation: auth.generation,
+            usage_limited,
+        })
+    }
+}
+
+fn matches_connection(status: &AuthStatus, connection: &QuestionConnection) -> bool {
+    !status.sign_in_pending
+        && status.generation == connection.generation
+        && status.active_account_id.as_deref() == Some(connection.account_id.as_str())
+        && status.selected_model.as_deref() == Some(connection.model.as_str())
+        && status
+            .models
+            .iter()
+            .any(|model| model.slug == connection.model)
+        && status.accounts.iter().any(|account| {
+            account.id == connection.account_id && account.signed_in && account.plan_enabled
+        })
+}
+
+fn safe_authorization_url(value: &str) -> bool {
+    url::Url::parse(value).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.host_str() == Some("auth.openai.com")
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.port_or_known_default() == Some(443)
+            && url.path() == "/api/accounts/authorize"
+            && url.fragment().is_none()
+            && url.query().is_some()
+    })
+}
+
+#[tauri::command]
+pub(crate) fn question_status(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    host.status(host.auth(&app)?.status()?)
+}
+
+#[tauri::command]
+pub(crate) async fn ask_question(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    request: QuestionRequest,
+    connection: QuestionConnection,
+) -> Result<QuestionAnswer, NativeError> {
+    main_window(&window)?;
+    request.validate()?;
+    let auth = host.auth(&app)?;
+    if !matches_connection(&auth.status()?, &connection) {
+        return Err(QuestionError::stale_connection().into());
+    }
+    if host.questions.is_usage_limited(&connection.account_id)? {
+        return Err(QuestionError::usage_limited().into());
+    }
+    let permit = host.questions.reserve(&request, &connection.account_id)?;
+    let credentials = auth.credentials(connection.generation).await?;
+    if credentials.generation != connection.generation
+        || credentials.account_id != connection.account_id
+        || credentials.model != connection.model
+        || !matches_connection(&auth.status()?, &connection)
+    {
+        return Err(QuestionError::stale_connection().into());
+    }
+    let config = Configuration::new(&credentials.access_token, &credentials.model)?
+        .with_account(&credentials.account_id)?
+        .with_cancellation(credentials.cancelled);
+    // Cancel records the ID even while native authentication is still refreshing.
+    // The auth lease also invalidates a not-yet-started or active HTTP request.
+    let answer = host.questions.ask_reserved(request, config, permit).await?;
+    if !auth.is_current(connection.generation) {
+        return Err(QuestionError::stale_connection().into());
+    }
+    Ok(answer)
+}
+
+#[tauri::command]
+pub(crate) fn cancel_question(
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    request_id: String,
+) -> Result<bool, NativeError> {
+    main_window(&window)?;
+    Ok(host.questions.cancel(&request_id)?)
+}
+
+#[tauri::command]
+pub(crate) async fn connect_question_account(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    allow_chatgpt_plan: bool,
+    account_id: Option<String>,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    if !allow_chatgpt_plan {
+        return Err(NativeError::Auth { code: "consentRequired", message: "Choose to allow ChatGPT plan usage before continuing to the browser consent screen.".into() });
+    }
+    host.questions.cancel_active()?;
+    let auth = host.auth(&app)?;
+    let status = auth
+        .connect(account_id.as_deref(), |url| {
+            if !safe_authorization_url(url) {
+                return Err(AuthError::Browser);
+            }
+            app.opener()
+                .open_url(url, None::<&str>)
+                .map_err(|_| AuthError::Browser)
+        })
+        .await?;
+    host.status(status)
+}
+
+#[tauri::command]
+pub(crate) fn cancel_question_sign_in(
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+) -> Result<(), NativeError> {
+    main_window(&window)?;
+    host.questions.cancel_active()?;
+    if let Some(auth) = host
+        .auth
+        .lock()
+        .map_err(|_| NativeError::unavailable())?
+        .as_ref()
+    {
+        auth.cancel();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn select_question_account(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    account_id: String,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    host.questions.cancel_active()?;
+    let auth = host.auth(&app)?;
+    host.status(auth.select_account(&account_id).await?)
+}
+
+#[tauri::command]
+pub(crate) fn select_question_model(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    slug: String,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    host.questions.cancel_active()?;
+    host.status(host.auth(&app)?.select_model(&slug)?)
+}
+
+#[tauri::command]
+pub(crate) async fn refresh_question_connection(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    let auth = host.auth(&app)?;
+    let status = auth.refresh_models().await?;
+    if let Some(id) = status.active_account_id.as_deref() {
+        host.questions.clear_usage_limit(id)?;
+    }
+    host.status(status)
+}
+
+#[tauri::command]
+pub(crate) async fn sign_out_question_account(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    account_id: Option<String>,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    host.questions.cancel_active()?;
+    let auth = host.auth(&app)?;
+    host.status(auth.sign_out(account_id.as_deref()).await?)
+}
+
+#[tauri::command]
+pub(crate) fn open_question_usage(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<(), NativeError> {
+    main_window(&window)?;
+    app.opener()
+        .open_url(USAGE_URL, None::<&str>)
+        .map_err(|_| AuthError::Browser.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status() -> AuthStatus {
+        AuthStatus {
+            accounts: vec![AccountView {
+                id: "oaiapp_account-one".into(),
+                label: "Writing account".into(),
+                signed_in: true,
+                plan_enabled: true,
+            }],
+            active_account_id: Some("oaiapp_account-one".into()),
+            models: vec![ModelView {
+                slug: "test-model".into(),
+                display_name: "Test model".into(),
+            }],
+            selected_model: Some("test-model".into()),
+            sign_in_pending: false,
+            generation: 7,
+            message: None,
+        }
+    }
+
+    fn connection() -> QuestionConnection {
+        QuestionConnection {
+            generation: 7,
+            account_id: "oaiapp_account-one".into(),
+            model: "test-model".into(),
+        }
+    }
+
+    #[test]
+    fn send_binding_requires_exact_generation_account_and_available_model() {
+        assert!(matches_connection(&status(), &connection()));
+        let mut binding = connection();
+        binding.generation += 1;
+        assert!(!matches_connection(&status(), &binding));
+        let mut binding = connection();
+        binding.account_id = "other".into();
+        assert!(!matches_connection(&status(), &binding));
+        let mut binding = connection();
+        binding.model = "other".into();
+        assert!(!matches_connection(&status(), &binding));
+        let mut auth = status();
+        auth.models.clear();
+        assert!(!matches_connection(&auth, &connection()));
+        let mut auth = status();
+        auth.sign_in_pending = true;
+        assert!(!matches_connection(&auth, &connection()));
+        let mut auth = status();
+        auth.accounts[0].plan_enabled = false;
+        assert!(!matches_connection(&auth, &connection()));
+        let mut auth = status();
+        auth.accounts[0].signed_in = false;
+        assert!(!matches_connection(&auth, &connection()));
+    }
+
+    #[test]
+    fn authorization_opener_allows_only_exact_native_https_route() {
+        assert!(safe_authorization_url("https://auth.openai.com/api/accounts/authorize?client_id=dynamic_agent_client&state=fake"));
+        for url in [
+            "http://auth.openai.com/api/accounts/authorize?x=1",
+            "https://auth.openai.com:444/api/accounts/authorize?x=1",
+            "https://auth.openai.com.evil.test/api/accounts/authorize?x=1",
+            "https://user@auth.openai.com/api/accounts/authorize?x=1",
+            "https://user:pass@auth.openai.com/api/accounts/authorize?x=1",
+            "https://auth.openai.com/api/accounts/authorize?x=1#fragment",
+            "https://auth.openai.com/api/accounts/authorize",
+            "https://auth.openai.com/another-route?x=1",
+            "file:///tmp/private",
+            "javascript:alert(1)",
+        ] {
+            assert!(!safe_authorization_url(url), "unexpectedly accepted URL");
+        }
+    }
+
+    #[test]
+    fn renderer_status_has_no_native_credential_fields_and_requires_plan_grant() {
+        let host = QuestionHost::default();
+        let value = serde_json::to_value(host.status(status()).ok().unwrap()).unwrap();
+        assert_eq!(value["configured"], true);
+        assert_eq!(value["generation"], 7);
+        assert_eq!(value["activeAccountId"], "oaiapp_account-one");
+        for key in [
+            "accessToken",
+            "refreshToken",
+            "idToken",
+            "authorizationUrl",
+            "auth",
+        ] {
+            assert!(value.get(key).is_none());
+        }
+        let mut auth = status();
+        auth.accounts[0].plan_enabled = false;
+        assert!(!host.status(auth).ok().unwrap().configured);
+    }
+
+    #[test]
+    fn connection_payload_rejects_extra_fields() {
+        assert!(serde_json::from_value::<QuestionConnection>(serde_json::json!({
+            "generation":7,"accountId":"oaiapp_account-one","model":"test-model","url":"https://evil.test"
+        })).is_err());
+    }
+
+    #[test]
+    fn private_account_storage_cannot_overlap_manuscript_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let manuscript = root.join("manuscript");
+        std::fs::create_dir(&manuscript).unwrap();
+        let future_private = root.join("private").join("chatgpt-auth");
+        assert!(
+            super::super::guard_auth_repository_separation(&manuscript, &future_private).is_ok()
+        );
+        assert!(super::super::guard_auth_repository_separation(&root, &future_private).is_err());
+        std::fs::create_dir_all(&future_private).unwrap();
+        assert!(
+            super::super::guard_auth_repository_separation(&future_private, &future_private)
+                .is_err()
+        );
+        assert!(super::super::guard_auth_repository_separation(
+            &future_private.join("scenes"),
+            &future_private
+        )
+        .is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_storage_overlap_resolves_symlinked_existing_parent() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let manuscript = root.join("manuscript");
+        std::fs::create_dir(&manuscript).unwrap();
+        let alias = root.join("storage-alias");
+        std::os::unix::fs::symlink(&manuscript, &alias).unwrap();
+        let future_private = alias.join("not-created").join("chatgpt-auth");
+        assert!(
+            super::super::guard_auth_repository_separation(&manuscript, &future_private).is_err()
+        );
+        assert!(!manuscript.join("not-created").exists());
+    }
+}

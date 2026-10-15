@@ -33,7 +33,9 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: cargo fmt --all -- --check
-      - run: cargo test --locked -p repository-core -p proposal-store -p heinlein-local-mcp
+      - run: cargo test --locked -p repository-core -p proposal-store -p heinlein-local-mcp -p drafting-questions -p heinlein-chatgpt-auth
+      - name: Native question boundary regressions
+        run: cargo test --locked -p heinlein-studio --bin heinlein-studio questions::tests
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Native proposal authority regressions
         run: |

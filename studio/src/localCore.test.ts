@@ -12,6 +12,26 @@ describe('local Core bridge contract', () => {
       ['set_unsaved_changes', {dirty: true}], ['request_close', {discard: true}],
     ]);
   });
+  it('uses the narrow native question boundary without credentials or repository paths', async () => {
+    const request = {requestId: 'unique-id', question: 'What happens next?', context: 'Exact\r\nselection', history: [{role: 'user' as const, text: 'Earlier question'}, {role: 'assistant' as const, text: 'Earlier answer'}]};
+    const connection = {generation: 7, accountId: 'opaque-account', model: 'mock-model'};
+    await localCore.questionStatus!(); await localCore.askQuestion!(request, connection); await localCore.cancelQuestion!('unique-id');
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ['question_status'], ['ask_question', {request, connection}], ['cancel_question', {requestId: 'unique-id'}],
+    ]);
+  });
+  it('uses native-only ChatGPT connection commands with explicit plan consent', async () => {
+    await localCore.connectQuestionAccount!({allowChatgptPlan: true});
+    await localCore.connectQuestionAccount!({allowChatgptPlan: true, accountId: 'account-2'});
+    await localCore.cancelQuestionSignIn!(); await localCore.selectQuestionAccount!('account-2');
+    await localCore.selectQuestionModel!('mock-model'); await localCore.refreshQuestionConnection!();
+    await localCore.signOutQuestionAccount!('account-2'); await localCore.openQuestionUsage!();
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ['connect_question_account', {allowChatgptPlan: true}], ['connect_question_account', {allowChatgptPlan: true, accountId: 'account-2'}],
+      ['cancel_question_sign_in'], ['select_question_account', {accountId: 'account-2'}], ['select_question_model', {slug: 'mock-model'}],
+      ['refresh_question_connection'], ['sign_out_question_account', {accountId: 'account-2'}], ['open_question_usage'],
+    ]);
+  });
   it('uses session-scoped recovery commands and compare-and-delete identifiers', async () => {
     await localCore.readRecovery('session', 'scene.md');
     await localCore.stageRecovery('session', 'scene.md', 'base', 'exact\r\ntext');

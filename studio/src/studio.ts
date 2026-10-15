@@ -1,7 +1,9 @@
 import { createProposalPanel } from './proposalPanel';
 import { createWritingPanel } from './writingPanel';
 import { createEditor, rawOffset } from './editor';
-import { createSelectionQuestionPanel, selectionQuestionProblem } from './selectionQuestion';
+import { captureSelectionQuestion, createSelectionQuestionPanel, selectionQuestionAvailability, selectionQuestionProblem, type SelectionQuestionState } from './selectionQuestion';
+import { createQuestionPanel, questionBytes, QUESTION_LIMITS } from './questionPanel';
+import { createSelectionAskAction } from './selectionAsk';
 import { createDraftingPanel, REPOSITORY_DRAG_TYPE } from './draftingPanel';
 import type { DraftingFileChange, DraftingState } from './localCore';
 import type { LocalCore, RepositorySession, Manuscript, Document, RecoveryDraft } from './localCore';
@@ -54,6 +56,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let opened: Document | null = null;
   let editor: ReturnType<typeof createEditor> | null = null;
   let questions: ReturnType<typeof createSelectionQuestionPanel> | null = null;
+  let draftingQuestions: ReturnType<typeof createQuestionPanel> | null = null;
+  let questionButton: HTMLButtonElement | null = null;
+  let selectionAsk: ReturnType<typeof createSelectionAskAction> | null = null;
+  let selectionCaptureVersion = 0; let selectionCapturePending = false;
   let dirty = false;
   let saving = false;
   let edits = 0;
@@ -396,6 +402,42 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     },
     report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
   });
+  draftingQuestions = createQuestionPanel(core, {
+    current: () => {
+      if (disposed || !editor || !opened || !repository) return null;
+      const source = editor.text(); const range = editor.view.state.selection.main;
+      const single = editor.view.state.selection.ranges.length === 1;
+      return {repositoryId: repository.id, path: opened.path, source,
+        from: single ? rawOffset(source, range.from) : -1, to: single ? rawOffset(source, range.to) : -1,
+        canCapture: !editor.view.state.readOnly && !opened.generatedCompatibility && !recoveryPending && !repositoryDetached && !selecting && !structuralBusy && !proposalBusy};
+    },
+    focusEditor: () => editor?.view.focus(),
+    visibilityChanged: visible => {questionButton?.setAttribute('aria-expanded', String(visible)); if (!visible) {selectionCaptureVersion++; selectionCapturePending = false;}},
+  });
+  draftingQuestions.element.id = 'drafting-questions';
+  function draftingSelectionState(): SelectionQuestionState | null {
+    const current = selectionQuestionState();
+    // Asking is read-only; an in-flight local save does not block capture.
+    return current ? {...current, busy: selecting || structuralBusy || proposalBusy || Boolean(guardPending)} : null;
+  }
+  async function askDraftingSelection(expected?: SelectionQuestionState) {
+    if (selectionCapturePending) return;
+    const initial = expected ?? draftingSelectionState(); const unavailable = selectionQuestionAvailability(initial);
+    if (!initial || unavailable) {status.textContent = unavailable ?? 'Highlight a passage first.'; return;}
+    if (questionBytes(initial.source.slice(initial.from, initial.to)) > QUESTION_LIMITS.context) {
+      status.textContent = `This selection exceeds ${QUESTION_LIMITS.context.toLocaleString()} UTF-8 bytes. Highlight a shorter passage before asking. Nothing was sent.`; status.classList.add('error'); return;
+    }
+    const request = ++selectionCaptureVersion; selectionCapturePending = true;
+    const contextVersion = draftingQuestions?.selectionVersion();
+    try {
+      const snapshot = await captureSelectionQuestion(initial);
+      if (disposed || selectionCaptureVersion !== request) return;
+      const problem = selectionQuestionProblem(snapshot, draftingSelectionState()); if (problem) throw new Error(problem);
+      draftingQuestions?.openSelection({repositoryId: snapshot.repositoryId, path: snapshot.path, source: snapshot.source, from: snapshot.from, to: snapshot.to, canCapture: true}, contextVersion);
+    } catch (error) {
+      if (!disposed && selectionCaptureVersion === request) {status.textContent = error instanceof Error ? error.message : 'The selection could not be captured. Highlight the passage again.'; status.classList.add('error');}
+    } finally {if (selectionCaptureVersion === request) selectionCapturePending = false;}
+  }
   async function runProposal(action: () => Promise<void>) {
     if (disposed || structuralBusy || selecting || !repository) return;
     if (repositoryDetached) { reportDetachedRepository(); return; }
@@ -595,6 +637,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
 
   function resetPreview() {
     questions?.clear();
+    selectionAsk?.destroy(); selectionAsk = null;
+    draftingQuestions?.clear(); questionButton = null;
     writing.clearScene();
     cancelAutosave(); documentEpoch++; recoveryErrorMessage = null; recovery = null; recoveryPending = false; writePaused = null;
     editor?.destroy(); editor = null; opened = null; saveButton = null; dirtyBadge = null; setDirty(false);
@@ -624,6 +668,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (selecting || !await allowLeave() || selecting) return;
     selecting = true;
     questions?.clear();
+    draftingQuestions?.clear();
     const editRevision = edits;
     const wasReadOnly = editor?.view.state.readOnly ?? false;
     const current = ++generation;
@@ -728,6 +773,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   function renderDocument(doc: Document, draft: RecoveryDraft | null = null) {
     questions?.clear();
+    selectionAsk?.destroy(); selectionAsk = null;
+    draftingQuestions?.clear(); questionButton = null;
     writing.openScene(repository?.projectKey ?? '', doc.path, doc.text, drafting.state?.scenes.find(scene => scene.path === doc.path)?.id);
     cancelAutosave(); documentEpoch++; recoveryErrorMessage = null; recovery = draft; recoveryPending = Boolean(draft && draft.text !== doc.text); writePaused = null; writeBaseHash = doc.contentHash;
     editor?.destroy(); editor = null; opened = doc; saveButton = null; dirtyBadge = null; setDirty(false);
@@ -750,16 +797,26 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       const askSelection = button('Ask about selection', () => { void questions?.open(); });
       askSelection.setAttribute('aria-haspopup', 'dialog');
       askSelection.title = 'Prepare a question for manual copy/paste into ChatGPT or another assistant';
+      questionButton = button('Questions', () => draftingQuestions?.open());
+      questionButton.setAttribute('aria-controls', 'drafting-questions'); questionButton.setAttribute('aria-expanded', 'false');
+      questionButton.title = 'Ask OpenAI while drafting, with only the context you choose';
+      const askDrafting = button('Ask Heinlein about selection', () => {void askDraftingSelection();}); askDrafting.disabled = true;
+      askDrafting.setAttribute('aria-keyshortcuts', 'Control+Alt+Enter Meta+Alt+Enter');
+      askDrafting.title = 'Capture the selected passage into Questions (Cmd/Ctrl+Alt+Enter). Nothing is sent automatically.';
       const split = button('Split scene at cursor', splitAtCursor);
       split.setAttribute('aria-haspopup', 'dialog'); split.setAttribute('aria-keyshortcuts', 'Control+Shift+Enter Meta+Shift+Enter');
       split.title = 'Split scene at cursor (Cmd/Ctrl+Shift+Enter)';
       split.disabled = !drafting.state?.scenes.some(scene => scene.path === doc.path);
-      toolbar.append(askSelection, split, saveButton, button('Undo', () => editor?.undo()), button('Redo', () => editor?.redo()), button('Find', () => editor?.find()), dirtyBadge);
+      toolbar.append(questionButton, askDrafting, askSelection, split, saveButton, button('Undo', () => editor?.undo()), button('Redo', () => editor?.redo()), button('Find', () => editor?.find()), dirtyBadge);
       const host = el('div', '', 'markdown-editor');
       host.addEventListener('keydown', event => {
+        if ((event.ctrlKey || event.metaKey) && event.altKey && !event.shiftKey && event.key === 'Enter') {event.preventDefault(); event.stopPropagation(); void askDraftingSelection(); return;}
         if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); splitAtCursor(); }
       }, true);
-      text.replaceWith(toolbar, host);
+      const draftingArea = el('div', '', 'drafting-editor-area');
+      const editorColumn = el('div', '', 'drafting-editor-column'); editorColumn.append(toolbar, host);
+      draftingArea.append(editorColumn); if (draftingQuestions) draftingArea.append(draftingQuestions.element);
+      text.replaceWith(draftingArea);
       let previousText = doc.text;
       editor = createEditor(host, doc.text, (raw, origin) => {
         writing.changed(previousText, raw, origin); previousText = raw;
@@ -768,6 +825,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         setDirty(raw !== opened?.text);
         scheduleAutosave();
       }, () => { void saveCurrent(); });
+      selectionAsk = createSelectionAskAction(editor.view, {current: draftingSelectionState, fallback: askDrafting,
+        ask: snapshot => {void askDraftingSelection(snapshot);}, stale: () => {status.textContent = 'The selection changed. Highlight the passage again before asking.';}});
       if (recoveryPending && draft) showRecoveryChoice(doc, draft, host);
       updateSaveState();
     }
@@ -876,6 +935,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { questions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler); }
+    destroy: () => { questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler); }
   };
 }

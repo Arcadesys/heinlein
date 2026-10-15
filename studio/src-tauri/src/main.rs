@@ -2,6 +2,7 @@
 
 mod drafting;
 mod proposals;
+mod questions;
 
 use repository_core::{Document, Entry, Manuscript, RecoveryDraft, RecoveryStore, Repository};
 use serde::{Deserialize, Serialize};
@@ -77,6 +78,65 @@ fn recent_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| e.to_string())?
         .join("recent-folders-v1.json"))
 }
+/// Compare private auth storage with repository roots even before the auth
+/// directory exists. This does not create it or read any credential contents.
+fn resolved_future_path(path: &Path) -> Result<PathBuf, String> {
+    if !path.is_absolute() {
+        return Err("Private account storage requires an absolute path".into());
+    }
+    let mut existing = path.to_path_buf();
+    let mut suffix = Vec::new();
+    while !existing
+        .try_exists()
+        .map_err(|_| "Private account storage is unavailable")?
+    {
+        suffix.push(
+            existing
+                .file_name()
+                .ok_or("Private account storage is unavailable")?
+                .to_os_string(),
+        );
+        if !existing.pop() {
+            return Err("Private account storage is unavailable".into());
+        }
+    }
+    let mut resolved = existing
+        .canonicalize()
+        .map_err(|_| "Private account storage is unavailable")?;
+    for name in suffix.into_iter().rev() {
+        resolved.push(name);
+    }
+    Ok(resolved)
+}
+fn auth_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "Private account storage is unavailable")?
+        .join("chatgpt-auth"))
+}
+fn guard_auth_repository_separation(
+    repository: &Path,
+    private_storage: &Path,
+) -> Result<(), String> {
+    let storage = resolved_future_path(private_storage)?;
+    if repository.starts_with(&storage) || storage.starts_with(repository) {
+        return Err("Choose a manuscript folder outside Heinlein's private account storage".into());
+    }
+    Ok(())
+}
+fn private_question_auth_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let path = auth_path(app)?;
+    let state = app.state::<BrowserState>();
+    let selected = state
+        .selected
+        .lock()
+        .map_err(|_| "Repository unavailable")?;
+    if let Some(selected) = selected.as_ref() {
+        guard_auth_repository_separation(selected.repo.root(), &path)?;
+    }
+    Ok(path)
+}
 fn load_recents(path: &Path) -> RecentStore {
     // Recent paths are convenience preferences, never arbitrary renderer-supplied paths.
     let result = fs::metadata(path)
@@ -105,6 +165,7 @@ fn save_recents(path: &Path, store: &RecentStore) -> Result<(), String> {
 }
 fn select(app: &tauri::AppHandle, path: PathBuf) -> Result<Session, String> {
     let repo = Repository::open(&path).map_err(|e| e.to_string())?;
+    guard_auth_repository_separation(repo.root(), &auth_path(app)?)?;
     let (manifests, warning) = match repo.discover() {
         Ok(paths) => (paths, None),
         Err(error) => (
@@ -461,7 +522,9 @@ async fn list_system_fonts(window: tauri::WebviewWindow) -> Result<Vec<String>, 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(BrowserState::default())
+        .manage(questions::QuestionHost::default())
         .setup(|app| {
             let path = recent_file(app.handle()).map_err(std::io::Error::other)?;
             *app.state::<BrowserState>()
@@ -494,6 +557,16 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            questions::question_status,
+            questions::ask_question,
+            questions::cancel_question,
+            questions::connect_question_account,
+            questions::cancel_question_sign_in,
+            questions::select_question_account,
+            questions::select_question_model,
+            questions::refresh_question_connection,
+            questions::sign_out_question_account,
+            questions::open_question_usage,
             proposals::list_proposals,
             proposals::review_proposal,
             proposals::review_proposal_revert,
