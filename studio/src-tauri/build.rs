@@ -1,6 +1,16 @@
 fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "connect_question_account",
+            "cancel_question_sign_in",
+            "select_question_account",
+            "select_question_model",
+            "refresh_question_connection",
+            "sign_out_question_account",
+            "open_question_usage",
+            "question_status",
+            "ask_question",
+            "cancel_question",
             "list_proposals",
             "review_proposal",
             "review_proposal_revert",

@@ -938,7 +938,8 @@ describe('trusted local proposal review', () => {
   });
   it('cancels without applying and returns the unchanged editable buffer', async () => {
     const {core, editor} = await setup(); await openReview();
-    findButton('Cancel').click(); await settle();
+    const review = document.querySelector('[aria-label="Review whole-scene proposal"]')!;
+    [...review.querySelectorAll('button')].find(node => node.textContent === 'Cancel')!.click(); await settle();
     expect(core.applyProposalReview).not.toHaveBeenCalled(); expect(core.cancelProposalReview).toHaveBeenCalledWith(session.id, view.id);
     expect(editor.state.doc.toString()).toBe(view.baseText); expect(editor.contentDOM.getAttribute('contenteditable')).toBe('true');
   });
