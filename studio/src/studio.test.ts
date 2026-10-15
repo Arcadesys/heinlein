@@ -924,7 +924,7 @@ describe('trusted local proposal review', () => {
     const edit = (text: string) => editor.dispatch({changes: {from: 0, to: editor.state.doc.length, insert: text}, annotations: Transaction.userEvent.of('input.type')});
     return {core, app, editor, edit};
   }
-  async function openReview() { findButton('MCP proposals').click(); await settle(); findButton('Review proposal').click(); await settle(); }
+  async function openReview() { findButton('Revision proposals').click(); await settle(); findButton('Review proposal').click(); await settle(); }
   it('displays literal whole-scene bytes with unverified attribution and exact native binding', async () => {
     const {core} = await setup(); await openReview();
     const modal = document.querySelector('[aria-label="Review whole-scene proposal"]')!;
@@ -996,7 +996,7 @@ describe('trusted local proposal review', () => {
   });
   it('shows immutable attributed receipts and reviews exact guarded reversal', async () => {
     const {core} = await setup(); core.listProposals = vi.fn(async () => ({pending: [], receipts: [receipt]}));
-    findButton('MCP proposals').click(); await settle();
+    findButton('Revision proposals').click(); await settle();
     expect(document.body.textContent).toContain('not an authenticated revision ledger'); expect(document.body.textContent).toContain('Author action: Studio native confirmation');
     expect(document.querySelector('.proposal-receipt script')).toBeNull(); findButton('Review revert').click(); await settle();
     const modal = document.querySelector('[aria-label="Review guarded revert"]')!;
@@ -1005,13 +1005,13 @@ describe('trusted local proposal review', () => {
   });
   it('never offers revert for an uncertain receipt', async () => {
     const {core} = await setup(); core.listProposals = vi.fn(async () => ({pending: [], receipts: [{...receipt, status: 'uncertain' as const, revertAvailable: false, message: 'Inspect current source'}]}));
-    findButton('MCP proposals').click(); await settle(); expect(document.body.textContent).toContain('uncertain');
+    findButton('Revision proposals').click(); await settle(); expect(document.body.textContent).toContain('uncertain');
     expect([...document.querySelectorAll('button')].some(n => n.textContent === 'Review revert')).toBe(false);
   });
   it('drops old list responses on repository switch', async () => {
     const {core, app} = await setup(); let finish!: (value: Awaited<ReturnType<NonNullable<LocalCore['listProposals']>>>) => void;
     core.listProposals = vi.fn(() => new Promise<Awaited<ReturnType<NonNullable<LocalCore['listProposals']>>>>(resolve => { finish = resolve; }));
-    findButton('MCP proposals').click(); await settle(); await app.selectRepository(async () => ({...session, id: 'new-session', manifests: []}));
+    findButton('Revision proposals').click(); await settle(); await app.selectRepository(async () => ({...session, id: 'new-session', manifests: []}));
     finish({pending: [{...view, id: view.proposalId, createdAtMs: 1}], receipts: []}); await settle();
     expect(document.querySelector('.proposal-dialog')).toBeNull();
   });

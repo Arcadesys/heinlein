@@ -1,3 +1,5 @@
+import {StateEffect} from '@codemirror/state';
+import {EditorView} from '@codemirror/view';
 import { createProposalPanel } from './proposalPanel';
 import { createWritingPanel } from './writingPanel';
 import { createEditor, rawOffset } from './editor';
@@ -90,6 +92,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   function updateSaveState() {
     if (dirtyBadge) dirtyBadge.textContent = recoveryPending ? 'Recovery available' : saving ? 'Saving locally…' : dirty ? (writePaused ? 'Unsaved · autosave paused' : 'Unsaved changes') : 'Saved locally';
     if (saveButton) saveButton.disabled = saving || recoveryPending || !dirty;
+    draftingQuestions?.stateChanged();
   }
   function setDirty(value: boolean) {
     dirty = value;
@@ -298,7 +301,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const appearance = button('Appearance', () => openAppearance(), 'appearance');
   appearance.title = 'Fonts and text size (Cmd/Ctrl+,)';
   appearance.setAttribute('aria-haspopup', 'dialog');
-  const proposalsEntry = button('MCP proposals', () => { void proposals.open(); });
+  const proposalsEntry = button('Revision proposals', () => { void proposals.open(); });
   proposalsEntry.hidden = true;
   actions.append(zoomGroup, appearance, proposalsEntry, open);
   header.append(brand, actions);
@@ -412,9 +415,27 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         canCapture: !editor.view.state.readOnly && !opened.generatedCompatibility && !recoveryPending && !repositoryDetached && !selecting && !structuralBusy && !proposalBusy};
     },
     focusEditor: () => editor?.view.focus(),
+    selectionState: reviewing => {
+      const current = selectionQuestionState();
+      return reviewing && current && proposalBusy ? {...current, readOnly: Boolean(opened?.generatedCompatibility), busy: false} : current;
+    },
+    revisionUnavailable: reviewing => revisionUnavailable(Boolean(reviewing)),
+    prepareRevision: async snapshot => {
+      await dirtySync;
+      const problem = revisionUnavailable(false) ?? selectionQuestionProblem(snapshot, selectionQuestionState());
+      if (problem) throw new Error(problem);
+    },
+    reviewRevision: (id, _snapshot, guard) => proposals.reviewProposal(id, guard),
     visibilityChanged: visible => {questionButton?.setAttribute('aria-expanded', String(visible)); if (!visible) {selectionCaptureVersion++; selectionCapturePending = false;}},
   });
   draftingQuestions.element.id = 'drafting-questions';
+  function revisionUnavailable(reviewing = false) {
+    if (!proposals.supported) return 'Revision review is unavailable in this native host.';
+    if (!editor || !opened || !repository || repositoryDetached || opened.generatedCompatibility) return 'Open an attached, editable saved scene before requesting a revision.';
+    if (dirty || saving || staging || writeInFlight || recovery || recoveryPending || guardPending || writePaused) return 'Save your scene and resolve local recovery before requesting or reviewing a revision. Nothing is saved automatically by Questions.';
+    if (selecting || ((structuralBusy || proposalBusy) && !reviewing)) return 'Finish the current local operation before requesting a revision.';
+    return null;
+  }
   function draftingSelectionState(): SelectionQuestionState | null {
     const current = selectionQuestionState();
     // Asking is read-only; an in-flight local save does not block capture.
@@ -825,6 +846,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         setDirty(raw !== opened?.text);
         scheduleAutosave();
       }, () => { void saveCurrent(); });
+      editor.view.dispatch({effects: StateEffect.appendConfig.of(EditorView.updateListener.of(update => {if (update.docChanged || update.selectionSet) draftingQuestions?.stateChanged();}))});
       selectionAsk = createSelectionAskAction(editor.view, {current: draftingSelectionState, fallback: askDrafting,
         ask: snapshot => {void askDraftingSelection(snapshot);}, stale: () => {status.textContent = 'The selection changed. Highlight the passage again before asking.';}});
       if (recoveryPending && draft) showRecoveryChoice(doc, draft, host);

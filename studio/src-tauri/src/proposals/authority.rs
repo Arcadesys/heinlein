@@ -103,7 +103,15 @@ impl Review {
     }
     /// Native dialog is created from the retained plan, never renderer-provided text.
     pub fn confirmation_message(&self) -> String {
-        format!("{} the exact whole-scene change reviewed in Studio?\n\nScene: {}\nProposal: {}\nUnverified MCP client: {}\nUnverified session: {}\n\nBase SHA-256: {}\nReplacement SHA-256: {}\nDiff SHA-256: {}\n\nThis author action changes a working draft, not a release approval.", if self.kind == "revert" { "Revert" } else { "Apply" }, self.path, self.proposal_id, self.origin.client_label, self.origin.session_id, self.base_hash, self.replacement_hash, self.diff_hash)
+        let origin = if self.origin.kind == "nativeOpenAi" {
+            format!("Recorded provider: {}\nRecorded model: {}\nRecorded request: {}\nProvider metadata is unverified stored attribution, not author approval", self.origin.provider.as_deref().unwrap_or(""), self.origin.model.as_deref().unwrap_or(""), self.origin.request_id.as_deref().unwrap_or(""))
+        } else {
+            format!(
+                "Unverified MCP client: {}\nUnverified session: {}",
+                self.origin.client_label, self.origin.session_id
+            )
+        };
+        format!("{} the exact whole-scene change reviewed in Studio?\n\nScene: {}\nProposal: {}\n{}\n\nBase SHA-256: {}\nReplacement SHA-256: {}\nDiff SHA-256: {}\n\nThis author action changes a working draft, not a release approval.", if self.kind == "revert" { "Revert" } else { "Apply" }, self.path, self.proposal_id, origin, self.base_hash, self.replacement_hash, self.diff_hash)
     }
 }
 fn valid_id(value: &str) -> bool {
@@ -196,7 +204,7 @@ impl Authority {
         let mut records = receipts.with_lock(repo, || receipts.read_all(repo))?;
         let consumed: HashSet<_> = records
             .iter()
-            .filter(|r| r.kind == "apply")
+            .filter(|r| matches!(r.kind.as_str(), "apply" | "reject"))
             .map(|r| r.proposal_id.clone())
             .collect();
         for record in &mut records {
@@ -214,6 +222,21 @@ impl Authority {
                 .collect(),
             receipts: records,
         })
+    }
+    /// Dismissal records only data and can never approve or save a manuscript.
+    /// The shared receipt lock makes reject/apply mutually exclusive across hosts.
+    pub fn reject(
+        &mut self,
+        repo: &Repository,
+        proposals: &ProposalStore,
+        receipts: &ReceiptStore,
+        proposal_id: &str,
+    ) -> Result<Receipt> {
+        self.plan = None;
+        let proposal = proposals
+            .get(repo, proposal_id)
+            .map_err(|e| e.to_string())?;
+        receipts.with_lock(repo, || receipts.write_rejection(repo, proposal))
     }
     // Explicit native repository, storage and editor inputs keep authority boundaries visible.
     #[allow(clippy::too_many_arguments)]

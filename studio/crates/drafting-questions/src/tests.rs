@@ -873,3 +873,278 @@ async fn reserved_preflight_enforces_one_flight_and_exact_binding() {
     assert_eq!(error.code, "invalidRequest");
     assert!(service.state.lock().unwrap().active.is_none());
 }
+
+fn revision_bytes(text: &str) -> Vec<u8> {
+    let mut value = answer_value();
+    value["output"][0]["content"][0]["text"] = json!(text);
+    serde_json::to_vec(&value).unwrap()
+}
+
+async fn prepared_revision(
+    service: &QuestionService,
+    id: &str,
+    config: Configuration,
+) -> PreparedRevision {
+    let request = request(id);
+    let permit = service.reserve(&request, &config.account_id).unwrap();
+    service
+        .revise_with(
+            request,
+            "Exact—🦊\r\n".into(),
+            config,
+            permit,
+            |_, _| async {
+                Ok(revision_bytes(
+                    r#"{"explanation":"Keep the voice.","replacement":"  Revised—🦊\r\n"}"#,
+                ))
+            },
+            REQUEST_TIMEOUT,
+        )
+        .await
+        .ok()
+        .unwrap()
+}
+
+#[test]
+fn revision_wire_is_strict_bounded_and_only_explicitly_supplied_text() {
+    let mut request = request("revision-wire");
+    request.context = "Opt-in context\r\n".into();
+    let target = "Exact—🦊\r\n";
+    let bytes = request_body_for(&request, "test-model", Some(target)).unwrap();
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        value["input"],
+        json!([
+            {"role":"user","content":request.context},
+            {"role":"user","content":target},
+            {"role":"user","content":request.question}
+        ])
+    );
+    assert_eq!(value["text"]["format"]["type"], "json_schema");
+    assert_eq!(value["text"]["format"]["strict"], true);
+    assert_eq!(
+        value["text"]["format"]["schema"]["additionalProperties"],
+        false
+    );
+    assert_eq!(
+        value["text"]["format"]["schema"]["required"],
+        json!(["explanation", "replacement"])
+    );
+    assert_eq!(value["store"], false);
+    assert_eq!(value["stream"], true);
+    assert_eq!(value["tools"], json!([]));
+    assert_eq!(value["max_output_tokens"], MAX_OUTPUT_TOKENS);
+    request.history.push(HistoryMessage {
+        role: Role::Assistant,
+        text: "Previous advice".into(),
+    });
+    assert!(validate_revision_request(&request, target).is_err());
+    request.history.clear();
+    request.question = "q".repeat(4000);
+    request.context = "c".repeat(16000);
+    assert!(validate_revision_request(&request, &"🦊".repeat(3000)).is_ok());
+    assert!(validate_revision_request(&request, &"🦊".repeat(3001)).is_err());
+    assert!(validate_revision_request(&request, "").is_err());
+}
+
+#[test]
+fn revision_parser_preserves_whitespace_and_accepts_explicit_deletion() {
+    let (answer, replacement) = parse_revision(
+        "r",
+        &revision_bytes(r#"{"explanation":"  Reason.\n","replacement":"  Élan—🦊\r\n"}"#),
+    )
+    .unwrap();
+    assert_eq!(answer.text, "  Reason.\n");
+    assert_eq!(replacement, "  Élan—🦊\r\n");
+    assert!(!answer.incomplete);
+    assert_eq!(
+        parse_revision(
+            "r",
+            &revision_bytes(
+                r#"{"explanation":"Remove the selected repetition.","replacement":""}"#
+            )
+        )
+        .unwrap()
+        .1,
+        ""
+    );
+}
+
+#[test]
+fn revision_parser_never_repairs_or_promotes_advice_or_malformed_json() {
+    for text in [
+        "Here is my advice",
+        "```json\n{\"explanation\":\"x\",\"replacement\":\"y\"}\n```",
+        r#"{"explanation":"x"}"#,
+        r#"{"replacement":"x"}"#,
+        r#"{"explanation":"x","replacement":"y","approve":true}"#,
+        r#"{"explanation":"x","replacement":"a","replacement":"b"}"#,
+        r#"{"explanation":"x","explanation":"y","replacement":"b"}"#,
+        r#"{"explanation":" ","replacement":"y"}"#,
+        r#"{"explanation":"x","replacement":null}"#,
+        r#"{"explanation":"x","replacement":"y"} trailing"#,
+    ] {
+        assert!(
+            parse_revision("r", &revision_bytes(text)).is_err(),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn revision_parser_rejects_incomplete_refusal_and_ambiguous_outputs() {
+    let valid = revision_bytes(r#"{"explanation":"x","replacement":"y"}"#);
+    let value: Value = serde_json::from_slice(&valid).unwrap();
+    for key in ["incomplete_details", "error"] {
+        let mut response = value.clone();
+        response[key] = json!({"reason":"not complete"});
+        assert!(parse_revision("r", &serde_json::to_vec(&response).unwrap()).is_err());
+    }
+    let mut response = value.clone();
+    response["output"][0]["status"] = json!("incomplete");
+    assert!(parse_revision("r", &serde_json::to_vec(&response).unwrap()).is_err());
+    for status in ["incomplete", "failed", "cancelled", "in_progress"] {
+        let mut response = value.clone();
+        response["status"] = json!(status);
+        assert!(parse_revision("r", &serde_json::to_vec(&response).unwrap()).is_err());
+    }
+    let mut response = value.clone();
+    response["output"][0]["content"][0] = json!({"type":"refusal","refusal":"No"});
+    assert!(parse_revision("r", &serde_json::to_vec(&response).unwrap()).is_err());
+    let mut response = value.clone();
+    response["output"][0]["content"][0]["refusal"] = json!("No");
+    assert!(parse_revision("r", &serde_json::to_vec(&response).unwrap()).is_err());
+    let mut response = value.clone();
+    response["output"]
+        .as_array_mut()
+        .unwrap()
+        .push(value["output"][0].clone());
+    assert!(parse_revision("r", &serde_json::to_vec(&response).unwrap()).is_err());
+    let mut response = value.clone();
+    response["output"][0]["content"]
+        .as_array_mut()
+        .unwrap()
+        .push(value["output"][0]["content"][0].clone());
+    assert!(parse_revision("r", &serde_json::to_vec(&response).unwrap()).is_err());
+}
+
+#[tokio::test]
+async fn prepared_revision_keeps_slot_and_cancellation_until_persistence() {
+    let service = QuestionService::default();
+    let prepared = prepared_revision(&service, "revision-cancel", config()).await;
+    assert_eq!(
+        service
+            .reserve(&request("busy-revision"), "")
+            .err()
+            .unwrap()
+            .code,
+        "busy"
+    );
+    assert!(service.cancel("revision-cancel").unwrap());
+    let called = AtomicBool::new(false);
+    let result: Result<_, QuestionError> = prepared.persist(|_, _| {
+        called.store(true, Ordering::SeqCst);
+        Ok(())
+    });
+    assert_eq!(result.err().unwrap().code, "cancelled");
+    assert!(!called.load(Ordering::SeqCst));
+    assert!(service.reserve(&request("next-revision"), "").is_ok());
+}
+
+#[tokio::test]
+async fn prepared_revision_drop_releases_slot_without_persisting() {
+    let service = QuestionService::default();
+    let prepared = prepared_revision(&service, "revision-drop", config()).await;
+    drop(prepared);
+    assert!(!service.cancel("revision-drop").unwrap());
+    assert!(service.reserve(&request("after-drop"), "").is_ok());
+}
+
+#[tokio::test]
+async fn prepared_revision_rejects_changed_or_closed_auth_lease() {
+    for close in [false, true] {
+        let service = QuestionService::default();
+        let (sender, receiver) = watch::channel(false);
+        let prepared = prepared_revision(
+            &service,
+            "revision-auth",
+            config().with_cancellation(receiver),
+        )
+        .await;
+        if close {
+            drop(sender);
+        } else {
+            sender.send(true).unwrap();
+        }
+        let result: Result<(QuestionAnswer, String, ()), QuestionError> =
+            prepared.persist(|_, _| panic!("stale auth cannot store a proposal"));
+        assert_eq!(result.err().unwrap().code, "staleConnection");
+    }
+}
+
+#[tokio::test]
+async fn prepared_revision_success_is_explicit_and_releases_slot() {
+    let service = QuestionService::default();
+    let prepared = prepared_revision(&service, "revision-store", config()).await;
+    let (answer, replacement, id) = prepared
+        .persist::<_, QuestionError>(|answer, replacement| {
+            assert_eq!(answer.request_id, "revision-store");
+            assert_eq!(replacement, "  Revised—🦊\r\n");
+            Ok("native-proposal-id")
+        })
+        .unwrap();
+    assert_eq!(id, "native-proposal-id");
+    assert!(!answer.incomplete);
+    assert_eq!(replacement, "  Revised—🦊\r\n");
+    assert!(!service.cancel("revision-store").unwrap());
+}
+
+#[tokio::test]
+async fn revision_transport_error_and_quota_never_persist() {
+    let service = QuestionService::default();
+    let config = config().with_account("oaiapp_test").unwrap();
+    let request = request("revision-quota");
+    let permit = service.reserve(&request, "oaiapp_test").unwrap();
+    let result = service
+        .revise_with(
+            request,
+            "Target".into(),
+            config,
+            permit,
+            |_, _| async { Err(QuestionError::usage_limited()) },
+            REQUEST_TIMEOUT,
+        )
+        .await;
+    assert_eq!(result.err().unwrap().code, "usageLimit");
+    assert!(service.is_usage_limited("oaiapp_test").unwrap());
+}
+
+#[tokio::test]
+async fn committing_revision_does_not_block_status_or_accept_cancellation() {
+    let service = QuestionService::default();
+    let prepared = prepared_revision(&service, "revision-commit", config()).await;
+    let (entered_send, entered) = std::sync::mpsc::channel();
+    let (resume, resume_recv) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        prepared.persist::<_, QuestionError>(|_, _| {
+            entered_send.send(()).unwrap();
+            resume_recv.recv().unwrap();
+            Ok("proposal-id")
+        })
+    });
+    entered.recv_timeout(Duration::from_secs(2)).unwrap();
+    // These calls must return while the persistence closure remains suspended.
+    assert!(!service.is_usage_limited("test-account").unwrap());
+    assert!(!service.cancel("revision-commit").unwrap());
+    assert_eq!(service.cancel_active().unwrap_err().code, "busy");
+    assert_eq!(
+        service
+            .reserve(&request("commit-busy"), "")
+            .err()
+            .unwrap()
+            .code,
+        "busy"
+    );
+    resume.send(()).unwrap();
+    assert_eq!(worker.join().unwrap().unwrap().2, "proposal-id");
+}

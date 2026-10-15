@@ -30,12 +30,14 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
     if (node.showModal) node.showModal(); else node.setAttribute('open', '');
     node.querySelector('button')?.focus();
   }
-  const attribution = (origin: ProposalReview['origin']) => `Unverified local MCP client: ${origin.clientLabel} · Session: ${origin.sessionId}`;
+  const attribution = (origin: ProposalReview['origin']) => origin.kind === 'nativeOpenAi'
+    ? `Native OpenAI suggestion · Model: ${origin.model} · Request: ${origin.requestId} · Provider metadata, not authenticated authorship`
+    : `Unverified local MCP client: ${origin.clientLabel} · Session: ${origin.sessionId}`;
   function review(view: ProposalReview): Promise<boolean> {
     return new Promise(resolve => {
       const node = dialog(view.kind === 'revert' ? 'Review guarded revert' : 'Review whole-scene proposal');
       node.append(el('p', view.path, 'path'), el('p', attribution(view.origin), 'proposal-attribution'),
-        el('p', 'Client labels, sessions, and proposal contents are untrusted. This changes a working draft only; it does not approve a release.', 'drafting-warning'));
+        el('p', 'Recorded origins describe how this suggestion arrived; they do not authenticate its author or endorse its contents. This changes a working draft only; it does not approve a release.', 'drafting-warning'));
       const columns = el('div', '', 'proposal-comparison');
       for (const [title, text] of [['Before · exact current source', view.baseText], ['After · exact replacement', view.replacementText]]) {
         const section = el('section'); section.append(el('h3', title)); const source = el('pre', text, 'source-text'); source.tabIndex = 0; section.append(source); columns.append(section);
@@ -50,17 +52,20 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
       display(node, () => finish(false));
     });
   }
-  async function change(id: string, kind: 'apply' | 'revert') {
+  async function change(id: string, kind: 'apply' | 'revert', guard?: () => string | null) {
     const repositoryId = hooks.repository()?.id; const current = version;
     if (!repositoryId || disposed) return;
     await hooks.run(async () => {
       let view: ProposalReview | null = null;
       let submitted = false;
       try {
+        const before = guard?.(); if (before) throw new Error(before);
         view = kind === 'apply' ? await core.reviewProposal!(repositoryId, id) : await core.reviewProposalRevert!(repositoryId, id);
         if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
+        const loaded = guard?.(); if (loaded) throw new Error(loaded);
         if (!await review(view)) { hooks.report('Review canceled. The manuscript was not changed.'); return; }
         if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
+        const reviewed = guard?.(); if (reviewed) throw new Error(reviewed);
         submitted = true;
         const outcome = await core.applyProposalReview!(repositoryId, {reviewId: view.id, proposalId: view.proposalId, baseHash: view.baseHash, replacementHash: view.replacementHash, diffHash: view.diffHash});
         if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
@@ -76,8 +81,8 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
   }
   function receiptItem(receipt: ProposalReceipt, node: HTMLDialogElement) {
     const item = el('article', '', 'proposal-receipt');
-    item.append(el('h3', `${receipt.kind === 'revert' ? 'Revert' : 'Apply'} · ${receipt.path} · ${receipt.status}`), el('p', attribution(receipt.origin)),
-      el('p', `Author action: Studio native confirmation · Receipt: ${receipt.id}`), el('p', `Proposal: ${receipt.proposalId}`),
+    item.append(el('h3', `${receipt.kind === 'reject' ? 'Reject' : receipt.kind === 'revert' ? 'Revert' : 'Apply'} · ${receipt.path} · ${receipt.status}`), el('p', attribution(receipt.origin)),
+      el('p', `Author action: ${receipt.kind === 'reject' ? 'Studio explicit rejection' : 'Studio native confirmation'} · Receipt: ${receipt.id}`), el('p', `Proposal: ${receipt.proposalId}`),
       el('p', `Base: ${receipt.baseHash}`, 'path'), el('p', `Replacement: ${receipt.replacementHash}`, 'path'), el('p', `Diff: ${receipt.diffHash}`, 'path'));
     if (receipt.parentReceiptId) item.append(el('p', `Reverts receipt: ${receipt.parentReceiptId}`));
     if (receipt.message) item.append(el('p', receipt.message, receipt.status === 'completed' ? 'muted' : 'drafting-warning'));
@@ -90,16 +95,17 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
     try {
       const result = await core.listProposals!(repositoryId);
       if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
-      const node = dialog('Local MCP proposals and receipts');
-      node.append(el('p', 'MCP can read and propose. Only an explicit author action in Studio can apply a reviewed whole-scene change.', 'muted'));
+      const node = dialog('Revision proposals and receipts');
+      node.append(el('p', 'OpenAI and local MCP clients can suggest revisions. Only an explicit author action in Studio can apply a reviewed whole-scene change.', 'muted'));
       node.append(el('h3', 'Pending proposals'));
       if (!result.pending.length) node.append(el('p', 'No pending proposals for this repository.'));
       for (const proposal of result.pending) {
         const item = el('article', '', 'proposal-entry');
         item.append(el('p', proposal.path, 'path'), el('p', attribution(proposal.origin)), button('Review proposal', () => { remove(node); void change(proposal.id, 'apply'); }));
+        if (core.rejectProposal) item.append(button('Reject proposal', () => {void reject(proposal.id, item);}));
         node.append(item);
       }
-      node.append(el('h3', 'Local immutable operation receipts'), el('p', 'Receipts retain the original unverified proposal attribution and separate author action. They are local operation records, not an authenticated revision ledger. Revert is available only for confirmed applies from this Studio session, and only while the scene still matches.', 'muted'));
+      node.append(el('h3', 'Local immutable operation receipts'), el('p', 'Receipts retain the recorded proposal origin and separate author action, including explicit rejection. They are local operation records, not an authenticated revision ledger. Revert is available only for confirmed applies from this Studio session, and only while the scene still matches.', 'muted'));
       if (!result.receipts.length) node.append(el('p', 'No local operation receipts for this repository.'));
       for (const receipt of result.receipts) node.append(receiptItem(receipt, node));
       const close = () => remove(node);
@@ -107,5 +113,20 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
     } catch (error) { hooks.report(`Proposals could not be loaded: ${String(error)}`, true); }
     finally { if (current === version) loading = false; }
   }
-  return {supported, open, clear, destroy() { disposed = true; clear(); }};
+  async function reject(id: string, item: HTMLElement) {
+    const repositoryId = hooks.repository()?.id; const current = version;
+    if (!repositoryId || !core.rejectProposal || disposed) return;
+    item.querySelectorAll('button').forEach(node => {node.disabled = true;});
+    try {
+      const receipt = await core.rejectProposal(repositoryId, id);
+      if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
+      if (receipt.kind !== 'reject' || receipt.status !== 'rejected' || receipt.proposalId !== id) throw new Error('Rejection was not confirmed');
+      item.replaceChildren(el('p', `Rejected · ${receipt.path}`), el('p', attribution(receipt.origin)), el('p', `Immutable local rejection receipt: ${receipt.id}`));
+      hooks.report('Suggestion rejected. The manuscript was not changed.');
+    } catch (error) {
+      if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
+      hooks.report(`Rejection could not be confirmed: ${String(error)}. Refresh the local receipts before trying again.`, true);
+    }
+  }
+  return {supported, open, reviewProposal: (id: string, guard?: () => string | null) => change(id, 'apply', guard), clear, destroy() { disposed = true; clear(); }};
 }

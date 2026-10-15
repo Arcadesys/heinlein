@@ -12,7 +12,7 @@ pub(crate) struct ProposalHost {
     pub authority: Authority,
     epoch: u64,
 }
-fn stores(app: &tauri::AppHandle) -> Result<(ProposalStore, ReceiptStore), String> {
+pub(crate) fn stores(app: &tauri::AppHandle) -> Result<(ProposalStore, ReceiptStore), String> {
     let path = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok((
         ProposalStore::open(path.join("pending-proposals-v1")).map_err(|e| e.to_string())?,
@@ -225,4 +225,28 @@ pub(crate) fn cancel_proposal_review(
         .authority
         .cancel(&repository_id, &review_id);
     Ok(())
+}
+
+/// Native main-window dismissal. It does not open an approval path or write source.
+#[tauri::command]
+pub(crate) async fn reject_proposal(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    proposal_id: String,
+) -> Result<authority::Receipt, String> {
+    check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<BrowserState>();
+        let mut host = state
+            .proposals
+            .lock()
+            .map_err(|_| "Proposal review unavailable")?;
+        let (store, receipts) = stores(&app)?;
+        with_repository(&app, &repository_id, |repo| {
+            host.authority.reject(repo, &store, &receipts, &proposal_id)
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

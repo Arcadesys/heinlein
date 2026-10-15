@@ -135,8 +135,11 @@ are determined by OpenAI; Heinlein does not silently switch to API-key billing.
 
 Context starts empty. Capture a selection or the current scene only when you want
 to include it, inspect the exact context/history preview, then choose **Send to
-OpenAI**. You can keep writing and saving while the answer is pending. Answers are
-read-only; use the existing explicit replacement-review workflow for edits.
+OpenAI**. You can keep writing and saving while the answer is pending. Ask returns
+advice. Choose **Suggest revision** explicitly for a proposed edit to a clean saved
+selection. Review the exact pending proposal, then accept through native confirmation
+or reject it. Changed source or dirty/recovery conflicts block application. Accepted
+changes keep attributed receipts and the existing guarded, same-session revert.
 
 Sign-in and model transport live in the native host. No credential belongs in the
 renderer, repository, chat transcript or browser storage. Development tests are

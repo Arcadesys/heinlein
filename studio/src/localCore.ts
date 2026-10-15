@@ -30,11 +30,13 @@ export interface DraftingFileChange { kind: string; source: string | null; desti
 export interface DraftingPreview { id: string; summary: string; changes: DraftingFileChange[]; warnings: string[] }
 export interface DraftingResult { state: DraftingState; undoId: string | null }
 export interface DraftingSelection { id: string; files: {name: string; sizeBytes: number}[] }
-export interface ProposalOrigin { kind: 'localMcp'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedLocalProcess' }
+export type ProposalOrigin =
+  | { kind: 'localMcp'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedLocalProcess' }
+  | { kind: 'nativeOpenAi'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedProviderMetadata'; provider: 'openai'; model: string; requestId: string };
 export interface ProposalSummary { id: string; path: string; baseHash: string; replacementHash: string; diffHash: string; origin: ProposalOrigin; createdAtMs: number }
 export interface ProposalReview { id: string; kind: 'apply' | 'revert'; proposalId: string; path: string; baseHash: string; replacementHash: string; diffHash: string; baseText: string; replacementText: string; origin: ProposalOrigin; expiresAtMs: number; parentReceiptId: string | null }
 export interface ProposalBinding { reviewId: string; proposalId: string; baseHash: string; replacementHash: string; diffHash: string }
-export interface ProposalReceipt { id: string; kind: 'apply' | 'revert'; proposalId: string; path: string; baseHash: string; replacementHash: string; diffHash: string; origin: ProposalOrigin; parentReceiptId: string | null; status: 'completed' | 'failed' | 'uncertain'; message: string | null; createdAtMs: number; revertAvailable: boolean }
+export interface ProposalReceipt { id: string; kind: 'apply' | 'revert' | 'reject'; proposalId: string; path: string; baseHash: string; replacementHash: string; diffHash: string; origin: ProposalOrigin; parentReceiptId: string | null; status: 'completed' | 'failed' | 'uncertain' | 'rejected'; message: string | null; createdAtMs: number; revertAvailable: boolean }
 export interface ProposalListing { pending: ProposalSummary[]; receipts: ProposalReceipt[] }
 export interface ProposalOutcome { receipt: ProposalReceipt; warning: string | null }
 export interface QuestionAccount { id: string; label: string; signedIn: boolean; planEnabled: boolean }
@@ -47,11 +49,14 @@ export interface QuestionStatus {
 export interface QuestionConnection { generation: number; accountId: string; model: string }
 export interface QuestionMessage { role: 'user' | 'assistant'; text: string }
 export interface QuestionRequest { requestId: string; question: string; context: string; history: QuestionMessage[] }
+export interface QuestionRevisionTarget { repositoryId: string; path: string; sourceHash: string; fromUtf8: number; toUtf8: number; selectedText: string }
+export interface QuestionRevisionAnswer extends QuestionAnswer { proposalId: string; replacementText: string }
 export interface QuestionAnswer { requestId: string; text: string; model: string; inputTokens?: number | null; outputTokens?: number | null; incomplete: boolean }
 export interface LocalCore {
   available(): boolean;
   questionStatus?(): Promise<QuestionStatus>;
   askQuestion?(request: QuestionRequest, connection: QuestionConnection): Promise<QuestionAnswer>;
+  suggestQuestionRevision?(request: QuestionRequest, connection: QuestionConnection, target: QuestionRevisionTarget): Promise<QuestionRevisionAnswer>;
   cancelQuestion?(requestId: string): Promise<boolean>;
   connectQuestionAccount?(options: {allowChatgptPlan: boolean; accountId?: string}): Promise<QuestionStatus>;
   cancelQuestionSignIn?(): Promise<void>;
@@ -61,6 +66,7 @@ export interface LocalCore {
   signOutQuestionAccount?(accountId?: string): Promise<QuestionStatus>;
   openQuestionUsage?(): Promise<void>;
   listProposals?(repositoryId: string): Promise<ProposalListing>;
+  rejectProposal?(repositoryId: string, proposalId: string): Promise<ProposalReceipt>;
   reviewProposal?(repositoryId: string, proposalId: string): Promise<ProposalReview>;
   reviewProposalRevert?(repositoryId: string, receiptId: string): Promise<ProposalReview>;
   applyProposalReview?(repositoryId: string, binding: ProposalBinding): Promise<ProposalOutcome | null>;
@@ -93,6 +99,7 @@ export const localCore: LocalCore = {
   available: isTauri,
   questionStatus: () => invoke('question_status'),
   askQuestion: (request, connection) => invoke('ask_question', {request, connection}),
+  suggestQuestionRevision: (request, connection, target) => invoke('suggest_question_revision', {request, connection, target}),
   cancelQuestion: requestId => invoke('cancel_question', {requestId}),
   connectQuestionAccount: options => invoke('connect_question_account', options),
   cancelQuestionSignIn: () => invoke('cancel_question_sign_in'),
@@ -102,6 +109,7 @@ export const localCore: LocalCore = {
   signOutQuestionAccount: accountId => invoke('sign_out_question_account', {accountId: accountId ?? null}),
   openQuestionUsage: () => invoke('open_question_usage'),
   listProposals: repositoryId => invoke('list_proposals', {repositoryId}),
+  rejectProposal: (repositoryId, proposalId) => invoke('reject_proposal', {repositoryId, proposalId}),
   reviewProposal: (repositoryId, proposalId) => invoke('review_proposal', {repositoryId, proposalId}),
   reviewProposalRevert: (repositoryId, receiptId) => invoke('review_proposal_revert', {repositoryId, receiptId}),
   applyProposalReview: (repositoryId, binding) => invoke('apply_proposal_review', {repositoryId, binding}),
