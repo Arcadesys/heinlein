@@ -279,6 +279,23 @@ async fn load_manuscript(
     .await
     .map_err(|e| e.to_string())?
 }
+#[tauri::command]
+async fn list_system_fonts(window: tauri::WebviewWindow) -> Result<Vec<String>, String> {
+    check_window(&window)?;
+    // Family names only, for the appearance pickers; no font files cross the bridge.
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        let families: std::collections::BTreeSet<String> = db
+            .faces()
+            .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+            .filter(|name| !name.is_empty() && name.len() <= 100 && !name.starts_with('.'))
+            .collect();
+        families.into_iter().collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -298,7 +315,8 @@ fn main() {
             open_recent_repository,
             list_directory,
             read_document,
-            load_manuscript
+            load_manuscript,
+            list_system_fonts
         ])
         .run(tauri::generate_context!())
         .expect("Heinlein Studio failed to start");
