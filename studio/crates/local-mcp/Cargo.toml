@@ -1,0 +1,20 @@
+[package]
+name = "heinlein-local-mcp"
+version = "1.5.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+repository-core = { path = "../repository-core" }
+proposal-store = { path = "../proposal-store" }
+rmcp = { version = "=3.5.1", default-features = false, features = ["server", "transport-io"] }
+futures = "0.3"
+tokio-util = { version = "0.7", features = ["codec"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"

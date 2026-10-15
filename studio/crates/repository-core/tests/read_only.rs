@@ -266,3 +266,34 @@ fn unrepresentable_unix_names_do_not_break_listing() {
     assert_eq!(r.list("").unwrap().len(), 1);
     assert!(r.discover().unwrap().is_empty());
 }
+
+#[test]
+fn chapter_source_without_sources_array_is_readonly_even_when_manifest_ignored() {
+    let t = fixture();
+    manifest(&t);
+    let path = t.path().join("book/scene-manifest.json");
+    let mut value: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    value.as_object_mut().unwrap().remove("sources");
+    fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    let r = repo(&t);
+    assert!(
+        r.read("book/vol/compat.md")
+            .unwrap()
+            .generated_compatibility
+    );
+    assert!(
+        !r.read("book/vol/chapter/scene-010.md")
+            .unwrap()
+            .generated_compatibility
+    );
+    fs::write(t.path().join(".gitignore"), "book/scene-manifest.json\n").unwrap();
+    assert!(
+        r.read("book/vol/compat.md")
+            .unwrap()
+            .generated_compatibility
+    );
+    assert_eq!(
+        fs::read_to_string(t.path().join("book/vol/compat.md")).unwrap(),
+        "# Generated chapter\n"
+    );
+}

@@ -1,6 +1,6 @@
 {
   "identifier": "repository-browser",
-  "description": "Bundled main window: bounded repository browsing, explicit revision-guarded Markdown saves, unsaved-change close protection and appearance fonts. No generic filesystem, shell, network or editorial approval permissions.",
+  "description": "Bundled main window: bounded repository browsing, revision-guarded Markdown saves, host-private bounded recovery snapshots, unsaved-change close protection and appearance fonts. No generic filesystem, shell, network, renderer-only approval, or release approval permissions. Native-confirmed, exact whole-scene MCP proposal review and guarded revert; no MCP approval route.",
   "windows": [
     "main"
   ],
@@ -13,9 +13,22 @@
     "allow-load-manuscript",
     "allow-list-system-fonts",
     "allow-save-document",
+    "allow-read-recovery",
+    "allow-stage-recovery",
+    "allow-discard-recovery",
     "allow-set-unsaved-changes",
     "allow-request-close",
     "core:event:allow-listen",
-    "core:event:allow-unlisten"
+    "core:event:allow-unlisten",
+    "allow-load-drafting",
+    "allow-preview-drafting-change",
+    "allow-apply-drafting-change",
+    "allow-undo-drafting-change",
+    "allow-pick-drafting-import",
+    "allow-list-proposals",
+    "allow-review-proposal",
+    "allow-review-proposal-revert",
+    "allow-apply-proposal-review",
+    "allow-cancel-proposal-review"
   ]
 }
