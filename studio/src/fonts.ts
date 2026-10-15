@@ -2,10 +2,18 @@
 // A choice is just a family name; it reaches CSS as a quoted string via the CSSOM, never as markup.
 export const FONT_ROLES = [
   { key: 'ui', label: 'Interface font', hint: 'Menus, buttons, and labels.', property: '--font-ui', fallback: 'var(--ui-fallback)' },
-  { key: 'text', label: 'Text font', hint: 'The source text you read. Blank follows the monospace font.', property: '--font-text', fallback: 'var(--font-mono)' },
+  { key: 'text', label: 'Text font', hint: 'The manuscript text you write and read.', property: '--font-text', fallback: 'var(--text-fallback)' },
   { key: 'mono', label: 'Monospace font', hint: 'File paths, frontmatter, and code.', property: '--font-mono', fallback: 'var(--mono-fallback)' },
 ] as const;
 export type FontRole = typeof FONT_ROLES[number]['key'];
+// One-click choices. Lora, Inter, JetBrains Mono, Atkinson Hyperlegible and OpenDyslexic ship
+// with Studio; Courier New and Georgia come from the operating system.
+export const FONT_PRESETS: Record<FontRole, readonly string[]> = {
+  ui: ['Inter', 'Atkinson Hyperlegible', 'JetBrains Mono', 'OpenDyslexic'],
+  text: ['Lora', 'Atkinson Hyperlegible', 'Inter', 'JetBrains Mono', 'OpenDyslexic', 'Courier New', 'Georgia'],
+  mono: ['JetBrains Mono', 'Courier New'],
+};
+export const BUNDLED_FONTS: readonly string[] = ['Lora', 'Inter', 'JetBrains Mono', 'Atkinson Hyperlegible', 'OpenDyslexic'];
 export type FontChoices = Partial<Record<FontRole, string>>;
 
 const STORAGE_KEY = 'heinlein-studio-fonts-v1';

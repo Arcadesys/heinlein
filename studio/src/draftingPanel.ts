@@ -240,9 +240,9 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   function reorder(scene: DraftingScene, delta: -1 | 1) {
     const index = state!.scenes.findIndex(item => item.id === scene.id);
     const target = index + delta;
-    if (target < 0 || target >= state!.scenes.length) return;
+    if (target < 0 || target >= state!.scenes.length) return Promise.resolve();
     const beforeId = delta < 0 ? state!.scenes[target].id : state!.scenes[target + 1]?.id ?? null;
-    void changeManuscript({kind: 'reorderScene', sceneId: scene.id, beforeId, groupId: scene.groupId});
+    return changeManuscript({kind: 'reorderScene', sceneId: scene.id, beforeId, groupId: scene.groupId});
   }
   async function undoLastChange() {
     const entry = undo; const before = state; const repositoryId = hooks.repository()?.id;
@@ -330,5 +330,11 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     dropTarget(dropEnd); element.append(dropEnd);
     if (state.groups.length) { const groups = el('p', `Groups: ${state.groups.map(group => group.title).join(' · ')}`, 'drafting-help'); element.append(groups); }
   }
-  return { element, supported, clear, load, initialize, importExternal, splitScene, get state() { return state; }, destroy() { disposed = true; clear(); } };
+  return { element, supported, clear, load, initialize, importExternal, splitScene, get state() { return state; },
+    /** The same previewed, confirmed reorder as the ↑/↓ buttons. Resolves once the change settles. */
+    async reorderScene(sceneId: string, delta: -1 | 1) { const scene = state?.scenes.find(item => item.id === sceneId); if (scene && state?.revision && !dialogs.size) await reorder(scene, delta); },
+    newScene() { if (state?.revision && !dialogs.size) newScene(); },
+    importRepository(mode: 'move' | 'copy' = 'move') { void importRepository(mode); },
+    undoLastChange() { void undoLastChange(); },
+    get canUndo() { return Boolean(undo); }, destroy() { disposed = true; clear(); } };
 }
