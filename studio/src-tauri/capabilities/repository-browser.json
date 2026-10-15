@@ -1,0 +1,6 @@
+{
+  "identifier": "repository-browser",
+  "description": "Bundled main window can request native folder selection and bounded read-only browsing. No filesystem, shell, network, or author-write plugin permissions.",
+  "windows": ["main"],
+  "permissions": ["allow-pick-repository", "allow-recent-repositories", "allow-open-recent-repository", "allow-list-directory", "allow-read-document", "allow-load-manuscript"]
+}

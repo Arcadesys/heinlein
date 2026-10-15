@@ -153,3 +153,9 @@ The full pipeline test runs only when both `pandoc` and Chrome are present.
 - Cover image generation.
 - Multi-title catalog mode.
 - Imprints other than FREE PLAY.
+
+## Studio repository browser (pass 1)
+
+An additive native, read-only browsing foundation lives in [`studio/`](studio/README.md).
+It opens local folders and scene manifests without modifying manuscripts or invoking
+the publishing pipeline. Editing and save/recovery are subsequent milestones.

@@ -1,0 +1,54 @@
+:root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #ebe9e4; background: #121714; font-synthesis: none; line-height: 1.55; font-size: 16px; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 340px; }
+button, summary { font: inherit; cursor: pointer; }
+button { border: 1px solid #59665b; border-radius: 6px; background: #222c25; color: #f4f2ec; min-height: 44px; padding: 9px 14px; text-align: left; overflow-wrap: anywhere; }
+button:hover { background: #344637; border-color: #a1b89b; }
+button:disabled { cursor: default; opacity: .55; }
+:focus-visible { outline: 3px solid #e8c67b; outline-offset: 3px; }
+h1, h2, h3, p { margin: 0; }
+h1 { font-family: Georgia, serif; font-size: 2rem; font-weight: 400; line-height: 1.1; }
+h2 { font-size: 1.12rem; margin-bottom: 8px; }
+h3 { font-family: Georgia, serif; font-size: 1.35rem; font-weight: 400; }
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 24px 30px; }
+.eyebrow { color: #b6c8ae; font-size: .72rem; font-weight: 700; letter-spacing: .15em; margin-bottom: 7px; }
+.muted, .empty { color: #b9c1b8; font-size: .9rem; }
+.topbar .muted { margin-top: 8px; }
+.primary { background: #b9cba5; border-color: #b9cba5; color: #142014; font-weight: 650; padding: 12px 20px; }
+.primary:hover { background: #d0dfbf; }
+.safety-banner { border-block: 1px solid #354137; padding: 9px 30px; color: #c6d6bb; background: #1b251e; font-size: .8rem; letter-spacing: .025em; }
+.recent { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 14px 30px 0; }
+.recent:empty { display: none; }
+.status { padding: 12px 30px; color: #bbc7b7; font-size: .85rem; overflow-wrap: anywhere; min-height: 44px; }
+.status.error { color: #ffc3aa; }
+.workspace { display: grid; grid-template-columns: minmax(200px, .7fr) minmax(250px, 1fr) minmax(330px, 2fr); border-top: 1px solid #354137; min-height: calc(100vh - 290px); }
+.panel { padding: 22px; min-width: 0; }
+.panel + .panel { border-left: 1px solid #354137; }
+.files { background: #161d18; }
+.manuscript { background: #1a211c; }
+.preview { background: #202820; }
+.path { font: .76rem/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; color: #b6c3af; overflow-wrap: anywhere; margin-bottom: 16px; }
+.file-list { display: grid; gap: 4px; }
+.file-entry { width: 100%; border-color: transparent; background: transparent; padding-inline: 8px; font-size: .9rem; }
+.file-entry.parent { color: #e8c67b; }
+.manifest-picker { display: grid; gap: 5px; margin-bottom: 18px; }
+.manifest-button { font-size: .75rem; }
+.volume { margin-top: 18px; }
+summary { min-height: 44px; padding: 10px 0; font-weight: 600; }
+.chapter { margin-left: 10px; border-top: 1px solid #354137; }
+.chapter summary { font-size: .9rem; font-weight: 450; }
+.scene-list { list-style: none; padding: 0; margin: 0 0 8px 12px; }
+.scene-list button { width: 100%; background: transparent; border-color: transparent; font-size: .82rem; }
+.scene-list button:hover { background: #344637; }
+.compatibility { font-size: .76rem; color: #d6caa9; margin: 0 0 14px 12px; }
+.badge { color: #e8d39d; font-size: .8rem; margin-bottom: 14px; }
+.metadata { border-block: 1px solid #4a584b; margin-bottom: 22px; padding: 3px 0; }
+.metadata summary { color: #bdcbb7; font-size: .82rem; }
+.metadata p { color: #bdcbb7; font-size: .8rem; }
+.frontmatter { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; }
+.source-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 1rem/1.85 ui-monospace, SFMono-Regular, Consolas, monospace; tab-size: 2; }
+.empty { padding-top: 14px; max-width: 45ch; }
+footer { border-top: 1px solid #354137; padding: 12px 30px; color: #b9c1b8; font-size: .75rem; }
+@media (max-width: 1050px) { .workspace { grid-template-columns: minmax(190px, .8fr) minmax(230px, 1fr); } .preview { grid-column: 1 / -1; min-height: 400px; border-top: 1px solid #354137; } .panel.preview { border-left: 0; } }
+@media (max-width: 560px) { .topbar { padding: 20px 16px; } .workspace { display: block; } .panel + .panel { border-left: 0; border-top: 1px solid #354137; } .panel { padding: 20px 16px; } .recent, .status, .safety-banner, footer { padding-inline: 16px; } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
