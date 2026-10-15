@@ -62,6 +62,29 @@ impl ProposalStore {
             || Ok(()),
         )
     }
+    /// Native callers can recheck live request/editor state after staging, directly
+    /// before publication. The callback must not reenter this store. It grants no
+    /// approval: a stored proposal still needs an independent native review/apply.
+    pub fn submit_checked(
+        &self,
+        repo: &Repository,
+        path: &str,
+        expected_base_hash: &str,
+        replacement_text: &str,
+        origin: ProposalOrigin,
+        before_commit: impl FnOnce() -> Result<()>,
+    ) -> Result<PendingProposal> {
+        let _gate = self.gate.lock().map_err(|_| Error::StorageIo)?;
+        let _lock = self.lock()?;
+        self.submit_inner(
+            repo,
+            path,
+            expected_base_hash,
+            replacement_text,
+            origin,
+            before_commit,
+        )
+    }
     fn submit_inner(
         &self,
         repo: &Repository,

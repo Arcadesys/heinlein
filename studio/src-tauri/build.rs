@@ -10,6 +10,8 @@ fn main() {
             "open_question_usage",
             "question_status",
             "ask_question",
+            "suggest_question_revision",
+            "reject_proposal",
             "cancel_question",
             "list_proposals",
             "review_proposal",

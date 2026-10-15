@@ -20,6 +20,13 @@ describe('local Core bridge contract', () => {
       ['question_status'], ['ask_question', {request, connection}], ['cancel_question', {requestId: 'unique-id'}],
     ]);
   });
+  it('keeps revision targets separate from ordinary advice and invokes immutable rejection', async () => {
+    const request = {requestId: 'id', question: 'Clarify', context: '', history: []};
+    const connection = {generation: 1, accountId: 'opaque', model: 'model'};
+    const target = {repositoryId: 'repo', path: 'scene.md', sourceHash: 'sha256', fromUtf8: 2, toUtf8: 6, selectedText: '🐺'};
+    await localCore.suggestQuestionRevision!(request, connection, target); await localCore.rejectProposal!('repo', 'proposal');
+    expect(vi.mocked(invoke).mock.calls).toEqual([['suggest_question_revision', {request, connection, target}], ['reject_proposal', {repositoryId: 'repo', proposalId: 'proposal'}]]);
+  });
   it('uses native-only ChatGPT connection commands with explicit plan consent', async () => {
     await localCore.connectQuestionAccount!({allowChatgptPlan: true});
     await localCore.connectQuestionAccount!({allowChatgptPlan: true, accountId: 'account-2'});

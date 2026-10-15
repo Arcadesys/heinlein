@@ -1,7 +1,7 @@
-# Studio local MCP proposal review
+# Studio local revision proposal review
 
 This is a bounded, local first slice of [ADR-001](adr-001-manuscript-authority.md).
-It implements whole-scene proposals and explicit author-confirmed application.
+It implements whole-scene proposals, immutable rejection decisions, and explicit author-confirmed application.
 It does **not** implement DraftGrant/WorkerGrant pairing, authenticated MCP client
 identity, the private Core IPC transport, a full revision ledger, or release
 approval. No MCP operation can approve, apply, revert, save a draft, or mint a grant.
@@ -14,7 +14,7 @@ approval. No MCP operation can approve, apply, revert, save a draft, or mint a g
    can read explicitly selected persisted scenes and submit untrusted proposals.
    The author must configure that process explicitly; Studio does not install a
    client, alter client configuration, start a server, or transmit credentials.
-3. Select **MCP proposals**, then **Review proposal**. Studio shows the entire
+3. Select the proposal list, then **Review proposal**. Studio shows the entire
    exact source and replacement side by side, including frontmatter, whitespace,
    CRLF source bytes, Unicode, and protected punctuation. Source/client strings
    are rendered as plain text, never executable markup. The panes preserve the
@@ -135,3 +135,38 @@ before application compilation because this Linux executor lacks `dbus-1.pc`
 (`libdbus-1-dev`). No system packages were installed. The focused authority harness
 is not a substitute for compiling the Tauri wrapper or manually verifying its
 native confirmation dialogs, close behavior, and packaged macOS/Linux app.
+
+
+## Native question revisions and rejection decisions
+
+An explicitly requested native OpenAI revision joins the same proposal workflow.
+Its bounded `nativeOpenAi` origin retains `provider: openai`, the model, and a
+request ID, with `identityAssurance: unverifiedProviderMetadata`. Provider/model/
+request strings are informational stored attribution, never authenticated identity,
+a grant, or author approval. Older `localMcp` records retain their original schema
+and unverified client/session attribution. Both origins survive exact review,
+apply receipts, and guarded same-session revert receipts. The existing project,
+scene path, base/replacement text and hashes bind the proposal to its source.
+
+The main-window-only `reject_proposal` command records an immutable `.reject.json`
+decision containing the validated proposal snapshot. It does not delete or replace
+the proposal, touch manuscript bytes, mint an apply/revert capability, or run Core
+save. Listings exclude rejected proposals and expose their `reject` / `rejected`
+receipt with no revert action. Dismissal is distinct from canceling a review, which
+leaves the proposal pending. Rejection invalidates the host's live review plan.
+
+Rejection and application use the same private receipt-store lock and check for a
+prior intent or rejection while holding it. Exactly one can win a race, including
+when a different host already retained an approval plan. Repeated rejection fails
+without appending another decision; rejected proposals cannot be reviewed/applied.
+The decision survives restart, but conveys no authority. Invalid or partial
+rejection records fail closed just like operation records. Rejections count toward
+the shared 256-operation/512-record/128-MiB storage limits; applies still reserve completion
+capacity before writing source. No restart replay, pruning, or automatic repair is
+introduced. Safe revert remains limited to completed applies retained in the
+current native session and an unchanged replacement source.
+
+Synthetic tests additionally cover legacy origin bytes, malformed/bounded native
+metadata, native origin through apply/revert and restart history, rejection
+persistence/replay, stale live reviews, malformed decisions, applied-proposal
+rejection refusal, and concurrent rejection versus native-confirmed application.

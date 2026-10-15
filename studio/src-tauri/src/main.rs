@@ -559,6 +559,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             questions::question_status,
             questions::ask_question,
+            questions::suggest_question_revision,
             questions::cancel_question,
             questions::connect_question_account,
             questions::cancel_question_sign_in,
@@ -568,6 +569,7 @@ fn main() {
             questions::sign_out_question_account,
             questions::open_question_usage,
             proposals::list_proposals,
+            proposals::reject_proposal,
             proposals::review_proposal,
             proposals::review_proposal_revert,
             proposals::apply_proposal_review,

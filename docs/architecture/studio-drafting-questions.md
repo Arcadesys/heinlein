@@ -1,6 +1,6 @@
 # In-app drafting questions
 
-Heinlein's drafting conversation is an optional, read-only aid alongside the editor.
+Heinlein's drafting conversation is an optional aid alongside the editor.
 Its model transport is distinct from the external MCP revision workflow.
 
 ## Author control
@@ -13,7 +13,8 @@ selection or scene snapshot. The contextual Ask Heinlein action explicitly captu
 the highlighted passage and focuses the question field without sending.
 Later typing never silently changes an already captured context snapshot.
 
-Answers are displayed as text. No provider response executes tools or changes a
+Advice is displayed as text. An explicit Suggest revision request produces a
+pending, source-bound proposal. No provider response executes tools or changes a
 manuscript. Existing review/apply safeguards remain the route for proposed edits.
 Conversation state is session-local. Closing or clearing it invalidates pending
 results, and cancellation does not imply that already processed provider work was
@@ -72,3 +73,31 @@ The credential-store implementation currently supports macOS and Linux. Other
 platforms reject connection rather than storing tokens without these protections.
 The saved registration is retained after sign-out so reauthorization can reuse
 its issued client identity. Conversation history remains in memory only.
+
+## Suggested revisions
+
+The author explicitly chooses Ask or Suggest revision. Revision requests require a
+clean saved source and an exact selected passage. The native host retains the source
+binding before inference; the complete local source is not implicitly sent to the
+provider. Only the previewed question, selection and opted-in context are shared.
+
+A structured revision response separates explanation from replacement text. A
+refusal, incomplete result, malformed response, cancellation, or changed source
+cannot become an applicable proposal. The native host constructs the whole-scene
+candidate from the retained prefix, replacement and suffix and stores it through
+the existing proposal store. It never applies it automatically.
+
+Review shows the exact before/after source and recorded OpenAI/model/request
+origin. Stored metadata does not authenticate an author or grant write authority.
+The existing separate native author confirmation binds application to the displayed
+patch and current source; dirty buffers/recovery conflicts block application.
+Reject creates an immutable local decision receipt without changing the manuscript.
+Cancellation accepted before local proposal commit prevents creation. Once that
+short commit phase starts, cancellation cannot retract its pending record; the UI
+reports that possibility and the author can reject it. Filesystem work does not
+hold the question-service mutex or block status/typing.
+Accepted proposals retain operation receipts and the existing guarded revert path.
+
+This is a pending-revision and local-receipt workflow. The broader authenticated
+revision ledger in ADR-001 remains future work. Current guarded revert is available
+for confirmed applies in the same Studio session and refuses intervening edits.

@@ -167,7 +167,7 @@ footer { border-top: 1px solid #354137; padding: 12px 30px; color: #b9c1b8; font
 .question-panel .question-auth { border: 1px solid #53664f; border-radius: 6px; padding: .6rem; }
 .question-panel .question-auth > :not(summary) { margin-top: .65rem; }
 .question-panel .question-auth > label { display: block; font-size: .85rem; }
-.question-panel .question-auth select { display: block; width: 100%; min-width: 0; min-height: 2.75rem; margin-top: .25rem; background: #121714; color: inherit; border: 1px solid #73866b; border-radius: 4px; font: inherit; padding: .4rem; }
+.question-panel select { display: block; width: 100%; min-width: 0; min-height: 2.75rem; margin-top: .25rem; background: #121714; color: inherit; border: 1px solid #73866b; border-radius: 4px; font: inherit; padding: .4rem; }
 .question-panel .question-consent input { width: 1.1rem; height: 1.1rem; vertical-align: middle; margin-right: .25rem; }
 @container drafting-preview (min-width: 36rem) {
   .drafting-editor-area:has(.question-panel:not([hidden])) { grid-template-columns: minmax(0, 1fr) minmax(16rem, .8fr); }
@@ -176,3 +176,7 @@ footer { border-top: 1px solid #354137; padding: 12px 30px; color: #b9c1b8; font
 .selection-ask-action { position: fixed; z-index: 100; min-height: 44px; min-width: 140px; max-width: calc(100vw - 16px); padding: .55rem .8rem; color: #142014; background: #d0dfbf; border: 2px solid #344637; box-shadow: 0 3px 12px #0008; font: 600 1rem/1.4 var(--font-ui, var(--ui-fallback)); text-align: center; }
 .selection-ask-action[hidden] { display: none; }
 .selection-ask-action:hover { background: #e3efda; }
+
+.question-revision-target { border: 1px solid #8ba48e; border-radius: 6px; padding: .65rem; }
+.question-request-note, .question-revision-status { font-size: .85rem; color: #f0d7a5; }
+.question-turn > button { margin: .4rem .4rem 0 0; }

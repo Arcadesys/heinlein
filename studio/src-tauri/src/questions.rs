@@ -1,13 +1,14 @@
-//! Main-window-only read-only questions and native ChatGPT account controls.
-//! No manuscript access, renderer credentials/URLs, or API-key billing fallback.
+//! Main-window-only advice, pending revision proposals, and ChatGPT controls.
+//! Revisions read only the explicitly bound local source. No manuscript writes.
 
 use drafting_questions::{
-    Configuration, QuestionAnswer, QuestionError, QuestionRequest, QuestionService,
+    splice_revision, validate_revision_request, validate_revision_selection, Configuration,
+    QuestionAnswer, QuestionError, QuestionRequest, QuestionService,
 };
 use heinlein_chatgpt_auth::{AccountView, AuthError, AuthService, AuthStatus, ModelView};
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
-use tauri::State;
+use std::sync::{atomic::Ordering, Arc, Mutex};
+use tauri::{Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 const USAGE_URL: &str = "https://chatgpt.com/settings/usage";
@@ -40,6 +41,12 @@ impl From<AuthError> for NativeError {
     }
 }
 impl NativeError {
+    fn revision(message: impl Into<String>) -> Self {
+        Self::Auth {
+            code: "revisionUnavailable",
+            message: message.into(),
+        }
+    }
     fn unavailable() -> Self {
         Self::Auth {
             code: "unavailable",
@@ -72,6 +79,198 @@ pub(crate) struct QuestionConnection {
     generation: u64,
     account_id: String,
     model: String,
+}
+
+/// Local bindings are never included in the provider payload. The selected text
+/// alone is sent as the exact separately previewed revision target.
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RevisionTarget {
+    repository_id: String,
+    path: String,
+    source_hash: String,
+    from_utf8: usize,
+    to_utf8: usize,
+    selected_text: String,
+}
+
+struct RevisionSnapshot {
+    target: RevisionTarget,
+    source: String,
+    generation: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RevisionAnswer {
+    #[serde(flatten)]
+    answer: QuestionAnswer,
+    proposal_id: String,
+    replacement_text: String,
+}
+
+fn validate_target(target: &RevisionTarget) -> Result<(), QuestionError> {
+    if target.repository_id.is_empty()
+        || target.repository_id.len() > 128
+        || target.path.is_empty()
+        || target.path.len() > 4096
+        || target.path.contains(['\\', ':'])
+        || target.path.split('/').count() > 32
+        || target.path.split('/').any(|part| {
+            part.is_empty() || part.starts_with('.') || part.chars().any(char::is_control)
+        })
+        || !matches!(
+            std::path::Path::new(&target.path)
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("md" | "markdown")
+        )
+        || target.source_hash.len() != 64
+        || !target
+            .source_hash
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        || target.from_utf8 >= target.to_utf8
+        || target.selected_text.is_empty()
+        || target.selected_text.len() > drafting_questions::MAX_CONTEXT_BYTES
+    {
+        return Err(QuestionError::invalid_revision());
+    }
+    Ok(())
+}
+
+fn clean_generation(state: &super::BrowserState, generation: u64) -> bool {
+    !state.unsaved_changes.load(Ordering::SeqCst) && state.mutation_gate.generation() == generation
+}
+
+fn same_revision_source(snapshot: &RevisionSnapshot, current: &repository_core::Document) -> bool {
+    !current.generated_compatibility
+        && current.path == snapshot.target.path
+        && current.content_hash == snapshot.target.source_hash
+        && current.text == snapshot.source
+}
+
+fn selected_revision_session(state: &super::BrowserState, repository_id: &str) -> bool {
+    state.selected.lock().is_ok_and(|selected| {
+        selected
+            .as_ref()
+            .is_some_and(|selected| selected.id == repository_id)
+    })
+}
+
+fn capture_revision(
+    app: &tauri::AppHandle,
+    target: RevisionTarget,
+) -> Result<RevisionSnapshot, NativeError> {
+    validate_target(&target)?;
+    let state = app.state::<super::BrowserState>();
+    let _selection = state
+        .selection_gate
+        .try_lock()
+        .map_err(|_| QuestionError::stale_revision())?;
+    let _mutation = state
+        .mutation_gate
+        .author_operation()
+        .map_err(NativeError::revision)?;
+    let generation = state.mutation_gate.generation();
+    if !clean_generation(&state, generation) {
+        return Err(QuestionError::stale_revision().into());
+    }
+    let recovery = super::recovery_store(app).map_err(NativeError::revision)?;
+    let source = super::with_repository(app, &target.repository_id, |repo| {
+        recovery
+            .with_clean_paths(repo, std::slice::from_ref(&target.path), || {
+                repo.read(&target.path)
+            })
+            .map_err(|error| error.to_string())
+    })
+    .map_err(NativeError::revision)?;
+    if source.generated_compatibility
+        || source.content_hash != target.source_hash
+        || !clean_generation(&state, generation)
+    {
+        return Err(QuestionError::stale_revision().into());
+    }
+    validate_revision_selection(
+        &source.text,
+        target.from_utf8,
+        target.to_utf8,
+        &target.selected_text,
+    )?;
+    Ok(RevisionSnapshot {
+        target,
+        source: source.text,
+        generation,
+    })
+}
+
+fn persist_revision(
+    app: &tauri::AppHandle,
+    auth: &AuthService,
+    connection: &QuestionConnection,
+    snapshot: &RevisionSnapshot,
+    answer: &QuestionAnswer,
+    replacement: &str,
+) -> Result<String, NativeError> {
+    let state = app.state::<super::BrowserState>();
+    let _selection = state
+        .selection_gate
+        .try_lock()
+        .map_err(|_| QuestionError::stale_revision())?;
+    let _mutation = state
+        .mutation_gate
+        .author_operation()
+        .map_err(NativeError::revision)?;
+    if !clean_generation(&state, snapshot.generation) || !auth.is_current(connection.generation) {
+        return Err(QuestionError::stale_revision().into());
+    }
+    let target = &snapshot.target;
+    let next = splice_revision(
+        &snapshot.source,
+        target.from_utf8,
+        target.to_utf8,
+        &target.selected_text,
+        replacement,
+    )?;
+    if next.len() as u64 > repository_core::MAX_FILE_BYTES {
+        return Err(QuestionError::invalid_revision().into());
+    }
+    let (store, _) = super::proposals::stores(app).map_err(NativeError::revision)?;
+    let recovery = super::recovery_store(app).map_err(NativeError::revision)?;
+    super::with_repository(app, &target.repository_id, |repo| {
+        recovery
+            .with_clean_paths(repo, std::slice::from_ref(&target.path), || {
+                let current = repo.read(&target.path)?;
+                if !same_revision_source(snapshot, &current) {
+                    return Ok(Err(QuestionError::stale_revision().to_string()));
+                }
+                Ok(store
+                    .submit_checked(
+                        repo,
+                        &target.path,
+                        &target.source_hash,
+                        &next,
+                        proposal_store::ProposalOrigin::native_openai(
+                            answer.model.clone(),
+                            answer.request_id.clone(),
+                        ),
+                        || {
+                            if !clean_generation(&state, snapshot.generation)
+                                || !auth.is_current(connection.generation)
+                            {
+                                return Err(proposal_store::Error::Conflict);
+                            }
+                            Ok(())
+                        },
+                    )
+                    .map(|proposal| proposal.id)
+                    .map_err(|error| error.to_string()))
+            })
+            .map_err(|error| error.to_string())?
+    })
+    .map_err(NativeError::revision)
 }
 
 fn main_window(window: &tauri::WebviewWindow) -> Result<(), NativeError> {
@@ -217,6 +416,72 @@ pub(crate) async fn ask_question(
 }
 
 #[tauri::command]
+pub(crate) async fn suggest_question_revision(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    request: QuestionRequest,
+    connection: QuestionConnection,
+    target: RevisionTarget,
+) -> Result<RevisionAnswer, NativeError> {
+    main_window(&window)?;
+    validate_target(&target)?;
+    validate_revision_request(&request, &target.selected_text)?;
+    let auth = host.auth(&app)?;
+    if !matches_connection(&auth.status()?, &connection) {
+        return Err(QuestionError::stale_connection().into());
+    }
+    let permit = host.questions.reserve(&request, &connection.account_id)?;
+    let capture_app = app.clone();
+    let snapshot =
+        tauri::async_runtime::spawn_blocking(move || capture_revision(&capture_app, target))
+            .await
+            .map_err(|_| NativeError::unavailable())??;
+    let credentials = auth.credentials(connection.generation).await?;
+    if credentials.generation != connection.generation
+        || credentials.account_id != connection.account_id
+        || credentials.model != connection.model
+        || !matches_connection(&auth.status()?, &connection)
+    {
+        return Err(QuestionError::stale_connection().into());
+    }
+    if !clean_generation(&app.state::<super::BrowserState>(), snapshot.generation)
+        || !selected_revision_session(
+            &app.state::<super::BrowserState>(),
+            &snapshot.target.repository_id,
+        )
+    {
+        return Err(QuestionError::stale_revision().into());
+    }
+    let config = Configuration::new(&credentials.access_token, &credentials.model)?
+        .with_account(&credentials.account_id)?
+        .with_cancellation(credentials.cancelled);
+    let prepared = host
+        .questions
+        .revise_reserved(
+            request,
+            snapshot.target.selected_text.clone(),
+            config,
+            permit,
+        )
+        .await?;
+    // No source/save/recovery locks span inference. The retained request permit
+    // serializes cancellation with this final, local pending-proposal operation.
+    tauri::async_runtime::spawn_blocking(move || {
+        let (answer, replacement_text, proposal_id) = prepared.persist(|answer, replacement| {
+            persist_revision(&app, &auth, &connection, &snapshot, answer, replacement)
+        })?;
+        Ok(RevisionAnswer {
+            answer,
+            proposal_id,
+            replacement_text,
+        })
+    })
+    .await
+    .map_err(|_| NativeError::unavailable())?
+}
+
+#[tauri::command]
 pub(crate) fn cancel_question(
     window: tauri::WebviewWindow,
     host: State<'_, QuestionHost>,
@@ -303,6 +568,7 @@ pub(crate) async fn refresh_question_connection(
     host: State<'_, QuestionHost>,
 ) -> Result<QuestionStatus, NativeError> {
     main_window(&window)?;
+    host.questions.cancel_active()?;
     let auth = host.auth(&app)?;
     let status = auth.refresh_models().await?;
     if let Some(id) = status.active_account_id.as_deref() {
@@ -338,6 +604,107 @@ pub(crate) fn open_question_usage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn revision_target() -> RevisionTarget {
+        RevisionTarget {
+            repository_id: "native-session".into(),
+            path: "scenes/fox.md".into(),
+            source_hash: "a".repeat(64),
+            from_utf8: 0,
+            to_utf8: 3,
+            selected_text: "Fox".into(),
+        }
+    }
+
+    #[test]
+    fn revision_target_wire_is_bounded_and_rejects_hidden_paths_or_extra_input() {
+        let target = revision_target();
+        assert!(validate_target(&target).is_ok());
+        for path in [
+            "../fox.md",
+            "/fox.md",
+            ".private/fox.md",
+            "scenes\\fox.md",
+            "scenes/file.txt",
+            "scenes//fox.md",
+        ] {
+            let mut target = revision_target();
+            target.path = path.into();
+            assert!(validate_target(&target).is_err());
+        }
+        let mut target = revision_target();
+        target.source_hash = "A".repeat(64);
+        assert!(validate_target(&target).is_err());
+        let mut target = revision_target();
+        target.to_utf8 = target.from_utf8;
+        assert!(validate_target(&target).is_err());
+        assert!(serde_json::from_value::<RevisionTarget>(serde_json::json!({
+            "repositoryId":"session","path":"scenes/fox.md","sourceHash":"a".repeat(64),
+            "fromUtf8":0,"toUtf8":3,"selectedText":"Fox","fullSource":"unpreviewed"
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn revision_source_binds_exact_bytes_path_hash_and_edit_epoch_even_after_undo() {
+        let snapshot = RevisionSnapshot {
+            target: revision_target(),
+            source: "Fox".into(),
+            generation: 0,
+        };
+        let mut document = repository_core::Document {
+            path: "scenes/fox.md".into(),
+            text: "Fox".into(),
+            content_hash: "a".repeat(64),
+            size_bytes: 3,
+            frontmatter: None,
+            generated_compatibility: false,
+        };
+        assert!(same_revision_source(&snapshot, &document));
+        document.text = "Dog".into();
+        assert!(!same_revision_source(&snapshot, &document));
+        document.text = "Fox".into();
+        document.content_hash = "b".repeat(64);
+        assert!(!same_revision_source(&snapshot, &document));
+        document.content_hash = "a".repeat(64);
+        document.path = "scenes/other.md".into();
+        assert!(!same_revision_source(&snapshot, &document));
+        document.path = "scenes/fox.md".into();
+        document.generated_compatibility = true;
+        assert!(!same_revision_source(&snapshot, &document));
+        let state = super::super::BrowserState::default();
+        assert!(clean_generation(&state, snapshot.generation));
+        state.unsaved_changes.store(true, Ordering::SeqCst);
+        assert!(!clean_generation(&state, snapshot.generation));
+        state.mutation_gate.invalidate();
+        state.unsaved_changes.store(false, Ordering::SeqCst);
+        assert!(!clean_generation(&state, snapshot.generation));
+        assert!(clean_generation(&state, state.mutation_gate.generation()));
+        assert!(!selected_revision_session(&state, "native-session"));
+    }
+
+    #[test]
+    fn revision_answer_exposes_advice_and_selected_replacement_without_full_source() {
+        let result = RevisionAnswer {
+            answer: QuestionAnswer {
+                request_id: "r".into(),
+                text: "Explanation".into(),
+                model: "test-model".into(),
+                input_tokens: None,
+                output_tokens: None,
+                incomplete: false,
+            },
+            proposal_id: "pending-id".into(),
+            replacement_text: "  Literal—🦊\r\n".into(),
+        };
+        let value = serde_json::to_value(result).unwrap();
+        assert_eq!(value["text"], "Explanation");
+        assert_eq!(value["replacementText"], "  Literal—🦊\r\n");
+        assert_eq!(value["proposalId"], "pending-id");
+        assert_eq!(value["incomplete"], false);
+        assert!(value.get("source").is_none());
+        assert!(value.get("answer").is_none());
+    }
 
     fn status() -> AuthStatus {
         AuthStatus {

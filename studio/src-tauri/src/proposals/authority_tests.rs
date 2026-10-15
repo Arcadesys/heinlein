@@ -634,3 +634,146 @@ fn dirty_change_during_source_staging_is_rechecked_before_commit() {
     assert_eq!(f.text(), BEFORE);
     assert!(!outcome.receipt.revert_available);
 }
+
+#[test]
+fn native_origin_survives_apply_revert_and_disk_receipts() {
+    let mut f = Fixture::new();
+    let origin = ProposalOrigin::native_openai("synthetic-model".into(), "req_synthetic".into());
+    f.proposal = f
+        .store
+        .submit(
+            &f.repo,
+            "scene.md",
+            &f.repo.read("scene.md").unwrap().content_hash,
+            AFTER,
+            origin.clone(),
+        )
+        .unwrap();
+    let mut host = Authority::default();
+    let review = f.review(&mut host);
+    assert_eq!(review.origin, origin);
+    assert!(review.confirmation_message().contains("synthetic-model"));
+    let applied = f.apply(&mut host, &review).unwrap();
+    let revert = host
+        .review_revert(&f.repo, "session", &f.recovery, &applied.receipt.id, false)
+        .unwrap();
+    assert_eq!(revert.origin, origin);
+    let reverted = f.apply(&mut host, &revert).unwrap();
+    assert_eq!(reverted.receipt.origin, origin);
+    assert_eq!(f.text(), BEFORE);
+    let restarted = Authority::default();
+    let records = f.records(&restarted);
+    assert!(records
+        .receipts
+        .iter()
+        .all(|r| r.origin == origin && !r.revert_available));
+}
+
+#[test]
+fn rejection_is_persistent_immutable_and_never_approval() {
+    let f = Fixture::new();
+    let mut host = Authority::default();
+    let review = f.review(&mut host);
+    let rejected = host
+        .reject(&f.repo, &f.store, &f.receipts, &f.proposal.id)
+        .unwrap();
+    assert_eq!(rejected.kind, "reject");
+    assert_eq!(rejected.status, "rejected");
+    assert!(!rejected.revert_available);
+    assert_eq!(rejected.origin, f.proposal.origin);
+    assert!(f.apply(&mut host, &review).is_err());
+    assert!(host
+        .reject(&f.repo, &f.store, &f.receipts, &f.proposal.id)
+        .is_err());
+    let mut restarted = Authority::default();
+    assert!(f.records(&restarted).pending.is_empty());
+    assert_eq!(f.records(&restarted).receipts.len(), 1);
+    assert!(restarted
+        .review(
+            &f.repo,
+            "session",
+            &f.store,
+            &f.receipts,
+            &f.recovery,
+            &f.proposal.id,
+            false
+        )
+        .is_err());
+    assert!(restarted
+        .review_revert(&f.repo, "session", &f.recovery, &rejected.id, false)
+        .is_err());
+    assert!(f.store.get(&f.repo, &f.proposal.id).is_ok());
+    assert_eq!(f.text(), BEFORE);
+}
+
+#[test]
+fn rejection_invalidates_another_hosts_preexisting_review() {
+    let f = Fixture::new();
+    let mut reviewer = Authority::default();
+    let review = f.review(&mut reviewer);
+    let mut rejecter = Authority::default();
+    rejecter
+        .reject(&f.repo, &f.store, &f.receipts, &f.proposal.id)
+        .unwrap();
+    assert!(f.apply(&mut reviewer, &review).is_err());
+    assert_eq!(f.text(), BEFORE);
+}
+
+#[test]
+fn applied_proposal_cannot_be_rejected() {
+    let f = Fixture::new();
+    let mut host = Authority::default();
+    let review = f.review(&mut host);
+    f.apply(&mut host, &review).unwrap();
+    assert!(host
+        .reject(&f.repo, &f.store, &f.receipts, &f.proposal.id)
+        .is_err());
+    assert_eq!(f.records(&host).receipts.len(), 1);
+    assert_eq!(f.text(), AFTER);
+}
+
+#[test]
+fn malformed_rejection_blocks_apply_instead_of_being_ignored() {
+    let f = Fixture::new();
+    let mut host = Authority::default();
+    let review = f.review(&mut host);
+    let filename = f._dir.path().join("receipts").join(format!(
+        "{}-{}.reject.json",
+        f.repo.project_key(),
+        id()
+    ));
+    fs::write(&filename, b"{}").unwrap();
+    fs::set_permissions(&filename, fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(f.apply(&mut host, &review).is_err());
+    assert_eq!(f.text(), BEFORE);
+}
+
+#[test]
+fn concurrent_reject_and_apply_have_exactly_one_winner() {
+    for _ in 0..8 {
+        let f = Fixture::new();
+        let mut applying_host = Authority::default();
+        let review = f.review(&mut applying_host);
+        let repo = Arc::new(Repository::open(f.repo.root()).unwrap());
+        let barrier = Arc::new(Barrier::new(2));
+        let receipt_path = f._dir.path().join("receipts");
+        let proposal_path = f._dir.path().join("proposals");
+        let r = Arc::clone(&repo);
+        let b = Arc::clone(&barrier);
+        let pid = f.proposal.id.clone();
+        let rejecting = thread::spawn(move || {
+            let receipts = ReceiptStore::open(receipt_path).unwrap();
+            let proposals = ProposalStore::open(proposal_path).unwrap();
+            b.wait();
+            Authority::default().reject(&r, &proposals, &receipts, &pid)
+        });
+        barrier.wait();
+        let applied = f.apply(&mut applying_host, &review);
+        let rejected = rejecting.join().unwrap();
+        assert_ne!(applied.is_ok(), rejected.is_ok());
+        let records = f.records(&applying_host);
+        assert_eq!(records.receipts.len(), 1);
+        assert!(records.pending.is_empty());
+        assert_eq!(f.text(), if applied.is_ok() { AFTER } else { BEFORE });
+    }
+}

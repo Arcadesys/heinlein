@@ -307,3 +307,41 @@ fn interrupted_temp_is_removed_but_never_promoted() {
     assert_eq!(f.store().list(&f.repo).unwrap(), vec![p.summary()]);
     assert!(!temp.exists());
 }
+
+#[test]
+fn native_guard_rechecks_before_publication_and_failure_preserves_source() {
+    let f = Fixture::new();
+    let store = f.store();
+    let source = f.repo.read("scene.md").unwrap();
+    let origin = ProposalOrigin::native_openai("synthetic-model".into(), "req_synthetic".into());
+    let called = std::cell::Cell::new(false);
+    assert_eq!(
+        store.submit_checked(
+            &f.repo,
+            "scene.md",
+            &source.content_hash,
+            "Revision",
+            origin.clone(),
+            || {
+                called.set(true);
+                Err(Error::Conflict)
+            }
+        ),
+        Err(Error::Conflict)
+    );
+    assert!(called.get());
+    assert!(store.list(&f.repo).unwrap().is_empty());
+    assert_eq!(f.repo.read("scene.md").unwrap().text, source.text);
+    let proposal = store
+        .submit_checked(
+            &f.repo,
+            "scene.md",
+            &source.content_hash,
+            "Revision",
+            origin,
+            || Ok(()),
+        )
+        .unwrap();
+    assert_eq!(store.get(&f.repo, &proposal.id).unwrap(), proposal);
+    assert_eq!(f.repo.read("scene.md").unwrap().text, source.text);
+}

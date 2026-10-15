@@ -35,6 +35,40 @@ struct Completion {
     status: String,
     message: Option<String>,
 }
+/// An immutable author dismissal, not an operation intent or approval.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Rejection {
+    schema_version: u32,
+    id: String,
+    proposal: proposal_store::PendingProposal,
+    created_at_ms: u64,
+}
+impl Rejection {
+    fn validate(&self) -> Result<()> {
+        if self.schema_version != 1 || !valid_id(&self.id) || self.created_at_ms == 0 {
+            return Err("Invalid rejection decision".into());
+        }
+        self.proposal.validate().map_err(|e| e.to_string())
+    }
+    fn receipt(&self) -> Receipt {
+        Receipt {
+            id: self.id.clone(),
+            kind: "reject".into(),
+            proposal_id: self.proposal.id.clone(),
+            path: self.proposal.path.clone(),
+            base_hash: self.proposal.base_hash.clone(),
+            replacement_hash: self.proposal.replacement_hash.clone(),
+            diff_hash: self.proposal.diff_hash.clone(),
+            origin: self.proposal.origin.clone(),
+            parent_receipt_id: None,
+            status: "rejected".into(),
+            message: None,
+            created_at_ms: self.created_at_ms,
+            revert_available: false,
+        }
+    }
+}
 impl Intent {
     pub fn new(repo: &Repository, review: Review) -> Self {
         Self {
@@ -75,6 +109,7 @@ impl Intent {
     }
 }
 pub struct ReceiptStore {
+    gate: std::sync::Mutex<()>,
     #[cfg(unix)]
     path: PathBuf,
     #[cfg(unix)]
@@ -99,6 +134,7 @@ impl ReceiptStore {
         private(&directory, true)?;
         let path = path.as_ref().canonicalize().map_err(|e| e.to_string())?;
         Ok(Self {
+            gate: std::sync::Mutex::new(()),
             path,
             directory,
             #[cfg(test)]
@@ -117,6 +153,10 @@ impl ReceiptStore {
         repo: &Repository,
         operation: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
+        let _gate = self
+            .gate
+            .lock()
+            .map_err(|_| "Local receipt storage is unavailable")?;
         flock(&self.directory, FlockOperation::LockExclusive)
             .map_err(|_| "Local receipt storage is unavailable")?;
         let _lock = Lock(&self.directory);
@@ -280,6 +320,19 @@ impl ReceiptStore {
                 return Err("Receipt result has no intent; inspect local records".into());
             }
         }
+        for name in names
+            .iter()
+            .filter(|name| name.starts_with(&prefix) && name.ends_with(".reject.json"))
+        {
+            let rejection: Rejection = self.read(name)?;
+            rejection.validate()?;
+            if rejection.proposal.project_key != repo.project_key()
+                || *name != format!("{}-{}.reject.json", repo.project_key(), rejection.id)
+            {
+                return Err("Rejection scope mismatch".into());
+            }
+            records.push(rejection.receipt());
+        }
         records.sort_by(|a, b| (b.created_at_ms, &b.id).cmp(&(a.created_at_ms, &a.id)));
         Ok(records)
     }
@@ -291,11 +344,47 @@ impl ReceiptStore {
         if self
             .read_all(repo)?
             .iter()
-            .any(|r| r.kind == "apply" && r.proposal_id == proposal_id)
+            .any(|r| matches!(r.kind.as_str(), "apply" | "reject") && r.proposal_id == proposal_id)
         {
-            return Err("This proposal already has an operation intent. Inspect its receipt and current source; do not apply it again".into());
+            return Err("This proposal already has an operation intent or rejection decision. Inspect its receipt; do not apply or reject it again".into());
         }
         Ok(())
+    }
+    #[cfg(unix)]
+    pub(super) fn write_rejection(
+        &self,
+        repo: &Repository,
+        proposal: proposal_store::PendingProposal,
+    ) -> Result<Receipt> {
+        self.require_unattempted(repo, &proposal.id)?;
+        let (names, _) = self.inventory()?;
+        if operation_count(&names) >= MAX_OPERATIONS {
+            return Err("Local receipt operation limit reached; preserve existing records".into());
+        }
+        let rejection = Rejection {
+            schema_version: 1,
+            id: id(),
+            proposal,
+            created_at_ms: now(),
+        };
+        rejection.validate()?;
+        if rejection.proposal.project_key != repo.project_key() {
+            return Err("Rejection scope mismatch".into());
+        }
+        self.append(
+            repo,
+            &format!("{}-{}.reject.json", repo.project_key(), rejection.id),
+            &rejection,
+        )?;
+        Ok(rejection.receipt())
+    }
+    #[cfg(not(unix))]
+    pub(super) fn write_rejection(
+        &self,
+        _repo: &Repository,
+        _proposal: proposal_store::PendingProposal,
+    ) -> Result<Receipt> {
+        Err("Unsupported platform".into())
     }
     pub(super) fn require_unreverted(&self, repo: &Repository, receipt_id: &str) -> Result<()> {
         if self
@@ -320,7 +409,7 @@ impl ReceiptStore {
         // Reserve both a record slot and completion byte budget before the save.
         let (names, total) = self.inventory()?;
         let bytes = serde_json::to_vec(intent).map_err(|e| e.to_string())?;
-        if names.iter().filter(|n| n.ends_with(".intent.json")).count() >= MAX_OPERATIONS
+        if operation_count(&names) >= MAX_OPERATIONS
             || names.len() + 2 > MAX_OPERATIONS * 2
             || total + bytes.len() as u64 + 16384 > MAX_BYTES
         {
@@ -374,6 +463,12 @@ impl ReceiptStore {
         self.fail_intent.set(true);
     }
 }
+fn operation_count(names: &[String]) -> usize {
+    names
+        .iter()
+        .filter(|n| n.ends_with(".intent.json") || n.ends_with(".reject.json"))
+        .count()
+}
 fn intent_name(intent: &Intent) -> String {
     format!("{}-{}.intent.json", intent.project_key, intent.id)
 }
@@ -384,6 +479,7 @@ fn valid_name(name: &str) -> bool {
     let Some(base) = name
         .strip_suffix(".intent.json")
         .or_else(|| name.strip_suffix(".result.json"))
+        .or_else(|| name.strip_suffix(".reject.json"))
     else {
         return false;
     };
