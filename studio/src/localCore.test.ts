@@ -20,7 +20,7 @@ describe('local Core bridge contract', () => {
     const channel = (vi.mocked(invoke).mock.calls[1][1] as {onProgress: {onmessage: (text: string) => void}}).onProgress;
     channel.onmessage('Live answer'); expect(progress).toHaveBeenCalledWith('Live answer');
     expect(vi.mocked(invoke).mock.calls).toEqual([
-      ['question_status'], ['ask_question', {request, connection, onProgress: expect.any(Object)}], ['cancel_question', {requestId: 'unique-id'}],
+      ['question_status'], ['ask_question', {request, connection, onProgress: expect.any(Object), chat: null}], ['cancel_question', {requestId: 'unique-id'}],
     ]);
   });
   it('keeps revision targets separate from ordinary advice and invokes immutable rejection', async () => {

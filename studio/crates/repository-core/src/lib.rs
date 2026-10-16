@@ -1,5 +1,7 @@
 //! Bounded repository access and explicit, revision-guarded Markdown saves. Native hosts choose roots; renderers receive relative paths only.
 //! Unix descriptor-relative opens reject every symlink component, including concurrent swaps.
+mod chat;
+pub use chat::{ChatEvent, ChatThread, ChatTranscript};
 mod drafting;
 #[cfg(all(test, unix))]
 mod fuzz_support;

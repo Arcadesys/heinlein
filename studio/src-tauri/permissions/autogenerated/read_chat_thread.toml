@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-chat-thread"
+description = "Enables the read_chat_thread command without any pre-configured scope."
+commands.allow = ["read_chat_thread"]
+
+[[permission]]
+identifier = "deny-read-chat-thread"
+description = "Denies the read_chat_thread command without any pre-configured scope."
+commands.deny = ["read_chat_thread"]

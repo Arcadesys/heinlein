@@ -52,10 +52,17 @@ export interface QuestionRequest { requestId: string; question: string; context:
 export interface QuestionRevisionTarget { repositoryId: string; path: string; sourceHash: string; fromUtf8: number; toUtf8: number; selectedText: string }
 export interface QuestionRevisionAnswer extends QuestionAnswer { proposalId: string; replacementText: string }
 export interface QuestionAnswer { requestId: string; text: string; model: string; inputTokens?: number | null; outputTokens?: number | null; incomplete: boolean }
+export interface ChatThread { schemaVersion: number; id: string; title: string; createdAt: number }
+export interface ChatTarget { repositoryId: string; threadId: string; sourcePath: string }
+export interface ChatEvent { schemaVersion: number; requestId: string; kind: 'question' | 'answer' | 'error'; createdAt: number; data: unknown }
+export interface ChatTranscript { thread: ChatThread; events: ChatEvent[] }
 export interface LocalCore {
   available(): boolean;
+  listChatThreads?(repositoryId: string): Promise<ChatThread[]>;
+  createChatThread?(repositoryId: string, title: string): Promise<ChatThread>;
+  readChatThread?(repositoryId: string, threadId: string): Promise<ChatTranscript>;
   questionStatus?(): Promise<QuestionStatus>;
-  askQuestion?(request: QuestionRequest, connection: QuestionConnection, onProgress?: (text: string) => void): Promise<QuestionAnswer>;
+  askQuestion?(request: QuestionRequest, connection: QuestionConnection, onProgress?: (text: string) => void, chat?: ChatTarget): Promise<QuestionAnswer>;
   suggestQuestionRevision?(request: QuestionRequest, connection: QuestionConnection, target: QuestionRevisionTarget): Promise<QuestionRevisionAnswer>;
   cancelQuestion?(requestId: string): Promise<boolean>;
   connectQuestionAccount?(options: {allowChatgptPlan: boolean; accountId?: string}): Promise<QuestionStatus>;
@@ -97,11 +104,14 @@ export interface LocalCore {
 // no credentials, filesystem handles, or absolute root paths enter the renderer.
 export const localCore: LocalCore = {
   available: isTauri,
+  listChatThreads: repositoryId => invoke('list_chat_threads', {repositoryId}),
+  createChatThread: (repositoryId, title) => invoke('create_chat_thread', {repositoryId, title}),
+  readChatThread: (repositoryId, threadId) => invoke('read_chat_thread', {repositoryId, threadId}),
   questionStatus: () => invoke('question_status'),
-  askQuestion: (request, connection, onProgress) => {
+  askQuestion: (request, connection, onProgress, chat) => {
     const channel = new Channel<string>();
     channel.onmessage = text => onProgress?.(text);
-    return invoke('ask_question', {request, connection, onProgress: channel});
+    return invoke('ask_question', {request, connection, onProgress: channel, chat: chat ?? null});
   },
   suggestQuestionRevision: (request, connection, target) => invoke('suggest_question_revision', {request, connection, target}),
   cancelQuestion: requestId => invoke('cancel_question', {requestId}),

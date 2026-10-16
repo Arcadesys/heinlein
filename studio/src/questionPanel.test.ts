@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {createQuestionPanel, questionBytes, questionHistory, questionProblem, type QuestionScene} from './questionPanel';
-import type {LocalCore, QuestionAnswer, QuestionRequest, QuestionStatus} from './localCore';
+import type {LocalCore, QuestionAnswer, QuestionRequest, QuestionStatus, ChatThread, ChatTranscript, ChatTarget} from './localCore';
 const cryptoModule = 'node:crypto';
 const {webcrypto} = await import(cryptoModule) as {webcrypto: Crypto};
 function deferred<T>() {let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((yes, no) => {resolve = yes; reject = no;}); return {promise, resolve, reject};}
@@ -9,7 +9,7 @@ const ready: QuestionStatus = {configured: true, model: 'mock-model', message: '
 const reply = (request: QuestionRequest, text = 'Mock answer'): QuestionAnswer => ({requestId: request.requestId, text, model: 'mock-model', incomplete: false});
 function bridge() {
   return {available: vi.fn(() => true), questionStatus: vi.fn(async () => ready),
-    askQuestion: vi.fn(async (request: QuestionRequest, _connection?: unknown, _progress?: (text: string) => void) => reply(request)), cancelQuestion: vi.fn(async (_id: string) => true)};
+    askQuestion: vi.fn(async (request: QuestionRequest, _connection?: unknown, _progress?: (text: string) => void, _chat?: ChatTarget) => reply(request)), cancelQuestion: vi.fn(async (_id: string) => true)};
 }
 let panel: ReturnType<typeof createQuestionPanel> | undefined;
 let scene: QuestionScene | null;
@@ -28,6 +28,74 @@ beforeEach(() => {
   scene = {repositoryId: 'repo-1', path: 'scene.md', source: 'A 🐺 passage.\r\nNext line', from: 2, to: 4, canCapture: true};
 });
 afterEach(() => {panel?.destroy(); panel = undefined; vi.unstubAllGlobals();});
+
+function durableBridge() {
+  const core = bridge(); const records = new Map<string, ChatTranscript>(); let clock = 1;
+  const api = Object.assign(core, {
+    listChatThreads: vi.fn(async (_repositoryId: string) => [...records.values()].map(value => structuredClone(value.thread)).reverse()),
+    createChatThread: vi.fn(async (_repositoryId: string, title: string) => {
+      const thread: ChatThread = {schemaVersion:1, id:crypto.randomUUID(), title, createdAt:clock++};
+      records.set(thread.id,{thread, events:[]}); return structuredClone(thread);
+    }),
+    readChatThread: vi.fn(async (_repositoryId: string, id: string) => structuredClone(records.get(id)!)),
+  });
+  core.askQuestion.mockImplementation(async (request, _binding, progress, chat) => {
+    const saved = records.get(chat!.threadId)!;
+    saved.events.push({schemaVersion:1, requestId:request.requestId, kind:'question', createdAt:clock++, data:{question:request.question, context:request.context}});
+    progress?.('Live advice'); const answer = reply(request, `Answer to ${request.question}`);
+    saved.events.push({schemaVersion:1, requestId:request.requestId, kind:'answer', createdAt:clock++, data:answer});
+    return answer;
+  });
+  return {api, records};
+}
+async function chatsReady() {await vi.waitFor(() => expect(document.querySelector('section[aria-label="Repository chat threads"]')!.textContent).not.toContain('Reading repository chats'));}
+describe('repository chat threads', () => {
+  it('reopens a saved thread in a new panel and sends its bounded history with a follow-up', async () => {
+    const {api, records} = durableBridge(); await start(api); await chatsReady(); await send('First message');
+    expect(api.createChatThread).toHaveBeenCalledTimes(1);
+    const chat = [...records.values()][0]; expect(chat.events).toHaveLength(2);
+    expect(api.askQuestion.mock.calls[0][3]).toMatchObject({repositoryId:'repo-1', threadId:chat.thread.id, sourcePath:'scene.md'});
+    panel!.destroy(); panel = undefined; await start(api); await chatsReady();
+    await vi.waitFor(() => expect(document.querySelector('.question-transcript')!.textContent).toContain('Answer to First message'));
+    api.questionStatus.mockResolvedValueOnce({...ready, generation:2}); button('Recheck OpenAI setup').click();
+    await vi.waitFor(() => expect(button('Recheck OpenAI setup').disabled).toBe(false));
+    await vi.waitFor(() => expect(document.querySelector('.question-transcript')!.textContent).toContain('Answer to First message'));
+    await send('Second message');
+    expect(api.askQuestion.mock.calls[1][0].history).toEqual([{role:'user',text:'First message'},{role:'assistant',text:'Answer to First message'}]);
+    expect(chat.events).toHaveLength(4); expect(api.createChatThread).toHaveBeenCalledTimes(1);
+    button('New chat').click(); await send('Another thread');
+    expect(records.size).toBe(2); expect(chat.events).toHaveLength(4);
+    const select = document.querySelector<HTMLSelectElement>('[aria-label="Saved chat thread"]')!;
+    select.value=chat.thread.id; select.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(document.querySelector('.question-transcript')!.textContent).toContain('Answer to Second message'));
+  });
+  it('retains all turns while sending only the recent context budget', async () => {
+    const {api, records}=durableBridge(); await start(api); await chatsReady();
+    for (let i=0;i<6;i++) await send(`Message ${i}`);
+    expect([...records.values()][0].events).toHaveLength(12);
+    expect(document.querySelectorAll('.question-transcript .question-turn')).toHaveLength(6);
+    expect(api.askQuestion.mock.calls[5][0].history).toHaveLength(8);
+  });
+  it('preserves unanswered messages and refuses sending when saved chat loading fails', async () => {
+    const {api, records}=durableBridge(); const thread=await api.createChatThread('repo-1','Interrupted');
+    records.get(thread.id)!.events.push({schemaVersion:1, requestId:crypto.randomUUID(),kind:'question',createdAt:1,data:{question:'Saved before interruption',context:''}});
+    await start(api); await chatsReady();
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="Unanswered saved messages"]')!.textContent).toContain('Saved before interruption'));
+    await send('Continue'); expect(api.askQuestion.mock.calls[0][0].history).toEqual([]);
+    api.readChatThread.mockRejectedValueOnce(new Error('corrupt file'));
+    button('Reload chats').click();
+    await vi.waitFor(() => expect(document.body.textContent).toContain('This chat could not be loaded'));
+    write('Do not send'); expect(button('Send to OpenAI').disabled).toBe(true);
+    expect(records.get(thread.id)!.events).toHaveLength(3);
+    button('New chat').click(); write('A new conversation'); expect(button('Send to OpenAI').disabled).toBe(false);
+  });
+  it('does not send if creating the repository thread fails', async () => {
+    const {api}=durableBridge(); api.createChatThread.mockRejectedValueOnce(new Error('read-only repository'));
+    await start(api); await chatsReady(); write('Save first'); button('Send to OpenAI').click();
+    await vi.waitFor(() => expect(status()).toContain('No question was sent'));
+    expect(api.askQuestion).not.toHaveBeenCalled(); expect(input().value).toBe('Save first');
+  });
+});
 
 describe('question payload boundaries', () => {
   it('counts UTF-8 bytes rather than UTF-16 units and rejects incomplete Unicode', () => {

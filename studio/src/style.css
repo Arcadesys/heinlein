@@ -417,3 +417,7 @@ dialog { color: var(--fg); }
 .document-details-fields dt { font-weight: 600; font-size: .85rem; color: var(--fg-muted); }
 .document-details-fields dd { margin: .25rem 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .document-details-fields small { display: block; margin-top: .25rem; color: var(--fg-muted); font-size: .75rem; }
+
+.question-thread-controls { display: grid; gap: .65rem; min-width: 0; }
+.question-thread-controls label { display: grid; gap: .4rem; font-weight: 600; }
+.question-thread-controls select, .question-thread-controls button { min-height: 2.75rem; }

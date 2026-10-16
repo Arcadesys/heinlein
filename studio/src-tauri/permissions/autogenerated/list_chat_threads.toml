@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-chat-threads"
+description = "Enables the list_chat_threads command without any pre-configured scope."
+commands.allow = ["list_chat_threads"]
+
+[[permission]]
+identifier = "deny-list-chat-threads"
+description = "Denies the list_chat_threads command without any pre-configured scope."
+commands.deny = ["list_chat_threads"]

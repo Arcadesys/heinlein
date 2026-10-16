@@ -18,7 +18,7 @@ export interface QuestionPanelHooks {
   visibilityChanged?(open: boolean): void;
 }
 interface Revision {snapshot: SelectionQuestionSnapshot; contextVersion: number; proposalId: string; replacementText: string; rejected: boolean; busy: boolean}
-interface Turn { question: string; answer: QuestionAnswer; contextBytes: number; revision?: Revision }
+interface Turn { question: string; answer: QuestionAnswer; contextBytes: number; savedContext?: string; revision?: Revision }
 function plainUnicode(text: string) {
   return new TextDecoder('utf-8', {ignoreBOM: true}).decode(new TextEncoder().encode(text)) === text;
 }
@@ -68,15 +68,29 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   let disposed = false; let session: string | null = null; let version = 0; let statusVersion = 0;
   let configuration: QuestionStatus | null = null; let checking = false;
   let authBusy: 'connect' | 'account' | 'model' | 'signout' | null = null;
-  let seenConnection: string | null = null;
+  let seenConnection: string | null = null; let seenChatIdentity: string | null = null;
   let selectedAccountId: string | null = null; let reauthorizing = false; let addingAccount = false;
   let context = ''; let contextLabel = 'None. No manuscript text will be sent.';
   let contextVersion = 0; let preparing = false;
   let target: SelectionQuestionState | null = null;
   const revisionActions: (() => void)[] = [];
+  const durable = Boolean(core.listChatThreads && core.createChatThread && core.readChatThread);
+  let chatId: string | null = null; let chatVersion = 0; let chatBusy = false; let chatError = false;
+  let chatRepository: string | null = null;
   let turns: Turn[] = []; let forgotten = 0; let pending: QuestionRequest | null = null; let pendingRevision = false;
   const header = el('div', '', 'question-heading');
-  header.append(el('h3', 'Questions'), button('Close questions', () => close(true)));
+  header.append(el('h3', durable ? 'Chat threads' : 'Questions'), button('Close questions', () => close(true)));
+  const threadLabel = el('label', 'Saved chat thread'); const threadSelect = el('select'); threadSelect.setAttribute('aria-label', 'Saved chat thread'); threadLabel.append(threadSelect);
+  const threadNote = el('p', '', 'muted'); threadNote.setAttribute('role', 'status');
+  const chatAttempts = el('section'); chatAttempts.setAttribute('aria-label', 'Unanswered saved messages');
+  const threadControls = el('section', '', 'question-thread-controls'); threadControls.setAttribute('aria-label', 'Repository chat threads'); threadControls.hidden = !durable;
+  const reloadChats = button('Reload chats', () => { void refreshChats(false); });
+  threadControls.append(threadLabel, reloadChats, threadNote);
+  threadSelect.addEventListener('change', () => {
+    if (!live() || pending || preparing) return;
+    if (!threadSelect.value) { resetContents(); update(); threadNote.textContent = 'New chat. Your first message creates a repository thread.'; return; }
+    void loadChat(threadSelect.value);
+  });
   const connection = el('p', '', 'question-connection'); connection.setAttribute('role', 'status');
   const refresh = button('Recheck OpenAI setup', () => { void checkStatus(true); });
   const auth = el('details', '', 'question-auth'); auth.setAttribute('aria-label', 'ChatGPT connection'); auth.open = true;
@@ -161,8 +175,10 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const wasPending = Boolean(pending); const wasRevision = pendingRevision; resetContents();
     status.textContent = wasPending ? 'Conversation cleared and request canceled locally. Previously sent text cannot be recalled from OpenAI.' : 'Conversation cleared from this window. Previously sent text cannot be recalled from OpenAI.';
     if (wasRevision) status.textContent += ' A pending suggestion may already have been recorded; check Proposed revisions.';
+    if (durable) { threadNote.textContent = 'New chat. Earlier threads remain saved in the repository.'; status.textContent = wasPending ? 'New chat started. The previous request was canceled locally; saved messages remain in its thread.' : 'New chat started. Earlier threads remain saved.'; }
     update(); question.focus({preventScroll: true});
   });
+  if (durable) reset.textContent = 'New chat';
   const actions = el('div', '', 'question-actions'); actions.append(send, cancel, button('Return to writing', () => hooks.focusEditor()), reset);
   const transcript = el('section', '', 'question-transcript'); transcript.setAttribute('aria-label', 'Question conversation');
   const streaming = el('section', '', 'question-stream-preview'); streaming.hidden = true;
@@ -171,7 +187,8 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   streaming.setAttribute('aria-busy', 'false');
   streaming.append(streamingLabel, streamingText);
   const lifetime = el('p', 'Conversation text stays only in this window, up to four turns and 64,000 UTF-8 bytes. Closing questions or changing scenes/folders clears it. Earlier context snapshots and revision replacements are not added to conversation history. Revision source snapshots stay local until this panel is cleared; saved proposal records remain available in Proposed revisions. Stopping a request may leave an already-recorded pending suggestion.', 'muted');
-  element.append(header, connection, auth, guidance, modeLabel, targetSection, questionLabel, count, requestNote, contextHeading, contextSource, contextText, contextActions, historyDetails, disclosure, actions, status, transcript, streaming, lifetime);
+  if (durable) lifetime.textContent = 'Ask threads are saved in .heinlein/chats/ inside this repository. Your sent questions, explicit context, selected history, answers and model names can be tracked and shared with Git; credentials are never stored there. The full transcript is retained. Only the history preview is sent with a follow-up. New chat keeps earlier threads. Revision suggestions keep their separate proposal and author-confirmation flow.';
+  element.append(header, threadControls, connection, auth, guidance, modeLabel, targetSection, questionLabel, count, requestNote, contextHeading, contextSource, contextText, contextActions, historyDetails, disclosure, actions, status, transcript, chatAttempts, streaming, lifetime);
   question.addEventListener('input', update);
   mode.addEventListener('change', () => {
     if (!live() || pending || preparing || authBusy) return;
@@ -230,7 +247,9 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     captureSelection.disabled = captureScene.disabled = Boolean(pending) || preparing || Boolean(authBusy);
     removeContext.disabled = Boolean(pending) || preparing || Boolean(authBusy) || !context;
     const authPending = Boolean(authBusy) || Boolean(configuration?.signInPending);
-    refresh.disabled = Boolean(pending) || checking || authPending;
+    threadSelect.disabled = Boolean(pending) || preparing || chatBusy;
+    reloadChats.disabled = Boolean(pending) || preparing || chatBusy;
+    refresh.disabled = chatBusy || Boolean(pending) || checking || authPending;
     accounts.disabled = checking || authPending || !core.selectQuestionAccount || !configuration?.accounts.length;
     models.disabled = checking || authPending || reauthorizing || !core.selectQuestionModel || !configuration?.models.length || !activeAccount()?.planEnabled;
     consent.disabled = checking || authPending || !core.available();
@@ -246,7 +265,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   }
   function updateRevisionState() {
     const problem = outgoingProblem();
-    send.disabled = !live() || checking || Boolean(authBusy) || Boolean(configuration?.signInPending) || !connectionReady() || !core.askQuestion || Boolean(pending) || preparing || Boolean(problem);
+    send.disabled = !live() || (durable && (chatBusy || chatError)) || checking || Boolean(authBusy) || Boolean(configuration?.signInPending) || !connectionReady() || !core.askQuestion || Boolean(pending) || preparing || Boolean(problem);
     send.title = problem ?? ''; requestNote.textContent = question.value.trim() ? send.title : ''; requestNote.hidden = !requestNote.textContent;
     if (mode.value === 'revision') targetNote.textContent = revisionProblem() ?? `${target!.path} · ${targetBytes().toLocaleString()} UTF-8 bytes. Only this target is replaced; saved source is rechecked before review.`;
     for (const refreshAction of revisionActions) refreshAction();
@@ -276,7 +295,13 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   function applyConfiguration(next: QuestionStatus) {
     const first = seenConnection === null;
     const key = JSON.stringify([next.generation, next.activeAccountId, next.selectedModel, next.accounts.find(account => account.id === next.activeAccountId)?.planEnabled]);
-    if (seenConnection !== null && seenConnection !== key) resetContents();
+    const chatIdentity = JSON.stringify([next.activeAccountId, next.selectedModel, next.accounts.find(account => account.id === next.activeAccountId)?.planEnabled]);
+    if (seenConnection !== null && seenConnection !== key) {
+      const resumeChat = durable && seenChatIdentity === chatIdentity ? chatId : null;
+      resetContents();
+      if (resumeChat) void loadChat(resumeChat);
+    }
+    seenChatIdentity = chatIdentity;
     seenConnection = key; configuration = next; selectedAccountId = next.activeAccountId; reauthorizing = false; addingAccount = false;
     const account = activeAccount();
     connection.textContent = `${account ? `ChatGPT · ${account.label}${next.model ? ` · ${next.model}` : ''}. ` : ''}${next.message}${next.usageLimited ? ' Plan usage is limited. Manage usage or explicitly recheck before trying again.' : ''}`;
@@ -347,13 +372,14 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     }
   }
   function resetContents() {
+    chatVersion++; chatBusy = false; chatError = false; chatId = null; threadSelect.value = ''; chatAttempts.replaceChildren();
     contextVersion++; cancelPending(); mode.value = 'ask'; target = null; targetText.textContent = ''; targetNote.textContent = ''; targetSection.hidden = true; revisionActions.length = 0; turns = []; forgotten = 0; context = ''; contextLabel = 'None. No manuscript text will be sent.'; question.value = ''; transcript.replaceChildren(); streaming.hidden = true; streamingText.textContent = '';
     // Closing also removes private snapshots from hidden DOM, not just state.
     contextText.textContent = ''; contextText.hidden = true; contextSource.textContent = contextLabel;
     historyText.replaceChildren(); historyNote.textContent = ''; historySummary.textContent = 'Conversation history to send · 0 messages';
   }
   async function submit() {
-    if (!live() || pending || preparing || checking || authBusy || !connectionReady() || !configuration || !core.askQuestion) return;
+    if (!live() || (durable && (chatBusy || chatError)) || pending || preparing || checking || authBusy || !connectionReady() || !configuration || !core.askQuestion) return;
     const problem = outgoingProblem();
     if (problem) {status.textContent = problem; update(); return;}
     if (!globalThis.crypto?.randomUUID) {status.textContent = 'A secure request identifier is unavailable. Reopen Studio before sending.'; return;}
@@ -372,6 +398,15 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
         const stale = revisionProblem(snapshot); if (stale) throw new Error(stale);
         if (snapshot.sourceHash !== snapshot.sourceSha256) throw new Error('The selected source does not match its saved hash. Save and capture the selection again.');
       }
+      if (durable && !snapshot) {
+        if (!chatId) {
+          preparing = true; update();
+          const created = await core.createChatThread!(session!, request.question);
+          if (!live() || version !== epoch) return;
+          chatId = created.id; threadNote.textContent = `Saved chat: ${created.title}`;
+          const option = el('option', created.title); option.value = created.id; threadSelect.append(option); threadSelect.value = created.id;
+        }
+      }
       preparing = false; pending = request; pendingRevision = Boolean(snapshot); update();
       streaming.hidden = true; streamingText.textContent = ''; streamingLabel.textContent = 'OpenAI · Streaming answer';
       const answer = snapshot
@@ -381,7 +416,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
           const first = streaming.hidden;
           streamingText.textContent = text; streaming.hidden = !text; streaming.setAttribute('aria-busy', 'true');
           if (first && text) status.textContent = 'Receiving OpenAI answer… Preview is incomplete until the request finishes.';
-        });
+        }, durable ? {repositoryId: session!, threadId: chatId!, sourcePath: hooks.current()!.path} : undefined);
       if (!live() || version !== epoch || pending !== request) return;
       if (answer.requestId !== request.requestId) throw new Error('The response did not match this question. It was ignored.');
       if (!answer.text?.trim()) throw new Error('OpenAI returned no text. No retry was sent automatically.');
@@ -392,13 +427,13 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
         if (!result.proposalId || result.incomplete || typeof result.replacementText !== 'string' || !plainUnicode(result.replacementText) || questionBytes(result.replacementText) + questionBytes(result.text) > QUESTION_LIMITS.answer) throw new Error('The revision response was incomplete or invalid. No review was opened.');
         revision = {snapshot, contextVersion: capturedContext, proposalId: result.proposalId, replacementText: result.replacementText, rejected: false, busy: false};
       }
-      turns.push({question: request.question, answer, contextBytes: questionBytes(request.context), revision});
-      while (turns.length > 4 || turns.reduce((sum, turn) => sum + questionBytes(turn.question) + questionBytes(turn.answer.text) + questionBytes(turn.revision?.replacementText ?? '') + questionBytes(turn.revision?.snapshot.selectedText ?? ''), 0) > QUESTION_LIMITS.memory) {turns.shift(); forgotten++;}
+      turns.push({question: request.question, answer, contextBytes: questionBytes(request.context), savedContext: durable ? request.context : undefined, revision});
+      while (!durable && (turns.length > 4 || turns.reduce((sum, turn) => sum + questionBytes(turn.question) + questionBytes(turn.answer.text) + questionBytes(turn.revision?.replacementText ?? '') + questionBytes(turn.revision?.snapshot.selectedText ?? ''), 0) > QUESTION_LIMITS.memory)) {turns.shift(); forgotten++;}
       question.value = '';
       streaming.hidden = true; streamingText.textContent = ''; streaming.setAttribute('aria-busy', 'false');
       renderTranscript();
       status.textContent = revision ? 'Suggested revision recorded. Review it or reject it below. Your manuscript has not been changed.' : answer.incomplete ? 'OpenAI returned an incomplete answer. It is marked below; nothing was retried automatically.' : 'Answer ready. Your manuscript has not been changed.';
-    } catch (error) { if (live() && version === epoch) {status.textContent = errorMessage(error); if (!streaming.hidden) { streamingLabel.textContent = 'OpenAI · Interrupted preview · Not added to history'; streaming.setAttribute('aria-busy', 'false'); } void checkStatus();} }
+    } catch (error) { if (live() && version === epoch) {status.textContent = durable && !revising && !pending ? 'The repository chat could not be saved. No question was sent. Your draft remains here.' : errorMessage(error); if (!streaming.hidden) { streamingLabel.textContent = 'OpenAI · Interrupted preview · Not added to history'; streaming.setAttribute('aria-busy', 'false'); } void checkStatus();} }
     finally { if (live() && version === epoch) {preparing = false; pending = null; pendingRevision = false; update();} }
   }
   function revisionGuard(revision: Revision, reviewing = false) {
@@ -411,6 +446,9 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       const section = el('section', '', 'question-turn');
       const usage = [turn.answer.inputTokens == null ? null : `${turn.answer.inputTokens.toLocaleString()} input tokens`, turn.answer.outputTokens == null ? null : `${turn.answer.outputTokens.toLocaleString()} output tokens`].filter(Boolean).join(' · ');
       section.append(el('h4', 'You'), preview(turn.question, `Question ${index + 1}`), el('p', `${turn.contextBytes.toLocaleString()} UTF-8 bytes of context sent`, 'muted'), el('h4', `OpenAI · ${turn.answer.model}${turn.answer.incomplete ? ' · Incomplete answer' : ''}`), preview(turn.answer.text, `Answer ${index + 1}`), el('p', usage || 'Token usage was not returned.', 'muted'));
+      if (turn.savedContext) {
+        const savedContext = el('details'); savedContext.append(el('summary', 'Saved context for this message'), preview(turn.savedContext, `Saved context ${index + 1}`)); section.append(savedContext);
+      }
       const origin = el('p', `Recorded origin: native OpenAI · Model: ${turn.answer.model} · Request: ${turn.answer.requestId}. Provider metadata is not authenticated authorship.`, 'muted'); section.append(origin);
       const revision = turn.revision;
       if (revision) {
@@ -446,12 +484,57 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       transcript.append(section);
     });
   }
+  async function loadChat(id: string) {
+    if (!live() || !durable) return;
+    const repositoryId = session!; resetContents(); const epoch = ++chatVersion;
+    chatBusy = true; threadNote.textContent = 'Loading saved chat…'; update();
+    try {
+      const saved = await core.readChatThread!(repositoryId, id);
+      if (!live() || session !== repositoryId || chatVersion !== epoch) return;
+      if (saved.thread.id !== id || saved.thread.schemaVersion !== 1 || !Array.isArray(saved.events)) throw new Error('Invalid saved chat');
+      const answers = new Map(saved.events.filter(event => event.kind === 'answer').map(event => [event.requestId, event.data as QuestionAnswer]));
+      const failures = new Set(saved.events.filter(event => event.kind === 'error').map(event => event.requestId));
+      for (const event of saved.events.filter(event => event.kind === 'question')) {
+        const data = event.data as {question?: unknown; context?: unknown; sourcePath?: unknown};
+        if (event.schemaVersion !== 1 || typeof data?.question !== 'string' || !plainUnicode(data.question) || questionBytes(data.question) > QUESTION_LIMITS.question || typeof data.context !== 'string' || questionBytes(data.context) > QUESTION_LIMITS.context) throw new Error('Invalid saved message');
+        const answer = answers.get(event.requestId);
+        if (answer) {
+          if (answer.requestId !== event.requestId || typeof answer.text !== 'string' || !plainUnicode(answer.text) || questionBytes(answer.text) > QUESTION_LIMITS.answer || typeof answer.model !== 'string' || typeof answer.incomplete !== 'boolean') throw new Error('Invalid saved answer');
+          turns.push({question:data.question, answer, contextBytes:questionBytes(data.context), savedContext:data.context});
+        } else {
+          const section = el('section'); section.append(el('h4', failures.has(event.requestId) ? 'Message saved · Request failed or canceled' : 'Message saved · No completed answer recorded'), preview(data.question, 'Unanswered message'), el('p', 'This message is kept on disk and is not included in follow-up history. No request is retried automatically.', 'muted')); chatAttempts.append(section);
+        }
+      }
+      chatId = id; threadSelect.value = id; renderTranscript();
+      threadNote.textContent = `Saved chat: ${saved.thread.title} · ${turns.length} answered ${turns.length === 1 ? 'message' : 'messages'} loaded.`;
+      status.textContent = 'Chat reopened from the repository. Write a follow-up or start a new chat.';
+    } catch {
+      if (live() && session === repositoryId && chatVersion === epoch) { chatError = true; turns = []; transcript.replaceChildren(); chatAttempts.replaceChildren(); threadNote.textContent = 'This chat could not be loaded. Files were preserved. Reload chats or start a new chat.'; }
+    } finally { if (live() && chatVersion === epoch) { chatBusy = false; update(); } }
+  }
+  async function refreshChats(resumeLatest: boolean) {
+    if (!live() || !durable) return;
+    const repositoryId = session!; const selected = chatId; const epoch = ++chatVersion;
+    chatBusy = true; chatError = false; threadNote.textContent = 'Reading repository chats…'; update();
+    try {
+      const threads = await core.listChatThreads!(repositoryId);
+      if (!live() || session !== repositoryId || chatVersion !== epoch || chatRepository !== repositoryId) return;
+      threadSelect.replaceChildren(); const fresh = el('option', 'New chat'); fresh.value = ''; threadSelect.append(fresh);
+      for (const thread of threads) { const option = el('option', `${thread.title} · ${new Date(thread.createdAt).toLocaleDateString()}`); option.value = thread.id; threadSelect.append(option); }
+      threadSelect.value = selected ?? '';
+      const resume = selected ?? (resumeLatest ? threads[0]?.id : null);
+      if (resume) { await loadChat(resume); return; }
+      threadNote.textContent = 'New chat. Your first message creates a thread in .heinlein/chats/.';
+    } catch {
+      if (live() && chatVersion === epoch) { chatError = true; threadNote.textContent = 'Repository chats could not be read. No files were changed. Reload chats before sending.'; }
+    } finally { if (live() && chatVersion === epoch) { chatBusy = false; update(); } }
+  }
   function close(returnFocus = false) {
     if ((authBusy === 'connect' || configuration?.signInPending) && core.cancelQuestionSignIn) {
       try {void core.cancelQuestionSignIn().catch(() => {});} catch { /* UI invalidation still wins */ }
     }
     const wasOpen = !element.hidden; resetContents(); statusVersion++; checking = false; configuration = null;
-    authBusy = null; seenConnection = null; selectedAccountId = null; reauthorizing = false; addingAccount = false; consent.checked = false; accounts.replaceChildren(); models.replaceChildren(); connection.textContent = '';
+    authBusy = null; seenConnection = null; seenChatIdentity = null; selectedAccountId = null; reauthorizing = false; addingAccount = false; consent.checked = false; accounts.replaceChildren(); models.replaceChildren(); connection.textContent = '';
     element.hidden = true; session = null; status.textContent = ''; hooks.visibilityChanged?.(false);
     if (wasOpen && returnFocus) hooks.focusEditor();
   }
@@ -459,7 +542,8 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     if (disposed) return;
     if (!element.hidden) {question.focus({preventScroll: true}); return;}
     const current = hooks.current(); if (!current) return;
-    session = current.repositoryId; element.hidden = false; hooks.visibilityChanged?.(true); update();
+    session = current.repositoryId; element.hidden = false;
+    if (durable) { chatRepository = session; void refreshChats(true); } hooks.visibilityChanged?.(true); update();
     question.focus({preventScroll: true}); void checkStatus();
   }
   return {element,

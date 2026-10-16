@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod chats;
 mod drafting;
 mod proposals;
 mod questions;
@@ -557,6 +558,9 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            chats::list_chat_threads,
+            chats::read_chat_thread,
+            chats::create_chat_thread,
             questions::question_status,
             questions::ask_question,
             questions::suggest_question_revision,

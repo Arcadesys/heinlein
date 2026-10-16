@@ -385,6 +385,7 @@ pub(crate) async fn ask_question(
     request: QuestionRequest,
     connection: QuestionConnection,
     on_progress: tauri::ipc::Channel<String>,
+    chat: Option<crate::chats::ChatTarget>,
 ) -> Result<QuestionAnswer, NativeError> {
     main_window(&window)?;
     request.validate()?;
@@ -410,13 +411,28 @@ pub(crate) async fn ask_question(
     config = config.with_progress(move |text| {
         let _ = on_progress.send(text);
     });
+    let recording = chat
+        .map(|target| crate::chats::ChatRecording::begin(&app, target, &request, &connection.model))
+        .transpose()
+        .map_err(|message| NativeError::Auth {
+            code: "chatStorage",
+            message,
+        })?;
     // Cancel records the ID even while native authentication is still refreshing.
     // The auth lease also invalidates a not-yet-started or active HTTP request.
-    let answer = host.questions.ask_reserved(request, config, permit).await?;
+    let mut answer = host.questions.ask_reserved(request, config, permit).await;
     if !auth.is_current(connection.generation) {
-        return Err(QuestionError::stale_connection().into());
+        answer = Err(QuestionError::stale_connection());
     }
-    Ok(answer)
+    if let Some(recording) = recording {
+        recording
+            .finish(&answer)
+            .map_err(|message| NativeError::Auth {
+                code: "chatStorage",
+                message,
+            })?;
+    }
+    answer.map_err(Into::into)
 }
 
 #[tauri::command]
