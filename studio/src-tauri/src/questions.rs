@@ -16,6 +16,7 @@ const USAGE_URL: &str = "https://chatgpt.com/settings/usage";
 #[derive(Default)]
 pub(crate) struct QuestionHost {
     questions: QuestionService,
+    review: Mutex<Option<crate::review_state::ReviewSession>>,
     auth: Mutex<Option<Arc<AuthService>>>,
 }
 
@@ -845,4 +846,240 @@ mod tests {
         );
         assert!(!manuscript.join("not-created").exists());
     }
+}
+
+/// Review snapshots are explicit renderer captures. Unsaved text remains advisory;
+/// preparation below requires these exact bytes to have been saved through Core.
+#[tauri::command]
+pub(crate) async fn request_review(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    request: drafting_questions::review::ReviewRequest,
+    connection: QuestionConnection,
+) -> Result<crate::review_state::ReviewResult, NativeError> {
+    main_window(&window)?;
+    request.validate()?;
+    let auth = host.auth(&app)?;
+    if !matches_connection(&auth.status()?, &connection) {
+        return Err(QuestionError::stale_connection().into());
+    }
+    let permit = host
+        .questions
+        .reserve(&request.question_request()?, &connection.account_id)?;
+    let capture = request.clone();
+    let capture_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = capture_app.state::<super::BrowserState>();
+        let _selection = state
+            .selection_gate
+            .try_lock()
+            .map_err(|_| NativeError::revision("Repository operation in progress"))?;
+        super::with_repository(&capture_app, &capture.repository_id, |repo| {
+            for snapshot in &capture.snapshots {
+                let current = repo.read(&snapshot.path).map_err(|e| e.to_string())?;
+                if current.generated_compatibility
+                    || (current.content_hash != snapshot.source_hash
+                        && current.text != snapshot.source)
+                {
+                    return Err("The saved base changed; capture the review again".into());
+                }
+            }
+            Ok(())
+        })
+        .map_err(NativeError::revision)
+    })
+    .await
+    .map_err(|_| NativeError::unavailable())??;
+    let credentials = auth.credentials(connection.generation).await?;
+    if credentials.generation != connection.generation
+        || credentials.account_id != connection.account_id
+        || credentials.model != connection.model
+        || !matches_connection(&auth.status()?, &connection)
+    {
+        return Err(QuestionError::stale_connection().into());
+    }
+    let config = Configuration::new(&credentials.access_token, &credentials.model)?
+        .with_account(&credentials.account_id)?
+        .with_cancellation(credentials.cancelled);
+    let prepared = host
+        .questions
+        .review_reserved(request.clone(), config, permit)
+        .await?;
+    let (_, _, result) = prepared.persist(|answer, json| {
+        let state = app.state::<super::BrowserState>();
+        let _selection = state
+            .selection_gate
+            .try_lock()
+            .map_err(|_| NativeError::revision("Repository operation in progress"))?;
+        if !selected_revision_session(&state, &request.repository_id)
+            || !auth.is_current(connection.generation)
+        {
+            return Err(QuestionError::stale_connection().into());
+        }
+        let output = serde_json::from_str(json)
+            .map_err(|_| NativeError::revision("Invalid review output"))?;
+        let session =
+            crate::review_state::ReviewSession::new(request, output, answer.model.clone())
+                .map_err(NativeError::revision)?;
+        let result = session.view();
+        *host.review.lock().map_err(|_| NativeError::unavailable())? = Some(session);
+        Ok::<_, NativeError>(result)
+    })?;
+    Ok(result)
+}
+
+fn review_session<'a>(
+    slot: &'a mut Option<crate::review_state::ReviewSession>,
+    repository_id: &str,
+    review_id: &str,
+) -> Result<&'a mut crate::review_state::ReviewSession, String> {
+    slot.as_mut()
+        .filter(|s| s.matches(repository_id, review_id))
+        .ok_or_else(|| {
+            "Review expired or belongs to another repository; request a new review".into()
+        })
+}
+
+#[tauri::command]
+pub(crate) fn get_review(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    repository_id: String,
+    review_id: String,
+) -> Result<crate::review_state::ReviewResult, String> {
+    super::check_window(&window)?;
+    if !selected_revision_session(&app.state::<super::BrowserState>(), &repository_id) {
+        return Err("Repository changed".into());
+    }
+    let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
+    Ok(review_session(&mut slot, &repository_id, &review_id)?.view())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreparedReviewEdit {
+    proposal_id: String,
+}
+
+#[tauri::command]
+pub(crate) async fn prepare_review_edit(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    review_id: String,
+    edit_id: String,
+) -> Result<PreparedReviewEdit, String> {
+    super::check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<super::BrowserState>();
+        let _selection = state.selection_gate.try_lock().map_err(|_|"Repository operation in progress")?;
+        let _mutation = state.mutation_gate.author_operation()?;
+        let epoch = state.mutation_gate.generation();
+        if !clean_generation(&state,epoch) { return Err("Save the exact reviewed snapshot and resolve recovery before accepting edits".into()); }
+        let host = app.state::<QuestionHost>();
+        let mut slot = host.review.lock().map_err(|_|"Review unavailable")?;
+        let session = review_session(&mut slot,&repository_id,&review_id)?;
+        let (store,_) = super::proposals::stores(&app)?;
+        let recovery = super::recovery_store(&app)?;
+        super::with_repository(&app,&repository_id,|repo| {
+            let candidate = session.candidate(&edit_id,&repo.project_key())?;
+            let was_prepared = session.is_prepared(&edit_id);
+            let path = candidate.path.clone();
+            let proposal = recovery.with_clean_paths(repo,std::slice::from_ref(&path),|| {
+                let current = repo.read(&path)?;
+                if current.generated_compatibility || current.text != candidate.base_text || current.content_hash != candidate.base_hash {
+                    return Ok(Err("The saved scene differs from the exact review snapshot or accepted-edit lineage; request a new review".to_string()));
+                }
+                // Reopening a prepared edit reuses its immutable proposal.
+                if was_prepared {
+                    return Ok(store.get(repo,&candidate.id).map_err(|e|e.to_string()).and_then(|stored| {
+                        if stored == candidate { Ok(candidate.clone()) }
+                        else { Err("The pending proposal changed; request a new review".into()) }
+                    }));
+                }
+                Ok(store.submit_checked(repo,&path,&candidate.base_hash,&candidate.replacement_text,candidate.origin.clone(),|| {
+                    if !clean_generation(&state,epoch) { return Err(proposal_store::Error::Conflict); }
+                    Ok(())
+                }).map_err(|e|e.to_string()))
+            }).map_err(|e|e.to_string())??;
+            let proposal_id = proposal.id.clone();
+            session.prepared(&edit_id,proposal)?;
+            Ok(PreparedReviewEdit {proposal_id})
+        })
+    }).await.map_err(|_|"Review unavailable".to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn reject_review_edit(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    review_id: String,
+    edit_id: String,
+) -> Result<crate::review_state::ReviewResult, String> {
+    super::check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<super::BrowserState>();
+        let _selection = state
+            .selection_gate
+            .try_lock()
+            .map_err(|_| "Repository operation in progress")?;
+        let host = app.state::<QuestionHost>();
+        let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
+        let session = review_session(&mut slot, &repository_id, &review_id)?;
+        let (_, receipts) = super::proposals::stores(&app)?;
+        super::with_repository(&app, &repository_id, |repo| {
+            let proposal = session.rejection_candidate(&edit_id, &repo.project_key())?;
+            let receipt = state
+                .proposals
+                .lock()
+                .map_err(|_| "Proposal unavailable")?
+                .authority
+                .reject_snapshot(repo, &receipts, proposal)?;
+            session.rejected(&edit_id, receipt.proposal_id)?;
+            Ok(session.view())
+        })
+    })
+    .await
+    .map_err(|_| "Review unavailable".to_string())?
+}
+
+pub(crate) fn record_review_apply(
+    app: &tauri::AppHandle,
+    repository_id: &str,
+    receipt: &super::proposals::authority::Receipt,
+) {
+    if receipt.kind != "apply" || receipt.status != "completed" {
+        return;
+    }
+    let host = app.state::<QuestionHost>();
+    if let Ok(mut slot) = host.review.lock() {
+        if let Some(session) = slot.as_mut() {
+            session.applied(
+                repository_id,
+                &receipt.proposal_id,
+                &receipt.base_hash,
+                &receipt.replacement_hash,
+                &receipt.diff_hash,
+            );
+        }
+    };
+}
+
+pub(crate) fn record_review_rejection(
+    app: &tauri::AppHandle,
+    repository_id: &str,
+    receipt: &super::proposals::authority::Receipt,
+) {
+    if receipt.kind != "reject" || receipt.status != "rejected" {
+        return;
+    }
+    let host = app.state::<QuestionHost>();
+    if let Ok(mut slot) = host.review.lock() {
+        if let Some(session) = slot.as_mut() {
+            session.rejected_proposal(repository_id, &receipt.proposal_id);
+        }
+    };
 }

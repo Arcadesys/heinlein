@@ -417,3 +417,12 @@ dialog { color: var(--fg); }
 .document-details-fields dt { font-weight: 600; font-size: .85rem; color: var(--fg-muted); }
 .document-details-fields dd { margin: .25rem 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .document-details-fields small { display: block; margin-top: .25rem; color: var(--fg-muted); font-size: .75rem; }
+
+/* Non-modal advisory review keeps the manuscript editor usable while inference runs. */
+.heinlein-review-panel { position: fixed; z-index: 12; inset: 5rem 1rem 1rem auto; width: min(32rem, calc(100vw - 2rem)); overflow: auto; padding: 1.25rem; background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: 0 1rem 3rem #0005; }
+.heinlein-review-panel[hidden] { display: none; }
+.heinlein-review-panel h2 { margin-top: 0; }
+.heinlein-review-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18rem; overflow: auto; }
+.review-edit { border-top: 1px solid var(--border); padding-block: 1rem; }
+.review-edit h3, .review-edit h4 { margin-block: .5rem; }
+.review-edit button { margin: .25rem; }

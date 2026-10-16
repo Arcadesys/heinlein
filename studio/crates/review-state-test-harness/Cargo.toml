@@ -1,0 +1,15 @@
+# Exact session-lineage module without the platform UI dependencies.
+[package]
+name = "review-state-test-harness"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[workspace]
+[lib]
+path = "lib.rs"
+[dependencies]
+drafting-questions = { path = "../drafting-questions" }
+proposal-store = { path = "../proposal-store" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
