@@ -1,6 +1,16 @@
 # Heinlein
 
-FREE PLAY Publishing's pipeline. Markdown manuscript in, PDF / EPUB / DOCX / HTML / plain text out — all branded in the **FREE PLAY** imprint design system.
+Publishing the same manuscript in print, ebook, and web formats can mean maintaining several versions by hand. Heinlein builds branded PDF, EPUB, DOCX, HTML, and plain text from Markdown and project configuration, using the **FREE PLAY** imprint design system.
+
+**Try it:** follow [Install](#install), then [build a manuscript](#one-shot-from-a-manuscript) or use the [preview server](#preview-server) to inspect the output.
+
+## Engineering to explore
+
+- **One source, multiple artifacts:** [the publishing package](heinlein/) combines manuscript metadata, templates, and format-specific rendering.
+- **Repeatable project setup:** `heinlein.yaml` records formats, page settings, and output paths; the preview server rebuilds as source files change.
+- **Inspectable output:** [tests/](tests/) includes frontmatter, navigation, rendering, and pipeline checks. Full pipeline tests require pandoc and Chrome; see [Tests](#tests).
+
+**Collaborator starting point:** build an [example](examples/), inspect the resulting formats, then trace a rendering or navigation case through the package and its tests. Use sample manuscripts and preserve author-controlled source.
 
 Named after Heinlein because it's the publishing machine for fiction.
 
@@ -9,7 +19,7 @@ Named after Heinlein because it's the publishing machine for fiction.
 Requires Python 3.11+, [pandoc](https://pandoc.org), and Google Chrome (for PDF).
 
 ```sh
-git clone <this repo> ~/code/heinlein
+git clone https://github.com/Arcadesys/heinlein.git ~/code/heinlein
 cd ~/code/heinlein
 uv tool install -e .
 ```
