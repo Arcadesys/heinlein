@@ -54,7 +54,7 @@ button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent);
 .ghost { border-color: transparent; color: var(--fg-muted); }
 .ghost:hover { color: var(--accent); border-color: transparent; }
 input, select, textarea { font: inherit; color: var(--fg); }
-input[type="text"], input[type="number"], select, textarea { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); min-height: 2.75rem; padding: .5rem .7rem; }
+input[type="text"], input[type="number"], input[type="search"], select, textarea { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); min-height: 2.75rem; padding: .5rem .7rem; }
 input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 summary { min-height: 2.75rem; padding: .6rem 0; font-weight: 500; }
 
@@ -385,3 +385,14 @@ dialog { color: var(--fg); }
   .proposal-comparison { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+
+/* Read-only manuscript search stays non-modal so drafting remains available. */
+.manuscript-search { position: fixed; z-index: 45; top: 5rem; left: 1rem; width: min(36rem, calc(100vw - 2rem)); max-height: calc(100dvh - 6rem); overflow: auto; padding: 1rem; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--fg); box-shadow: var(--shadow-strong); }
+.manuscript-search h2 { font-size: 1.1rem; }
+.manuscript-search > p { margin-block: .8rem; overflow-wrap: anywhere; }
+.manuscript-search form { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.manuscript-search input[type="search"] { flex: 1 1 100%; min-width: 0; width: 100%; }
+.manuscript-search label { display: flex; align-items: center; gap: .35rem; }
+.manuscript-search ol { list-style: none; padding: 0; margin: 0; }
+.manuscript-search-result { display: flex; flex-direction: column; gap: .3rem; width: 100%; text-align: left; white-space: normal; overflow-wrap: anywhere; margin-top: .5rem; padding: .7rem; }
+.manuscript-search-result .path { font-size: .8em; }

@@ -1,3 +1,4 @@
+import { createManuscriptSearch, editorOffset, type SearchScope, type SearchMatch } from './manuscriptSearch';
 import {StateEffect} from '@codemirror/state';
 import {EditorView} from '@codemirror/view';
 import { createProposalPanel } from './proposalPanel';
@@ -62,6 +63,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let chromeReady = false; let writingSummary: WritingSummary | null = null;
   const writing = createWritingPanel(summary => { writingSummary = summary; if (chromeReady) renderPill(); });
   let generation = 0;
+  let searchScopeRevision = 0;
   let opened: Document | null = null;
   let editor: ReturnType<typeof createEditor> | null = null;
   let questions: ReturnType<typeof createSelectionQuestionPanel> | null = null;
@@ -397,7 +399,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const outline = el('div');
   outline.append(el('p', 'Open a folder with a scene-manifest.json to browse manuscript order.', 'empty'));
   const manuscriptBody = el('div', '', 'panel-body');
-  manuscriptBody.append(draftingEntry, manifests, outline);
+  const searchManuscript = button('Find in manuscript', openManuscriptSearch);
+  searchManuscript.setAttribute('aria-keyshortcuts', 'Control+Shift+F Meta+Shift+F');
+  manuscriptBody.append(draftingEntry, searchManuscript, manifests, outline);
   manuscriptPane.append(panelHead(el('h2', 'Manuscript'), 'manuscript', 'manuscript outline'), manuscriptBody);
   const preview = el('section', '', 'panel preview');
   preview.setAttribute('aria-label', 'Document preview');
@@ -597,6 +601,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   async function draftingChanged(state: DraftingState, previous: DraftingState | null, changes: DraftingFileChange[], focusPath?: string) {
     verifyStructuralBuffer();
+    currentBook = null; searchScopeRevision++; manuscriptSearch.invalidate();
     const oldPath = opened?.path;
     const oldScene = previous?.scenes.find(scene => scene.path === oldPath);
     const sameScene = oldScene ? state.scenes.find(scene => scene.id === oldScene.id) : undefined;
@@ -613,7 +618,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (structuralBusy || selecting || !repository) return;
     try {
       const state = await drafting.load();
-      if (state) { outline.replaceChildren(drafting.element); void writing.setManuscript(core, repository, state); }
+      if (state) { currentBook = null; searchScopeRevision++; manuscriptSearch.invalidate(); outline.replaceChildren(drafting.element); void writing.setManuscript(core, repository, state); }
     } catch (error) { reportError(error); }
   }
 
@@ -819,10 +824,50 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     },
     closed: () => focusEditor(),
   });
+  let searchNavigation = 0;
+  const manuscriptSearch = createManuscriptSearch(root, {
+    scope: searchScope,
+    openResult: (match, source, key) => { void openSearchResult(match, source, key); },
+    closed: () => focusEditor(),
+  });
+  function searchScope(): SearchScope | null {
+    if (!repository || disposed || selecting || repositoryDetached || structuralBusy) return null;
+    const scenes = currentBook
+      ? currentBook.volumes.flatMap(volume => volume.chapters.flatMap(chapter => chapter.scenes.map(scene => ({path: scene.path, title: `${chapter.title} · ${basename(scene.path)}`}))))
+      : drafting.state?.revision ? drafting.state.scenes.map(scene => ({path: scene.path, title: scene.title || basename(scene.path)})) : null;
+    if (!scenes) return null;
+    const repositoryId = repository.id;
+    return {
+      key: JSON.stringify([generation, searchScopeRevision, repositoryId, currentBook?.path ?? drafting.state?.manifestPath, drafting.state?.revision, scenes]),
+      title: currentBook?.project ?? drafting.state?.project ?? repository.name, scenes,
+      buffer: opened && editor ? {path: opened.path, text: editor.text()} : undefined,
+      read: async path => (await core.readDocument(repositoryId, path)).text,
+    };
+  }
+  function openManuscriptSearch() {
+    if (!searchScope()) { status.textContent = 'Open a manuscript to search its scenes.'; return; }
+    palette.close(); toggleGoal(false); if (helpLayer) toggleHelp(false);
+    manuscriptSearch.open();
+  }
+  async function openSearchResult(match: SearchMatch, source: string, key: string) {
+    const navigation = ++searchNavigation;
+    const navigationCurrent = () => navigation === searchNavigation && searchScope()?.key === key;
+    const stale = () => { status.textContent = 'This search result changed. Search the manuscript again to locate the current passage.'; status.classList.add('error'); };
+    if (!navigationCurrent()) { stale(); return; }
+    // Reusing the current editor preserves dirty text, undo history, and recovery.
+    // Other scenes pass through the same save/discard/cancel guard as ordinary navigation.
+    if (opened?.path !== match.path && !await showDocument(match.path, false, navigationCurrent)) return;
+    if (disposed || !navigationCurrent() || opened?.path !== match.path) return;
+    if (!editor || recoveryPending || editor.text() !== source) { stale(); return; }
+    editor.view.dispatch({selection: {anchor: editorOffset(source, match.from), head: editorOffset(source, match.to)}, scrollIntoView: true});
+    editor.view.focus();
+    status.textContent = `Found passage in ${match.path} · line ${match.line}`;
+    status.classList.remove('error');
+  }
   function focusEditor() { if (editor && !document.querySelector('dialog[open]')) editor.view.focus(); }
   function openPalette(scope: PaletteScope, query = '') {
     if (!core.available()) return;
-    toggleGoal(false); if (helpLayer) toggleHelp(false);
+    manuscriptSearch.close(); toggleGoal(false); if (helpLayer) toggleHelp(false);
     palette.open(scope, query);
   }
   function paletteItems(scope: PaletteScope): PaletteItem[] {
@@ -851,6 +896,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       })));
     }
     const commands: (PaletteItem | false)[] = [
+      Boolean(searchScope()) && {key: 'find-manuscript', label: 'Find in manuscript', sub: 'Search scene text locally, including the open buffer', right: formatKeys('⌘⇧F'), run: openManuscriptSearch},
       Boolean(editor) && {key: 'ask', label: 'Ask Heinlein about selection', sub: 'Opens Questions with the highlighted passage', right: formatKeys('⌘J'), run: () => askShortcut()},
       Boolean(editor) && {key: 'split', label: 'Split scene at cursor', sub: 'Previews before anything moves', right: formatKeys('⌘⇧↵'), run: splitAtCursor},
       Boolean(drafting.state?.revision) && {key: 'new-scene', label: 'New scene', sub: 'Creates Markdown under ms/', run: () => drafting.newScene()},
@@ -914,7 +960,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const run = (task: () => void) => { event.preventDefault(); event.stopPropagation(); task(); };
     if (key === ',') { run(() => { if (dialog.open) dialog.close(); else void openAppearance(); }); return; }
     if (dialog.open) return;
-    if (key === 'k') run(() => openPalette('scenes'));
+    if (key === 'f' && event.shiftKey) run(openManuscriptSearch);
+    else if (key === 'k') run(() => openPalette('scenes'));
     else if (key === 'p') run(() => openPalette(event.shiftKey ? 'commands' : 'files'));
     else if (key === '\\') run(() => setCollapsed('files', !collapsed.files));
     else if (key === '/' || (key === '?' && event.shiftKey)) run(() => toggleHelp());
@@ -979,6 +1026,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   async function selectRepository(select: () => Promise<RepositorySession | null>) {
     if (selecting || !await allowLeave() || selecting) return;
     selecting = true;
+    manuscriptSearch.close();
     questions?.clear();
     draftingQuestions?.clear();
     const editRevision = edits;
@@ -1056,9 +1104,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if (!entries.length) listing.append(el('p', 'This folder is empty.', 'empty'));
     } catch (error) { if (!disposed && current === generation && request === directoryRequest) reportError(error); }
   }
-  async function showDocument(path: string, structuralRefresh = false) {
+  async function showDocument(path: string, structuralRefresh = false, navigationCurrent: () => boolean = () => true) {
     if (selecting && !structuralRefresh) return false;
     if (!structuralRefresh && !await allowLeave()) return false;
+    if (!navigationCurrent()) return false;
     const editRevision = edits;
     const current = generation;
     const request = ++documentRequest;
@@ -1068,14 +1117,14 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     try {
       const repositoryId = repository!.id;
       const doc = await core.readDocument(repositoryId, path);
-      if (disposed || current !== generation || request !== documentRequest || editRevision !== edits) return;
+      if (disposed || current !== generation || request !== documentRequest || editRevision !== edits || !navigationCurrent()) return;
       let draft: RecoveryDraft | null = null;
       let recoveryError: {error: unknown} | null = null;
       if (!doc.generatedCompatibility && /\.(md|markdown)$/i.test(doc.path)) {
         try { draft = await core.readRecovery(repositoryId, path); }
         catch (error) { recoveryError = {error}; }
       }
-      if (disposed || current !== generation || request !== documentRequest || editRevision !== edits) return;
+      if (disposed || current !== generation || request !== documentRequest || editRevision !== edits || !navigationCurrent()) return;
       renderDocument(doc, draft);
       if (recoveryError) showRecoveryReadFailure(doc, recoveryError.error);
       else if (!recoveryPending) {
@@ -1083,7 +1132,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         if (draft) await clearRecovery(draft, repositoryId, documentEpoch);
       }
       return !recoveryError && !recoveryPending;
-    } catch (error) { if (!disposed && current === generation && request === documentRequest) reportError(error); return false; }
+    } catch (error) { if (!disposed && current === generation && request === documentRequest && navigationCurrent()) reportError(error); return false; }
   }
   function renderDocument(doc: Document, draft: RecoveryDraft | null = null) {
     questions?.clear();
@@ -1213,6 +1262,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     } catch (error) { if (!disposed && current === generation && request === manuscriptRequest) { outline.replaceChildren(el('p', 'Manuscript could not be loaded. Browse files or choose another manifest.', 'empty')); reportError(error); } }
   }
   function renderManuscript(book: Manuscript) {
+    searchScopeRevision++; manuscriptSearch.invalidate();
     currentBook = book;
     outline.replaceChildren(el('h3', book.project), el('p', `Manifest order · Schema ${book.schemaVersion}`, 'muted'));
     for (const volume of book.volumes) {
@@ -1259,6 +1309,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

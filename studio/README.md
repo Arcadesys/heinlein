@@ -57,6 +57,13 @@ width behind it. The pill fades while you type and returns when the pointer move
   **Cmd/Ctrl+Shift+P** lists every command. Type `/` or `>` to switch scope, Tab
   cycles scopes, and Alt+↑/↓ reorders the highlighted ms/ scene through the usual
   previewed change.
+- **Cmd/Ctrl+Shift+F** opens Find in manuscript, also available in the outline
+  and command palette. Search literal text across the selected manuscript, with
+  optional case matching. Results include the current unsaved buffer and saved
+  text in other scenes. Click a result to select its exact passage; changed
+  snapshots require a new search. Search is local, cancelable and bounded, with
+  skipped scenes and partial results reported. **Cmd/Ctrl+F** still finds within
+  the current scene. See [the search contract](../docs/architecture/studio-manuscript-search.md).
 - **Cmd/Ctrl+J** captures the highlighted passage into Questions, or opens and
   closes Questions when nothing is highlighted. Highlighting text also shows a
   small toolbar: Ask Heinlein, Suggest revision, and the selection's word count.
