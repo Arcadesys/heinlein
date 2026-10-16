@@ -119,6 +119,8 @@ describe('seeded actual Studio asynchronous state machine', () => {
             machine.trace.push(`${step}: ${user ? 'type' : 'programmatic'} ${from}..${to} ${JSON.stringify(insert)}`);
             record(user ? 'type' : 'programmatic');
             const progress = document.querySelector<HTMLProgressElement>('progress')!.value;
+            // A real edit first selects its target; this also reveals folded document details.
+            if (user) current.dispatch({selection: {anchor: from, head: to}});
             current.dispatch({changes: {from, to, insert}, annotations: [isolateHistory.of('full'), ...(user ? [Transaction.userEvent.of('input.type')] : [])]});
             expect(current.state.doc.toString()).toBe(before.slice(0, from) + insert + before.slice(to));
             if (!user) expect(document.querySelector<HTMLProgressElement>('progress')!.value).toBe(progress);

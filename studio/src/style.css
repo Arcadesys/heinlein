@@ -408,3 +408,12 @@ dialog { color: var(--fg); }
 .scene-break-list button[aria-current="location"] { border-width: 2px; font-weight: 600; }
 .scene-navigator-body .muted { font-size: 1rem; line-height: 1.5; }
 
+/* Document details are a presentation of the unchanged manuscript source. */
+.document-details { margin-block: 1rem; }
+.document-details > summary { cursor: pointer; width: fit-content; }
+.document-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.document-details-content { padding-block: .75rem; }
+.document-details-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 1rem 1.5rem; margin-block: 1rem; }
+.document-details-fields dt { font-weight: 600; font-size: .85rem; color: var(--fg-muted); }
+.document-details-fields dd { margin: .25rem 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.document-details-fields small { display: block; margin-top: .25rem; color: var(--fg-muted); font-size: .75rem; }
