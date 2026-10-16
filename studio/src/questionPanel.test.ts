@@ -9,7 +9,7 @@ const ready: QuestionStatus = {configured: true, model: 'mock-model', message: '
 const reply = (request: QuestionRequest, text = 'Mock answer'): QuestionAnswer => ({requestId: request.requestId, text, model: 'mock-model', incomplete: false});
 function bridge() {
   return {available: vi.fn(() => true), questionStatus: vi.fn(async () => ready),
-    askQuestion: vi.fn(async (request: QuestionRequest) => reply(request)), cancelQuestion: vi.fn(async (_id: string) => true)};
+    askQuestion: vi.fn(async (request: QuestionRequest, _connection?: unknown, _progress?: (text: string) => void) => reply(request)), cancelQuestion: vi.fn(async (_id: string) => true)};
 }
 let panel: ReturnType<typeof createQuestionPanel> | undefined;
 let scene: QuestionScene | null;
@@ -47,6 +47,36 @@ describe('question payload boundaries', () => {
 });
 
 describe('nonmodal drafting questions', () => {
+  it('shows live plain text without focus theft or adding provisional text to history', async () => {
+    const core = bridge(); const response = deferred<QuestionAnswer>();
+    let progress!: (text: string) => void;
+    core.askQuestion.mockImplementationOnce((_request, _connection, onProgress) => {progress = onProgress!; return response.promise;});
+    await start(core); write('Stream this'); button('Send to OpenAI').click();
+    input().focus(); progress('Live <script>inert</script> 🦊');
+    const preview = document.querySelector<HTMLElement>('[aria-label="Live answer preview"]')!;
+    expect(preview.textContent).toBe('Live <script>inert</script> 🦊');
+    expect(preview.parentElement!.hidden).toBe(false); expect(preview.querySelector('script')).toBeNull();
+    expect(document.activeElement).toBe(input());
+    expect(document.querySelector('.question-transcript')!.textContent).not.toContain('Live');
+    progress('x'.repeat(32001)); progress('\ud800'); expect(preview.textContent).toContain('Live');
+    const request = core.askQuestion.mock.calls[0][0]; response.resolve(reply(request, 'Validated final'));
+    await vi.waitFor(() => expect(status()).toContain('Answer ready'));
+    expect(preview.parentElement!.hidden).toBe(true); expect(preview.textContent).toBe('');
+    progress('late'); expect(preview.textContent).toBe('');
+    expect(document.querySelector('.question-transcript')!.textContent).toContain('Validated final');
+  });
+  it('labels canceled previews, ignores late chunks, and clears private text on close', async () => {
+    const core = bridge(); const response = deferred<QuestionAnswer>();
+    let progress!: (text: string) => void;
+    core.askQuestion.mockImplementationOnce((_request, _connection, onProgress) => {progress = onProgress!; return response.promise;});
+    await start(core); write('Stream this'); button('Send to OpenAI').click(); progress('Partial text');
+    button('Cancel request').click(); progress('late text');
+    const preview = document.querySelector<HTMLElement>('[aria-label="Live answer preview"]')!;
+    expect(preview.textContent).toBe('Partial text'); expect(preview.parentElement!.textContent).toContain('Interrupted preview');
+    expect(document.querySelector('.question-transcript')!.textContent).toBe('');
+    panel!.close(); expect(preview.textContent).toBe('');
+    response.resolve(reply(core.askQuestion.mock.calls[0][0]));
+  });
   it('does not send on open or typing and sends only the exact explicit payload', async () => {
     const fetch = vi.fn(); vi.stubGlobal('fetch', fetch); const core = await start();
     expect(document.querySelector('dialog')).toBeNull(); expect(input()).toBe(document.activeElement);

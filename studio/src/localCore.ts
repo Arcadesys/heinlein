@@ -1,4 +1,4 @@
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 export interface RecentRepository { id: string; name: string }
 export interface RepositorySession extends RecentRepository { projectKey?: string; manifests: string[]; warning?: string | null }
@@ -55,7 +55,7 @@ export interface QuestionAnswer { requestId: string; text: string; model: string
 export interface LocalCore {
   available(): boolean;
   questionStatus?(): Promise<QuestionStatus>;
-  askQuestion?(request: QuestionRequest, connection: QuestionConnection): Promise<QuestionAnswer>;
+  askQuestion?(request: QuestionRequest, connection: QuestionConnection, onProgress?: (text: string) => void): Promise<QuestionAnswer>;
   suggestQuestionRevision?(request: QuestionRequest, connection: QuestionConnection, target: QuestionRevisionTarget): Promise<QuestionRevisionAnswer>;
   cancelQuestion?(requestId: string): Promise<boolean>;
   connectQuestionAccount?(options: {allowChatgptPlan: boolean; accountId?: string}): Promise<QuestionStatus>;
@@ -98,7 +98,11 @@ export interface LocalCore {
 export const localCore: LocalCore = {
   available: isTauri,
   questionStatus: () => invoke('question_status'),
-  askQuestion: (request, connection) => invoke('ask_question', {request, connection}),
+  askQuestion: (request, connection, onProgress) => {
+    const channel = new Channel<string>();
+    channel.onmessage = text => onProgress?.(text);
+    return invoke('ask_question', {request, connection, onProgress: channel});
+  },
   suggestQuestionRevision: (request, connection, target) => invoke('suggest_question_revision', {request, connection, target}),
   cancelQuestion: requestId => invoke('cancel_question', {requestId}),
   connectQuestionAccount: options => invoke('connect_question_account', options),

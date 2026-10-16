@@ -1386,3 +1386,39 @@ fn contradictory_terminal_fields_cannot_publish_answer_text() {
         assert!(!serde_json::to_string(&error).unwrap().contains("private"));
     }
 }
+
+#[test]
+fn streaming_preview_is_incremental_bounded_and_not_a_completed_answer() {
+    let first = format!(
+        "data: {}\n\n",
+        json!({"type":"response.output_text.delta","delta":"Live 🦊"})
+    );
+    let second = format!(
+        "data: {}\n\n",
+        json!({"type":"response.output_text.delta","delta":"—next"})
+    );
+    for size in 1..=first.len() {
+        let mut body = ResponseBody::new(None).unwrap();
+        let mut preview = None;
+        for chunk in first.as_bytes().chunks(size) {
+            body.push(chunk).unwrap();
+            if let Some(text) = body.take_preview() {
+                preview = Some(text);
+            }
+        }
+        assert_eq!(preview.as_deref(), Some("Live 🦊"));
+        assert!(body.take_preview().is_none());
+        body.push(second.as_bytes()).unwrap();
+        assert_eq!(body.take_preview().as_deref(), Some("Live 🦊—next"));
+        assert_eq!(body.finish().unwrap_err().code, "interrupted");
+    }
+    let mut body = ResponseBody::new(None).unwrap();
+    let huge = format!(
+        "data: {}\n\n",
+        json!({"type":"response.output_text.delta","delta":"x".repeat(MAX_ANSWER_BYTES + 1)})
+    );
+    assert_eq!(
+        body.push(huge.as_bytes()).unwrap_err().code,
+        "responseTooLarge"
+    );
+}

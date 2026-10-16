@@ -165,8 +165,13 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   });
   const actions = el('div', '', 'question-actions'); actions.append(send, cancel, button('Return to writing', () => hooks.focusEditor()), reset);
   const transcript = el('section', '', 'question-transcript'); transcript.setAttribute('aria-label', 'Question conversation');
+  const streaming = el('section', '', 'question-stream-preview'); streaming.hidden = true;
+  const streamingLabel = el('h4', 'OpenAI · Streaming answer');
+  const streamingText = preview('', 'Live answer preview');
+  streaming.setAttribute('aria-busy', 'false');
+  streaming.append(streamingLabel, streamingText);
   const lifetime = el('p', 'Conversation text stays only in this window, up to four turns and 64,000 UTF-8 bytes. Closing questions or changing scenes/folders clears it. Earlier context snapshots and revision replacements are not added to conversation history. Revision source snapshots stay local until this panel is cleared; saved proposal records remain available in Proposed revisions. Stopping a request may leave an already-recorded pending suggestion.', 'muted');
-  element.append(header, connection, auth, guidance, modeLabel, targetSection, questionLabel, count, requestNote, contextHeading, contextSource, contextText, contextActions, historyDetails, disclosure, actions, status, transcript, lifetime);
+  element.append(header, connection, auth, guidance, modeLabel, targetSection, questionLabel, count, requestNote, contextHeading, contextSource, contextText, contextActions, historyDetails, disclosure, actions, status, transcript, streaming, lifetime);
   question.addEventListener('input', update);
   mode.addEventListener('change', () => {
     if (!live() || pending || preparing || authBusy) return;
@@ -331,6 +336,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   }
   function cancelPending(reportOutcome = false) {
     const epoch = ++version; preparing = false;
+    if (!streaming.hidden) { streamingLabel.textContent = 'OpenAI · Interrupted preview · Not added to history'; streaming.setAttribute('aria-busy', 'false'); }
     const request = pending; const wasRevision = pendingRevision; pending = null; pendingRevision = false;
     if (request && core.cancelQuestion) {
       try {void core.cancelQuestion(request.requestId).then(accepted => {
@@ -341,7 +347,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     }
   }
   function resetContents() {
-    contextVersion++; cancelPending(); mode.value = 'ask'; target = null; targetText.textContent = ''; targetNote.textContent = ''; targetSection.hidden = true; revisionActions.length = 0; turns = []; forgotten = 0; context = ''; contextLabel = 'None. No manuscript text will be sent.'; question.value = ''; transcript.replaceChildren();
+    contextVersion++; cancelPending(); mode.value = 'ask'; target = null; targetText.textContent = ''; targetNote.textContent = ''; targetSection.hidden = true; revisionActions.length = 0; turns = []; forgotten = 0; context = ''; contextLabel = 'None. No manuscript text will be sent.'; question.value = ''; transcript.replaceChildren(); streaming.hidden = true; streamingText.textContent = '';
     // Closing also removes private snapshots from hidden DOM, not just state.
     contextText.textContent = ''; contextText.hidden = true; contextSource.textContent = contextLabel;
     historyText.replaceChildren(); historyNote.textContent = ''; historySummary.textContent = 'Conversation history to send · 0 messages';
@@ -367,9 +373,15 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
         if (snapshot.sourceHash !== snapshot.sourceSha256) throw new Error('The selected source does not match its saved hash. Save and capture the selection again.');
       }
       preparing = false; pending = request; pendingRevision = Boolean(snapshot); update();
+      streaming.hidden = true; streamingText.textContent = ''; streamingLabel.textContent = 'OpenAI · Streaming answer';
       const answer = snapshot
         ? await core.suggestQuestionRevision!(request, binding, {repositoryId: snapshot.repositoryId, path: snapshot.path, sourceHash: snapshot.sourceHash, fromUtf8: snapshot.fromUtf8, toUtf8: snapshot.toUtf8, selectedText: snapshot.selectedText})
-        : await core.askQuestion(request, binding);
+        : await core.askQuestion(request, binding, text => {
+          if (!live() || version !== epoch || pending !== request || typeof text !== 'string' || !plainUnicode(text) || questionBytes(text) > QUESTION_LIMITS.answer) return;
+          const first = streaming.hidden;
+          streamingText.textContent = text; streaming.hidden = !text; streaming.setAttribute('aria-busy', 'true');
+          if (first && text) status.textContent = 'Receiving OpenAI answer… Preview is incomplete until the request finishes.';
+        });
       if (!live() || version !== epoch || pending !== request) return;
       if (answer.requestId !== request.requestId) throw new Error('The response did not match this question. It was ignored.');
       if (!answer.text?.trim()) throw new Error('OpenAI returned no text. No retry was sent automatically.');
@@ -383,9 +395,10 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       turns.push({question: request.question, answer, contextBytes: questionBytes(request.context), revision});
       while (turns.length > 4 || turns.reduce((sum, turn) => sum + questionBytes(turn.question) + questionBytes(turn.answer.text) + questionBytes(turn.revision?.replacementText ?? '') + questionBytes(turn.revision?.snapshot.selectedText ?? ''), 0) > QUESTION_LIMITS.memory) {turns.shift(); forgotten++;}
       question.value = '';
+      streaming.hidden = true; streamingText.textContent = ''; streaming.setAttribute('aria-busy', 'false');
       renderTranscript();
       status.textContent = revision ? 'Suggested revision recorded. Review it or reject it below. Your manuscript has not been changed.' : answer.incomplete ? 'OpenAI returned an incomplete answer. It is marked below; nothing was retried automatically.' : 'Answer ready. Your manuscript has not been changed.';
-    } catch (error) { if (live() && version === epoch) {status.textContent = errorMessage(error); void checkStatus();} }
+    } catch (error) { if (live() && version === epoch) {status.textContent = errorMessage(error); if (!streaming.hidden) { streamingLabel.textContent = 'OpenAI · Interrupted preview · Not added to history'; streaming.setAttribute('aria-busy', 'false'); } void checkStatus();} }
     finally { if (live() && version === epoch) {preparing = false; pending = null; pendingRevision = false; update();} }
   }
   function revisionGuard(revision: Revision, reviewing = false) {
