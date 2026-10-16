@@ -35,6 +35,21 @@ beforeEach(() => {
 });
 afterEach(() => {app?.destroy(); app = undefined; vi.unstubAllGlobals();});
 describe('Studio selection question integration', () => {
+  it('keeps folded document details byte-exact through prose saves, source edits, and conflict pauses', async () => {
+    const bridge = core(); await start(bridge);
+    const details = document.querySelector<HTMLDetailsElement>('.document-details')!;
+    expect(details.open).toBe(false); expect(view().contentDOM.textContent).not.toContain('title: Exact');
+    view().dispatch({changes: {from: view().state.doc.length, insert: '!'}}); await app!.saveCurrent();
+    expect(bridge.saveDocument).toHaveBeenLastCalledWith('session', 'scene.md', 'a'.repeat(64), source + '!');
+    button('Edit source fields').click(); const from = view().state.doc.toString().indexOf('Exact');
+    view().dispatch({changes: {from, to: from + 5, insert: 'Changed'}});
+    expect(details.textContent).toContain('Changed'); await app!.saveCurrent();
+    expect(bridge.saveDocument).toHaveBeenLastCalledWith('session', 'scene.md', 'a'.repeat(64), source.replace('Exact', 'Changed') + '!');
+    bridge.saveDocument.mockRejectedValueOnce(new Error('External conflict'));
+    view().dispatch({changes: {from: view().state.doc.length, insert: '?'}}); await app!.saveCurrent();
+    expect(view().state.doc.toString()).toContain('title: Changed');
+    expect(bridge.stageRecovery).toHaveBeenLastCalledWith('session', 'scene.md', 'a'.repeat(64), source.replace('Exact', 'Changed') + '!?');
+  });
   it('reviews a passage and saves exact untouched source through existing recovery', async () => {
     const bridge = core(); await start(bridge); button('Ask about selection').click(); await dialog();
     expect(document.body.textContent).toContain('No provider is connected');

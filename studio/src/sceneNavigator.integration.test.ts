@@ -42,8 +42,9 @@ describe('scene navigator drawer', () => {
     expect(items()[1].textContent).toBe('Changed—still ours.'); expect(document.activeElement).toBe(view().contentDOM);
   });
   it('refuses an outdated entry during the debounce window', async () => {
-    await start(); const stale = items()[1]; const before = view().state.selection.main;
-    view().dispatch({changes:{from: 0, insert:'Shifted\n'}}); stale.click();
+    await start(); const stale = items()[1];
+    view().dispatch({changes:{from: 0, insert:'Shifted\n'}});
+    const before = view().state.selection.main; stale.click();
     expect(view().state.selection.main).toEqual(before); expect(document.querySelector('.scene-navigator-body')?.textContent).toContain('document changed');
   });
   it('clears entries on document changes and remembers the shared drawer state', async () => {

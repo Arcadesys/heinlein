@@ -30,8 +30,7 @@ supported `scene-manifest.json` files and uses manifest array order, including
 volumes, chapters and scenes. Version 1 of the writing-archive scene manifest is
 supported. Unsupported or invalid manifests produce an error, never a migration.
 
-Click a document to preview its exact UTF-8 source. YAML frontmatter is shown
-separately as source metadata, without parsing/reformatting it or executing tags.
+Click a document to preview its UTF-8 source. In editable Markdown, opening YAML frontmatter is tucked into a closed **Document details** disclosure with readable labels and values. **Edit source fields** reveals the original fields in the same editor; Save, Undo, recovery, and conflict handling still apply to the complete source. Comments, unknown fields, and newline bytes are preserved, never regenerated from the friendly view. Search or a selection inside hidden fields reveals them at their original positions. Backspace at the start of prose reveals hidden fields before allowing their deletion. Malformed or unterminated frontmatter remains visible. Generated/read-only files retain their raw-source preview.
 Markdown scenes open in a plain-source editor with Undo, Redo, Find and explicit Save (Cmd/Ctrl+S). Generated compatibility sources remain read-only. Edits schedule local autosave after a short idle interval; Save (Cmd/Ctrl+S) flushes it immediately. Each manuscript save first stages a durable recovery snapshot. Unsaved changes prompt before navigation and close. Conflicts and write errors retain your buffer. Reopening an interrupted scene offers Restore or Discard, with both the recovery draft and current disk text available for comparison. A crash before a snapshot completes can still lose the newest keystrokes.
 Large type, visible keyboard focus, semantic controls, and a high-contrast palette
 are provided. Local editing and saving send nothing to an AI provider. Optional

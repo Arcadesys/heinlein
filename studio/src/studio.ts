@@ -1,3 +1,4 @@
+import { createDocumentDetails } from './documentDetails';
 import { createSceneNavigator } from './sceneNavigator';
 import { createNavigationDrawer } from './navigationDrawer';
 import { assembleChapter, chapterSelection, type AssembledChapter } from './assembledChapter';
@@ -1031,7 +1032,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     sceneNavigator.refresh();
     const welcome = el('div', '', 'welcome');
     welcome.append(el('p', repository ? repository.name : 'Heinlein Studio', 'eyebrow'), el('h2', repository ? 'A quiet place to write' : 'A quiet place to read'),
-      el('p', repository ? 'Pick a scene to start writing. Source text is displayed exactly as stored, including Markdown and frontmatter.' : 'Select a scene or file. Source text is displayed exactly as stored, including Markdown and frontmatter.', 'empty'));
+      el('p', repository ? 'Pick a scene to start writing. Markdown source is preserved exactly. Document details are tucked away above the writing area.' : 'Select a scene or file. Markdown source is preserved exactly. Document details are tucked away above the writing area.', 'empty'));
     if (!repository && core.available()) welcome.append(button('Open a folder…', () => { void selectRepository(() => core.pickRepository()); }, 'primary'));
     const keys = el('dl', '', 'welcome-keys');
     for (const [shortcut, label] of [['⌘K', 'Jump to a scene'], ['⌘P', 'Browse files'], ['⌘⇧P', 'Every command'], ['⌘,', 'Theme, fonts and size'], ['⌘/', 'All shortcuts']]) {
@@ -1268,6 +1269,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         setDirty(raw !== opened?.text);
         scheduleAutosave(); sceneNavigator.schedule();
       }, () => { void saveCurrent(); });
+      createDocumentDetails(metadata, editor);
       editor.view.dispatch({effects: StateEffect.appendConfig.of(EditorView.updateListener.of(update => {if (update.docChanged || update.selectionSet) draftingQuestions?.stateChanged();}))});
       selectionAsk = createSelectionAskAction(editor.view, {current: draftingSelectionState, fallback: askDrafting, keys: formatKeys('⌘J'),
         revise: () => { if (!draftingQuestions) return; draftingQuestions.open(); draftingQuestions.setMode('revision'); },
