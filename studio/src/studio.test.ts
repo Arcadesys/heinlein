@@ -179,22 +179,22 @@ describe('manifest discovery warnings', () => {
     expect(document.querySelector('.zoom-level')?.textContent).toBe('100%');
     vi.unstubAllGlobals();
   });
-  it('collapses the file browser and manuscript panels and remembers it', async () => {
+  it('closes the unified drawer and remembers its selected tab', async () => {
     const store = new Map<string, string>();
     vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
     mountStudio(document.body.firstElementChild as HTMLElement, bridge());
     const layout = document.querySelector('.workspace')!;
-    const toggle = document.querySelector<HTMLButtonElement>('.files .panel-toggle')!;
+    const toggle = document.querySelector<HTMLButtonElement>('.navigation-toggle')!;
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     toggle.click();
-    expect(layout.classList.contains('files-collapsed')).toBe(true);
+    expect(layout.classList.contains('navigation-open')).toBe(false);
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     document.dispatchEvent(new KeyboardEvent('keydown', { key: '\\', ctrlKey: true }));
-    expect(layout.classList.contains('files-collapsed')).toBe(false);
-    document.querySelector<HTMLButtonElement>('.manuscript .panel-toggle')!.click();
-    expect(JSON.parse(store.get('heinlein-studio-collapsed-v1')!)).toEqual({ files: false, manuscript: true, scenes: false });
+    expect(layout.classList.contains('navigation-open')).toBe(true);
+    document.querySelector<HTMLButtonElement>('#navigation-tab-manuscript')!.click();
+    expect(JSON.parse(store.get('heinlein-studio-navigation-v1')!)).toEqual({open: true, active: 'manuscript'});
     mountStudio(document.body.firstElementChild as HTMLElement, bridge());
-    expect(document.querySelector('.workspace')!.classList.contains('manuscript-collapsed')).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('#navigation-tab-manuscript')!.getAttribute('aria-selected')).toBe('true');
     vi.unstubAllGlobals();
   });
   it('lists installed fonts in Appearance and applies a chosen family', async () => {

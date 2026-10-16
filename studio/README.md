@@ -48,10 +48,13 @@ No Git commit, pull, checkout or push is performed.
 ## Layout and keyboard
 
 The page fills the window. Everything else floats: a status pill at the top
-(project, scene, word count, save state, daily goal, proposals), the file browser
-and manuscript outline as collapsible cards on the left (Cmd/Ctrl+\ hides the
-file browser), and Questions as a card docked right while the page stays full
-width behind it. The pill fades while you type and returns when the pointer moves.
+(project, scene, word count, save state, daily goal, proposals), the file browser,
+manuscript outline, and scene passages in one tabbed navigation drawer on the left (Cmd/Ctrl+\
+opens or closes it; Left/Right and Home/End switch tabs, Escape closes the drawer),
+and Questions as a card docked right while the page stays full width behind it.
+Hover over the Manuscript tab while dragging a repository file to reveal its
+existing import targets; imports still require their usual preview and confirmation.
+The pill fades while you type and returns when the pointer moves.
 
 - **Cmd/Ctrl+K** jumps to a scene, **Cmd/Ctrl+P** browses files and
   **Cmd/Ctrl+Shift+P** lists every command. Type `/` or `>` to switch scope, Tab

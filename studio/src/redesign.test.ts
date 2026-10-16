@@ -110,6 +110,8 @@ describe('Studio chrome', () => {
   const settle = () => new Promise(resolve => setTimeout(resolve, 0));
   const press = (key: string, init: KeyboardEventInit = {}) => document.body.dispatchEvent(new KeyboardEvent('keydown', {key, bubbles: true, cancelable: true, ...init}));
   beforeEach(() => {
+    localStorage.removeItem('heinlein-studio-navigation-v1');
+    localStorage.removeItem('heinlein-studio-collapsed-v1');
     document.querySelectorAll('.cm-editor').forEach(node => EditorView.findFromDOM(node as HTMLElement)?.destroy());
     Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect();
     document.body.replaceChildren(document.createElement('div'));
@@ -130,6 +132,33 @@ describe('Studio chrome', () => {
     expect(document.querySelector('.pill-scene')!.textContent).toBe('casino.md');
     expect(document.querySelector('.pill-words')!.textContent).toBe('10 words');
     expect(document.querySelector('.cm-editor')).not.toBeNull();
+  });
+  it('shares one drawer across tabs and the keyboard shortcut without replacing the editor', async () => {
+    const app = await start(); await app.showDocument('casino.md'); await settle();
+    const editor = document.querySelector('.cm-editor');
+    const repository = document.querySelector<HTMLElement>('#navigation-panel-files')!;
+    const manuscript = document.querySelector<HTMLElement>('#navigation-panel-manuscript')!;
+    document.querySelector<HTMLButtonElement>('#navigation-tab-manuscript')!.click();
+    expect(repository.hidden).toBe(true); expect(manuscript.hidden).toBe(false);
+    press('\\', {ctrlKey: true});
+    expect(document.querySelector<HTMLElement>('#navigation-drawer')!.hidden).toBe(true);
+    expect(document.querySelector('.workspace')!.classList.contains('navigation-open')).toBe(false);
+    press('\\', {ctrlKey: true});
+    expect(document.activeElement?.id).toBe('navigation-tab-manuscript');
+    expect(document.querySelectorAll('.navigation-drawer')).toHaveLength(1);
+    expect(document.querySelector('.cm-editor')).toBe(editor);
+    document.querySelector<HTMLButtonElement>('#navigation-tab-files')!.click();
+    expect(repository.hidden).toBe(false); expect(manuscript.hidden).toBe(true);
+    expect(repository.querySelector('.file-entry')?.textContent).toContain('casino.md');
+  });
+  it('closes the command palette before focusing the navigation drawer', async () => {
+    await start();
+    press('p', {ctrlKey: true, shiftKey: true}); expect(document.querySelector('.palette')).not.toBeNull();
+    press('\\', {ctrlKey: true});
+    expect(document.querySelector('.palette')).toBeNull();
+    expect(document.activeElement).toBe(document.querySelector('.navigation-toggle'));
+    press('p', {ctrlKey: true, shiftKey: true}); press('\\', {ctrlKey: true});
+    expect(document.querySelector('.palette')).toBeNull(); expect(document.activeElement?.id).toBe('navigation-tab-files');
   });
   it('toggles the shortcut sheet and Questions from the keyboard', async () => {
     const app = await start(); await app.showDocument('casino.md'); await settle();
