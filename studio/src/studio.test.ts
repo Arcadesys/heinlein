@@ -289,7 +289,7 @@ describe('editing and loss protection', () => {
     const {app, view, change} = await setup(); const initial = view.state.doc.toString(); change();
     findButton('Undo').click(); expect(view.state.doc.toString()).toBe(initial);
     findButton('Redo').click(); expect(view.state.doc.toString()).toBe('New words');
-    findButton('Find').click(); expect(document.querySelector('[name="search"]')).not.toBeNull();
+    [...document.querySelectorAll('button')].find(button => button.textContent === 'Find')!.click(); expect(document.querySelector('[name="search"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="Markdown editor"]')).not.toBeNull(); app.destroy();
   });
 });
