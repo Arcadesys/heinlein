@@ -972,6 +972,9 @@ struct ResponseStream {
     data: Vec<u8>,
     total: usize,
     terminal: Option<Vec<u8>>,
+    response_id: Option<String>,
+    completed_items: Vec<serde_json::Value>,
+    completed_bytes: usize,
 }
 
 impl ResponseStream {
@@ -1020,8 +1023,45 @@ impl ResponseStream {
         let event: serde_json::Value = serde_json::from_slice(&data)
             .map_err(|_| QuestionError::invalid_response().at(ProtocolDiagnostic::EventJson))?;
         match event.get("type").and_then(serde_json::Value::as_str) {
+            Some("response.created") => {
+                let id = event["response"]["id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty() && id.len() <= 256)
+                    .ok_or_else(QuestionError::invalid_response)?;
+                if self.response_id.is_some() {
+                    return Err(QuestionError::invalid_response());
+                }
+                self.response_id = Some(id.to_owned());
+            }
+            Some("response.output_item.done") => {
+                let item = event
+                    .get("item")
+                    .ok_or_else(QuestionError::invalid_response)?;
+                let id = item["id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty() && id.len() <= 256);
+                if self.response_id.is_none()
+                    || event["output_index"].as_u64() != Some(self.completed_items.len() as u64)
+                    || self.completed_items.len() >= 64
+                    || id.is_none()
+                    || self
+                        .completed_items
+                        .iter()
+                        .any(|old| old["id"] == item["id"])
+                    || (item["type"] == "message" && item["status"] != "completed")
+                {
+                    return Err(
+                        QuestionError::invalid_response().at(ProtocolDiagnostic::AnswerContent)
+                    );
+                }
+                self.completed_bytes = self.completed_bytes.saturating_add(data.len());
+                if self.completed_bytes > MAX_RESPONSE_BYTES {
+                    return Err(QuestionError::response_too_large());
+                }
+                self.completed_items.push(item.clone());
+            }
             Some(kind @ ("response.completed" | "response.incomplete")) => {
-                let response = event.get("response").ok_or_else(|| {
+                let mut response = event.get("response").cloned().ok_or_else(|| {
                     QuestionError::invalid_response().at(ProtocolDiagnostic::ResponseSchema)
                 })?;
                 let expected = if kind == "response.completed" {
@@ -1034,7 +1074,22 @@ impl ResponseStream {
                         QuestionError::invalid_response().at(ProtocolDiagnostic::TerminalStatus)
                     );
                 }
-                let bytes = serde_json::to_vec(response).map_err(|_| {
+                if let Some(id) = &self.response_id {
+                    if response["id"].as_str() != Some(id.as_str()) {
+                        return Err(QuestionError::invalid_response()
+                            .at(ProtocolDiagnostic::TerminalStatus));
+                    }
+                }
+                // Plan-usage streams may omit output from the terminal snapshot.
+                // Only completed items from this response can fill an empty array;
+                // deltas alone and disconnected streams never become answers.
+                if response["output"].as_array().is_some_and(Vec::is_empty)
+                    && !self.completed_items.is_empty()
+                {
+                    response["output"] =
+                        serde_json::Value::Array(std::mem::take(&mut self.completed_items));
+                }
+                let bytes = serde_json::to_vec(&response).map_err(|_| {
                     QuestionError::invalid_response().at(ProtocolDiagnostic::EventJson)
                 })?;
                 if bytes.len() > MAX_RESPONSE_BYTES {
