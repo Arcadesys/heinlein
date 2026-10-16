@@ -1,4 +1,5 @@
 import { createSceneNavigator } from './sceneNavigator';
+import { createNavigationDrawer } from './navigationDrawer';
 import { assembleChapter, chapterSelection, type AssembledChapter } from './assembledChapter';
 import { createManuscriptSearch, editorOffset, type SearchScope, type SearchMatch } from './manuscriptSearch';
 import {StateEffect} from '@codemirror/state';
@@ -416,38 +417,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   corner.append(appearance, helpButton);
 
   const layout = el('main', '', 'workspace');
-  // Collapsible side panels (file browser, manuscript outline); remembered between launches.
-  const collapsed: Record<string, boolean> = (() => { try { const v = JSON.parse(localStorage.getItem('heinlein-studio-collapsed-v1') ?? '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } })();
-  const toggles = new Map<string, HTMLButtonElement>();
-  function setCollapsed(key: string, value: boolean) {
-    collapsed[key] = value;
-    try { localStorage.setItem('heinlein-studio-collapsed-v1', JSON.stringify(collapsed)); } catch { /* convenience only */ }
-    layout.classList.toggle(`${key}-collapsed`, value);
-    const toggle = toggles.get(key);
-    if (toggle) {
-      toggle.setAttribute('aria-expanded', String(!value));
-      toggle.textContent = value ? '▸' : '◂';
-      toggle.title = `${value ? 'Show' : 'Hide'} ${toggle.dataset.what}${key === 'files' ? ' (Cmd/Ctrl+\\)' : ''}`;
-      toggle.setAttribute('aria-label', toggle.title);
-    }
-  }
-  function panelHead(heading: HTMLElement, key: string, what: string) {
-    const head = el('div', '', 'panel-head');
-    const toggle = button('◂', () => setCollapsed(key, !collapsed[key]), 'panel-toggle');
-    toggle.dataset.what = what;
-    toggles.set(key, toggle);
-    head.append(heading, toggle);
-    return head;
-  }
-  const files = el('section', '', 'panel files floating-card');
+  const files = el('section', '', 'panel files');
   files.setAttribute('aria-label', 'Repository files');
   const repoName = el('h2', 'Repository');
   const directoryPath = el('p', 'No folder selected', 'path');
   const listing = el('div', '', 'file-list');
   const filesBody = el('div', '', 'panel-body');
   filesBody.append(open, recent, directoryPath, listing);
-  files.append(panelHead(repoName, 'files', 'file browser'), filesBody);
-  const manuscriptPane = el('section', '', 'panel manuscript floating-card');
+  files.append(repoName, filesBody);
+  const manuscriptPane = el('section', '', 'panel manuscript');
   manuscriptPane.setAttribute('aria-label', 'Manuscript order');
   const manifests = el('div', '', 'manifest-picker');
   const draftingEntry = button('ms drafting', () => { void openDrafting(); }, 'drafting-entry');
@@ -458,22 +436,17 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const searchManuscript = button('Find in manuscript', openManuscriptSearch);
   searchManuscript.setAttribute('aria-keyshortcuts', 'Control+Shift+F Meta+Shift+F');
   manuscriptBody.append(draftingEntry, searchManuscript, manifests, outline);
-  manuscriptPane.append(panelHead(el('h2', 'Manuscript'), 'manuscript', 'manuscript outline'), manuscriptBody);
+  manuscriptPane.append(manuscriptBody);
   const sceneNavigator = createSceneNavigator(() => editor?.view ?? chapterEditor?.view ?? null);
-  const scenePane = el('section', '', 'panel scene-navigator floating-card');
+  const scenePane = el('section', '', 'panel scene-navigator');
   scenePane.setAttribute('aria-label', 'Scene navigator');
-  scenePane.append(panelHead(el('h2', 'Scene navigator'), 'scenes', 'scene navigator'), sceneNavigator.element);
-  toggles.get('scenes')!.setAttribute('aria-controls', sceneNavigator.element.id);
+  scenePane.append(sceneNavigator.element);
   const preview = el('section', '', 'panel preview');
   preview.setAttribute('aria-label', 'Document preview');
-  const navigator = el('nav', '', 'navigator'); navigator.setAttribute('aria-label', 'Files, manuscript, and scene navigator');
-  navigator.append(files, manuscriptPane, scenePane);
-  layout.append(navigator, preview);
+  const navigation = createNavigationDrawer(files, manuscriptPane, scenePane, open => layout.classList.toggle('navigation-open', open));
+  layout.append(navigation.element, preview);
   chromeReady = true;
   resetPreview();
-  setCollapsed('files', Boolean(collapsed.files));
-  setCollapsed('manuscript', Boolean(collapsed.manuscript));
-  setCollapsed('scenes', Boolean(collapsed.scenes));
   root.replaceChildren(glow, layout, pill, status, goalCard, corner);
   const drafting = createDraftingPanel(core, {
     root, repository: () => repository, run: runStructural, verify: verifyStructuralBuffer,
@@ -974,11 +947,12 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       Boolean(drafting.state?.revision) && {key: 'import-repo', label: 'Import repository files…', sub: 'Move Markdown files into ms/', run: () => drafting.importRepository('move')},
       Boolean(drafting.state?.revision) && {key: 'legacy', label: 'Copy legacy scenes…', sub: 'Independent copies; the old manuscript is unchanged', run: () => drafting.importRepository('copy')},
       drafting.canUndo && {key: 'undo-structure', label: 'Undo last manuscript change', run: () => drafting.undoLastChange()},
-      !draftingEntry.hidden && {key: 'drafting', label: 'Show ms drafting manuscript', run: () => { setCollapsed('manuscript', false); void openDrafting(); }},
+      !draftingEntry.hidden && {key: 'drafting', label: 'Show ms drafting manuscript', run: () => { navigation.select('manuscript'); void openDrafting(); }},
       {key: 'goal', label: 'Set daily goal…', sub: writingSummary ? `Currently ${writingSummary.goal.toLocaleString()} words` : '', run: () => toggleGoal(true)},
-      {key: 'files', label: collapsed.files ? 'Show file browser' : 'Hide file browser', right: formatKeys('⌘\\'), run: () => setCollapsed('files', !collapsed.files)},
-      {key: 'outline', label: collapsed.manuscript ? 'Show manuscript outline' : 'Hide manuscript outline', run: () => setCollapsed('manuscript', !collapsed.manuscript)},
-      {key: 'scene-navigator', label: collapsed.scenes ? 'Show scene navigator' : 'Hide scene navigator', run: () => setCollapsed('scenes', !collapsed.scenes)},
+      {key: 'navigation', label: 'Toggle navigation drawer', right: formatKeys('⌘\\'), run: () => navigation.toggle()},
+      {key: 'files', label: 'Show repository files', run: () => navigation.select('files')},
+      {key: 'outline', label: 'Show manuscript outline', run: () => navigation.select('manuscript')},
+      {key: 'scene-navigator', label: 'Show scene navigator', run: () => navigation.select('scenes')},
       {key: 'shortcuts', label: 'Keyboard shortcuts', right: formatKeys('⌘/'), run: () => toggleHelp(true)},
     ];
     return commands.filter((item): item is PaletteItem => Boolean(item));
@@ -1026,7 +1000,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (key === 'f' && event.shiftKey) run(openManuscriptSearch);
     else if (key === 'k') run(() => openPalette('scenes'));
     else if (key === 'p') run(() => openPalette(event.shiftKey ? 'commands' : 'files'));
-    else if (key === '\\') run(() => setCollapsed('files', !collapsed.files));
+    else if (key === '\\') run(() => { if (palette.isOpen()) palette.close(); navigation.toggle(); });
     else if (key === '/' || (key === '?' && event.shiftKey)) run(() => toggleHelp());
     else if (key === 'j' && !event.shiftKey) run(askShortcut);
     else if (key === 'o' && !event.shiftKey) run(() => { if (!open.disabled) open.click(); });

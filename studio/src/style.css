@@ -65,7 +65,7 @@ summary { min-height: 2.75rem; padding: .6rem 0; font-weight: 500; }
 .workspace { position: absolute; inset: 0; }
 .panel { min-width: 0; }
 .preview { position: absolute; inset: 0; overflow-y: auto; padding: 8.25rem 3rem 6rem; scroll-padding-top: 8rem; }
-.workspace:not(.files-collapsed) .preview, .workspace:not(.manuscript-collapsed) .preview, .workspace:not(.scenes-collapsed) .preview { padding-left: calc(var(--nav-width) + 3rem); }
+.workspace.navigation-open .preview { padding-left: calc(var(--nav-width) + 3rem); }
 .page { max-width: var(--measure); margin: 0 auto; }
 .page > .eyebrow { margin-bottom: .9rem; }
 .page-title { font: 300 2.25rem/1.2 var(--font-ui, var(--ui-fallback)); letter-spacing: .02em; margin: 0 0 .6rem; overflow-wrap: anywhere; }
@@ -127,19 +127,16 @@ summary { min-height: 2.75rem; padding: .6rem 0; font-weight: 500; }
 .goal-card { position: absolute; top: 4.25rem; left: 50%; transform: translateX(-50%); z-index: 7; width: min(32rem, calc(100vw - 2rem)); }
 .goal-card[hidden] { display: none; }
 
-/* Navigator: files and manuscript order float over the left gutter. */
-.navigator { position: absolute; top: 4.5rem; left: 1rem; bottom: 1rem; width: var(--nav-width); z-index: 3; display: flex; flex-direction: column; gap: .75rem; pointer-events: none; overflow-y: auto; }
-.navigator > .panel { pointer-events: auto; min-height: 0; padding: 1rem; overflow-y: auto; overscroll-behavior: contain; }
-.navigator > .files { flex: 0 1 auto; max-height: 45%; }
-.navigator > .manuscript, .navigator > .scene-navigator { flex: 1 1 0; min-height: 5rem; }
-.workspace.files-collapsed .navigator > .manuscript, .workspace.manuscript-collapsed .navigator > .files { max-height: none; }
-.panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .5rem; }
-.panel-head h2 { min-width: 0; overflow-wrap: anywhere; font-size: .95rem; margin: .5rem 0 .75rem; }
-.panel-toggle { flex: none; min-width: 2.75rem; padding: .4rem; text-align: center; border-color: transparent; color: var(--fg-muted); }
-.workspace.files-collapsed .files > .panel-body, .workspace.manuscript-collapsed .manuscript > .panel-body, .workspace.scenes-collapsed .scene-navigator > .panel-body { display: none; }
-.workspace.files-collapsed .files, .workspace.manuscript-collapsed .manuscript, .workspace.scenes-collapsed .scene-navigator { width: 3.25rem; flex: none; padding: .25rem; overflow: hidden; }
-.workspace.files-collapsed .files .panel-head, .workspace.manuscript-collapsed .manuscript .panel-head, .workspace.scenes-collapsed .scene-navigator .panel-head { flex-direction: column-reverse; align-items: center; }
-.workspace.files-collapsed .files h2, .workspace.manuscript-collapsed .manuscript h2, .workspace.scenes-collapsed .scene-navigator h2 { writing-mode: vertical-rl; margin: .5rem 0; white-space: nowrap; font-size: .875rem; color: var(--fg-muted); max-height: 12rem; overflow: hidden; text-overflow: ellipsis; }
+/* A single bounded drawer shares the repository and manuscript views. */
+.navigator { position: absolute; top: 4.5rem; left: 1rem; bottom: 1rem; width: min(var(--nav-width), calc(100vw - 2rem)); z-index: 3; display: flex; flex-direction: column; gap: .5rem; pointer-events: none; }
+.navigation-toggle { pointer-events: auto; flex: none; align-self: flex-start; max-width: 100%; background: var(--surface); font-size: .875rem; }
+.navigation-drawer { pointer-events: auto; display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.navigation-drawer[hidden], .navigation-drawer > [hidden] { display: none; }
+.navigation-tabs { display: flex; flex: none; gap: .25rem; padding: .5rem; border-bottom: 1px solid var(--border); }
+.navigation-tabs [role="tab"] { flex: 1; min-width: 0; padding: .5rem .25rem; font-size: .875rem; text-align: center; overflow-wrap: anywhere; border-color: transparent; }
+.navigation-tabs [aria-selected="true"] { color: var(--accent); background: var(--surface-hover); border-color: var(--border-strong); }
+.navigation-drawer > .panel { flex: 1; min-height: 0; padding: 1rem; overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; }
+.navigation-drawer h2 { font-size: .95rem; margin: 0 0 .75rem; overflow-wrap: anywhere; }
 .files .primary { width: 100%; text-align: center; margin-bottom: .75rem; min-height: 2.25rem; padding: .3rem .7rem; background: transparent; border: 1px solid var(--border-strong); color: var(--fg); font-weight: 500; font-size: .875rem; }
 .files .primary:hover { border-color: var(--accent); color: var(--accent); filter: none; }
 .recent { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: .75rem; }
@@ -371,12 +368,12 @@ dialog { color: var(--fg); }
 
 /* ---------- Narrow windows and high zoom ---------- */
 @media (max-width: 1100px) {
-  .workspace:not(.files-collapsed) .preview, .workspace:not(.manuscript-collapsed) .preview, .workspace:not(.scenes-collapsed) .preview { padding-left: 3rem; }
-  .navigator > .panel { background: var(--surface); box-shadow: var(--shadow); }
+  .workspace.navigation-open .preview { padding-left: 3rem; }
+  .navigation-drawer { background: var(--surface); box-shadow: var(--shadow); }
 }
 @media (max-width: 760px) {
   .preview { padding: 7.5rem 1rem 5rem; }
-  .workspace:not(.files-collapsed) .preview, .workspace:not(.manuscript-collapsed) .preview, .workspace:not(.scenes-collapsed) .preview { padding-left: 1rem; }
+  .workspace.navigation-open .preview { padding-left: 1rem; }
   .pill-project, .pill-project + .pill-muted, .pill-rule, .pill-save { display: none; }
   .settings-window[open] { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .settings-sidebar { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--border); }
@@ -411,6 +408,3 @@ dialog { color: var(--fg); }
 .scene-break-list button[aria-current="location"] { border-width: 2px; font-weight: 600; }
 .scene-navigator-body .muted { font-size: 1rem; line-height: 1.5; }
 
-@media (max-width: 760px) {
-  .workspace.files-collapsed.manuscript-collapsed.scenes-collapsed .preview { padding-left: 5.25rem; }
-}

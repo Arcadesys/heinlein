@@ -2,7 +2,7 @@
 export const SHORTCUT_GROUPS: {name: string; items: {label: string; keys: string}[]}[] = [
   {name: 'Navigate', items: [
     {label: 'Jump to scene', keys: '⌘K'}, {label: 'Files', keys: '⌘P'}, {label: 'Commands', keys: '⌘⇧P'},
-    {label: 'Show or hide the file browser', keys: '⌘\\'}, {label: 'Reorder scene in palette', keys: '⌥↑ ⌥↓'}, {label: 'Step back / close', keys: 'esc'},
+    {label: 'Show or hide navigation', keys: '⌘\\'}, {label: 'Reorder scene in palette', keys: '⌥↑ ⌥↓'}, {label: 'Step back / close', keys: 'esc'},
   ]},
   {name: 'Write', items: [
     {label: 'Save now', keys: '⌘S'}, {label: 'Split scene at cursor', keys: '⌘⇧↵'}, {label: 'Undo / redo', keys: '⌘Z  ⌘⇧Z'}, {label: 'Find in scene', keys: '⌘F'}, {label: 'Find in manuscript', keys: '⌘⇧F'},

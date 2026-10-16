@@ -21,9 +21,12 @@ async function start(bridge = core()) {
 beforeEach(() => {localStorage.clear(); Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect(); document.body.replaceChildren();});
 afterEach(() => {app?.destroy();});
 describe('scene navigator drawer', () => {
-  it('renders a third independent drawer and jumps to exact source without saving', async () => {
+  it('renders scene passages as the third tab and jumps to exact source without saving', async () => {
     const bridge = await start();
-    expect(document.querySelectorAll('.navigator > .panel')).toHaveLength(3);
+    expect(document.querySelectorAll('.navigation-drawer > .panel')).toHaveLength(3);
+    document.querySelector<HTMLButtonElement>('#navigation-tab-scenes')!.click();
+    expect(document.querySelector<HTMLElement>('#navigation-panel-scenes')!.hidden).toBe(false);
+    expect(document.querySelector<HTMLElement>('#navigation-panel-files')!.hidden).toBe(true);
     expect(items().map(item=>item.textContent)).toEqual(['First 🦊—passage.', 'Second passage.']);
     items()[1].click();
     const range = view().state.selection.main;
@@ -43,12 +46,13 @@ describe('scene navigator drawer', () => {
     view().dispatch({changes:{from: 0, insert:'Shifted\n'}}); stale.click();
     expect(view().state.selection.main).toEqual(before); expect(document.querySelector('.scene-navigator-body')?.textContent).toContain('document changed');
   });
-  it('clears entries on document changes and remembers the independent collapse state', async () => {
+  it('clears entries on document changes and remembers the shared drawer state', async () => {
     await start();
-    const toggle = document.querySelector<HTMLButtonElement>('.scene-navigator .panel-toggle')!; toggle.click();
-    expect(toggle.getAttribute('aria-expanded')).toBe('false'); expect(JSON.parse(localStorage.getItem('heinlein-studio-collapsed-v1')!).scenes).toBe(true);
-    expect(document.querySelector('.workspace')?.classList.contains('manuscript-collapsed')).toBe(false);
+    document.querySelector<HTMLButtonElement>('#navigation-tab-scenes')!.click();
+    const toggle = document.querySelector<HTMLButtonElement>('.navigation-toggle')!; toggle.click();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false'); expect(JSON.parse(localStorage.getItem('heinlein-studio-navigation-v1')!)).toEqual({open: false, active: 'scenes'});
+    expect(document.querySelector('.workspace')?.classList.contains('navigation-open')).toBe(false);
     await app.showDocument('empty.md'); expect(items()).toHaveLength(0); expect(document.querySelector('.scene-navigator-body')?.textContent).toContain('No --- scene breaks');
-    app.destroy(); app = mountStudio(document.body, core()); expect(document.querySelector('.scene-navigator .panel-toggle')?.getAttribute('aria-expanded')).toBe('false');
+    app.destroy(); app = mountStudio(document.body, core()); expect(document.querySelector('.navigation-toggle')?.getAttribute('aria-expanded')).toBe('false');
   });
 });
