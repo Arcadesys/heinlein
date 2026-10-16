@@ -59,6 +59,7 @@ const typingTarget = (target: EventTarget | null) => target instanceof HTMLEleme
 
 export const AUTOSAVE_DELAY_MS = 600;
 export const AUTOSAVE_MAX_WAIT_MS = 5000;
+export const SAVE_NOTICE_IDLE_MS = 5000;
 
 export function mountStudio(root: HTMLElement, core: LocalCore) {
   // The status pill mirrors the writing panel; it is built further down, so render only once it exists.
@@ -101,6 +102,50 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let guardPending: Promise<boolean> | null = null;
   let closeUnlisten: (() => void) | null = null;
   let dirtySync = Promise.resolve();
+  let saveNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastEditAt = -Infinity;
+  let composing = false;
+  let pendingSaveNotice: (() => void) | null = null;
+  let visibleSaveNotice: string | null = null;
+  function cancelSaveNotice() {
+    if (saveNoticeTimer !== null) clearTimeout(saveNoticeTimer);
+    saveNoticeTimer = null; pendingSaveNotice = null;
+  }
+  function noteEditing() {
+    lastEditAt = Date.now(); cancelSaveNotice();
+    // A resumed writing session also dismisses its own previous success notice.
+    // Never dismiss errors or unrelated status messages.
+    if (visibleSaveNotice && status.textContent === visibleSaveNotice) status.textContent = '';
+    visibleSaveNotice = null;
+  }
+  function scheduleSaveNotice() {
+    if (!pendingSaveNotice) return;
+    if (saveNoticeTimer !== null) clearTimeout(saveNoticeTimer);
+    saveNoticeTimer = setTimeout(() => {
+      saveNoticeTimer = null;
+      if (composing || editor?.view.compositionStarted) {
+        composing = true;
+        // CodeMirror can end a Safari dead-key composition without a DOM
+        // compositionend event. Recheck its state instead of suppressing notices
+        // forever; allow a full idle interval after observing the fallback end.
+        if (!editor?.view.compositionStarted) { composing = false; lastEditAt = Date.now(); }
+        scheduleSaveNotice(); return;
+      }
+      const show = pendingSaveNotice; pendingSaveNotice = null; show?.();
+    }, composing ? 100 : Math.max(0, SAVE_NOTICE_IDLE_MS - (Date.now() - lastEditAt)));
+  }
+  function queueSaveNotice(path: string, epoch: number) {
+    cancelSaveNotice();
+    // Keep the inline save badge current; only the floating success notice waits.
+    const previousStatus = status.textContent;
+    pendingSaveNotice = () => {
+      if (!active(epoch) || selecting || repositoryDetached || dirty || composing || status.classList.contains('error') || status.textContent !== previousStatus) return;
+      visibleSaveNotice = `Saved ${path} locally`;
+      status.textContent = visibleSaveNotice;
+    };
+    scheduleSaveNotice();
+  }
+
   function updateSaveState() {
     const label = recoveryPending ? 'Recovery available' : saving ? 'Saving locally…' : dirty ? (writePaused ? 'Unsaved · autosave paused' : 'Unsaved changes') : 'Saved locally';
     if (dirtyBadge) dirtyBadge.textContent = label;
@@ -201,7 +246,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       }
       if (writePaused && !manual) return false;
       if (manual) writePaused = null;
-      status.classList.remove('error'); status.textContent = `Saving ${snapshot.path}…`;
+      cancelSaveNotice();
+      status.classList.remove('error');
+      if (manual) status.textContent = `Saving ${snapshot.path}…`;
       let saved: Document;
       try {
         saved = await core.saveDocument(snapshot.repositoryId, snapshot.path, snapshot.baseHash, snapshot.text);
@@ -222,7 +269,13 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       const cleaned = await clearRecovery(draft, snapshot.repositoryId, epoch);
       if (!active(epoch)) return false;
       if (dirty && recoveryErrorMessage) { status.textContent = recoveryErrorMessage; status.classList.add('error'); }
-      else if (cleaned) status.textContent = dirty ? 'Saved the submitted revision. Newer edits are still unsaved.' : `Saved ${saved.path} locally`;
+      else if (cleaned) {
+        if (dirty) status.textContent = 'Saved the submitted revision. Newer edits are still unsaved.';
+        else {
+          if (status.textContent === `Saving ${snapshot.path}…`) status.textContent = '';
+          queueSaveNotice(saved.path, epoch);
+        }
+      }
       return !dirty;
     })();
     writeInFlight = task;
@@ -998,7 +1051,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     selectionAsk?.destroy(); selectionAsk = null;
     draftingQuestions?.clear(); questionButton = null;
     writing.clearScene();
-    cancelAutosave(); documentEpoch++; recoveryErrorMessage = null; recovery = null; recoveryPending = false; writePaused = null;
+    cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; recoveryErrorMessage = null; recovery = null; recoveryPending = false; writePaused = null;
     chapterEditor?.destroy(); chapterEditor = null;
     editor?.destroy(); editor = null; opened = null; saveButton = null; dirtyBadge = null; setDirty(false);
     sceneNavigator.refresh();
@@ -1048,7 +1101,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     open.disabled = true;
     recent.querySelectorAll('button').forEach(node => { node.disabled = true; });
     // Block navigation while the host may be switching its selected root.
-    layout.inert = true; cancelAutosave(); editor?.setEditable(false);
+    layout.inert = true; cancelAutosave(); cancelSaveNotice(); editor?.setEditable(false);
     status.classList.remove('error');
     status.textContent = 'Opening folder…';
     try {
@@ -1181,7 +1234,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     draftingQuestions?.clear(); questionButton = null;
     if (doc.generatedCompatibility) writing.clearScene();
     else writing.openScene(repository?.projectKey ?? '', doc.path, doc.text, drafting.state?.scenes.find(scene => scene.path === doc.path)?.id);
-    cancelAutosave(); documentEpoch++; recoveryErrorMessage = null; recovery = draft; recoveryPending = Boolean(draft && draft.text !== doc.text); writePaused = null; writeBaseHash = doc.contentHash;
+    cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; recoveryErrorMessage = null; recovery = draft; recoveryPending = Boolean(draft && draft.text !== doc.text); writePaused = null; writeBaseHash = doc.contentHash;
     editor?.destroy(); editor = null; opened = doc; saveButton = null; dirtyBadge = null; setDirty(false);
     const sceneInfo = drafting.state?.scenes.find(scene => scene.path === doc.path);
     const sceneIndex = sceneInfo ? drafting.state!.scenes.indexOf(sceneInfo) : -1;
@@ -1221,6 +1274,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       split.disabled = !drafting.state?.scenes.some(scene => scene.path === doc.path);
       toolbar.append(questionButton, askDrafting, askSelection, split, saveButton, button('Undo', () => editor?.undo()), button('Redo', () => editor?.redo()), button('Find', () => editor?.find()), dirtyBadge);
       const host = el('div', '', 'markdown-editor');
+      host.addEventListener('compositionstart', () => { composing = true; noteEditing(); });
+      host.addEventListener('compositionend', () => { composing = false; lastEditAt = Date.now(); scheduleSaveNotice(); });
       host.addEventListener('keydown', event => {
         if ((event.ctrlKey || event.metaKey) && event.altKey && !event.shiftKey && event.key === 'Enter') {event.preventDefault(); event.stopPropagation(); void askDraftingSelection(); return;}
         if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); splitAtCursor(); }
@@ -1231,6 +1286,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       text.replaceWith(draftingArea);
       let previousText = doc.text;
       editor = createEditor(host, doc.text, (raw, origin) => {
+        noteEditing();
         writing.changed(previousText, raw, origin); previousText = raw;
         if (origin === 'user' && !root.classList.contains('typing')) root.classList.add('typing');
         edits++;
@@ -1396,6 +1452,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

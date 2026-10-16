@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
 import { Transaction } from '@codemirror/state';
 import { createEditor } from './editor';
-import { AUTOSAVE_DELAY_MS, AUTOSAVE_MAX_WAIT_MS, mountStudio as mount } from './studio';
+import { AUTOSAVE_DELAY_MS, AUTOSAVE_MAX_WAIT_MS, SAVE_NOTICE_IDLE_MS, mountStudio as mount } from './studio';
 const apps: ReturnType<typeof mount>[] = [];
 function mountStudio(...args: Parameters<typeof mount>) { const app = mount(...args); apps.push(app); return app; }
 afterEach(() => { apps.splice(0).forEach(app => app.destroy()); vi.useRealTimers(); });
@@ -1014,5 +1014,115 @@ describe('trusted local proposal review', () => {
     findButton('Proposed revisions').click(); await settle(); await app.selectRepository(async () => ({...session, id: 'new-session', manifests: []}));
     finish({pending: [{...view, id: view.proposalId, createdAtMs: 1}], receipts: []}); await settle();
     expect(document.querySelector('.proposal-dialog')).toBeNull();
+  });
+});
+
+
+describe('idle-only save success notice', () => {
+  const notice = () => document.querySelector('.status')!;
+  it('saves at 600ms but waits exactly five seconds after the edit to announce success', async () => {
+    fakeClock(); const {core, change} = await openEditor();
+    change('Quiet writing'); await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+    expect(core.saveDocument).toHaveBeenCalledOnce();
+    expect(document.querySelector('.editor-toolbar [role="status"]')?.textContent).toBe('Saved locally');
+    expect(notice().textContent).not.toMatch(/Saving scene|Saved scene/);
+    await vi.advanceTimersByTimeAsync(SAVE_NOTICE_IDLE_MS - AUTOSAVE_DELAY_MS - 1);
+    expect(notice().textContent).not.toBe('Saved scene.md locally');
+    await vi.advanceTimersByTimeAsync(1);
+    expect(notice().textContent).toBe('Saved scene.md locally');
+    expect(notice().classList.contains('quiet')).toBe(false);
+  });
+  it('resets the notice deadline for every edit and dismisses it when typing resumes', async () => {
+    fakeClock(); const {change} = await openEditor();
+    change('First'); await vi.advanceTimersByTimeAsync(4000);
+    change('Second'); await vi.advanceTimersByTimeAsync(4999);
+    expect(notice().textContent).not.toBe('Saved scene.md locally');
+    await vi.advanceTimersByTimeAsync(1); expect(notice().textContent).toBe('Saved scene.md locally');
+    change('Third'); await flush(); expect(notice().textContent).toBe('');
+    await vi.advanceTimersByTimeAsync(4999); expect(notice().textContent).toBe('');
+    await vi.advanceTimersByTimeAsync(1); expect(notice().textContent).toBe('Saved scene.md locally');
+  });
+  it('does not announce a stale saved revision while newer edits await a save', async () => {
+    fakeClock(); const {core, change} = await openEditor();
+    const save = deferred<Awaited<ReturnType<LocalCore['saveDocument']>>>();
+    core.saveDocument = vi.fn(() => save.promise);
+    change('First'); await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+    change('Second'); save.resolve(savedDocument('First')); await flush();
+    await vi.advanceTimersByTimeAsync(SAVE_NOTICE_IDLE_MS);
+    expect(notice().textContent).not.toBe('Saved scene.md locally');
+  });
+  it.each(['scene', 'repository', 'unmount'] as const)('cancels pending success after %s changes', async destination => {
+    fakeClock(); const {app, change} = await openEditor();
+    change('First'); await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+    if (destination === 'scene') await app.showDocument('other.md');
+    else if (destination === 'repository') await app.selectRepository(async () => ({...session, id: 'other-session', projectKey: 'other-project'}));
+    else app.destroy();
+    const before = notice().textContent;
+    await vi.advanceTimersByTimeAsync(SAVE_NOTICE_IDLE_MS);
+    expect(notice().textContent).toBe(before);
+    expect(notice().textContent).not.toBe('Saved scene.md locally');
+  });
+  it('waits until five seconds after IME composition ends', async () => {
+    fakeClock(); const {view, change} = await openEditor();
+    view.contentDOM.dispatchEvent(new CompositionEvent('compositionstart', {bubbles: true}));
+    change('Composed text'); await vi.advanceTimersByTimeAsync(6000);
+    expect(notice().textContent).not.toBe('Saved scene.md locally');
+    view.contentDOM.dispatchEvent(new CompositionEvent('compositionend', {bubbles: true}));
+    await vi.advanceTimersByTimeAsync(4999); expect(notice().textContent).not.toBe('Saved scene.md locally');
+    await vi.advanceTimersByTimeAsync(1); expect(notice().textContent).toBe('Saved scene.md locally');
+  });
+  it('recovers when CodeMirror ends composition without a DOM compositionend event', async () => {
+    fakeClock(); const {view, change} = await openEditor();
+    view.contentDOM.dispatchEvent(new CompositionEvent('compositionstart', {bubbles: true}));
+    change('Dead key text'); await vi.advanceTimersByTimeAsync(6000);
+    expect(notice().textContent).not.toBe('Saved scene.md locally');
+    // Model CodeMirror's Safari fallback, which clears its state directly.
+    vi.spyOn(view, 'compositionStarted', 'get').mockReturnValue(false);
+    await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(4999); expect(notice().textContent).not.toBe('Saved scene.md locally');
+    await vi.advanceTimersByTimeAsync(1); expect(notice().textContent).toBe('Saved scene.md locally');
+  });
+  it('checks CodeMirror composition state even without DOM composition events', async () => {
+    fakeClock(); const {view, change} = await openEditor();
+    const composition = vi.spyOn(view, 'compositionStarted', 'get').mockReturnValue(true);
+    change('EditContext text'); await vi.advanceTimersByTimeAsync(6000);
+    expect(notice().textContent).not.toBe('Saved scene.md locally');
+    composition.mockReturnValue(false); await vi.advanceTimersByTimeAsync(100);
+    await vi.advanceTimersByTimeAsync(4999); expect(notice().textContent).not.toBe('Saved scene.md locally');
+    await vi.advanceTimersByTimeAsync(1); expect(notice().textContent).toBe('Saved scene.md locally');
+  });
+  it('keeps failures immediate and never replaces them with an older success', async () => {
+    fakeClock(); const {core, change} = await openEditor();
+    change('Saved'); await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+    core.saveDocument = vi.fn(async () => {throw new Error('Disk full');});
+    change('Unsaved'); await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+    expect(notice().textContent).toContain('Save failed: Error: Disk full');
+    await vi.advanceTimersByTimeAsync(SAVE_NOTICE_IDLE_MS);
+    expect(notice().textContent).toContain('Save failed: Error: Disk full');
+    expect(notice().classList.contains('error')).toBe(true);
+  });
+  it('does not delay an explicit save, but still defers its success notice', async () => {
+    fakeClock(); const {core, app, change} = await openEditor();
+    change('Manual save'); await app.saveCurrent();
+    expect(core.saveDocument).toHaveBeenCalledOnce();
+    expect(notice().textContent).not.toBe('Saved scene.md locally');
+    await vi.advanceTimersByTimeAsync(4999); expect(notice().textContent).not.toBe('Saved scene.md locally');
+    await vi.advanceTimersByTimeAsync(1); expect(notice().textContent).toBe('Saved scene.md locally');
+  });
+  it('announces a slow successful save only after it actually completes', async () => {
+    fakeClock(); const {core, change} = await openEditor();
+    const save = deferred<Awaited<ReturnType<LocalCore['saveDocument']>>>();
+    core.saveDocument = vi.fn(() => save.promise);
+    change('Slow save'); await vi.advanceTimersByTimeAsync(6000);
+    expect(notice().textContent).not.toBe('Saved scene.md locally');
+    save.resolve(savedDocument('Slow save')); await flush();
+    await vi.advanceTimersByTimeAsync(0); expect(notice().textContent).toBe('Saved scene.md locally');
+  });
+  it('does not overwrite unrelated status updates during the idle delay', async () => {
+    fakeClock(); const {change} = await openEditor();
+    change('Saved'); await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+    notice().textContent = 'Another operation needs your attention';
+    await vi.advanceTimersByTimeAsync(SAVE_NOTICE_IDLE_MS);
+    expect(notice().textContent).toBe('Another operation needs your attention');
   });
 });
