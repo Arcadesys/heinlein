@@ -238,6 +238,18 @@ impl Authority {
             .map_err(|e| e.to_string())?;
         receipts.with_lock(repo, || receipts.write_rejection(repo, proposal))
     }
+    /// A rejection-only audit of an advisory snapshot, including an unsaved one.
+    /// This route cannot issue review, apply, or revert authority.
+    pub fn reject_snapshot(
+        &mut self,
+        repo: &Repository,
+        receipts: &ReceiptStore,
+        proposal: PendingProposal,
+    ) -> Result<Receipt> {
+        self.plan = None;
+        proposal.validate().map_err(|e| e.to_string())?;
+        receipts.with_lock(repo, || receipts.write_rejection(repo, proposal))
+    }
     // Explicit native repository, storage and editor inputs keep authority boundaries visible.
     #[allow(clippy::too_many_arguments)]
     pub fn review(
