@@ -24,7 +24,7 @@ function bridge(initial = ready) {
 let panel: ReturnType<typeof createQuestionPanel> | undefined;
 let scene: QuestionScene;
 function button(label: string) {const found = [...document.querySelectorAll('button')].find(node => node.textContent === label); if (!found) throw new Error(`Missing ${label}`); return found;}
-const composer = () => document.querySelector<HTMLTextAreaElement>('[aria-label="Your drafting question"]')!;
+const composer = () => document.querySelector<HTMLTextAreaElement>('[aria-label="Your message"]')!;
 function write(value: string) {composer().value = value; composer().dispatchEvent(new Event('input', {bubbles: true}));}
 function grant() {const input = document.querySelector<HTMLInputElement>('[aria-label="Allow Heinlein to use my ChatGPT plan"]')!; input.checked = true; input.dispatchEvent(new Event('change', {bubbles: true}));}
 function choose(label: 'ChatGPT account' | 'Question model', value: string) {const select = document.querySelector<HTMLSelectElement>(`[aria-label="${label}"]`)!; select.value = value; select.dispatchEvent(new Event('change', {bubbles: true}));}

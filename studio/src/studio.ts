@@ -514,7 +514,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if (problem) throw new Error(problem);
     },
     reviewRevision: (id, _snapshot, guard) => proposals.reviewProposal(id, guard),
-    visibilityChanged: visible => {questionButton?.setAttribute('aria-expanded', String(visible)); if (!visible) {selectionCaptureVersion++; selectionCapturePending = false;}},
+    visibilityChanged: visible => {layout.classList.toggle('questions-open', visible); questionButton?.setAttribute('aria-expanded', String(visible)); if (!visible) {selectionCaptureVersion++; selectionCapturePending = false;}},
   });
   draftingQuestions.element.id = 'drafting-questions';
   function revisionUnavailable(reviewing = false) {
@@ -988,6 +988,13 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (action) { event.preventDefault(); setZoom(action); return; }
     const otherModal = [...document.querySelectorAll('dialog[open]')].some(node => node !== dialog);
     if (root.inert || otherModal) return;
+    const dedicatedQuestions = draftingQuestions?.visible() && draftingQuestions.element.getAttribute('aria-modal') === 'true';
+    if (dedicatedQuestions) {
+      const mod = event.metaKey || event.ctrlKey; const key = event.key.toLowerCase();
+      if (mod && key === 'j' && !event.shiftKey && !event.altKey) { event.preventDefault(); event.stopPropagation(); askShortcut(); }
+      else if (mod && ['k', 'p', 'o', '\\', ',', '/', 'f', 's'].includes(key)) { event.preventDefault(); event.stopPropagation(); }
+      return;
+    }
     const mod = event.metaKey || event.ctrlKey;
     if (!mod) {
       if (event.key === '?' && !event.altKey && !typingTarget(event.target) && !dialog.open && !palette.isOpen()) { event.preventDefault(); toggleHelp(true); }

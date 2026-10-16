@@ -21,7 +21,7 @@ let unavailable: string | null;
 const review = vi.fn(async (_id: string, _snapshot: unknown, _guard: () => string | null) => {});
 const prepare = vi.fn(async () => {});
 const button = (name: string) => [...document.querySelectorAll('button')].find(node => node.textContent === name)!;
-function write(value = 'Please clarify this passage') {const field = document.querySelector<HTMLTextAreaElement>('[aria-label="Your drafting question"]')!; field.value = value; field.dispatchEvent(new Event('input'));}
+function write(value = 'Please clarify this passage') {const field = document.querySelector<HTMLTextAreaElement>('[aria-label="Your message"]')!; field.value = value; field.dispatchEvent(new Event('input'));}
 function mode(value: 'ask' | 'revision') {const select = document.querySelector<HTMLSelectElement>('[aria-label="Response mode"]')!; select.value = value; select.dispatchEvent(new Event('change'));}
 async function start(bridge = core()) {
   panel = createQuestionPanel(bridge as unknown as LocalCore, {current: () => ({...state, canCapture: true}), selectionState: () => state, revisionUnavailable: () => unavailable, prepareRevision: prepare, reviewRevision: review, focusEditor: vi.fn()});

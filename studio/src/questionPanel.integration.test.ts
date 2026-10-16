@@ -27,7 +27,7 @@ function core() {
 function button(label: string) {const found = [...document.querySelectorAll('button')].find(node => node.textContent === label); if (!found) throw new Error(`Missing ${label}`); return found;}
 const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
 const panel = () => document.querySelector<HTMLElement>('[aria-label="Drafting questions"]')!;
-function question(value: string) {const input = document.querySelector<HTMLTextAreaElement>('[aria-label="Your drafting question"]')!; input.value = value; input.dispatchEvent(new Event('input', {bubbles: true}));}
+function question(value: string) {const input = document.querySelector<HTMLTextAreaElement>('[aria-label="Your message"]')!; input.value = value; input.dispatchEvent(new Event('input', {bubbles: true}));}
 async function start(bridge: LocalCore) {app = mountStudio(document.body, bridge); await app.selectRepository(async () => session); await app.showDocument('scene.md');}
 async function open() {button('Questions').click(); await vi.waitFor(() => expect(button('Recheck OpenAI setup').disabled).toBe(false));}
 async function highlight(from: number, to: number) {
@@ -44,6 +44,19 @@ beforeEach(() => {
 afterEach(() => {app?.destroy(); app = undefined; vi.unstubAllGlobals();});
 
 describe('Studio in-app drafting questions', () => {
+  it('keeps app navigation shortcuts from moving focus behind the dedicated chat view', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({matches:query.includes('1399'), addEventListener:vi.fn(), removeEventListener:vi.fn()})));
+    await start(core()); await open();
+    expect(panel().getAttribute('aria-modal')).toBe('true');
+    const navigation = new KeyboardEvent('keydown',{key:'k',ctrlKey:true,bubbles:true,cancelable:true});
+    document.dispatchEvent(navigation); expect(navigation.defaultPrevented).toBe(true);
+    expect(document.querySelector('.palette-layer')).toBeNull();
+    const authorDialog = document.createElement('dialog'); authorDialog.setAttribute('open', ''); document.body.append(authorDialog);
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'j',ctrlKey:true,bubbles:true,cancelable:true}));
+    expect(panel().hidden).toBe(false); authorDialog.remove();
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'j',ctrlKey:true,bubbles:true,cancelable:true}));
+    expect(panel().hidden).toBe(true); expect(document.activeElement).toBe(view().contentDOM);
+  });
   it('keeps editing, manual save, and autosave available during a pending request', async () => {
     const bridge = core(); const response = deferred<QuestionAnswer>(); bridge.askQuestion.mockReturnValueOnce(response.promise);
     await start(bridge); await open(); button('Capture current scene').click(); question('What next?'); button('Send to OpenAI').click();
@@ -94,7 +107,7 @@ describe('Studio in-app drafting questions', () => {
     button('Return to writing').click(); expect(document.activeElement).toBe(view().contentDOM);
     view().contentDOM.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); expect(panel().hidden).toBe(false);
     const selectionBeforeClose = view().state.selection.main;
-    document.querySelector('textarea[aria-label="Your drafting question"]')!.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+    document.querySelector('textarea[aria-label="Your message"]')!.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
     expect(panel().hidden).toBe(true); expect(document.activeElement).toBe(view().contentDOM); expect(view().state.selection.main).toEqual(selectionBeforeClose);
     expect(button('Questions').getAttribute('aria-expanded')).toBe('false'); expect(bridge.askQuestion).not.toHaveBeenCalled();
   });
@@ -105,7 +118,7 @@ describe('Studio in-app drafting questions', () => {
     expect(pointer.defaultPrevented).toBe(true); expect(document.activeElement).toBe(view().contentDOM); expect(view().state.selection).toBe(before);
     action.click(); await vi.waitFor(() => expect(panel().hidden).toBe(false));
     expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe('🐺 passage.\r\nLast line');
-    expect(document.activeElement).toBe(document.querySelector('[aria-label="Your drafting question"]'));
+    expect(document.activeElement).toBe(document.querySelector('[aria-label="Your message"]'));
     expect(bridge.askQuestion).not.toHaveBeenCalled(); expect(bridge.saveDocument).not.toHaveBeenCalled(); expect(bridge.readDocument).toHaveBeenCalledTimes(1);
     expect(view().state.doc.toString()).toBe(text);
   });
@@ -132,7 +145,7 @@ describe('Studio in-app drafting questions', () => {
     await highlight(0, 3); document.querySelector<HTMLButtonElement>('.selection-ask-action')!.click();
     await vi.waitFor(() => expect(bridge.cancelQuestion).toHaveBeenCalledWith(request.requestId));
     expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe('---'); expect(panel().textContent).toContain('may still count toward plan usage');
-    expect(document.activeElement).toBe(document.querySelector('[aria-label="Your drafting question"]')); expect(bridge.askQuestion).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(document.querySelector('[aria-label="Your message"]')); expect(bridge.askQuestion).toHaveBeenCalledTimes(1);
     response.resolve({requestId: request.requestId, text: 'Old request answer', model: 'mock-model', incomplete: false}); await Promise.resolve();
     expect(panel().textContent).not.toContain('Old request answer'); expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n'));
   });

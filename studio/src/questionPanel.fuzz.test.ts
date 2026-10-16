@@ -8,7 +8,7 @@ const processModule='node:process';
 const {env}=await import(processModule) as {env: Record<string,string|undefined>};
 const ready: QuestionStatus={configured:true, model:'synthetic-model',message:'Synthetic',accounts:[{id:'synthetic-account',label:'Synthetic',signedIn:true,planEnabled:true}],activeAccountId:'synthetic-account',models:[{slug:'synthetic-model',displayName:'Synthetic'}],selectedModel:'synthetic-model',signInPending:false,generation:1,usageLimited:false};
 const button=(label:string)=>{const result=[...document.querySelectorAll('button')].find(x=>x.textContent===label);if(!result)throw Error(`Missing ${label}`);return result;};
-const input=()=>document.querySelector<HTMLTextAreaElement>('[aria-label="Your drafting question"]')!;
+const input=()=>document.querySelector<HTMLTextAreaElement>('[aria-label="Your message"]')!;
 const write=(value:string)=>{input().value=value;input().dispatchEvent(new Event('input',{bubbles:true}));};
 async function settle(){for(let n=0;n<12;n++)await Promise.resolve();}
 function deferred<T>(){let resolve!:(value:T)=>void;let reject!:(error:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}

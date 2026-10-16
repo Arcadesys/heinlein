@@ -15,7 +15,7 @@ let panel: ReturnType<typeof createQuestionPanel> | undefined;
 let scene: QuestionScene | null;
 const focusEditor = vi.fn();
 function button(label: string) {const found = [...document.querySelectorAll('button')].find(node => node.textContent === label); if (!found) throw new Error(`Missing ${label}`); return found;}
-const input = () => document.querySelector<HTMLTextAreaElement>('[aria-label="Your drafting question"]')!;
+const input = () => document.querySelector<HTMLTextAreaElement>('[aria-label="Your message"]')!;
 function write(value: string) {input().value = value; input().dispatchEvent(new Event('input', {bubbles: true}));}
 const status = () => document.querySelector('.question-status')!.textContent!;
 async function start(core = bridge()) {
@@ -68,6 +68,7 @@ describe('repository chat threads', () => {
     const select = document.querySelector<HTMLSelectElement>('[aria-label="Saved chat thread"]')!;
     select.value=chat.thread.id; select.dispatchEvent(new Event('change'));
     await vi.waitFor(() => expect(document.querySelector('.question-transcript')!.textContent).toContain('Answer to Second message'));
+    await vi.waitFor(() => expect(document.activeElement).toBe(button('Saved chats')));
   });
   it('retains all turns while sending only the recent context budget', async () => {
     const {api, records}=durableBridge(); await start(api); await chatsReady();
@@ -115,6 +116,31 @@ describe('question payload boundaries', () => {
 });
 
 describe('nonmodal drafting questions', () => {
+  it('puts the transcript before the composer and keeps routine receipts and setup collapsed', async () => {
+    await start(); await send('A question');
+    const transcript = document.querySelector('.question-transcript')!;
+    const composer = document.querySelector('.question-composer')!;
+    const settings = document.querySelector('.question-connection-area')!;
+    expect(transcript.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(composer.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.querySelector<HTMLDetailsElement>('.question-auth')!.open).toBe(false);
+    expect(document.querySelector<HTMLDetailsElement>('.question-message-details')!.open).toBe(false);
+    expect(document.querySelector<HTMLDetailsElement>('[aria-label="What will be sent"]')!.open).toBe(false);
+    button('Capture current scene').click();
+    expect(document.querySelector<HTMLDetailsElement>('[aria-label="What will be sent"]')!.open).toBe(true);
+    expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe(scene!.source);
+  });
+  it('keeps keyboard focus within the dedicated narrow view and returns to writing on close', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({matches:true, addEventListener:vi.fn(), removeEventListener:vi.fn()})));
+    const rects=vi.spyOn(HTMLElement.prototype,'getClientRects').mockReturnValue([new DOMRect()] as unknown as DOMRectList);
+    await start(); expect(panel!.element.getAttribute('role')).toBe('dialog'); expect(panel!.element.getAttribute('aria-modal')).toBe('true');
+    const storage=document.querySelector<HTMLElement>('.question-storage > summary')!; storage.focus();
+    storage.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));
+    expect(document.activeElement).toBe(button('Clear conversation'));
+    button('Clear conversation').dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,bubbles:true,cancelable:true}));
+    expect(document.activeElement).toBe(storage);
+    button('Close questions').click(); expect(focusEditor).toHaveBeenCalled(); rects.mockRestore();
+  });
   it('shows live plain text without focus theft or adding provisional text to history', async () => {
     const core = bridge(); const response = deferred<QuestionAnswer>();
     let progress!: (text: string) => void;
@@ -207,7 +233,7 @@ describe('nonmodal drafting questions', () => {
     panel = createQuestionPanel(core as unknown as LocalCore, {current: () => scene, focusEditor}); document.body.append(panel.element); panel.open(); write('Question');
     expect(button('Send to OpenAI').disabled).toBe(true); button('Close questions').click(); result.resolve(ready); await Promise.resolve();
     expect(panel.element.hidden).toBe(true); expect(core.askQuestion).not.toHaveBeenCalled();
-    panel.open(); await vi.waitFor(() => expect(document.body.textContent).toContain('Mock provider ready')); expect(input().value).toBe('');
+    panel.open(); await vi.waitFor(() => expect(document.body.textContent).toContain('Connected to ChatGPT')); expect(input().value).toBe('');
   });
   it('renders provider text inertly, reports usage/incomplete output, and never offers application', async () => {
     const core = bridge(); core.askQuestion.mockImplementation(async request => ({...reply(request, '<img src=x onerror="alert(1)">\n<script>bad()</script>'), incomplete: true, inputTokens: 100, outputTokens: 55}));
