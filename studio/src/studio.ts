@@ -1,3 +1,4 @@
+import { createSceneNavigator } from './sceneNavigator';
 import { assembleChapter, chapterSelection, type AssembledChapter } from './assembledChapter';
 import { createManuscriptSearch, editorOffset, type SearchScope, type SearchMatch } from './manuscriptSearch';
 import {StateEffect} from '@codemirror/state';
@@ -458,15 +459,21 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   searchManuscript.setAttribute('aria-keyshortcuts', 'Control+Shift+F Meta+Shift+F');
   manuscriptBody.append(draftingEntry, searchManuscript, manifests, outline);
   manuscriptPane.append(panelHead(el('h2', 'Manuscript'), 'manuscript', 'manuscript outline'), manuscriptBody);
+  const sceneNavigator = createSceneNavigator(() => editor?.view ?? chapterEditor?.view ?? null);
+  const scenePane = el('section', '', 'panel scene-navigator floating-card');
+  scenePane.setAttribute('aria-label', 'Scene navigator');
+  scenePane.append(panelHead(el('h2', 'Scene navigator'), 'scenes', 'scene navigator'), sceneNavigator.element);
+  toggles.get('scenes')!.setAttribute('aria-controls', sceneNavigator.element.id);
   const preview = el('section', '', 'panel preview');
   preview.setAttribute('aria-label', 'Document preview');
-  const navigator = el('nav', '', 'navigator'); navigator.setAttribute('aria-label', 'Files and manuscript');
-  navigator.append(files, manuscriptPane);
+  const navigator = el('nav', '', 'navigator'); navigator.setAttribute('aria-label', 'Files, manuscript, and scene navigator');
+  navigator.append(files, manuscriptPane, scenePane);
   layout.append(navigator, preview);
   chromeReady = true;
   resetPreview();
   setCollapsed('files', Boolean(collapsed.files));
   setCollapsed('manuscript', Boolean(collapsed.manuscript));
+  setCollapsed('scenes', Boolean(collapsed.scenes));
   root.replaceChildren(glow, layout, pill, status, goalCard, corner);
   const drafting = createDraftingPanel(core, {
     root, repository: () => repository, run: runStructural, verify: verifyStructuralBuffer,
@@ -971,6 +978,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       {key: 'goal', label: 'Set daily goal…', sub: writingSummary ? `Currently ${writingSummary.goal.toLocaleString()} words` : '', run: () => toggleGoal(true)},
       {key: 'files', label: collapsed.files ? 'Show file browser' : 'Hide file browser', right: formatKeys('⌘\\'), run: () => setCollapsed('files', !collapsed.files)},
       {key: 'outline', label: collapsed.manuscript ? 'Show manuscript outline' : 'Hide manuscript outline', run: () => setCollapsed('manuscript', !collapsed.manuscript)},
+      {key: 'scene-navigator', label: collapsed.scenes ? 'Show scene navigator' : 'Hide scene navigator', run: () => setCollapsed('scenes', !collapsed.scenes)},
       {key: 'shortcuts', label: 'Keyboard shortcuts', right: formatKeys('⌘/'), run: () => toggleHelp(true)},
     ];
     return commands.filter((item): item is PaletteItem => Boolean(item));
@@ -1046,6 +1054,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; recoveryErrorMessage = null; recovery = null; recoveryPending = false; writePaused = null;
     chapterEditor?.destroy(); chapterEditor = null;
     editor?.destroy(); editor = null; opened = null; saveButton = null; dirtyBadge = null; setDirty(false);
+    sceneNavigator.refresh();
     const welcome = el('div', '', 'welcome');
     welcome.append(el('p', repository ? repository.name : 'Heinlein Studio', 'eyebrow'), el('h2', repository ? 'A quiet place to write' : 'A quiet place to read'),
       el('p', repository ? 'Pick a scene to start writing. Source text is displayed exactly as stored, including Markdown and frontmatter.' : 'Select a scene or file. Source text is displayed exactly as stored, including Markdown and frontmatter.', 'empty'));
@@ -1283,7 +1292,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         edits++;
         if (writePaused === 'discard' && !repositoryDetached) writePaused = null;
         setDirty(raw !== opened?.text);
-        scheduleAutosave();
+        scheduleAutosave(); sceneNavigator.schedule();
       }, () => { void saveCurrent(); });
       editor.view.dispatch({effects: StateEffect.appendConfig.of(EditorView.updateListener.of(update => {if (update.docChanged || update.selectionSet) draftingQuestions?.stateChanged();}))});
       selectionAsk = createSelectionAskAction(editor.view, {current: draftingSelectionState, fallback: askDrafting, keys: formatKeys('⌘J'),
@@ -1292,6 +1301,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if (recoveryPending && draft) showRecoveryChoice(doc, draft, host);
       updateSaveState();
     }
+    sceneNavigator.refresh();
     renderPill(); updateSaveState();
     title.focus({ preventScroll: true });
   }
@@ -1442,6 +1452,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

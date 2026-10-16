@@ -192,7 +192,7 @@ describe('manifest discovery warnings', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: '\\', ctrlKey: true }));
     expect(layout.classList.contains('files-collapsed')).toBe(false);
     document.querySelector<HTMLButtonElement>('.manuscript .panel-toggle')!.click();
-    expect(JSON.parse(store.get('heinlein-studio-collapsed-v1')!)).toEqual({ files: false, manuscript: true });
+    expect(JSON.parse(store.get('heinlein-studio-collapsed-v1')!)).toEqual({ files: false, manuscript: true, scenes: false });
     mountStudio(document.body.firstElementChild as HTMLElement, bridge());
     expect(document.querySelector('.workspace')!.classList.contains('manuscript-collapsed')).toBe(true);
     vi.unstubAllGlobals();
