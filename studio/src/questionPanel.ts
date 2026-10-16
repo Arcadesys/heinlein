@@ -155,17 +155,17 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const cancel = button('Cancel request', () => {
     if (!pending && !preparing) return;
     const wasSent = Boolean(pending); const wasRevision = pendingRevision; cancelPending(true);
-    status.textContent = !wasSent ? 'Local preparation canceled. No request was sent.' : wasRevision ? 'Stopped locally. A pending suggestion may already have been recorded; check Revision proposals. OpenAI usage may still count. Your manuscript was not changed.' : 'Canceled locally. OpenAI may already have processed the request; it can still count toward your plan usage.'; update();
+    status.textContent = !wasSent ? 'Local preparation canceled. No request was sent.' : wasRevision ? 'Stopped locally. A pending suggestion may already have been recorded; check Proposed revisions. OpenAI usage may still count. Your manuscript was not changed.' : 'Canceled locally. OpenAI may already have processed the request; it can still count toward your plan usage.'; update();
   }); cancel.hidden = true;
   const reset = button('Clear conversation', () => {
     const wasPending = Boolean(pending); const wasRevision = pendingRevision; resetContents();
     status.textContent = wasPending ? 'Conversation cleared and request canceled locally. Previously sent text cannot be recalled from OpenAI.' : 'Conversation cleared from this window. Previously sent text cannot be recalled from OpenAI.';
-    if (wasRevision) status.textContent += ' A pending suggestion may already have been recorded; check Revision proposals.';
+    if (wasRevision) status.textContent += ' A pending suggestion may already have been recorded; check Proposed revisions.';
     update(); question.focus({preventScroll: true});
   });
   const actions = el('div', '', 'question-actions'); actions.append(send, cancel, button('Return to writing', () => hooks.focusEditor()), reset);
   const transcript = el('section', '', 'question-transcript'); transcript.setAttribute('aria-label', 'Question conversation');
-  const lifetime = el('p', 'Conversation text stays only in this window, up to four turns and 64,000 UTF-8 bytes. Closing questions or changing scenes/folders clears it. Earlier context snapshots and revision replacements are not added to conversation history. Revision source snapshots stay local until this panel is cleared; saved proposal records remain available in Revision proposals. Stopping a request may leave an already-recorded pending suggestion.', 'muted');
+  const lifetime = el('p', 'Conversation text stays only in this window, up to four turns and 64,000 UTF-8 bytes. Closing questions or changing scenes/folders clears it. Earlier context snapshots and revision replacements are not added to conversation history. Revision source snapshots stay local until this panel is cleared; saved proposal records remain available in Proposed revisions. Stopping a request may leave an already-recorded pending suggestion.', 'muted');
   element.append(header, connection, auth, guidance, modeLabel, targetSection, questionLabel, count, requestNote, contextHeading, contextSource, contextText, contextActions, historyDetails, disclosure, actions, status, transcript, lifetime);
   question.addEventListener('input', update);
   mode.addEventListener('change', () => {
@@ -334,9 +334,9 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const request = pending; const wasRevision = pendingRevision; pending = null; pendingRevision = false;
     if (request && core.cancelQuestion) {
       try {void core.cancelQuestion(request.requestId).then(accepted => {
-        if (reportOutcome && wasRevision && !accepted && live() && epoch === version) status.textContent = 'This revision request is already finishing. Its pending suggestion may have been recorded; check Revision proposals. Your manuscript was not changed.';
+        if (reportOutcome && wasRevision && !accepted && live() && epoch === version) status.textContent = 'This revision request is already finishing. Its pending suggestion may have been recorded; check Proposed revisions. Your manuscript was not changed.';
       }).catch(() => {
-        if (reportOutcome && wasRevision && live() && epoch === version) status.textContent = 'Stopped locally, but cancellation could not be confirmed. Check Revision proposals for a pending suggestion. Your manuscript was not changed.';
+        if (reportOutcome && wasRevision && live() && epoch === version) status.textContent = 'Stopped locally, but cancellation could not be confirmed. Check Proposed revisions for a pending suggestion. Your manuscript was not changed.';
       });} catch { /* local invalidation still wins */ }
     }
   }
@@ -402,7 +402,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       const revision = turn.revision;
       if (revision) {
         const note = el('p', '', 'question-revision-status'); note.setAttribute('role', 'status');
-        const review = button('Review suggested revision', () => {
+        const review = button('Review proposed revision', () => {
           if (revision.busy || revision.rejected) return;
           const stale = revisionGuard(revision); if (stale) {note.textContent = stale; review.disabled = true; return;}
           revision.busy = true; refreshAction();
@@ -410,7 +410,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
             if (live() && turns.includes(turn)) status.textContent = 'Revision review could not be opened. Check the local proposals and receipts.';
           }).finally(() => {revision.busy = false; if (live() && turns.includes(turn)) refreshAction();});
         });
-        const reject = button('Reject suggested revision', () => {
+        const reject = button('Reject proposed revision', () => {
           if (!live() || revision.busy || revision.rejected || !core.rejectProposal) return;
           revision.busy = true; refreshAction(); const epoch = version;
           void core.rejectProposal(revision.snapshot.repositoryId, revision.proposalId).then(receipt => {
@@ -466,7 +466,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       if (authBusy || configuration?.signInPending) {status.textContent = 'Finish or cancel the account connection before capturing a selection.'; return false;}
       const canceled = Boolean(pending) || preparing; const wasRevision = pendingRevision; if (canceled) cancelPending(true);
       capture('selection'); question.focus({preventScroll: true});
-      if (canceled) status.textContent = `Previous request stopped locally; it may still count toward plan usage.${wasRevision ? ' A pending suggestion may already exist; check Revision proposals.' : ''} Selection captured. Write your question, then explicitly choose Send.`;
+      if (canceled) status.textContent = `Previous request stopped locally; it may still count toward plan usage.${wasRevision ? ' A pending suggestion may already exist; check Proposed revisions.' : ''} Selection captured. Write your question, then explicitly choose Send.`;
       return true;
     },
     visible: () => !element.hidden,

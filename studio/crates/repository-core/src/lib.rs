@@ -76,7 +76,7 @@ impl fmt::Display for Error {
             Self::InvalidManifest => "Scene manifest is invalid or unsupported",
             Self::Io => "Repository I/O failed; the draft was not saved",
             Self::Conflict => "Document changed on disk; reload before saving",
-            Self::ReadOnly => "Only non-generated Markdown documents can be saved",
+            Self::ReadOnly => "This file is read-only. Open a source scene to edit an assembled chapter.",
             Self::SaveUncertain => {
                 "Document replaced, but durability could not be confirmed; reload before retrying"
             }
@@ -182,6 +182,26 @@ struct RawChapter {
 #[derive(Deserialize)]
 struct RawSource {
     path: String,
+}
+
+// Some manifests use `source` as a chapter's entry scene, not an export.
+// Explicit output declarations always win; otherwise an in-chapter scene is
+// author-controlled source, and a distinct chapter source is assembled output.
+fn declares_assembled_path(raw: &RawManifest, base: &str, path: &str) -> bool {
+    raw.sources
+        .iter()
+        .any(|source| join(base, &source.path).as_deref() == Ok(path))
+        || raw
+            .volumes
+            .iter()
+            .flat_map(|volume| &volume.chapters)
+            .any(|chapter| {
+                join(base, &chapter.source).as_deref() == Ok(path)
+                    && !chapter
+                        .scenes
+                        .iter()
+                        .any(|scene| join(base, scene).as_deref() == Ok(path))
+            })
 }
 
 pub struct Repository {
@@ -611,16 +631,7 @@ impl Repository {
                     if raw.schema_version != 1 {
                         return Err(Error::InvalidManifest);
                     }
-                    if raw
-                        .sources
-                        .iter()
-                        .any(|s| join(base, &s.path).as_deref() == Ok(path))
-                        || raw
-                            .volumes
-                            .iter()
-                            .flat_map(|v| &v.chapters)
-                            .any(|c| join(base, &c.source).as_deref() == Ok(path))
-                    {
+                    if declares_assembled_path(&raw, base, path) {
                         return Err(Error::ReadOnly);
                     }
                 }
@@ -722,17 +733,7 @@ impl Repository {
             match self.raw(&manifest, MAX_MANIFEST_BYTES, true) {
                 Ok(text) => {
                     if let Ok(raw) = serde_json::from_str::<RawManifest>(&text) {
-                        if raw.schema_version == 1
-                            && (raw
-                                .sources
-                                .iter()
-                                .any(|s| join(base, &s.path).as_deref() == Ok(path))
-                                || raw
-                                    .volumes
-                                    .iter()
-                                    .flat_map(|v| &v.chapters)
-                                    .any(|c| join(base, &c.source).as_deref() == Ok(path)))
-                        {
+                        if raw.schema_version == 1 && declares_assembled_path(&raw, base, path) {
                             return Ok(true);
                         }
                     }

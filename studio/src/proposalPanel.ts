@@ -95,7 +95,7 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
     try {
       const result = await core.listProposals!(repositoryId);
       if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
-      const node = dialog('Revision proposals and receipts');
+      const node = dialog('Proposed revisions and receipts');
       node.append(el('p', 'OpenAI and local MCP clients can suggest revisions. Only an explicit author action in Studio can apply a reviewed whole-scene change.', 'muted'));
       node.append(el('h3', 'Pending proposals'));
       if (!result.pending.length) node.append(el('p', 'No pending proposals for this repository.'));
