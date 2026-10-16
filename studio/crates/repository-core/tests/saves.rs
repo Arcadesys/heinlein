@@ -158,3 +158,41 @@ fn readonly_file_failure_preserves_original_and_leaves_no_temporary() {
     );
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
 }
+
+#[test]
+fn chapter_entry_scene_is_editable_but_explicit_outputs_stay_protected() {
+    let (dir, repo) = fixture();
+    // Mirrors manifests where chapter.source names the first source scene.
+    let manifest = r#"{"schema_version":1,"project":"Book","volumes":[{"number":1,"title":"V","directory":"v","chapters":[{"number":1,"title":"C","directory":"v/c","source":"scene.md","scenes":["scene.md","second.md"]}]}],"sources":[]}"#;
+    fs::write(dir.path().join("scene-manifest.json"), manifest).unwrap();
+    let before = repo.read("scene.md").unwrap();
+    assert!(!before.generated_compatibility);
+    let saved = repo
+        .save(
+            "scene.md",
+            &before.content_hash,
+            "Author edit—preserved.\r\n",
+        )
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(dir.path().join("scene.md")).unwrap(),
+        saved.text
+    );
+    assert!(!saved.generated_compatibility);
+    // An explicit generated declaration cannot be bypassed by listing it as a scene.
+    fs::write(
+        dir.path().join("scene-manifest.json"),
+        manifest.replace("\"sources\":[]", "\"sources\":[{\"path\":\"scene.md\"}]"),
+    )
+    .unwrap();
+    assert!(repo.read("scene.md").unwrap().generated_compatibility);
+    assert_eq!(
+        repo.save("scene.md", &saved.content_hash, "Must not write")
+            .unwrap_err(),
+        Error::ReadOnly
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("scene.md")).unwrap(),
+        saved.text
+    );
+}

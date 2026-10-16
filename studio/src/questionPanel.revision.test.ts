@@ -27,7 +27,7 @@ async function start(bridge = core()) {
   panel = createQuestionPanel(bridge as unknown as LocalCore, {current: () => ({...state, canCapture: true}), selectionState: () => state, revisionUnavailable: () => unavailable, prepareRevision: prepare, reviewRevision: review, focusEditor: vi.fn()});
   document.body.append(panel.element); panel.open(); await vi.waitFor(() => expect(button('Recheck OpenAI setup').disabled).toBe(false)); return bridge;
 }
-async function sendRevision() {mode('revision'); write(); button('Send to OpenAI').click(); await vi.waitFor(() => expect(button('Review suggested revision')).toBeDefined());}
+async function sendRevision() {mode('revision'); write(); button('Send to OpenAI').click(); await vi.waitFor(() => expect(button('Review proposed revision')).toBeDefined());}
 beforeEach(async () => {
   vi.stubGlobal('crypto', webcrypto); document.body.replaceChildren(); review.mockClear(); prepare.mockReset(); prepare.mockResolvedValue(); unavailable = null;
   const source = 'Before\r\nA 🐺 passage.\r\nAfter';
@@ -39,7 +39,7 @@ afterEach(() => {panel?.destroy(); vi.unstubAllGlobals();});
 describe('explicit revision requests', () => {
   it('keeps ordinary Ask as attributed advice and never calls the revision command', async () => {
     const bridge = core(); bridge.askQuestion.mockImplementation(async request => ({...answer(request), text: 'Advice only'})); await start(bridge); write(); button('Send to OpenAI').click(); await vi.waitFor(() => expect(panel.element.textContent).toContain('Advice only'));
-    expect(bridge.askQuestion).toHaveBeenCalledTimes(1); expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled(); expect(button('Review suggested revision')).toBeUndefined();
+    expect(bridge.askQuestion).toHaveBeenCalledTimes(1); expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled(); expect(button('Review proposed revision')).toBeUndefined();
     expect(panel.element.textContent).toContain('Recorded origin: native OpenAI'); expect(panel.element.textContent).toContain('not authenticated authorship');
   });
   it('previews exact target separately and sends only bounded optional context with a saved UTF-8 binding', async () => {
@@ -58,7 +58,7 @@ describe('explicit revision requests', () => {
     await sendRevision(); expect(bridge.suggestQuestionRevision.mock.calls[0][0].history).toEqual([]);
     expect(panel.element.textContent).toContain('Revision requests include no conversation history');
     expect(document.querySelector('[aria-label="Suggested replacement 2"]')!.textContent).toBe('A different 🐺 passage.'); expect(review).not.toHaveBeenCalled();
-    button('Review suggested revision').click(); await vi.waitFor(() => expect(review).toHaveBeenCalledTimes(1));
+    button('Review proposed revision').click(); await vi.waitFor(() => expect(review).toHaveBeenCalledTimes(1));
     expect(review.mock.calls[0][0]).toBe('proposal-1'); expect(review.mock.calls[0][2]()).toBeNull();
   });
   it('blocks dirty saved-source requests while ordinary Ask remains available', async () => {
@@ -73,14 +73,14 @@ describe('explicit revision requests', () => {
     if (change === 'undo') state.revision += 2;
     if (change === 'scene') state.documentEpoch++;
     if (change === 'hash') state.sourceHash = 'different';
-    panel.stateChanged(); expect(button('Review suggested revision').disabled).toBe(true); button('Review suggested revision').click(); expect(review).not.toHaveBeenCalled();
-    expect(panel.element.textContent).toContain('A suggested change, with reasoning.'); expect(button('Reject suggested revision').disabled).toBe(false);
-    button('Reject suggested revision').click(); await vi.waitFor(() => expect(bridge.rejectProposal).toHaveBeenCalledWith('repo', 'proposal-1'));
+    panel.stateChanged(); expect(button('Review proposed revision').disabled).toBe(true); button('Review proposed revision').click(); expect(review).not.toHaveBeenCalled();
+    expect(panel.element.textContent).toContain('A suggested change, with reasoning.'); expect(button('Reject proposed revision').disabled).toBe(false);
+    button('Reject proposed revision').click(); await vi.waitFor(() => expect(bridge.rejectProposal).toHaveBeenCalledWith('repo', 'proposal-1'));
   });
   it('invalidates review when context is recaptured and records explicit rejection only once', async () => {
-    const bridge = await start(); await sendRevision(); button('Capture current scene').click(); expect(button('Review suggested revision').disabled).toBe(true);
-    button('Reject suggested revision').click(); button('Reject suggested revision').click(); await vi.waitFor(() => expect(panel.element.textContent).toContain('rejection-1'));
-    expect(bridge.rejectProposal).toHaveBeenCalledTimes(1); expect(button('Reject suggested revision').disabled).toBe(true); expect(review).not.toHaveBeenCalled();
+    const bridge = await start(); await sendRevision(); button('Capture current scene').click(); expect(button('Review proposed revision').disabled).toBe(true);
+    button('Reject proposed revision').click(); button('Reject proposed revision').click(); await vi.waitFor(() => expect(panel.element.textContent).toContain('rejection-1'));
+    expect(bridge.rejectProposal).toHaveBeenCalledTimes(1); expect(button('Reject proposed revision').disabled).toBe(true); expect(review).not.toHaveBeenCalled();
   });
   it('waits for local preparation and rejects edit/undo before provider dispatch', async () => {
     const waiting = deferred<void>(); prepare.mockReturnValueOnce(waiting.promise); const bridge = await start(); mode('revision'); write(); button('Send to OpenAI').click();
@@ -90,28 +90,28 @@ describe('explicit revision requests', () => {
   it.each(['close', 'cancel', 'clear'] as const)('ignores a prepared revision after %s', async action => {
     const waiting = deferred<void>(); prepare.mockReturnValueOnce(waiting.promise); const bridge = await start(); mode('revision'); write(); button('Send to OpenAI').click(); await vi.waitFor(() => expect(prepare).toHaveBeenCalled());
     button(action === 'close' ? 'Close questions' : action === 'cancel' ? 'Cancel request' : 'Clear conversation').click(); waiting.resolve(); await Promise.resolve(); await Promise.resolve();
-    expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled(); expect(button('Review suggested revision')).toBeUndefined();
+    expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled(); expect(button('Review proposed revision')).toBeUndefined();
   });
   it('keeps a late stale suggestion readable without enabling review or automatic replacement', async () => {
     const bridge = core(); const result = deferred<QuestionRevisionAnswer>(); bridge.suggestQuestionRevision.mockReturnValueOnce(result.promise); await start(bridge); mode('revision'); write(); button('Send to OpenAI').click();
     await vi.waitFor(() => expect(bridge.suggestQuestionRevision).toHaveBeenCalledTimes(1)); state.source += ' new draft'; state.revision++; panel.stateChanged();
-    result.resolve(answer(bridge.suggestQuestionRevision.mock.calls[0][0])); await vi.waitFor(() => expect(button('Review suggested revision')).toBeDefined());
-    expect(button('Review suggested revision').disabled).toBe(true); expect(panel.element.textContent).toContain('A suggested change, with reasoning.'); expect(state.source).toContain('new draft'); expect(review).not.toHaveBeenCalled();
+    result.resolve(answer(bridge.suggestQuestionRevision.mock.calls[0][0])); await vi.waitFor(() => expect(button('Review proposed revision')).toBeDefined());
+    expect(button('Review proposed revision').disabled).toBe(true); expect(panel.element.textContent).toContain('A suggested change, with reasoning.'); expect(state.source).toContain('new draft'); expect(review).not.toHaveBeenCalled();
   });
   it('reports a native commit already finishing and ignores its late response after local cancellation', async () => {
     const bridge = core(); const waiting = deferred<QuestionRevisionAnswer>(); bridge.suggestQuestionRevision.mockReturnValueOnce(waiting.promise); bridge.cancelQuestion.mockResolvedValueOnce(false);
     await start(bridge); mode('revision'); write(); button('Send to OpenAI').click(); await vi.waitFor(() => expect(bridge.suggestQuestionRevision).toHaveBeenCalledTimes(1));
     button('Cancel request').click(); await vi.waitFor(() => expect(panel.element.textContent).toContain('already finishing'));
-    expect(panel.element.textContent).toContain('check Revision proposals'); waiting.resolve(answer(bridge.suggestQuestionRevision.mock.calls[0][0])); await Promise.resolve(); expect(button('Review suggested revision')).toBeUndefined();
+    expect(panel.element.textContent).toContain('check Proposed revisions'); waiting.resolve(answer(bridge.suggestQuestionRevision.mock.calls[0][0])); await Promise.resolve(); expect(button('Review proposed revision')).toBeUndefined();
   });
   it('reports unconfirmed rejection without changing attribution or retrying automatically', async () => {
-    const bridge = core(); bridge.rejectProposal.mockRejectedValueOnce(new Error('write unavailable')); await start(bridge); await sendRevision(); button('Reject suggested revision').click();
+    const bridge = core(); bridge.rejectProposal.mockRejectedValueOnce(new Error('write unavailable')); await start(bridge); await sendRevision(); button('Reject proposed revision').click();
     await vi.waitFor(() => expect(panel.element.textContent).toContain('Rejection could not be confirmed')); expect(bridge.rejectProposal).toHaveBeenCalledTimes(1); expect(review).not.toHaveBeenCalled();
     expect(panel.element.textContent).toContain('native OpenAI');
   });
   it('does not restore rejected proposal text after closing during the native decision', async () => {
     const bridge = core(); const waiting = deferred<Awaited<ReturnType<typeof bridge.rejectProposal>>>(); const receipt = await bridge.rejectProposal('repo', 'proposal-1'); bridge.rejectProposal.mockReturnValueOnce(waiting.promise);
-    await start(bridge); await sendRevision(); button('Reject suggested revision').click(); button('Close questions').click(); waiting.resolve(receipt); await Promise.resolve();
+    await start(bridge); await sendRevision(); button('Reject proposed revision').click(); button('Close questions').click(); waiting.resolve(receipt); await Promise.resolve();
     expect(panel.element.textContent).not.toContain('A different 🐺 passage.'); expect(panel.element.textContent).not.toContain('rejection-1');
   });
   it('rejects mismatched saved hashes and oversized total payloads before dispatch', async () => {
@@ -133,6 +133,6 @@ describe('explicit revision requests', () => {
   });
   it('rejects incomplete or invalid revision results without offering review', async () => {
     const bridge = core(); bridge.suggestQuestionRevision.mockImplementation(async request => ({...answer(request), incomplete: true})); await start(bridge); mode('revision'); write(); button('Send to OpenAI').click();
-    await vi.waitFor(() => expect(panel.element.textContent).toContain('revision response was incomplete')); expect(button('Review suggested revision')).toBeUndefined();
+    await vi.waitFor(() => expect(panel.element.textContent).toContain('revision response was incomplete')); expect(button('Review proposed revision')).toBeUndefined();
   });
 });
