@@ -69,6 +69,14 @@ describe('assembled chapter to proposed revision', () => {
     button('Open source scene 1 · one.md').click(); await settle();
     expect(view().state.readOnly).toBe(false); expect(document.querySelector('.page-meta .path')?.textContent).toBe('one.md');
   });
+  it('navigates breaks in an assembled chapter by exact position', async () => {
+    const {core, files} = bridge(); files.set('one.md', 'Opening.\n---\nRepeated line.\n---\nRepeated line.');
+    await start(core);
+    const entries = [...document.querySelectorAll<HTMLButtonElement>('.scene-break-list button')];
+    expect(entries).toHaveLength(2); entries[1].click();
+    expect(view().state.selection.main.from).toBe(view().state.doc.toString().lastIndexOf('Repeated line.'));
+    expect(view().state.readOnly).toBe(true); expect(core.saveDocument).not.toHaveBeenCalled();
+  });
   it('opens source scenes directly for ordinary editing', async () => {
     const {core} = bridge(); await start(core); button('Open source scene 1 · one.md').click(); await settle();
     expect(view().state.readOnly).toBe(false); expect(view().state.doc.toString()).toContain('title: First');
