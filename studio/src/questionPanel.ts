@@ -191,6 +191,10 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const latestReply = button('Read latest reply', () => (integrated ? transcript.firstElementChild : transcript.lastElementChild)?.scrollIntoView({block: 'start'})); latestReply.hidden = true;
   const actions = el('div', '', 'question-actions question-send-actions'); actions.append(send, cancel, button('Return to writing', () => hooks.focusEditor()), latestReply);
   const transcript = el('section', '', 'question-transcript'); transcript.setAttribute('aria-label', 'Question conversation');
+  const streaming = el('section', '', 'question-stream-preview'); streaming.hidden = true;
+  const streamingLabel = el('h4', 'OpenAI · Streaming answer');
+  const streamingText = preview('', 'Live answer preview');
+  streaming.setAttribute('aria-busy', 'false'); streaming.append(streamingLabel, streamingText);
   const lifetime = el('p', 'Questions and answers are saved on this Mac for this project, account and model, including across scene changes and app restarts. The latest 100 turns are retained within 512 KB. Only recent messages that fit the request limit are sent. Exact scene snapshots and revision targets are not stored in chat history; saved revision proposals remain in Proposed revisions. Clear conversation removes this saved chat.', 'muted');
   const settings = el('details', '', 'question-settings'); settings.append(el('summary', 'Connection & conversation details'), connection, auth, guidance, count, historyDetails, disclosure, lifetime, reset);
   const welcome = el('section', '', 'question-welcome'); welcome.append(el('h4', 'A second pair of eyes'), el('p', 'Explore an idea, work through a scene, or ask what a reader might notice.'));
@@ -200,7 +204,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   }
   welcome.append(starters, el('p', 'Add context below when you want to discuss your writing. Nothing is sent until you choose Send.', 'muted'));
   const waiting = el('div', '', 'question-waiting'); waiting.hidden = true; waiting.setAttribute('role', 'status');
-  const conversation = el('div', '', 'question-conversation'); conversation.tabIndex = 0; conversation.setAttribute('aria-label', 'Conversation'); conversation.append(welcome, transcript, waiting);
+  const conversation = el('div', '', 'question-conversation'); conversation.tabIndex = 0; conversation.setAttribute('aria-label', 'Conversation'); conversation.append(welcome, transcript, waiting, streaming);
   contextDetails.append(contextHeading, contextSource, contextActions, contextText);
   const composer = el('section', '', 'question-composer'); composer.setAttribute('aria-label', 'Write a message');
   const composerTop = el('div', '', 'question-composer-top'); composerTop.append(modeLabel);
@@ -214,7 +218,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const connectionArea = el('section', '', 'question-connection-area'); connectionArea.setAttribute('aria-label', 'Account and storage'); connectionArea.append(connection, auth, settings);
     settings.querySelector('summary')!.textContent = 'Storage and revision safety'; settings.append(persistence);
     composer.replaceChildren(modeLabel, questionLabel, requestNote, actions, contextSummary, contextDetails, status);
-    element.append(header, currentTitle, fullReview, passagePicker, transcript, waiting, composer, connectionArea);
+    element.append(header, currentTitle, fullReview, passagePicker, transcript, waiting, streaming, composer, connectionArea);
   } else element.append(header, settings, conversation, composer);
 
   const layoutQuery = window.matchMedia?.('(max-width: 1399px)');
@@ -449,6 +453,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   }
   function cancelPending(reportOutcome = false) {
     const epoch = ++version; preparing = false;
+    if (!streaming.hidden) { streamingLabel.textContent = 'OpenAI · Interrupted preview · Not added to history'; streaming.setAttribute('aria-busy', 'false'); }
     const request = pending; const wasRevision = pendingRevision; pending = null; pendingRevision = false;
     if (request && core.cancelQuestion) {
       try {void core.cancelQuestion(request.requestId).then(accepted => {
@@ -462,7 +467,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     if (integrated) {passages.length = 0; activePassage = null; projectTurns = [];}
 
     contextMode='scene'; contextVersion++; cancelPending(); mode.value = 'ask'; target = null; targetText.textContent = ''; targetNote.textContent = ''; targetSection.hidden = true; revisionActions.length = 0; turns = []; forgotten = 0; context = ''; contextLabel = 'None. No manuscript text will be sent.'; question.value = ''; question.placeholder = 'Ask about an idea, a detail, or where to go next…'; transcript.replaceChildren(); contextDetails.open = false;
-    waiting.textContent = ''; waiting.hidden = true; contextSummary.textContent = '';
+    waiting.textContent = ''; waiting.hidden = true; contextSummary.textContent = ''; streaming.hidden = true; streamingText.textContent = '';
     // Closing also removes private snapshots from hidden DOM, not just state.
     contextText.textContent = ''; contextText.hidden = true; contextSource.textContent = contextLabel;
     historyText.replaceChildren(); historyNote.textContent = ''; historySummary.textContent = 'Conversation history to send · 0 messages';
@@ -489,9 +494,15 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
         if (snapshot.sourceHash !== snapshot.sourceSha256) throw new Error('The selected source does not match its saved hash. Save and capture the selection again.');
       }
       preparing = false; pending = request; pendingRevision = Boolean(snapshot); update();
+      streaming.hidden = true; streamingText.textContent = ''; streamingLabel.textContent = 'OpenAI · Streaming answer';
       const answer = snapshot
         ? await core.suggestQuestionRevision!(request, binding, {repositoryId: snapshot.repositoryId, path: snapshot.path, sourceHash: snapshot.sourceHash, fromUtf8: snapshot.fromUtf8, toUtf8: snapshot.toUtf8, selectedText: snapshot.selectedText})
-        : await core.askQuestion(request, binding);
+        : await core.askQuestion(request, binding, text => {
+          if (!live() || version !== epoch || pending !== request || typeof text !== 'string' || !plainUnicode(text) || questionBytes(text) > QUESTION_LIMITS.answer) return;
+          const first = streaming.hidden;
+          streamingText.textContent = text; streaming.hidden = !text; streaming.setAttribute('aria-busy', 'true');
+          if (first && text) status.textContent = 'Receiving OpenAI answer… Preview is incomplete until the request finishes.';
+        });
       if (!live() || version !== epoch || pending !== request) return;
       if (answer.requestId !== request.requestId) throw new Error('The response did not match this question. It was ignored.');
       if (!answer.text?.trim()) throw new Error('OpenAI returned no text. No retry was sent automatically.');
@@ -506,11 +517,12 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
 
       while(turns.reduce((n,t)=>n+(t.revision?questionBytes(t.revision.snapshot.selectedText)+questionBytes(t.revision.replacementText)+questionBytes(t.answer.text):0),0)>QUESTION_LIMITS.memory){const old=turns.find(t=>t.revision);if(!old)break;old.proposalId=old.revision!.proposalId;delete old.revision;}
       question.value = ''; if (integrated) questionLabel.firstChild!.textContent = 'Ask a follow-up'; question.placeholder = 'Ask a follow-up…';
+      streaming.hidden = true; streamingText.textContent = ''; streaming.setAttribute('aria-busy', 'false');
       persist(); renderTranscript();
       const latest = transcript.lastElementChild as HTMLElement | null;
       if (latest && !integrated && !element.hidden) conversation.scrollTop += latest.getBoundingClientRect().top - conversation.getBoundingClientRect().top - 20;
       status.textContent = revision ? 'Suggested revision recorded. Review it or reject it below. Your manuscript has not been changed.' : answer.incomplete ? 'OpenAI returned an incomplete answer. It is marked below; nothing was retried automatically.' : 'Answer ready. Your manuscript has not been changed.';
-    } catch (error) { if (live() && version === epoch) {status.textContent = errorMessage(error); void checkStatus();} }
+    } catch (error) { if (live() && version === epoch) {status.textContent = errorMessage(error); if (!streaming.hidden) { streamingLabel.textContent = 'OpenAI · Interrupted preview · Not added to history'; streaming.setAttribute('aria-busy', 'false'); } void checkStatus();} }
     finally { if (live() && version === epoch) {preparing = false; pending = null; pendingRevision = false; update();} }
   }
   function revisionGuard(revision: Revision, reviewing = false) {

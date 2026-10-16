@@ -386,6 +386,7 @@ pub(crate) async fn ask_question(
     host: State<'_, QuestionHost>,
     request: QuestionRequest,
     connection: QuestionConnection,
+    on_progress: tauri::ipc::Channel<String>,
 ) -> Result<QuestionAnswer, NativeError> {
     main_window(&window)?;
     request.validate()?;
@@ -405,9 +406,12 @@ pub(crate) async fn ask_question(
     {
         return Err(QuestionError::stale_connection().into());
     }
-    let config = Configuration::new(&credentials.access_token, &credentials.model)?
+    let mut config = Configuration::new(&credentials.access_token, &credentials.model)?
         .with_account(&credentials.account_id)?
         .with_cancellation(credentials.cancelled);
+    config = config.with_progress(move |text| {
+        let _ = on_progress.send(text);
+    });
     // Cancel records the ID even while native authentication is still refreshing.
     // The auth lease also invalidates a not-yet-started or active HTTP request.
     let answer = host.questions.ask_reserved(request, config, permit).await?;

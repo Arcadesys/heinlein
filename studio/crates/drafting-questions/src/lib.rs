@@ -224,6 +224,7 @@ pub struct Configuration {
     model: String,
     cancelled: Option<watch::Receiver<bool>>,
     account_id: String,
+    progress: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 impl Configuration {
@@ -243,7 +244,14 @@ impl Configuration {
             model: model.into(),
             cancelled: None,
             account_id: String::new(),
+            progress: None,
         })
+    }
+
+    /// Provisional text only; callers must await final validation.
+    pub fn with_progress(mut self, progress: impl Fn(String) + Send + Sync + 'static) -> Self {
+        self.progress = Some(Arc::new(progress));
+        self
     }
 
     pub fn model(&self) -> &str {
@@ -985,6 +993,8 @@ struct ResponseStream {
     response_id: Option<String>,
     completed_items: Vec<serde_json::Value>,
     completed_bytes: usize,
+    preview: String,
+    preview_changed: bool,
 }
 
 impl ResponseStream {
@@ -1033,6 +1043,16 @@ impl ResponseStream {
         let event: serde_json::Value = serde_json::from_slice(&data)
             .map_err(|_| QuestionError::invalid_response().at(ProtocolDiagnostic::EventJson))?;
         match event.get("type").and_then(serde_json::Value::as_str) {
+            Some("response.output_text.delta") => {
+                let delta = event["delta"]
+                    .as_str()
+                    .ok_or_else(QuestionError::invalid_response)?;
+                if delta.len() > MAX_ANSWER_BYTES.saturating_sub(self.preview.len()) {
+                    return Err(QuestionError::response_too_large());
+                }
+                self.preview.push_str(delta);
+                self.preview_changed = true;
+            }
             Some("response.created") => {
                 let id = event["response"]["id"]
                     .as_str()
@@ -1179,6 +1199,14 @@ impl ResponseBody {
             Self::Json(bytes) => append_bounded(bytes, chunk),
         }
     }
+    fn take_preview(&mut self) -> Option<String> {
+        if let Self::Events(stream) = self {
+            if std::mem::take(&mut stream.preview_changed) {
+                return Some(stream.preview.clone());
+            }
+        }
+        None
+    }
     fn terminal(&self) -> bool {
         matches!(self, Self::Events(stream) if stream.terminal.is_some())
     }
@@ -1293,6 +1321,11 @@ async fn send_decoded_request(
     {
         body.push(&chunk)
             .map_err(|error| error.with_http(status, request_id.as_deref()))?;
+        if !revision {
+            if let (Some(progress), Some(text)) = (&config.progress, body.take_preview()) {
+                progress(text);
+            }
+        }
         if body.terminal() {
             break;
         }

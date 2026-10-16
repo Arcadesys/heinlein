@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-vi.mock('@tauri-apps/api/core', () => ({invoke: vi.fn(async () => null), isTauri: vi.fn(() => true)}));
+vi.mock('@tauri-apps/api/core', () => ({Channel: class { onmessage = (_text: string) => {}; }, invoke: vi.fn(async () => null), isTauri: vi.fn(() => true)}));
 import { invoke } from '@tauri-apps/api/core';
 import { localCore } from './localCore';
 describe('local Core bridge contract', () => {
@@ -15,9 +15,12 @@ describe('local Core bridge contract', () => {
   it('uses the narrow native question boundary without credentials or repository paths', async () => {
     const request = {requestId: 'unique-id', question: 'What happens next?', context: 'Exact\r\nselection', history: [{role: 'user' as const, text: 'Earlier question'}, {role: 'assistant' as const, text: 'Earlier answer'}]};
     const connection = {generation: 7, accountId: 'opaque-account', model: 'mock-model'};
-    await localCore.questionStatus!(); await localCore.askQuestion!(request, connection); await localCore.cancelQuestion!('unique-id');
+    const progress = vi.fn();
+    await localCore.questionStatus!(); await localCore.askQuestion!(request, connection, progress); await localCore.cancelQuestion!('unique-id');
+    const channel = (vi.mocked(invoke).mock.calls[1][1] as {onProgress: {onmessage: (text: string) => void}}).onProgress;
+    channel.onmessage('Live answer'); expect(progress).toHaveBeenCalledWith('Live answer');
     expect(vi.mocked(invoke).mock.calls).toEqual([
-      ['question_status'], ['ask_question', {request, connection}], ['cancel_question', {requestId: 'unique-id'}],
+      ['question_status'], ['ask_question', {request, connection, onProgress: expect.any(Object)}], ['cancel_question', {requestId: 'unique-id'}],
     ]);
   });
   it('keeps revision targets separate from ordinary advice and invokes immutable rejection', async () => {

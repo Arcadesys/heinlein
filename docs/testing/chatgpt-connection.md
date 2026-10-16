@@ -1,5 +1,34 @@
 # ChatGPT connection repair and deterministic fuzzing
 
+## 2026-10-16 live Ask streaming checkpoint
+
+Route: bounded workhorse, medium requested, one context; no runtime model/effort
+switch is claimed. Ask now sends bounded cumulative text previews through a
+request-specific Tauri channel. The panel labels them as streaming, uses plain
+text, avoids automatic scrolling/focus changes, and announces the receiving state
+once rather than every token. Cancel/error labels retained text as an interrupted
+preview excluded from history. Close/context/account changes clear private text;
+stale callbacks cannot update a subsequent request. Final validation replaces the
+preview with the authoritative answer. Suggest revision does not stream previews
+and retains its separate proposal/author-confirmation path.
+
+Validation: 57 drafting-questions tests, 101 focused panel/bridge tests (including
+the default renderer fuzz corpus), workspace strict Clippy, formatting, TypeScript,
+frontend/native release build and local signature verification passed. New checks
+cover fragmented Unicode deltas, preview size limits, no success without a terminal
+event, inert text rendering, focus preservation, invalid/late callbacks, cancellation,
+and final replacement without provisional history.
+
+The local repair bundle was updated, preserving the previous executable outside
+the bundle. A single native synthetic request used the retained selected
+`gpt-6.1-sol`, zero manuscript context and zero history. While Cancel remained
+available, live snapshots grew from 8 to 13 numbered sentences. The preview wrapped
+at the current large text size; keyboard Tab put a visible focus ring on Cancel
+while updates continued. The request then reached Answer ready, replaced the provisional preview with the
+validated attributed answer, and reported 154 input / 783 output tokens. The
+synthetic source remained byte-identical. The existing Documents-folder issue
+remains out of scope.
+
 ## 2026-10-16 completed-item repair checkpoint
 
 Route: bounded workhorse pass, medium requested, one context. Runtime model/effort

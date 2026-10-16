@@ -3,7 +3,7 @@ import type {DraftRequest,DraftResponse} from './standaloneDrafts';
 import type {UpdateStatus} from './updatePanel';
 import type {GitHubRequest,GitHubResponse} from './githubTypes';
 import type {FirstStoryState, PublishingMetadata, PublishingCopy} from './firstStory';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 export interface RecentRepository { id: string; name: string }
 export interface RepositorySession extends RecentRepository { projectKey?: string; manifests: string[]; warning?: string | null; githubWorkspaceId?: string | null; projectId?:string; projectRevision?:number; resume?:ProjectResume|null }
@@ -96,7 +96,7 @@ export interface LocalCore {
   rejectReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<ReviewResult>;
   getReview?(repositoryId: string, reviewId: string): Promise<ReviewResult>;
   questionStatus?(): Promise<QuestionStatus>;
-  askQuestion?(request: QuestionRequest, connection: QuestionConnection): Promise<QuestionAnswer>;
+  askQuestion?(request: QuestionRequest, connection: QuestionConnection, onProgress?: (text: string) => void): Promise<QuestionAnswer>;
   suggestQuestionRevision?(request: QuestionRequest, connection: QuestionConnection, target: QuestionRevisionTarget): Promise<QuestionRevisionAnswer>;
   cancelQuestion?(requestId: string): Promise<boolean>;
   connectQuestionAccount?(options: {allowChatgptPlan: boolean; accountId?: string}): Promise<QuestionStatus>;
@@ -159,7 +159,11 @@ export const localCore: LocalCore = {
   rejectReviewEdit: (repositoryId, reviewId, editId) => invoke('reject_review_edit', {repositoryId, reviewId, editId}),
   getReview: (repositoryId, reviewId) => invoke('get_review', {repositoryId, reviewId}),
   questionStatus: () => invoke('question_status'),
-  askQuestion: (request, connection) => invoke('ask_question', {request, connection}),
+  askQuestion: (request, connection, onProgress) => {
+    const channel = new Channel<string>();
+    channel.onmessage = text => onProgress?.(text);
+    return invoke('ask_question', {request, connection, onProgress: channel});
+  },
   suggestQuestionRevision: (request, connection, target) => invoke('suggest_question_revision', {request, connection, target}),
   cancelQuestion: requestId => invoke('cancel_question', {requestId}),
   connectQuestionAccount: options => invoke('connect_question_account', options),
