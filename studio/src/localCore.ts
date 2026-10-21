@@ -1,8 +1,9 @@
+import type {GitHubRequest,GitHubResponse} from './githubTypes';
 import type {FirstStoryState, PublishingMetadata, PublishingCopy} from './firstStory';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 export interface RecentRepository { id: string; name: string }
-export interface RepositorySession extends RecentRepository { projectKey?: string; manifests: string[]; warning?: string | null }
+export interface RepositorySession extends RecentRepository { projectKey?: string; manifests: string[]; warning?: string | null; githubWorkspaceId?: string | null }
 export interface Entry { path: string; name: string; kind: 'directory' | 'file'; sizeBytes: number }
 export interface Document { path: string; text: string; sizeBytes: number; frontmatter: string | null; generatedCompatibility: boolean; contentHash: string }
 export interface RecoveryDraft { id: string; path: string; baseHash: string; text: string; updatedAt: number; actor?: 'author'; client?: 'studio' }
@@ -59,6 +60,7 @@ export interface ReviewEdit { id: string; path: string; fromUtf8: number; toUtf8
 export interface ReviewResult { reviewId: string; requestId: string; model: string; schemaVersion: 1; scope: 'scene' | 'chapter'; edits: ReviewEdit[] }
 export interface LocalCore {
   available(): boolean;
+  githubRequest?(request: GitHubRequest): Promise<GitHubResponse>;
   loadFirstStory?(repositoryId: string): Promise<FirstStoryState>;
   saveFirstStory?(repositoryId: string, guide: FirstStoryState, markProof: boolean): Promise<FirstStoryState>;
   resetFirstStory?(repositoryId: string): Promise<FirstStoryState | null>;
@@ -111,6 +113,7 @@ export interface LocalCore {
 // no credentials, filesystem handles, or absolute root paths enter the renderer.
 export const localCore: LocalCore = {
   available: isTauri,
+  githubRequest: request => invoke('github_request', {request}),
   loadFirstStory: repositoryId => invoke('load_first_story', {repositoryId}),
   saveFirstStory: (repositoryId, guide, markProof) => invoke('save_first_story', {repositoryId, guide, markProof}),
   resetFirstStory: repositoryId => invoke('reset_first_story', {repositoryId}),

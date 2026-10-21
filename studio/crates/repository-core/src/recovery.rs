@@ -600,7 +600,7 @@ impl RecoveryStore {
 }
 
 #[cfg(unix)]
-fn private_metadata(file: &File, directory: bool) -> Result<()> {
+pub(crate) fn private_metadata(file: &File, directory: bool) -> Result<()> {
     let metadata = file.metadata().map_err(|_| Error::RecoveryIo)?;
     let expected_mode = if directory { 0o700 } else { 0o600 };
     if metadata.uid() != rustix::process::geteuid().as_raw()
@@ -614,7 +614,7 @@ fn private_metadata(file: &File, directory: bool) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn open_directory(path: &Path, create: bool) -> Result<File> {
+pub(crate) fn open_directory(path: &Path, create: bool) -> Result<File> {
     if !path.is_absolute() || path == Path::new("/") {
         return Err(Error::RecoveryIo);
     }

@@ -3,7 +3,9 @@
 Studio prioritizes writing and arranging author-controlled source. The first-story
 guide adds one narrow compilation exception: an explicitly confirmed, text-only,
 one-way snapshot for the existing external Python publisher. Studio does not run
-a publishing engine, distribute files, manage accounts or synchronize copies.
+a publishing engine, distribute files, manage publishing accounts or synchronize publishing copies. The separate
+[GitHub workspace](studio-github-workspaces.md) flow manages author-confirmed
+source versions and feedback; it does not change this one-way publishing boundary.
 
 ## Source authority
 
