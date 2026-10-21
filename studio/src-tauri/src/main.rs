@@ -1,14 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod drafting;
+#[cfg(all(test, unix))]
+mod persistence_tests;
 mod proposals;
 mod questions;
+mod recents;
 mod review_state;
 
+use recents::{load_recents, save_recents, Recent, RecentStore};
 use repository_core::{Document, Entry, Manuscript, RecoveryDraft, RecoveryStore, Repository};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{
-    fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -18,19 +21,6 @@ use std::{
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
-#[derive(Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Recent {
-    id: String,
-    name: String,
-    path: PathBuf,
-}
-#[derive(Clone, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RecentStore {
-    schema_version: u32,
-    folders: Vec<Recent>,
-}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RecentView {
@@ -138,35 +128,23 @@ fn private_question_auth_path(app: &tauri::AppHandle) -> Result<PathBuf, String>
     }
     Ok(path)
 }
-fn load_recents(path: &Path) -> RecentStore {
-    // Recent paths are convenience preferences, never arbitrary renderer-supplied paths.
-    let result = fs::metadata(path)
-        .ok()
-        .filter(|m| m.len() < 65536)
-        .and_then(|_| fs::read(path).ok())
-        .and_then(|bytes| serde_json::from_slice::<RecentStore>(&bytes).ok());
-    match result {
-        Some(mut value) if value.schema_version == 1 => {
-            value.folders.truncate(10);
-            value
-        }
-        _ => RecentStore {
-            schema_version: 1,
-            folders: vec![],
-        },
-    }
-}
-fn save_recents(path: &Path, store: &RecentStore) -> Result<(), String> {
-    fs::create_dir_all(path.parent().ok_or("Missing preferences directory")?)
-        .map_err(|e| e.to_string())?;
-    let temporary = path.with_extension(format!("{}.tmp", id()));
-    let content = serde_json::to_vec(store).map_err(|e| e.to_string())?;
-    fs::write(&temporary, content).map_err(|e| e.to_string())?;
-    fs::rename(&temporary, path).map_err(|e| e.to_string())
-}
 fn select(app: &tauri::AppHandle, path: PathBuf) -> Result<Session, String> {
+    select_repository(
+        &app.state::<BrowserState>(),
+        path,
+        &recent_file(app)?,
+        &auth_path(app)?,
+    )
+}
+// Keep the native selection transaction testable without a window or real preferences.
+fn select_repository(
+    state: &BrowserState,
+    path: PathBuf,
+    preferences: &Path,
+    private_storage: &Path,
+) -> Result<Session, String> {
     let repo = Repository::open(&path).map_err(|e| e.to_string())?;
-    guard_auth_repository_separation(repo.root(), &auth_path(app)?)?;
+    guard_auth_repository_separation(repo.root(), private_storage)?;
     let (manifests, warning) = match repo.discover() {
         Ok(paths) => (paths, None),
         Err(error) => (
@@ -182,7 +160,6 @@ fn select(app: &tauri::AppHandle, path: PathBuf) -> Result<Session, String> {
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
-    let state = app.state::<BrowserState>();
     let session = Session {
         id: id(),
         project_key: repo.project_key(),
@@ -206,7 +183,7 @@ fn select(app: &tauri::AppHandle, path: PathBuf) -> Result<Session, String> {
         },
     );
     recents.folders.truncate(10);
-    save_recents(&recent_file(app)?, &recents)?;
+    save_recents(preferences, &recents)?;
     *recent_guard = recents;
     *state
         .selected
@@ -270,16 +247,7 @@ async fn open_recent_repository(
     id: String,
 ) -> Result<Session, String> {
     check_window(&window)?;
-    let path = app
-        .state::<BrowserState>()
-        .recents
-        .lock()
-        .map_err(|_| "Preferences unavailable")?
-        .folders
-        .iter()
-        .find(|r| r.id == id)
-        .map(|r| r.path.clone())
-        .ok_or("Unknown recent folder; use Open folder")?;
+    let path = recent_repository_path(&app.state::<BrowserState>(), &id)?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<BrowserState>();
         let _selection = state
@@ -290,6 +258,18 @@ async fn open_recent_repository(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+// Renderer input is an opaque persisted ID, never a root path.
+fn recent_repository_path(state: &BrowserState, id: &str) -> Result<PathBuf, String> {
+    state
+        .recents
+        .lock()
+        .map_err(|_| "Preferences unavailable")?
+        .folders
+        .iter()
+        .find(|r| r.id == id)
+        .map(|r| r.path.clone())
+        .ok_or_else(|| "Unknown recent folder; use Open folder".into())
 }
 fn with_repository<T>(
     app: &tauri::AppHandle,
