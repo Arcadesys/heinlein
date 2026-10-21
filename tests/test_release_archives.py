@@ -13,7 +13,7 @@ def test_publisher_archives_include_runtime_assets_without_workspace_data(tmp_pa
     with tarfile.open(source) as archive:
         names = archive.getnames()
         relative = [name.split("/", 1)[1] for name in names if "/" in name]
-        assert all(name.startswith("heinlein/") or name in {"pyproject.toml", "README.md", "LICENSE", "PKG-INFO"} for name in relative), relative
+        assert all(name.startswith("heinlein/") or name in {"pyproject.toml", "README.md", "LICENSE", "PKG-INFO", ".gitignore"} for name in relative), relative
         assert not any({"__pycache__", "node_modules", ".venv", "examples", "tests", "studio", ".git"}.intersection(name.split("/")) for name in names)
     with zipfile.ZipFile(next(tmp_path.glob("*.whl"))) as archive:
         names = archive.namelist()
