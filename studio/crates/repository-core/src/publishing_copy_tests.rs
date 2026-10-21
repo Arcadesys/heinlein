@@ -110,6 +110,35 @@ fn exact_order_bytes_receipt_and_sources_survive_snapshot() {
     assert_eq!(fs::read_dir(&f.parent).unwrap().count(), 1);
 }
 #[test]
+fn title_and_author_cannot_introduce_assets_or_references() {
+    let f = Fixture::new();
+    let before = f.sources();
+    for field in ["title", "author"] {
+        for value in [
+            "![Story](missing.png)",
+            "[Story](https://example.invalid)",
+            "[Story][ref]",
+            "\\include{missing}",
+        ] {
+            let mut metadata = f.metadata();
+            if field == "title" {
+                metadata.title = value.into();
+            } else {
+                metadata.author = value.into();
+            }
+            assert!(
+                matches!(
+                    f.repo.preview_publishing_copy(metadata, &f.recovery),
+                    Err(Error::PublishingText)
+                ),
+                "{field}: {value}"
+            );
+        }
+    }
+    assert_eq!(f.sources(), before);
+    assert_eq!(fs::read_dir(&f.parent).unwrap().count(), 0);
+}
+#[test]
 fn empty_nonempty_file_and_symlink_destinations_are_never_replaced() {
     // NOREPLACE must reject even an empty directory on both macOS and Linux;
     // plain rename would silently replace it on Unix.

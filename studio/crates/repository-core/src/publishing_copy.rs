@@ -64,6 +64,11 @@ impl PublishingPlan {
 }
 
 fn validate_metadata(m: &PublishingMetadata) -> Result<()> {
+    // The existing publisher interpolates these into Markdown headings/bylines.
+    // Apply the scene boundary here too; never introduce uncopied asset references.
+    if !text_only(&m.title) || !text_only(&m.author) {
+        return Err(Error::PublishingText);
+    }
     let fields = [
         (&m.title, 200),
         (&m.author, 200),

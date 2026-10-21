@@ -18,7 +18,7 @@ export function invalidateFirstStory(state: FirstStoryState) {
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '') => {const n = document.createElement(tag); n.textContent = text; return n;};
 export function createFirstStory(core: LocalCore, options: {session(): RepositorySession | null; problem(): string | null; settle(): Promise<void>; openFolder(): Promise<void>; draft(): Promise<void>; review(): void}) {
   const element = node('dialog'); element.className = 'first-story'; element.setAttribute('aria-labelledby', 'first-story-title');
-  let state: FirstStoryState | null = null; let copy: PublishingCopy | null = null; let busy = false; let generation = 0; let opener: HTMLElement | null = null;
+  let state: FirstStoryState | null = null; let copy: PublishingCopy | null = null; let busy = false; let generation = 0; let sourceGeneration = 0; let opener: HTMLElement | null = null;
   const message = node('p'); message.setAttribute('role', 'status'); message.className = 'guide-status';
   function button(label: string, run: () => void | Promise<void>, primary = false) {const b = node('button', label); b.type = 'button'; if (primary) b.className = 'primary'; b.addEventListener('click', () => {void act(run);}); return b;}
   async function act(run: () => void | Promise<void>) {
@@ -43,12 +43,17 @@ export function createFirstStory(core: LocalCore, options: {session(): Repositor
   function help(summary: string, content: string) {const details = node('details'); details.append(node('summary', summary), node('p', content)); return details;}
   async function persist(proof = false) {
     const session = options.session(); if (!session || !state || !core.saveFirstStory) throw new Error('Choose a story folder in the native app first.');
-    const current = generation; const saved = await core.saveFirstStory(session.id, structuredClone(state), proof);
+    const current = generation; const source = sourceGeneration; const submitted = structuredClone(state);
+    const saved = await core.saveFirstStory(session.id, submitted, proof);
     if (generation !== current) throw new Error('Story folder changed. Reopen the guide.');
-    // Rendered controls retain these objects. Merge the persisted revision without
-    // detaching their callbacks or rebuilding the focused input after each save.
-    const publishing = state.publishing && saved.publishing ? Object.assign(state.publishing, saved.publishing) : saved.publishing;
-    Object.assign(state, saved, {publishing});
+    // Controls stay editable while saving. Retain author edits and bound objects;
+    // accept only native-owned revisions and proof/check invalidations.
+    state.revision = saved.revision; state.sourceRevision = saved.sourceRevision; state.proofRevision = saved.proofRevision;
+    if (source !== sourceGeneration || (!proof && saved.sourceRevision !== submitted.sourceRevision)) invalidateFirstStory(state);
+    else {
+      for (const i of [4, 5]) if (saved.steps[i] !== submitted.steps[i]) state.steps[i] = saved.steps[i];
+      saved.releaseChecks.forEach((value, i) => {if (value !== submitted.releaseChecks[i]) state!.releaseChecks[i] = value;});
+    }
   }
   async function next() {if (!state) return; state.steps[state.stage] = 'done'; state.stage = Math.min(5, state.stage + 1); await persist(); render(true);}
   async function leave(run?: () => void | Promise<void>) {if (state?.enabled) await persist(); element.close(); if (run) await run();}
@@ -116,5 +121,5 @@ export function createFirstStory(core: LocalCore, options: {session(): Repositor
   }
   element.addEventListener('cancel', e => {e.preventDefault(); void act(() => leave());});
   element.addEventListener('close', () => opener?.isConnected && opener.focus());
-  return {element, open, clear: () => {generation++; busy = false; state = null; copy = null; if (element.open) element.close();}, sourceChanged: () => {copy = null; if (state) {invalidateFirstStory(state); if (element.open) {message.textContent = 'Story changed. Proof and release checks need a new saved revision.'; render();}}}, destroy: () => {generation++; element.remove();}};
+  return {element, open, clear: () => {generation++; busy = false; state = null; copy = null; if (element.open) element.close();}, sourceChanged: () => {sourceGeneration++; copy = null; if (state) {invalidateFirstStory(state); if (element.open) {message.textContent = 'Story changed. Proof and release checks need a new saved revision.'; render();}}}, destroy: () => {generation++; element.remove();}};
 }

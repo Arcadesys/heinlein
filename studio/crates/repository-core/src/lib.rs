@@ -72,7 +72,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::PublishingText => "Text-only publishing copies cannot include scene frontmatter, asset/reference syntax, HTML or include directives. Prepare a separate publishing project manually; source files are unchanged",
+            Self::PublishingText => "Text-only publishing copies cannot include scene frontmatter, asset/reference syntax, HTML or include directives in scenes, title or author. Use plain text for title/author, or prepare a separate publishing project manually; source files are unchanged",
             Self::PublishingMetadata => "Supply title, author, rights, language, output formats and a new folder name; explicitly approve FREE PLAY branding and the no-cover choice",
             Self::PublishingDestination => "Choose a NEW publishing-copy folder outside the manuscript repository. Existing files/folders and unsafe paths are never replaced",
             Self::InvalidPath => "Invalid repository-relative path",

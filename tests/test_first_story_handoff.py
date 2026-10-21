@@ -1,4 +1,4 @@
-"""Real native snapshot -> unchanged existing CLI, without manuscripts or providers."""
+"""Production core snapshot -> unchanged existing CLI, using only synthetic data."""
 import hashlib
 import json
 import os
@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import zipfile
+import pytest
 from html.parser import HTMLParser
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +27,7 @@ class Headings(HTMLParser):
             self.headings.append("".join(self.current))
             self.current = None
 
-def test_native_first_story_copy_builds_html_and_epub(tmp_path):
+def test_core_first_story_copy_builds_html_and_epub(tmp_path):
     env = {**os.environ, "PYTHONPATH": str(ROOT)}
     subprocess.run(["cargo", "run", "--locked", "--manifest-path", str(ROOT / "studio/Cargo.toml"), "-p", "repository-core", "--example", "first_story_handoff", "--", str(tmp_path / "handoff")], check=True, env=env, capture_output=True, text=True)
     project = tmp_path / "handoff/copies/release"
@@ -52,3 +53,22 @@ def test_native_first_story_copy_builds_html_and_epub(tmp_path):
         assert "Example Author" in text
     assert {p: p.read_bytes() for p in before} == before
     assert hashlib.sha256((project / "manuscript.md").read_bytes()).hexdigest() == receipt["manuscriptHash"]
+
+@pytest.mark.parametrize("field,value", [
+    ("title", "![Story](missing.png)"),
+    ("author", "![Portrait](https://example.invalid/portrait.png)"),
+    ("title", "[Story][reference]"),
+    ("author", "[Author](https://example.invalid)"),
+])
+def test_core_handoff_rejects_metadata_assets_before_cli(tmp_path, field, value):
+    metadata = {"title":"Synthetic First Story", "author":"Example Author", "rights":"Example Author retains rights.", "language":"en-US", "formats":["html","epub"], "folderName":"release", "freePlayApproved":True, "noCoverApproved":True}
+    metadata[field] = value
+    settings = tmp_path / "metadata.json"
+    settings.write_text(json.dumps(metadata))
+    target = tmp_path / "handoff"
+    result = subprocess.run(["cargo", "run", "--locked", "--manifest-path", str(ROOT / "studio/Cargo.toml"), "-p", "repository-core", "--example", "first_story_handoff", "--", str(target), str(settings)], capture_output=True, text=True)
+    assert result.returncode != 0, "Unsupported metadata must never reach the external publisher"
+    assert "PublishingText" in result.stderr
+    assert not list((target / "copies").iterdir())
+    assert (target / "source/ms/z-opening.md").read_bytes() == b"# Scene opening\n\nFirst scene \xe2\x80\x94 exact words.\n"
+    assert (target / "source/ms/a-ending.md").read_bytes() == b"Second scene follows the first.\n\nTHE END.\n"
