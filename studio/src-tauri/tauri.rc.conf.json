@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Heinlein Studio RC1",
+  "identifier": "me.thearcades.heinlein.studio.rc1",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Heinlein Studio RC1 \u00b7 Local Markdown editor",
+        "width": 1200,
+        "height": 850,
+        "minWidth": 650,
+        "minHeight": 500
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/icon.png"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
+    }
+  }
+}
