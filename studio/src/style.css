@@ -451,3 +451,12 @@ dialog { color: var(--fg); }
 :root[data-custom-theme] ::selection, .theme-scope[data-custom-theme] ::selection {
   color: var(--fg); background: var(--selection);
 }
+
+/* Non-modal advisory review keeps the manuscript editor usable while inference runs. */
+.heinlein-review-panel { position: fixed; z-index: 12; inset: 5rem 1rem 1rem auto; width: min(32rem, calc(100vw - 2rem)); overflow: auto; padding: 1.25rem; background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: 0 1rem 3rem #0005; }
+.heinlein-review-panel[hidden] { display: none; }
+.heinlein-review-panel h2 { margin-top: 0; }
+.heinlein-review-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18rem; overflow: auto; }
+.review-edit { border-top: 1px solid var(--border); padding-block: 1rem; }
+.review-edit h3, .review-edit h4 { margin-block: .5rem; }
+.review-edit button { margin: .25rem; }

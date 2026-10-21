@@ -45,4 +45,8 @@ jobs:
         run: |
           cargo test --locked --manifest-path crates/proposal-authority-test-harness/Cargo.toml
           cargo clippy --locked --manifest-path crates/proposal-authority-test-harness/Cargo.toml --all-targets -- -D warnings
+      - name: Targeted review lineage regressions
+        run: |
+          cargo test --locked --manifest-path crates/review-state-test-harness/Cargo.toml
+          cargo clippy --locked --manifest-path crates/review-state-test-harness/Cargo.toml --all-targets -- -D warnings
       - run: npm run tauri build -- --no-bundle

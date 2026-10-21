@@ -1,3 +1,4 @@
+import { createReviewPanel } from './reviewPanel';
 import { createDocumentDetails } from './documentDetails';
 import { createSceneNavigator } from './sceneNavigator';
 import { createNavigationDrawer } from './navigationDrawer';
@@ -75,6 +76,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let chapterEditor: ReturnType<typeof createEditor> | null = null;
   let questions: ReturnType<typeof createSelectionQuestionPanel> | null = null;
   let draftingQuestions: ReturnType<typeof createQuestionPanel> | null = null;
+  let reviewPanel: ReturnType<typeof createReviewPanel> | null = null;
+  let reviewApplying = false;
+  let currentChapter: AssembledChapter | null = null;
   let questionButton: HTMLButtonElement | null = null;
   let selectionAsk: ReturnType<typeof createSelectionAskAction> | null = null;
   let selectionCaptureVersion = 0; let selectionCapturePending = false;
@@ -158,6 +162,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     }
     if (saveButton) saveButton.disabled = saving || recoveryPending || !dirty;
     draftingQuestions?.stateChanged();
+    reviewPanel?.stateChanged();
   }
   function setDirty(value: boolean) {
     dirty = value;
@@ -496,7 +501,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   });
   draftingQuestions = createQuestionPanel(core, {
     current: () => {
-      if (disposed || !editor || !opened || !repository) return null;
+      if (disposed || !opened || !repository) return null;
+      if (!editor) return {repositoryId: repository.id, path: opened.path, source: '', from: 0, to: 0, canCapture: false};
       const source = editor.text(); const range = editor.view.state.selection.main;
       const single = editor.view.state.selection.ranges.length === 1;
       return {repositoryId: repository.id, path: opened.path, source,
@@ -518,6 +524,28 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     visibilityChanged: visible => {questionButton?.setAttribute('aria-expanded', String(visible)); if (!visible) {selectionCaptureVersion++; selectionCapturePending = false;}},
   });
   draftingQuestions.element.id = 'drafting-questions';
+  reviewPanel = createReviewPanel(core, {
+    capture: () => {
+      if (!repository || !opened || disposed || repositoryDetached || selecting || structuralBusy || recoveryPending) return null;
+      if (currentChapter) return {repositoryId: repository.id, scope: 'chapter', label: currentChapter.chapter.title,
+        snapshots: currentChapter.parts.map(({document}) => ({path: document.path, source: document.text, sourceHash: document.contentHash}))};
+      if (!editor || opened.generatedCompatibility || editor.view.state.readOnly) return null;
+      return {repositoryId: repository.id, scope: 'scene', label: opened.path,
+        snapshots: [{path: opened.path, source: editor.text(), sourceHash: opened.contentHash}]};
+    },
+    unavailable: reviewing => {
+      if (!repository || !opened || repositoryDetached || disposed) return 'Open the reviewed repository before accepting an edit.';
+      if (!proposals.supported) return 'Native revision approval is unavailable.';
+      if (dirty || saving || staging || writeInFlight || recovery || recoveryPending || guardPending || writePaused) return 'Save the matching scene and resolve recovery before accepting an edit. Your working text is preserved.';
+      if (selecting || ((structuralBusy || proposalBusy) && !reviewing)) return 'Finish the current local operation first.';
+      return null;
+    },
+    reviewProposal: async (id, guard) => {reviewApplying = true; try {await proposals.reviewProposal(id, guard);} finally {reviewApplying = false;}},
+    openConnection: () => {reviewPanel?.clear(); if (draftingQuestions) {root.append(draftingQuestions.element); draftingQuestions.open();}},
+    focusEditor: () => (editor ?? chapterEditor)?.view.focus(),
+  });
+  root.append(reviewPanel.element);
+
   function revisionUnavailable(reviewing = false) {
     if (!proposals.supported) return 'Revision review is unavailable in this native host.';
     if (!editor || !opened || !repository || repositoryDetached || opened.generatedCompatibility) return 'Open an attached, editable saved scene before requesting a revision.';
@@ -1032,6 +1060,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     questions?.clear();
     selectionAsk?.destroy(); selectionAsk = null;
     draftingQuestions?.clear(); questionButton = null;
+    if (!reviewApplying) reviewPanel?.clear(); currentChapter = null;
     writing.clearScene();
     cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; recoveryErrorMessage = null; recovery = null; recoveryPending = false; writePaused = null;
     chapterEditor?.destroy(); chapterEditor = null;
@@ -1073,6 +1102,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   async function selectRepository(select: () => Promise<RepositorySession | null>) {
     if (selecting || !await allowLeave() || selecting) return;
     selecting = true;
+    reviewPanel?.clear();
     manuscriptSearch.close();
     questions?.clear();
     draftingQuestions?.clear();
@@ -1214,6 +1244,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     questions?.clear();
     selectionAsk?.destroy(); selectionAsk = null;
     draftingQuestions?.clear(); questionButton = null;
+    if (!reviewApplying) reviewPanel?.clear(); currentChapter = null;
     if (doc.generatedCompatibility) writing.clearScene();
     else writing.openScene(repository?.projectKey ?? '', doc.path, doc.text, drafting.state?.scenes.find(scene => scene.path === doc.path)?.id);
     cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; recoveryErrorMessage = null; recovery = draft; recoveryPending = Boolean(draft && draft.text !== doc.text); writePaused = null; writeBaseHash = doc.contentHash;
@@ -1234,6 +1265,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const page = el('div', '', 'page');
     page.append(el('p', assembled ? 'Assembled chapter' : sceneIndex >= 0 ? `Scene ${sceneIndex + 1} of ${drafting.state!.scenes.length}` : 'Source scene', 'eyebrow'), title, meta, metadata, text);
     preview.replaceChildren(page);
+    currentChapter = assembled;
     if (assembled) renderAssembledChapter(assembled, text);
     else if (doc.generatedCompatibility) text.before(el('p', 'This assembled file has no chapter mapping in the available manifests. Open its source scenes from the file browser to edit.', 'muted'));
     if (!doc.generatedCompatibility && /\.(md|markdown)$/i.test(doc.path)) {
@@ -1244,7 +1276,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       const askSelection = button('Ask about selection', () => { void questions?.open(); });
       askSelection.setAttribute('aria-haspopup', 'dialog');
       askSelection.title = 'Prepare a question for manual copy/paste into ChatGPT or another assistant';
-      questionButton = button('Questions', () => draftingQuestions?.open());
+      questionButton = button('Questions', () => {reviewPanel?.clear(); draftingQuestions?.open();});
       questionButton.setAttribute('aria-controls', 'drafting-questions'); questionButton.setAttribute('aria-expanded', 'false');
       questionButton.title = 'Ask OpenAI while drafting, with only the context you choose';
       const askDrafting = button('Ask Heinlein about selection', () => {void askDraftingSelection();}); askDrafting.disabled = true;
@@ -1254,7 +1286,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       split.setAttribute('aria-haspopup', 'dialog'); split.setAttribute('aria-keyshortcuts', 'Control+Shift+Enter Meta+Shift+Enter');
       split.title = 'Split scene at cursor (Cmd/Ctrl+Shift+Enter)';
       split.disabled = !drafting.state?.scenes.some(scene => scene.path === doc.path);
-      toolbar.append(questionButton, askDrafting, askSelection, split, saveButton, button('Undo', () => editor?.undo()), button('Redo', () => editor?.redo()), button('Find', () => editor?.find()), dirtyBadge);
+      toolbar.append(button('Heinlein Review', () => {draftingQuestions?.close(); reviewPanel?.open();}), questionButton, askDrafting, askSelection, split, saveButton, button('Undo', () => editor?.undo()), button('Redo', () => editor?.redo()), button('Find', () => editor?.find()), dirtyBadge);
       const host = el('div', '', 'markdown-editor');
       host.addEventListener('compositionstart', () => { composing = true; noteEditing(); });
       host.addEventListener('compositionend', () => { composing = false; lastEditAt = Date.now(); scheduleSaveNotice(); });
@@ -1297,7 +1329,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const sources = el('details', '', 'chapter-sources'); sources.open = true;
     sources.append(el('summary', 'Source scenes'));
     for (const [index, part] of assembled.parts.entries()) sources.append(button(`Open source scene ${index + 1} · ${basename(part.document.path)}`, () => { void showDocument(part.document.path); }));
-    toolbar.append(revise);
+    toolbar.append(button('Heinlein Review', () => {draftingQuestions?.close(); reviewPanel?.open();}), revise);
     text.replaceWith(explanation, toolbar, host, sources);
     const reader = createEditor(host, assembled.text, () => {}, () => {});
     chapterEditor = reader; reader.setEditable(false);
@@ -1435,6 +1467,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { themeBuilder.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

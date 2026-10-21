@@ -230,3 +230,15 @@ in `tests/browser/fixture.html`, with the real Studio/theme implementation and
 synthetic prose. That fixture has no credentials, native filesystem or paid calls
 and is not part of the production build. It is not evidence of live agent answers,
 native WebKit persistence, screen-reader acceptance or resolution of issue #22.
+
+## Heinlein Review
+
+Choose **Heinlein Review** in a source scene or mapped assembled chapter to
+preview its exact snapshot, then **Run Heinlein Review**. A proofreader/editor
+pass returns versioned JSON and targeted before/after suggestions. Accept or
+reject each individually; accepting still requires the existing exact proposal
+review and separate native confirmation. Unsaved text can be reviewed, but must
+be saved unchanged before acceptance. The current bound is 16 scenes / 16,000
+UTF-8 bytes, with no automatic truncation. Larger chapters require reviewing
+individual source scenes. See [the review contract](../docs/architecture/studio-heinlein-review.md)
+for scope, limits, stale protection and verification boundaries.

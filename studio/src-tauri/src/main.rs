@@ -3,6 +3,7 @@
 mod drafting;
 mod proposals;
 mod questions;
+mod review_state;
 
 use repository_core::{Document, Entry, Manuscript, RecoveryDraft, RecoveryStore, Repository};
 use serde::{Deserialize, Serialize};
@@ -558,6 +559,10 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             questions::question_status,
+            questions::request_review,
+            questions::prepare_review_edit,
+            questions::reject_review_edit,
+            questions::get_review,
             questions::ask_question,
             questions::suggest_question_revision,
             questions::cancel_question,
