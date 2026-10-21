@@ -192,7 +192,7 @@ pub(crate) async fn apply_proposal_review(
         // Check the live plan, its monotonic TTL, dirty state, recovery and source
         // again after the native author action. Never refresh its reviewed bytes.
         let epoch = host.epoch;
-        with_repository(&app, &repository_id, |repo| {
+        let outcome = with_repository(&app, &repository_id, |repo| {
             host.authority.apply_confirmed(
                 repo,
                 &repository_id,
@@ -204,8 +204,10 @@ pub(crate) async fn apply_proposal_review(
                         || epoch != state.mutation_gate.generation()
                 },
             )
-        })
-        .map(Some)
+        })?;
+        drop(host);
+        super::questions::record_review_apply(&app, &repository_id, &outcome.receipt);
+        Ok(Some(outcome))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -243,9 +245,12 @@ pub(crate) async fn reject_proposal(
             .lock()
             .map_err(|_| "Proposal review unavailable")?;
         let (store, receipts) = stores(&app)?;
-        with_repository(&app, &repository_id, |repo| {
+        let receipt = with_repository(&app, &repository_id, |repo| {
             host.authority.reject(repo, &store, &receipts, &proposal_id)
-        })
+        })?;
+        drop(host);
+        super::questions::record_review_rejection(&app, &repository_id, &receipt);
+        Ok(receipt)
     })
     .await
     .map_err(|e| e.to_string())?

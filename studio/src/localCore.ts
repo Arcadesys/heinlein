@@ -52,8 +52,16 @@ export interface QuestionRequest { requestId: string; question: string; context:
 export interface QuestionRevisionTarget { repositoryId: string; path: string; sourceHash: string; fromUtf8: number; toUtf8: number; selectedText: string }
 export interface QuestionRevisionAnswer extends QuestionAnswer { proposalId: string; replacementText: string }
 export interface QuestionAnswer { requestId: string; text: string; model: string; inputTokens?: number | null; outputTokens?: number | null; incomplete: boolean }
+export interface ReviewSnapshot { path: string; source: string; sourceHash: string }
+export interface ReviewRequest { requestId: string; repositoryId: string; scope: 'scene' | 'chapter'; snapshots: ReviewSnapshot[] }
+export interface ReviewEdit { id: string; path: string; fromUtf8: number; toUtf8: number; original: string; replacement: string; reason: string; role: 'proofreader' | 'editor'; status: 'pending' | 'prepared' | 'accepted' | 'rejected'; proposalId: string | null }
+export interface ReviewResult { reviewId: string; requestId: string; model: string; schemaVersion: 1; scope: 'scene' | 'chapter'; edits: ReviewEdit[] }
 export interface LocalCore {
   available(): boolean;
+  requestReview?(request: ReviewRequest, connection: QuestionConnection): Promise<ReviewResult>;
+  prepareReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<{proposalId: string}>;
+  rejectReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<ReviewResult>;
+  getReview?(repositoryId: string, reviewId: string): Promise<ReviewResult>;
   questionStatus?(): Promise<QuestionStatus>;
   askQuestion?(request: QuestionRequest, connection: QuestionConnection): Promise<QuestionAnswer>;
   suggestQuestionRevision?(request: QuestionRequest, connection: QuestionConnection, target: QuestionRevisionTarget): Promise<QuestionRevisionAnswer>;
@@ -97,6 +105,10 @@ export interface LocalCore {
 // no credentials, filesystem handles, or absolute root paths enter the renderer.
 export const localCore: LocalCore = {
   available: isTauri,
+  requestReview: (request, connection) => invoke('request_review', {request, connection}),
+  prepareReviewEdit: (repositoryId, reviewId, editId) => invoke('prepare_review_edit', {repositoryId, reviewId, editId}),
+  rejectReviewEdit: (repositoryId, reviewId, editId) => invoke('reject_review_edit', {repositoryId, reviewId, editId}),
+  getReview: (repositoryId, reviewId) => invoke('get_review', {repositoryId, reviewId}),
   questionStatus: () => invoke('question_status'),
   askQuestion: (request, connection) => invoke('ask_question', {request, connection}),
   suggestQuestionRevision: (request, connection, target) => invoke('suggest_question_revision', {request, connection, target}),
