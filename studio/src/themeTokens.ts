@@ -12,6 +12,19 @@ function luminance(color: string) {
 }
 export function contrast(a: string, b: string) {const x = luminance(a), y = luminance(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05);}
 export function onAccent(tokens: ThemeTokens) {return contrast(tokens.accent, '#000000') >= contrast(tokens.accent, '#ffffff') ? '#000000' : '#ffffff';}
+/** Neutral selection fill remains distinct even when all agent backgrounds are equal. */
+export function selectionColor(tokens: ThemeTokens): string {
+  let selected = ''; let best = 0;
+  for (let shade = 0; shade < 256; shade++) {
+    const color = '#' + shade.toString(16).padStart(2, '0').repeat(3);
+    const backgroundRatio = Math.min(...[tokens.bg, tokens.surface, tokens.hover].map(bg => contrast(color, bg)));
+    const textRatio = contrast(color, tokens.fg);
+    const score = Math.min(backgroundRatio / 3, textRatio / 4.5);
+    if (score >= 1 && score > best) {selected = color; best = score;}
+  }
+  if (!selected) throw new Error('Palette needs room for visible selection: 3:1 against backgrounds and 4.5:1 for selected text. Increase foreground contrast or keep backgrounds closer.');
+  return selected;
+}
 export function validateTheme(value: unknown): ThemeTokens {
   if (!plain(value) || Object.keys(value).length !== THEME_COLORS.length + 1 || Object.keys(value).some(key => ![...THEME_COLORS, 'radius'].includes(key as typeof THEME_COLORS[number]))) throw new Error('Return exactly the allowed theme tokens; CSS and extra fields are rejected.');
   const result = {} as ThemeTokens;
@@ -27,6 +40,7 @@ export function validateTheme(value: unknown): ThemeTokens {
     }
     if (contrast(result.border, result[bg]) < 3) throw new Error(`border on ${bg} needs at least 3:1 contrast.`);
   }
+  selectionColor(result);
   return result;
 }
 export function parseTheme(text: string): ThemeTokens {
@@ -40,7 +54,7 @@ export function themeVariables(tokens: ThemeTokens): Record<string, string> {
   return {'--bg': tokens.bg, '--surface': tokens.surface, '--surface-hover': tokens.hover, '--fg': tokens.fg, '--fg-muted': tokens.muted,
     '--accent': tokens.accent, '--border': tokens.border, '--border-strong': tokens.border, '--chrome-bg': tokens.bg,
     '--warn': tokens.warn, '--danger': tokens.danger, '--radius': `${tokens.radius}px`, '--radius-sm': `${Math.min(tokens.radius, 8)}px`,
-    '--accent-glow': 'transparent', '--selection': tokens.hover, '--gradient': tokens.accent, '--on-accent': onAccent(tokens)};
+    '--accent-glow': 'transparent', '--selection': selectionColor(tokens), '--gradient': tokens.accent, '--on-accent': onAccent(tokens)};
 }
 const EXTRA = ['--warn', '--danger', '--radius', '--radius-sm', '--gradient', '--on-accent'];
 export function renderTheme(target: HTMLElement, tokens: ThemeTokens | null, baseline: Appearance) {
@@ -67,14 +81,17 @@ export function createThemeStore(storage?: Storage) {
       state = {version: 1, accepted: data.accepted === null ? null : validateTheme(data.accepted), previous: data.previous === null ? null : validateTheme(data.previous), canRevert: data.canRevert};
     }
   } catch {warning = 'Saved custom theme could not be loaded. Baseline is shown; reset to repair local theme storage.'; state = empty();}
-  function commit(next: ThemeState) {
+  function assertCurrent() {
     if (!storage) throw new Error('Local theme storage is unavailable. Accepted theme is unchanged.');
     if (storage.getItem(THEME_STORAGE_KEY) !== raw) throw new Error('Theme changed in another window. Reopen Studio before applying.');
-    const encoded = JSON.stringify(next); storage.setItem(THEME_STORAGE_KEY, encoded);
+  }
+  function commit(next: ThemeState) {
+    assertCurrent();
+    const encoded = JSON.stringify(next); storage!.setItem(THEME_STORAGE_KEY, encoded);
     raw = encoded; state = next; warning = '';
   }
   return {
-    get state() {return structuredClone(state);}, get warning() {return warning;},
+    get state() {return structuredClone(state);}, get warning() {return warning;}, assertCurrent,
     apply(tokens: ThemeTokens) {commit({version: 1, accepted: validateTheme(tokens), previous: state.accepted, canRevert: true});},
     reset() {commit({version: 1, accepted: null, previous: state.accepted, canRevert: state.accepted !== null});},
     revert() {if (!state.canRevert) return; commit({version: 1, accepted: state.previous, previous: state.accepted, canRevert: true});},

@@ -194,7 +194,9 @@ has separate live/native acceptance requirements.
 The agent returns nine opaque colour tokens and a bounded corner radius, rather
 than executable CSS. Each text/status/accent colour must reach 4.5:1 against all
 three backgrounds; borders must reach 3:1. The accent is the focus ring. Studio
-chooses black or white primary-button text for contrast. Fonts, type size,
+chooses black or white primary-button text for contrast. It derives a neutral
+selection fill with 3:1 contrast against the backgrounds and 4.5:1 for selected
+text; palettes without room for both are rejected. Fonts, type size,
 spacing, selectors, layout, logic and content cannot be changed by these tokens.
 URLs, imports, arbitrary CSS, alpha colours, and additional fields are rejected.
 The sample shows controls, disabled/hover/selection states, secondary text and
@@ -206,7 +208,7 @@ keeps the accepted theme. **Revert accepted theme** swaps the saved current and
 previous theme; **Reset to baseline** restores the selected built-in preset,
 without changing fonts, zoom or manuscript text. Choosing a built-in theme/accent
 also leaves the custom theme. A storage error leaves the accepted theme unchanged
-and keeps the candidate reviewable; stale writes from another window are rejected.
+and keeps the candidate reviewable; stale writes or preset selections from another window are visibly rejected.
 Corrupt saved themes fall back to the built-in preset with a repair message.
 Aesthetic descriptions and provider responses are not stored with accepted themes.
 

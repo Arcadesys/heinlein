@@ -712,7 +712,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   applyChoices(fontChoices);
   let installedFonts: string[] | null = null;
   const lookControls: (() => void)[] = [];
-  function setLook(patch: Partial<Appearance>) { if ((patch.theme || patch.accent) && !themeBuilder.usePreset()) return; look = {...look, ...patch}; saveAppearance(look); applyAppearance(look); themeBuilder.refresh(); lookControls.forEach(sync => sync()); }
+  function setLook(patch: Partial<Appearance>) { if ((patch.theme || patch.accent) && !themeBuilder.usePreset()) {showCategory('vibecode'); themeBuilder.focusStatus(); return;} look = {...look, ...patch}; saveAppearance(look); applyAppearance(look); themeBuilder.refresh(); lookControls.forEach(sync => sync()); }
   function pressed(node: HTMLElement, on: boolean) { node.setAttribute('aria-pressed', String(on)); }
   const dialog = el('dialog', '', 'appearance-dialog settings-window');
   dialog.setAttribute('aria-labelledby', 'appearance-title');

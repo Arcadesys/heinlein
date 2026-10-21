@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import {beforeEach, describe, expect, it} from 'vitest';
-import {createThemeStore, contrast, parseTheme, renderTheme, THEME_STORAGE_KEY, themeCSS, themePrompt, validateTheme} from './themeTokens';
+import {createThemeStore, contrast, parseTheme, renderTheme, selectionColor, THEME_STORAGE_KEY, themeCSS, themePrompt, validateTheme} from './themeTokens';
 import {DEFAULT_APPEARANCE} from './appearance';
 const dark = {bg: '#101010', surface: '#181818', hover: '#222222', fg: '#ffffff', muted: '#bbbbbb', accent: '#ffcc66', border: '#aaaaaa', warn: '#ffdd88', danger: '#ffaaaa', radius: 12};
 const light = {...dark, bg: '#ffffff', surface: '#fafafa', hover: '#eeeeee', fg: '#111111', muted: '#444444', accent: '#553300', border: '#555555', warn: '#553311', danger: '#770022', radius: 0};
@@ -24,6 +24,11 @@ describe('theme boundary', () => {
     expect(themeCSS(dark)).toContain('.theme-scope {'); expect(themeCSS(dark)).not.toMatch(/url|@import|content:/);
     renderTheme(host, null, DEFAULT_APPEARANCE); expect(host.style.getPropertyValue('--on-accent')).toBe(''); expect(host.style.getPropertyValue('--font-text')).toBe('Georgia'); expect(host.textContent).toBe('Exact — words');
   });
+  it('derives a visible, readable selection for equal backgrounds and rejects impossible palettes', () => {
+    const equal = {...dark, bg: '#000000', surface: '#000000', hover: '#000000'};
+    const fill = selectionColor(validateTheme(equal)); expect(contrast(fill, equal.bg)).toBeGreaterThanOrEqual(3); expect(contrast(fill, equal.fg)).toBeGreaterThanOrEqual(4.5);
+    expect(() => validateTheme({...dark, fg: '#767676', muted: '#767676', accent: '#767676', warn: '#767676', danger: '#767676', border: '#767676', bg: '#000000', surface: '#ffffff', hover: '#000000'})).toThrow(/selection/);
+  });
   it('bounds aesthetic input and creates a token-only request', () => {
     expect(themePrompt('Warm library')).toContain('Warm library'); expect(() => themePrompt('')).toThrow(); expect(() => themePrompt('x'.repeat(1201))).toThrow(); expect(() => themePrompt('界'.repeat(1200))).toThrow(/UTF-8/);
   });
@@ -38,6 +43,8 @@ describe('accepted theme persistence', () => {
   it('retains accepted state after write failure and refuses stale cross-window writes', () => {
     const store = createThemeStore(); store.apply(dark);
     const stale = createThemeStore(); store.apply(light); expect(() => stale.reset()).toThrow(/another window/);
+    const baselineStorage = new Map<string, string>(); const storage = {getItem: (key: string) => baselineStorage.get(key) ?? null, setItem: (key: string, value: string) => baselineStorage.set(key, value)} as unknown as Storage;
+    const first = createThemeStore(storage), second = createThemeStore(storage); first.apply(dark); expect(() => second.assertCurrent()).toThrow(/another window/);
     const failing = createThemeStore({getItem: () => null, setItem: () => {throw new Error('Storage full');}} as unknown as Storage);
     expect(() => failing.apply(dark)).toThrow(/Storage full/); expect(failing.state.accepted).toBeNull();
   });

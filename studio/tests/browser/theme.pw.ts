@@ -12,6 +12,8 @@ test('normal renderer opens Appearance without native access', async ({page}) =>
 
 import AxeBuilder from '@axe-core/playwright';
 import {dark, light} from './tokens';
+import {contrast} from '../../src/themeTokens';
+const rgbHex = (rgb: string) => '#' + rgb.match(/\d+/g)!.slice(0, 3).map(n => Number(n).toString(16).padStart(2, '0')).join('');
 const storageKey = 'heinlein-studio-custom-theme-v1';
 const rootBg = (page: import('@playwright/test').Page) => page.locator('html').evaluate(el => getComputedStyle(el).getPropertyValue('--bg').trim());
 async function openThemes(page: import('@playwright/test').Page) {
@@ -51,7 +53,8 @@ test('synthetic provider: review, keyboard, contrast, persistence, reset and ref
   for (const aesthetic of ['Warm library', 'light paper']) {
     await generate(page, aesthetic); await page.getByRole('button', {name: 'Apply theme', exact: true}).click();
     const selection = await page.getByLabel('Theme sample text', {exact: true}).evaluate(el => {const s = getComputedStyle(el, '::selection'); return {fg: s.color, bg: s.backgroundColor};});
-    expect(selection).toEqual(aesthetic === 'light paper' ? {fg: 'rgb(17, 17, 17)', bg: 'rgb(238, 238, 238)'} : {fg: 'rgb(255, 255, 255)', bg: 'rgb(34, 34, 34)'});
+    expect(contrast(rgbHex(selection.fg), rgbHex(selection.bg))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(rgbHex(selection.bg), aesthetic === 'light paper' ? light.bg : dark.bg)).toBeGreaterThanOrEqual(3);
     for (const label of ['Theme sample text', 'Disabled sample action']) {
       const control = label === 'Theme sample text' ? page.getByLabel(label, {exact: true}) : page.getByRole('button', {name: label, exact: true});
       await control.scrollIntoViewIfNeeded();
@@ -91,4 +94,31 @@ test('synthetic failures and unavailable storage preserve accepted theme', async
   await expect(page.getByText('Synthetic storage full', {exact: true})).toBeVisible(); expect(await rootBg(page)).toBe('#0a0a14');
   await expect(page.getByRole('button', {name: 'Apply theme', exact: true})).toBeEnabled();
   expect(await page.evaluate(key => localStorage.getItem(key), storageKey)).toBeNull();
+});
+
+
+test('equal-background tokens keep actual manuscript selection visible and readable', async ({page}) => {
+  await page.goto('/tests/browser/fixture.html'); await openThemes(page);
+  await page.getByText('Use another coding agent', {exact: true}).click();
+  await page.getByLabel('Paste agent token JSON', {exact: true}).fill(JSON.stringify({...dark, bg: '#000000', surface: '#000000', hover: '#000000'}));
+  await page.getByRole('button', {name: 'Preview pasted tokens'}).click();
+  await page.getByRole('button', {name: 'Apply theme', exact: true}).click(); await page.keyboard.press('Escape');
+  const editor = page.getByRole('textbox', {name: 'Markdown editor', exact: true});
+  const firstLine = editor.locator('.cm-line').first(); await firstLine.scrollIntoViewIfNeeded(); await firstLine.click(); await expect(editor).toBeFocused(); await page.keyboard.press('ControlOrMeta+A');
+  const selection = page.locator('.cm-editor .cm-selectionBackground').first(); await expect(selection).toBeVisible();
+  const fill = rgbHex(await selection.evaluate(el => getComputedStyle(el).backgroundColor));
+  const foreground = rgbHex(await editor.evaluate(el => getComputedStyle(el).color));
+  expect(contrast(fill, '#000000')).toBeGreaterThanOrEqual(3); expect(contrast(foreground, fill)).toBeGreaterThanOrEqual(4.5);
+  expect(await editor.textContent()).toContain('Synthetic prose — exact words.');
+});
+
+test('a stale baseline window visibly rejects a preset after another window accepts a theme', async ({page, context}) => {
+  await page.goto('/tests/browser/fixture.html');
+  const other = await context.newPage(); await other.goto('/tests/browser/fixture.html'); await openThemes(other);
+  await openThemes(page); await generate(page); await page.getByRole('button', {name: 'Apply theme', exact: true}).click();
+  await other.getByRole('button', {name: 'Theme', exact: true}).click(); await other.getByRole('button', {name: 'Paper', exact: true}).click();
+  const error = other.getByText('Theme changed in another window. Reopen Studio before applying.', {exact: true}); await expect(error).toBeVisible(); await expect(error).toBeFocused();
+  expect(await rootBg(other)).toBe('#0a0a14'); expect(await other.evaluate(key => JSON.parse(localStorage.getItem(key)!).accepted, storageKey)).toEqual(dark);
+  expect(await other.evaluate(() => localStorage.getItem('heinlein-studio-appearance-v1'))).toBeNull();
+  await other.close();
 });

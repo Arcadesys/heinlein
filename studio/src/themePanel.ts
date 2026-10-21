@@ -15,7 +15,7 @@ export function createThemePanel(core: LocalCore, baseline: () => Appearance, ta
   const payload = node('pre'); payload.className = 'theme-code'; payload.setAttribute('aria-label', 'Exact theme request'); payload.tabIndex = 0;
   const payloadDetails = node('details'); payloadDetails.append(node('summary', 'Review or copy the exact agent prompt'), payload);
   const connection = node('p', 'Open this section to check the selected Questions connection.'); connection.setAttribute('role', 'status');
-  const message = node('p', store.warning || (store.state.accepted ? 'Saved accepted theme is active.' : 'Built-in baseline is active.')); message.setAttribute('role', 'status'); message.setAttribute('aria-live', 'polite');
+  const message = node('p', store.warning || (store.state.accepted ? 'Saved accepted theme is active.' : 'Built-in baseline is active.')); message.setAttribute('role', 'status'); message.setAttribute('aria-live', 'polite'); message.tabIndex = -1;
   const previewLabel = node('h4', 'Accepted theme sample');
   const preview = node('div'); preview.className = 'theme-scope theme-live-sample'; preview.setAttribute('aria-label', 'Live theme sample');
   const sampleInput = node('input'); sampleInput.type = 'text'; sampleInput.value = 'Readable writing — your words stay yours.'; sampleInput.setAttribute('aria-label', 'Theme sample text');
@@ -52,7 +52,7 @@ export function createThemePanel(core: LocalCore, baseline: () => Appearance, ta
   }
   function adopt(text: string, source: string) {
     const next = parseTheme(text); candidate = next;
-    message.textContent = `${source}. Checks passed: text 4.5:1, borders 3:1, accent focus 4.5:1; opaque colours and bounded corner radius only. Review the sample and diff before Apply.`;
+    message.textContent = `${source}. Checks passed: text 4.5:1, borders 3:1, accent focus 4.5:1, distinct selection 3:1; opaque colours and bounded corner radius only. Review the sample and diff before Apply.`;
     refresh();
   }
   async function check() {
@@ -105,7 +105,9 @@ export function createThemePanel(core: LocalCore, baseline: () => Appearance, ta
   element.append(heading, intro, scope, description.label, description.input, payloadDetails, connection, actions, externalDetails, message, previewLabel, preview, node('h4', 'CSS token diff: accepted → candidate'), diff, cssDetails, reviewActions);
   refresh();
   return {element, check, refresh,
+    focusStatus() {message.focus();},
     usePreset() {
+      try {store.assertCurrent();} catch (error) {fail(error); return false;}
       if (!store.state.accepted && !store.warning) {invalidate(); candidate = null; refresh(); return true;}
       return commit(() => store.reset(), 'Built-in theme selected. Custom candidate discarded.');
     },

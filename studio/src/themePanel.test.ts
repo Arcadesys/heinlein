@@ -51,6 +51,10 @@ describe('theme review flow (deterministic provider fixture, not live agent proo
     else {await vi.waitFor(() => expect(button('Cancel theme request').disabled).toBe(true)); expect(core.askQuestion).toHaveBeenCalledOnce();}
     expect(createThemeStore().state.accepted).toBeNull(); expect(button('Apply theme').disabled).toBe(true);
   });
+  it('rejects a preset visibly when another window accepted a theme after this baseline panel opened', () => {
+    mount(); createThemeStore().apply(dark); expect(panel.usePreset()).toBe(false); expect(message()).toContain('another window'); expect(createThemeStore().state.accepted).toEqual(dark);
+    expect(document.documentElement.style.getPropertyValue('--bg')).toBe('#0a0a14');
+  });
   it('rejects an answer after connection generation changes', async () => {
     const core = mount(); aesthetic(); await panel.check(); core.questionStatus.mockResolvedValue({...status(), generation: 5}); button('Generate theme candidate').click();
     await vi.waitFor(() => expect(message()).toContain('Connection changed')); expect(button('Apply theme').disabled).toBe(true);
