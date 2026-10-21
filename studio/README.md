@@ -180,3 +180,53 @@ mocked; complete sign-in and a real question locally to verify your account.
 Protected account storage currently supports macOS and Linux; other platforms
 reject connection until an equivalent secure storage implementation is available.
 See [drafting question boundaries](../docs/architecture/studio-drafting-questions.md).
+
+## Vibecode your theme
+
+Open **Appearance → Vibecode theme**. Describe the aesthetic, review the exact
+outgoing prompt, and choose **Generate theme candidate**. Generation uses the
+account/model explicitly selected in Questions and its plan allowance. Nothing
+from the manuscript, selection, or conversation is included. There are no
+automatic retries, model/account changes, or billing fallbacks. Connection and
+empty-answer failures remain visible; issue [#22](https://github.com/Arcadesys/heinlein/issues/22)
+has separate live/native acceptance requirements.
+
+The agent returns nine opaque colour tokens and a bounded corner radius, rather
+than executable CSS. Each text/status/accent colour must reach 4.5:1 against all
+three backgrounds; borders must reach 3:1. The accent is the focus ring. Studio
+chooses black or white primary-button text for contrast. Fonts, type size,
+spacing, selectors, layout, logic and content cannot be changed by these tokens.
+URLs, imports, arbitrary CSS, alpha colours, and additional fields are rejected.
+The sample shows controls, disabled/hover/selection states, secondary text and
+status colours. Review its scoped CSS and the accepted-to-candidate token diff.
+
+**Apply theme** saves the accepted theme and its previous value together on this
+device. Candidates stay in memory and are discarded on close. **Discard candidate**
+keeps the accepted theme. **Revert accepted theme** swaps the saved current and
+previous theme; **Reset to baseline** restores the selected built-in preset,
+without changing fonts, zoom or manuscript text. Choosing a built-in theme/accent
+also leaves the custom theme. A storage error leaves the accepted theme unchanged
+and keeps the candidate reviewable; stale writes from another window are rejected.
+Corrupt saved themes fall back to the built-in preset with a repair message.
+Aesthetic descriptions and provider responses are not stored with accepted themes.
+
+You can also give another coding agent the exact prompt, then paste its JSON
+under **Use another coding agent**. Pasted output goes through the same validation
+and explicit preview/apply flow. No raw agent CSS is executed.
+
+### Repeatable browser checks
+
+```sh
+npm ci
+npx playwright install --with-deps chromium
+npm run test:theme:browser
+```
+
+This feature smoke runs real Chromium at 1280px and 320px, checks keyboard focus,
+axe contrast/semantics, sample/control states, candidate isolation, apply/revert/
+reset, reload persistence, provider failure and storage failure. It also opens the
+normal renderer. Generation checks use an explicitly labeled synthetic provider
+in `tests/browser/fixture.html`, with the real Studio/theme implementation and
+synthetic prose. That fixture has no credentials, native filesystem or paid calls
+and is not part of the production build. It is not evidence of live agent answers,
+native WebKit persistence, screen-reader acceptance or resolution of issue #22.
