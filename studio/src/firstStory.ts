@@ -18,7 +18,7 @@ export function invalidateFirstStory(state: FirstStoryState) {
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '') => {const n = document.createElement(tag); n.textContent = text; return n;};
 export function createFirstStory(core: LocalCore, options: {session(): RepositorySession | null; problem(): string | null; settle(): Promise<void>; openFolder(): Promise<void>; draft(): Promise<void>; review(): void}) {
   const element = node('dialog'); element.className = 'first-story'; element.setAttribute('aria-labelledby', 'first-story-title');
-  let state: FirstStoryState | null = null; let copy: PublishingCopy | null = null; let busy = false; let generation = 0; let sourceGeneration = 0; let opener: HTMLElement | null = null;
+  let state: FirstStoryState | null = null; let copy: PublishingCopy | null = null; let busy = false; let generation = 0; let sourceGeneration = 0; let editGeneration = 0; let opener: HTMLElement | null = null;
   const message = node('p'); message.setAttribute('role', 'status'); message.className = 'guide-status';
   function button(label: string, run: () => void | Promise<void>, primary = false) {const b = node('button', label); b.type = 'button'; if (primary) b.className = 'primary'; b.addEventListener('click', () => {void act(run);}); return b;}
   async function act(run: () => void | Promise<void>) {
@@ -34,11 +34,11 @@ export function createFirstStory(core: LocalCore, options: {session(): Repositor
   }
   function field(label: string, value: string, update: (v: string) => void, multiline = false) {
     const wrap = node('label', label); const input = multiline ? node('textarea') : node('input'); input.value = value; input.maxLength = multiline ? 4000 : 200;
-    input.addEventListener('input', () => {discardCopy(); update(input.value);}); wrap.append(input); return wrap;
+    input.addEventListener('input', () => {editGeneration++; discardCopy(); update(input.value);}); wrap.append(input); return wrap;
   }
   function check(label: string, value: boolean, update: (v: boolean) => void) {
     const wrap = node('label', label); wrap.className = 'guide-check'; const input = node('input'); input.type = 'checkbox'; input.checked = value;
-    input.addEventListener('change', () => {discardCopy(); update(input.checked);}); wrap.prepend(input); return wrap;
+    input.addEventListener('change', () => {editGeneration++; discardCopy(); update(input.checked);}); wrap.prepend(input); return wrap;
   }
   function help(summary: string, content: string) {const details = node('details'); details.append(node('summary', summary), node('p', content)); return details;}
   async function persist(proof = false) {
@@ -56,7 +56,15 @@ export function createFirstStory(core: LocalCore, options: {session(): Repositor
     }
   }
   async function next() {if (!state) return; state.steps[state.stage] = 'done'; state.stage = Math.min(5, state.stage + 1); await persist(); render(true);}
-  async function leave(run?: () => void | Promise<void>) {if (state?.enabled) await persist(); element.close(); if (run) await run();}
+  async function leave(run?: () => void | Promise<void>) {
+    if (state?.enabled) {
+      // Close/Escape and drafting/review exits must flush edits made while the
+      // final native save was pending, before open() can reload stored progress.
+      let submittedEdits: number;
+      do {submittedEdits = editGeneration; await persist();} while (submittedEdits !== editGeneration);
+    }
+    element.close(); if (run) await run();
+  }
   function confirmation(title: string, detail: string, proceed: () => Promise<void>) {
     const box = node('section'); box.className = 'guide-confirm'; box.setAttribute('aria-label', title); const heading = node('h3', title); heading.tabIndex = -1;
     box.append(heading, node('p', detail), button('Keep this stage', () => {box.remove(); element.querySelector<HTMLElement>('h2')?.focus();}), button('Skip this stage', async () => {await proceed();})); element.append(box); heading.focus();
@@ -82,7 +90,7 @@ export function createFirstStory(core: LocalCore, options: {session(): Repositor
         stage.append(node('p', 'Ready when you have a want and an obstacle, or a question you want to explore.'), help('An example, if useful', 'A courier wants to deliver a letter before dawn, but the bridge is gone. By the end, they may have to ask for help. Yours can be quieter, stranger or less planned.'), button('Save idea and continue', next, true));
       } else if (s.stage === 1) {
         stage.append(node('p', 'Next: choose how you want to begin. Discovery writing means finding the story while writing it; a light plan is only a few possible turns.'));
-        const label = node('label', 'My way in'); const select = node('select'); for (const [value, text] of [['discovery', 'Discover by writing'], ['plan', 'Make a light plan']]) {const option = node('option', text); option.value = value; select.append(option);} select.value = s.approach; select.onchange = () => {s.approach = select.value as typeof s.approach;}; label.append(select); stage.append(label, field('Optional notes: an opening, a turn, a possible ending', s.plan, v => s.plan = v, true), node('p', 'Ready when you have somewhere to start. You may change your mind as you write.'), button('Use this approach', next, true));
+        const label = node('label', 'My way in'); const select = node('select'); for (const [value, text] of [['discovery', 'Discover by writing'], ['plan', 'Make a light plan']]) {const option = node('option', text); option.value = value; select.append(option);} select.value = s.approach; select.onchange = () => {editGeneration++; s.approach = select.value as typeof s.approach;}; label.append(select); stage.append(label, field('Optional notes: an opening, a turn, a possible ending', s.plan, v => s.plan = v, true), node('p', 'Ready when you have somewhere to start. You may change your mind as you write.'), button('Use this approach', next, true));
       } else if (s.stage === 2) {
         stage.append(node('p', 'Next: write one scene where the character tries something. Keep going toward an ending. A scene is one stretch of action or conversation; it need not be a chapter.'), button('Open drafting', () => leave(options.draft), true), node('p', 'New story? In drafting, use the manuscript-creation button, then New scene. Leave a note for any gap you cannot solve yet.'), help('When is a first draft ready?', 'Ready for revision when there is an ending you can respond to, even if the middle has gaps. Aim to discover what happens, not to perfect every sentence.'), button('My draft reaches an ending; continue', next));
       } else if (s.stage === 3) {
@@ -121,5 +129,5 @@ export function createFirstStory(core: LocalCore, options: {session(): Repositor
   }
   element.addEventListener('cancel', e => {e.preventDefault(); void act(() => leave());});
   element.addEventListener('close', () => opener?.isConnected && opener.focus());
-  return {element, open, clear: () => {generation++; busy = false; state = null; copy = null; if (element.open) element.close();}, sourceChanged: () => {sourceGeneration++; copy = null; if (state) {invalidateFirstStory(state); if (element.open) {message.textContent = 'Story changed. Proof and release checks need a new saved revision.'; render();}}}, destroy: () => {generation++; element.remove();}};
+  return {element, open, clear: () => {generation++; busy = false; state = null; copy = null; if (element.open) element.close();}, sourceChanged: () => {sourceGeneration++; editGeneration++; copy = null; if (state) {invalidateFirstStory(state); if (element.open) {message.textContent = 'Story changed. Proof and release checks need a new saved revision.'; render();}}}, destroy: () => {generation++; element.remove();}};
 }

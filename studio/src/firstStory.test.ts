@@ -79,6 +79,28 @@ it('a source edit during a pending save cannot restore an older proof',async()=>
   expect(f.c.element.textContent).toContain('No current proof recorded.');await f.click('Close guide');
   expect(f.stored().proofRevision).toBeNull();expect(f.stored().steps[4]).toBe('todo');expect(f.stored().releaseChecks).toEqual([false,false,false,false]);
 });
+it.each([[0,'Close guide'],[5,'Close guide'],[0,'Escape'],[5,'Escape']] as const)('closing stage %s with %s flushes edits made during its final save before reopen',async(stage,action)=>{
+  const state=emptyFirstStory();state.enabled=true;state.stage=stage;state.sourceRevision='source';state.proofRevision='source';
+  const f=fixture(state);await f.c.open();const input=f.c.element.querySelector<HTMLInputElement>('label input')!;
+  input.value='Before close';input.dispatchEvent(new Event('input'));
+  const save=vi.mocked(f.core.saveFirstStory!);const original=save.getMockImplementation()!;let finish!:()=>void;
+  save.mockImplementationOnce(async(...args)=>{await new Promise<void>(resolve=>finish=resolve);return original(...args);});
+  if(action==='Escape'){f.c.element.dispatchEvent(new Event('cancel',{cancelable:true}));await tick();}else await f.click(action);
+  expect(f.c.element.open).toBe(true);input.value='Edited during close';input.dispatchEvent(new Event('input'));
+  if(stage===5){const check=[...f.c.element.querySelectorAll('label')].find(el=>el.textContent==='Rights and permissions are mine or cleared')!.querySelector<HTMLInputElement>('input')!;check.checked=true;check.dispatchEvent(new Event('change'));}
+  finish();await tick();expect(f.c.element.open).toBe(false);expect(save).toHaveBeenCalledTimes(2);await f.c.open();
+  expect(f.c.element.querySelector<HTMLInputElement>('label input')!.value).toBe('Edited during close');
+  if(stage===5)expect(f.stored().releaseChecks[0]).toBe(true);
+});
+it('leaving for advisory review also flushes checklist edits made during the exit save',async()=>{
+  const state=emptyFirstStory();state.enabled=true;state.stage=3;const f=fixture(state);await f.c.open();
+  const save=vi.mocked(f.core.saveFirstStory!);const original=save.getMockImplementation()!;let finish!:()=>void;
+  save.mockImplementationOnce(async(...args)=>{await new Promise<void>(resolve=>finish=resolve);return original(...args);});
+  await f.click('Open advisory Heinlein Review');expect(f.hooks.review).not.toHaveBeenCalled();
+  const check=f.c.element.querySelector<HTMLInputElement>('input[type="checkbox"]')!;check.checked=true;check.dispatchEvent(new Event('change'));
+  finish();await tick();expect(f.hooks.review).toHaveBeenCalledOnce();expect(f.stored().structureReviewed).toBe(true);
+  await f.c.open();expect(f.c.element.querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked).toBe(true);
+});
 it('reset cancellation preserves progress and malformed load offers explicit reset', async () => {
   const state=emptyFirstStory();state.enabled=true;state.idea[0]='Keep';const f=fixture(state);await f.c.open();await f.click('Reset guide…');expect(f.stored().idea[0]).toBe('Keep');
   vi.mocked(f.core.loadFirstStory!).mockRejectedValueOnce(new Error('Malformed guide; story unchanged'));await f.c.open();expect(f.c.element.textContent).toContain('Malformed guide');expect(f.c.element.textContent).toContain('Reset guide…');
