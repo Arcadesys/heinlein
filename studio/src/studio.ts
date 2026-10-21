@@ -16,6 +16,7 @@ import { createDraftingPanel, REPOSITORY_DRAG_TYPE } from './draftingPanel';
 import type { DraftingFileChange, DraftingState } from './localCore';
 import type { LocalCore, RepositorySession, Manuscript, Document, RecoveryDraft, Chapter } from './localCore';
 import { BUNDLED_FONTS, FONT_PRESETS, FONT_ROLES, applyChoices, cleanFamily, familyValue, loadChoices, saveChoices, type FontChoices } from './fonts';
+import { createThemePanel } from './themePanel';
 import { ACCENTS, LEADINGS, THEMES, WIDTHS, accentColor, applyAppearance, loadAppearance, saveAppearance, type Appearance } from './appearance';
 import { createPalette, type PaletteItem, type PaletteScope } from './palette';
 import { formatKeys, shortcutSheet } from './shortcuts';
@@ -711,7 +712,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   applyChoices(fontChoices);
   let installedFonts: string[] | null = null;
   const lookControls: (() => void)[] = [];
-  function setLook(patch: Partial<Appearance>) { look = {...look, ...patch}; saveAppearance(look); applyAppearance(look); lookControls.forEach(sync => sync()); }
+  function setLook(patch: Partial<Appearance>) { if ((patch.theme || patch.accent) && !themeBuilder.usePreset()) {showCategory('vibecode'); themeBuilder.focusStatus(); return;} look = {...look, ...patch}; saveAppearance(look); applyAppearance(look); themeBuilder.refresh(); lookControls.forEach(sync => sync()); }
   function pressed(node: HTMLElement, on: boolean) { node.setAttribute('aria-pressed', String(on)); }
   const dialog = el('dialog', '', 'appearance-dialog settings-window');
   dialog.setAttribute('aria-labelledby', 'appearance-title');
@@ -729,10 +730,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let category = 'theme';
   function showCategory(key: string) {
     category = key;
+    if (key === 'vibecode') void themeBuilder.check();
     sections.forEach((section, name) => { section.hidden = name !== key; });
     categoryButtons.forEach((node, name) => node.setAttribute('aria-current', String(name === key)));
   }
-  for (const [key, label] of [['theme', 'Theme'], ['type', 'Typography'], ['editor', 'Editor'], ['keys', 'Shortcuts']]) {
+  for (const [key, label] of [['theme', 'Theme'], ['vibecode', 'Vibecode theme'], ['type', 'Typography'], ['editor', 'Editor'], ['keys', 'Shortcuts']]) {
     const node = button(label, () => showCategory(key), 'settings-category'); categoryButtons.set(key, node); sidebar.append(node);
     const section = el('section', '', 'settings-section'); section.setAttribute('aria-label', label); sections.set(key, section); settingsBody.append(section);
   }
@@ -747,6 +749,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     return row;
   }
   function settingRow(label: string, control: HTMLElement) { const row = el('div', '', 'setting-row'); row.append(el('span', label), control); return row; }
+
+  const themeBuilder = createThemePanel(core, () => look);
+  sections.get('vibecode')!.append(themeBuilder.element);
+  dialog.addEventListener('close', () => { themeBuilder.close(); appearance.focus(); });
 
   // Theme: four base themes and four accents.
   const themeGrid = el('div', '', 'theme-grid');
@@ -836,12 +842,13 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   sections.get('keys')!.append(shortcutSheet());
 
-  sidebar.append(button('Done', () => dialog.close ? dialog.close() : dialog.removeAttribute('open'), 'primary'));
+  sidebar.append(button('Done', () => { themeBuilder.close(); if (dialog.close) dialog.close(); else { dialog.removeAttribute('open'); appearance.focus(); } }, 'primary'));
   root.append(dialog);
   lookControls.forEach(sync => sync());
   showCategory(category);
   async function openAppearance(section?: string) {
     if (section) showCategory(section);
+    else if (category === 'vibecode') void themeBuilder.check();
     const passage = editor?.text().slice(splitBodyStart(editor.text()) ?? 0).split(/\r?\n\s*\r?\n/).map(part => part.replace(/^#+\s.*$/m, '').trim()).find(part => part.length > 40);
     sample.textContent = passage ? (passage.length > 320 ? `${passage.slice(0, 320)}…` : passage) : SAMPLE_TEXT;
     if (!dialog.open) { if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', ''); }
@@ -1460,6 +1467,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }
