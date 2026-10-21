@@ -117,4 +117,56 @@ it('copy preview, cancellation, changed metadata and native confirmation remain 
   await f.click('Preview publishing copy…');await f.click('Create this new copy…');expect(f.core.confirmPublishingCopy).toHaveBeenCalledWith('project','opaque-plan');expect(f.c.element.textContent).toContain('Creation canceled');
   vi.mocked(f.core.confirmPublishingCopy!).mockResolvedValueOnce(true);await f.click('Preview publishing copy…');await f.click('Create this new copy…');expect(f.c.element.textContent).toContain('heinlein build');expect(f.c.element.textContent).toContain('No files have been shared');
 });
+it.each(['title','imprint','cover','source','reopen','clear'])('a deferred publishing preview is discarded after %s changes',async(change)=>{
+  const state=emptyFirstStory();state.enabled=true;state.stage=5;state.publishing={title:'Original title',author:'Example Author',rights:'Example rights',language:'en-US',formats:['html'],folderName:'new-copy',freePlayApproved:true,noCoverApproved:true};const f=fixture(state);await f.c.open();
+  const preview=vi.mocked(f.core.previewPublishingCopy!);const original=preview.getMockImplementation()!;let finish!:()=>void;
+  preview.mockImplementationOnce((...args)=>new Promise(resolve=>finish=()=>{void original(...args).then(resolve);}));
+  await f.click('Preview publishing copy…');
+  if(change==='source')f.c.sourceChanged();
+  else if(change==='reopen')await f.c.open();
+  else if(change==='clear')f.c.clear();
+  else if(change==='title'){const input=f.c.element.querySelector<HTMLInputElement>('label input')!;input.value='New title';input.dispatchEvent(new Event('input'));}
+  else {const label=change==='imprint'?'I approve the existing FREE PLAY Publishing branding for this copy':'I choose no cover for this text-only copy';const input=[...f.c.element.querySelectorAll('label')].find(el=>el.textContent===label)!.querySelector<HTMLInputElement>('input')!;input.checked=false;input.dispatchEvent(new Event('change'));}
+  finish();await tick();expect(f.c.element.querySelector('[aria-label="Publishing copy preview"]')).toBeNull();
+  expect(f.c.element.textContent).not.toContain('Preview ready.');expect(f.core.confirmPublishingCopy).not.toHaveBeenCalled();
+});
+it('stale settling cannot start a publishing preview for a different view',async()=>{
+  const state=emptyFirstStory();state.enabled=true;state.stage=5;const f=fixture(state);await f.c.open();let finish!:()=>void;
+  f.hooks.settle.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));await f.click('Preview publishing copy…');f.c.clear();finish();await tick();
+  expect(f.core.previewPublishingCopy).not.toHaveBeenCalled();
+});
+it('confirmation locks metadata and does not proceed after source changes while settling',async()=>{
+  const state=emptyFirstStory();state.enabled=true;state.stage=5;const f=fixture(state);await f.c.open();await f.click('Preview publishing copy…');let finish!:()=>void;
+  f.hooks.settle.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));await f.click('Create this new copy…');
+  expect([...f.c.element.querySelectorAll<HTMLInputElement>('input')].every(input=>input.disabled)).toBe(true);
+  f.c.sourceChanged();finish();await tick();expect(f.core.confirmPublishingCopy).not.toHaveBeenCalled();
+});
+it('a delayed confirmation result cannot install success into a reopened view',async()=>{
+  const state=emptyFirstStory();state.enabled=true;state.stage=5;const f=fixture(state);await f.c.open();await f.click('Preview publishing copy…');let finish!:(created:boolean)=>void;
+  vi.mocked(f.core.confirmPublishingCopy!).mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));await f.click('Create this new copy…');
+  await f.c.open();finish(true);await tick();expect(f.c.element.textContent).not.toContain('Publishing copy created.');expect(f.c.element.textContent).not.toContain('Build and inspect outside Studio');
+});
+it('a delayed reset cannot replace a reopened view',async()=>{
+  const state=emptyFirstStory();state.enabled=true;state.stage=5;const f=fixture(state);await f.c.open();let finish!:(state:FirstStoryState)=>void;
+  vi.mocked(f.core.resetFirstStory!).mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));await f.click('Reset guide…');await f.c.open();finish(emptyFirstStory());await tick();
+  expect(f.c.element.textContent).toContain('6. Prepare a publishing copy');expect(f.c.element.textContent).not.toContain('Start my story guide');
+});
+it('a source edit during load invalidates the returned proof',async()=>{
+  const state=emptyFirstStory();state.enabled=true;state.stage=4;state.proofRevision='old';state.steps[4]='done';const f=fixture(state);let finish!:(state:FirstStoryState)=>void;
+  vi.mocked(f.core.loadFirstStory!).mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));const opening=f.c.open();await tick();f.c.sourceChanged();finish(state);await opening;
+  expect(f.c.element.textContent).toContain('No current proof recorded.');
+});
+it.each(['view','source'])('proof cannot start after %s changes during settling',async(change)=>{
+  const state=emptyFirstStory();state.enabled=true;state.stage=4;const f=fixture(state);await f.c.open();let finish!:()=>void;
+  f.hooks.settle.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));await f.click('Mark this saved revision proofread');
+  if(change==='view')f.c.clear();else f.c.sourceChanged();finish();await tick();expect(f.core.saveFirstStory).not.toHaveBeenCalled();
+});
+it('a source edit during proof persistence prevents advancement and keeps proof stale',async()=>{
+  const state=emptyFirstStory();state.enabled=true;state.stage=4;const f=fixture(state);await f.c.open();
+  const save=vi.mocked(f.core.saveFirstStory!);const original=save.getMockImplementation()!;let finish!:()=>void;
+  save.mockImplementationOnce(async(...args)=>{await new Promise<void>(resolve=>finish=resolve);return original(...args);});
+  await f.click('Mark this saved revision proofread');f.c.sourceChanged();finish();await tick();
+  expect(f.c.element.textContent).toContain('5. Proof a saved revision');expect(f.c.element.textContent).toContain('No current proof recorded.');
+  await f.click('Close guide');expect(f.stored().proofRevision).toBeNull();expect(f.stored().stage).toBe(4);
+});
 it('pure invalidation keeps notes and intentional skips', () => {const s=emptyFirstStory();s.steps[4]='skipped';s.plan='Keep my plan';invalidateFirstStory(s);expect(s.steps[4]).toBe('skipped');expect(s.plan).toBe('Keep my plan');});
