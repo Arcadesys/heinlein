@@ -1,0 +1,35 @@
+name: Publishing and editorial validation
+on:
+  pull_request:
+    paths: ['heinlein/**', 'tests/**', 'examples/**', '.codex/hooks/**', 'tools/**', 'editorial/**', 'pyproject.toml', 'uv.lock', '.github/workflows/python.yml']
+  push:
+    branches: [main]
+    paths: ['heinlein/**', 'tests/**', 'examples/**', '.codex/hooks/**', 'tools/**', 'editorial/**', 'pyproject.toml', 'uv.lock', '.github/workflows/python.yml']
+permissions:
+  contents: read
+jobs:
+  publishing:
+    runs-on: ubuntu-latest
+    env:
+      HEINLEIN_REQUIRE_GOLDENS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install locked Python dependencies
+        run: |
+          python -m pip install uv
+          uv sync --locked --extra dev
+      - name: Install fixture-pinned Pandoc and PDF prerequisites
+        run: |
+          version=$(cat tests/golden/PANDOC_VERSION)
+          curl --fail --location --retry 3 "https://github.com/jgm/pandoc/releases/download/${version}/pandoc-${version}-1-amd64.deb" -o "$RUNNER_TEMP/pandoc.deb"
+          sudo dpkg -i "$RUNNER_TEMP/pandoc.deb"
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+          test "$(pandoc --version | head -1)" = "pandoc ${version}"
+          google-chrome --version
+          pdftotext -v
+      - name: Publishing, golden and editorial hook tests
+        run: uv run --locked --extra dev pytest -ra

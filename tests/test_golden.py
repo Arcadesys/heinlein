@@ -11,7 +11,7 @@ Rules:
   * HTML is compared on <body> only: <head> keeps remote font links when the
     network is blocked and embeds them when it is open.
   * Goldens are tied to one pandoc version (tests/golden/PANDOC_VERSION).
-    Other versions skip with a clear reason instead of failing.
+    Other versions skip locally; CI requires the pinned version and fails closed.
   * PDF is out of scope here (needs Chrome). It stays covered by smoke tests.
 
 Regenerate after an INTENDED change:
@@ -51,16 +51,20 @@ def _pandoc_version() -> str | None:
 
 
 PANDOC = _pandoc_version()
-PINNED = (GOLDEN / "PANDOC_VERSION").read_text().strip() if (GOLDEN / "PANDOC_VERSION").exists() else None
-
-pytestmark = pytest.mark.skipif(PANDOC is None, reason="pandoc not installed")
+PINNED = (GOLDEN / "PANDOC_VERSION").read_text().strip()
 
 
 def _skip_if_version_drift() -> None:
-    if UPDATE:
+    required = os.environ.get("CI") == "true" or os.environ.get("HEINLEIN_REQUIRE_GOLDENS") == "1"
+    if UPDATE and required:
+        pytest.fail("Golden updates are forbidden during required validation", pytrace=False)
+    if UPDATE and PANDOC is not None:
         return
-    if PINNED and PANDOC != PINNED:
-        pytest.skip(f"goldens pinned to pandoc {PINNED}; found {PANDOC}")
+    if PANDOC != PINNED:
+        reason = f"goldens require pandoc {PINNED}; found {PANDOC or 'no pandoc'}"
+        if required:
+            pytest.fail(reason, pytrace=False)
+        pytest.skip(reason)
 
 
 # ---------------------------------------------------------------- cases
