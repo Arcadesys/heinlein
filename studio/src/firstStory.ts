@@ -44,7 +44,11 @@ export function createFirstStory(core: LocalCore, options: {session(): Repositor
   async function persist(proof = false) {
     const session = options.session(); if (!session || !state || !core.saveFirstStory) throw new Error('Choose a story folder in the native app first.');
     const current = generation; const saved = await core.saveFirstStory(session.id, structuredClone(state), proof);
-    if (generation !== current) throw new Error('Story folder changed. Reopen the guide.'); state = saved;
+    if (generation !== current) throw new Error('Story folder changed. Reopen the guide.');
+    // Rendered controls retain these objects. Merge the persisted revision without
+    // detaching their callbacks or rebuilding the focused input after each save.
+    const publishing = state.publishing && saved.publishing ? Object.assign(state.publishing, saved.publishing) : saved.publishing;
+    Object.assign(state, saved, {publishing});
   }
   async function next() {if (!state) return; state.steps[state.stage] = 'done'; state.stage = Math.min(5, state.stage + 1); await persist(); render(true);}
   async function leave(run?: () => void | Promise<void>) {if (state?.enabled) await persist(); element.close(); if (run) await run();}

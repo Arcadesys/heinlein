@@ -34,6 +34,29 @@ it('notes persist and reopen; stage navigation and skip require explicit author 
   await f.click('Close guide');await f.c.open();expect(f.c.element.textContent).toContain('3. Draft to an ending');
   expect(f.hooks.review).not.toHaveBeenCalled();await f.click('Open drafting');expect(f.hooks.draft).toHaveBeenCalledOnce();
 });
+it('explicit saves keep rendered notes and skip controls connected through reopen', async () => {
+  const state=emptyFirstStory();state.enabled=true;const f=fixture(state);await f.c.open();
+  const input=f.c.element.querySelector<HTMLInputElement>('label input')!;
+  input.value='First idea';input.dispatchEvent(new Event('input'));await f.click('Save guide progress');
+  input.focus();input.value='Later idea';input.dispatchEvent(new Event('input'));await f.click('Save guide progress');
+  expect(f.c.element.querySelector('label input')).toBe(input);expect(document.activeElement).toBe(input);
+  expect(f.stored().idea[0]).toBe('Later idea');
+  input.value='Idea before closing';input.dispatchEvent(new Event('input'));await f.click('Close guide');await f.c.open();
+  expect(f.c.element.querySelector<HTMLInputElement>('label input')!.value).toBe('Idea before closing');
+  await f.click('Save guide progress');await f.click('Skip this stage…');await f.click('Skip this stage');
+  await f.click('Close guide');await f.c.open();expect(f.stored().steps[0]).toBe('skipped');expect(f.stored().stage).toBe(1);
+});
+it('publishing metadata and checklist changes after explicit save persist on close and reopen', async () => {
+  const state=emptyFirstStory();state.enabled=true;state.stage=5;const f=fixture(state);await f.c.open();
+  const title=f.c.element.querySelector<HTMLInputElement>('label input')!;
+  title.value='First title';title.dispatchEvent(new Event('input'));await f.click('Save guide progress');
+  title.value='Later title';title.dispatchEvent(new Event('input'));
+  const check=(label:string)=>{const input=[...f.c.element.querySelectorAll('label')].find(el=>el.textContent===label)!.querySelector<HTMLInputElement>('input')!;input.checked=true;input.dispatchEvent(new Event('change'));};
+  check('I choose no cover for this text-only copy');check('Rights and permissions are mine or cleared');
+  await f.click('Save guide progress');await f.click('Close guide');await f.c.open();
+  expect(f.stored().publishing?.title).toBe('Later title');expect(f.stored().publishing?.noCoverApproved).toBe(true);expect(f.stored().releaseChecks[0]).toBe(true);
+  expect(f.c.element.querySelector<HTMLInputElement>('label input')!.value).toBe('Later title');
+});
 it('reset cancellation preserves progress and malformed load offers explicit reset', async () => {
   const state=emptyFirstStory();state.enabled=true;state.idea[0]='Keep';const f=fixture(state);await f.c.open();await f.click('Reset guide…');expect(f.stored().idea[0]).toBe('Keep');
   vi.mocked(f.core.loadFirstStory!).mockRejectedValueOnce(new Error('Malformed guide; story unchanged'));await f.c.open();expect(f.c.element.textContent).toContain('Malformed guide');expect(f.c.element.textContent).toContain('Reset guide…');
