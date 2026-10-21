@@ -33,3 +33,8 @@ packages = ["heinlein"]
 
 [tool.hatch.build.targets.wheel.shared-data]
 "heinlein/templates" = "heinlein/templates"
+
+# Release source archives contain only the installable publisher. Manuscripts,
+# examples, local app data, tests and workspace build products are not release data.
+[tool.hatch.build.targets.sdist]
+include = ["/heinlein/**", "/pyproject.toml", "/README.md", "/LICENSE", "/.gitignore"]

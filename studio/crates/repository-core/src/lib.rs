@@ -3,10 +3,14 @@
 mod drafting;
 #[cfg(all(test, unix))]
 mod fuzz_support;
+mod publishing_copy;
 mod recovery;
 pub use drafting::{
     DraftingChange, DraftingChangeView, DraftingExternalFile, DraftingGroup, DraftingPlan,
     DraftingPreview, DraftingScene, DraftingState, DraftingUndo,
+};
+pub use publishing_copy::{
+    PublishingMetadata, PublishingPlan, PublishingPreview, PublishingSource,
 };
 pub use recovery::{RecoveryDraft, RecoveryStore};
 #[cfg(unix)]
@@ -33,6 +37,9 @@ const MAX_MANUSCRIPT_ITEMS: usize = 10000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Error {
+    PublishingText,
+    PublishingMetadata,
+    PublishingDestination,
     InvalidPath,
     Denied,
     NotFound,
@@ -65,6 +72,9 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
+            Self::PublishingText => "Text-only publishing copies cannot include scene frontmatter, asset/reference syntax, HTML or include directives in scenes, title or author. Use plain text for title/author, or prepare a separate publishing project manually; source files are unchanged",
+            Self::PublishingMetadata => "Supply title, author, rights, language, output formats and a new folder name; explicitly approve FREE PLAY branding and the no-cover choice",
+            Self::PublishingDestination => "Choose a NEW publishing-copy folder outside the manuscript repository. Existing files/folders and unsafe paths are never replaced",
             Self::InvalidPath => "Invalid repository-relative path",
             Self::Denied => "Path is excluded or is a symbolic link",
             Self::NotFound => "Repository item was not found",

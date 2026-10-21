@@ -45,6 +45,11 @@
     "allow-sign-out-question-account",
     "allow-open-question-usage",
     "allow-suggest-question-revision",
-    "allow-reject-proposal"
+    "allow-reject-proposal",
+    "allow-load-first-story",
+    "allow-save-first-story",
+    "allow-reset-first-story",
+    "allow-preview-publishing-copy",
+    "allow-confirm-publishing-copy"
   ]
 }

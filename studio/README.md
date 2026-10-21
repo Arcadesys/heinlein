@@ -4,6 +4,86 @@ An additive native desktop editor with local autosave and explicit recovery deci
 folder, browse its files, and use a scene manifest to navigate the manuscript.
 The existing Python publisher and its CLI remain unchanged.
 
+## rc1 candidate packaging
+
+The literal release tag is `rc1`; Studio's internal SemVer is `1.5.0-rc.1`.
+The existing Python publisher remains independently versioned at `0.1.0`.
+
+On an Apple Silicon Mac, build the separate candidate with:
+
+```sh
+cd studio
+npm ci
+npm run tauri build -- --config src-tauri/tauri.rc.conf.json --bundles app --ci
+```
+
+This produces **Heinlein Studio RC1.app** with bundle identifier
+`me.thearcades.heinlein.studio.rc1` and separate app data, leaving an existing
+Heinlein Studio installation/profile alone. It is a self-contained build of the
+checked-out source: no launcher fetches or rebuilds moving main on launch.
+The RC configuration uses ad-hoc signing, not a certified Developer ID or Apple
+notarization. An ARM64 build supports Apple Silicon; it is not a universal,
+Intel, Windows or Linux release. macOS 11 is the packaging minimum, not a claim
+that runtime acceptance was performed on every supported OS.
+
+Extract the app ZIP, keep its RC1 name, and copy it to your user Applications
+folder or run it from the extracted folder. Do not replace the stable app.
+macOS may require Finder's **Open** or **System Settings → Privacy & Security**
+approval for this non-notarized candidate. Verify the published SHA256 before
+opening it; never disable Gatekeeper globally. Removing the RC app does not
+remove its isolated guide/recovery data.
+
+Python wheel/source assets are separate from the Mac app. Install the wheel in
+a dedicated Python 3.11+ environment; Python dependencies, Pandoc and Chrome
+(for PDF) are external prerequisites, not bundled in the app or wheel. The
+source archive is restricted to publisher code/templates/package metadata;
+no manuscripts, examples, credentials or native app profiles belong in assets.
+Release notes and checksums identify the exact source commit and observed
+architecture/signing. A successful package build is not OS picker, VoiceOver,
+provider, live Linux or power-loss acceptance.
+
+## Your first story
+
+Choose **First story** for an optional guide from an idea to a publishing copy.
+It can help you choose a folder and start a manuscript, or resume work already
+underway. Each stage offers one next action, a readiness check and optional help.
+Use a light plan or discover the story while writing. Skip stages, return to them,
+or close and resume; resetting the guide asks for confirmation and leaves story
+files unchanged. Progress and planning answers stay in local app data, outside
+the manuscript. No checkbox edits prose or sends it to a provider.
+
+Revision separates the story/structure pass from sentence/voice work. Optional
+Heinlein Review remains advisory and runs only when requested. Proof applies to a
+saved revision; later source edits clear proof and release checks. Intentional
+style has no score or gate to pass.
+
+**Preview publishing copy** prepares a new, text-only snapshot of a drafting
+manuscript. Review all included scenes in order, metadata and text treatment.
+Scene frontmatter, links, images and include directives require a separately
+configured publishing project; the guide reports them rather than dropping them.
+Groups stay organizational. Supply your own author/rights information and
+explicitly approve the no-cover choice and the existing FREE PLAY / The Arcades
+branding (including its preset colophon). If you do not want that branding, use a
+separate manual publisher configuration; there is no generic unbranded preset.
+
+Choose an existing parent folder with the native picker. Only an additional
+native confirmation creates a **new** folder with `manuscript.md`, `heinlein.yaml`
+and a source-hash receipt. Existing folders/files are never replaced. Dirty,
+stale, missing or unsafe source and pending recovery stop the copy. Your original
+story remains authoritative; copies never synchronize in either direction.
+
+In the new copy folder, use the separately installed existing CLI:
+
+```sh
+heinlein build
+heinlein serve --host 127.0.0.1 --port 8765
+```
+
+Studio does not run these commands, share files, distribute a book or connect a
+publishing account. Check the actual HTML and chosen output before sharing. PDF
+needs Chrome; the other conversion formats use the existing Pandoc setup.
+See [the architecture boundary](../docs/architecture/studio-ms-drafting.md).
+
 ## Run
 
 macOS and Linux are the first supported platforms. Install Node.js 22+, stable

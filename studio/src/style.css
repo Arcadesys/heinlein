@@ -113,7 +113,8 @@ summary { min-height: 2.75rem; padding: .6rem 0; font-weight: 500; }
 .status:empty { display: none; }
 .status.quiet:not(.error) { opacity: 0; pointer-events: none; transition: opacity .6s; }
 .status.error { color: var(--danger); border-color: var(--danger); border-radius: var(--radius); }
-.corner-actions { position: absolute; right: 1.25rem; bottom: 1.1rem; z-index: 2; display: flex; gap: .25rem; padding: 2px; border-radius: 999px; background: var(--chrome-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+/* Global actions remain above the navigator when enlarged text makes them overlap. */
+.corner-actions { position: absolute; right: 1.25rem; bottom: 1.1rem; z-index: 4; display: flex; gap: .25rem; padding: 2px; border-radius: 999px; background: var(--chrome-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
 .corner-actions button { min-height: 2.25rem; border-color: transparent; color: var(--fg-muted); font: 400 .75rem var(--font-mono); padding: .25rem .6rem; }
 .corner-actions button:hover { color: var(--accent); }
 .corner-actions kbd { margin-left: .4rem; }
@@ -460,3 +461,26 @@ dialog { color: var(--fg); }
 .review-edit { border-top: 1px solid var(--border); padding-block: 1rem; }
 .review-edit h3, .review-edit h4 { margin-block: .5rem; }
 .review-edit button { margin: .25rem; }
+
+/* Optional story guide: large targets, one column, no colour-only progress. */
+.first-story { color: var(--fg); background: var(--bg); border: 2px solid var(--border); border-radius: 12px; width: min(46rem, calc(100vw - 1rem)); max-width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); padding: clamp(.75rem, 3vw, 2rem); overflow: auto; font-size: max(18px, 1rem); line-height: 1.6; box-sizing: border-box; }
+.first-story::backdrop { background: #000b; }
+.first-story h2 { font-size: 1.65em; line-height: 1.25; }
+.first-story h3 { font-size: 1.2em; line-height: 1.4; }
+.first-story :is(p, label, button, pre, li, summary) { overflow-wrap: anywhere; }
+.first-story :is(label, fieldset, details, section) { display: block; margin-block: 1rem; min-width: 0; }
+.first-story label :is(input:not([type=checkbox]), textarea, select) { display: block; width: 100%; box-sizing: border-box; min-height: 48px; margin-top: .4rem; padding: .6rem; color: var(--fg); background: var(--surface, var(--bg)); border: 2px solid var(--fg-muted); font: inherit; }
+.first-story textarea { min-height: 8rem; }
+.first-story button { min-height: 48px; max-width: 100%; padding: .6rem .8rem; margin: .3rem .4rem .3rem 0; font: inherit; white-space: normal; text-align: start; }
+.first-story nav { display: flex; flex-wrap: wrap; gap: .3rem; }
+.first-story nav button { flex: 1 1 13rem; border: 2px solid var(--border); }
+.first-story [aria-current=step] { font-weight: 800; text-decoration: underline; border-color: var(--fg); }
+.first-story .guide-check { display: flex; align-items: start; gap: .7rem; min-height: 48px; }
+.first-story input[type=checkbox] { flex: 0 0 auto; width: 24px; height: 24px; margin-top: .4rem; }
+.first-story :focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+.first-story summary { cursor: pointer; min-height: 48px; }
+.first-story pre { white-space: pre-wrap; max-width: 100%; border: 1px solid var(--border); padding: .6rem; font-size: .9em; }
+.first-story .guide-confirm { border: 2px solid var(--fg); padding: .8rem; }
+.first-story .guide-status:empty { display: none; }
+.corner-actions:has(.first-story-entry) { flex-wrap: wrap; max-width: calc(100vw - 1rem); border-radius: .8rem; }
+.corner-actions .first-story-entry { min-height: 44px; font-weight: 600; color: var(--fg); }

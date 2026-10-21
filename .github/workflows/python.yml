@@ -1,10 +1,10 @@
 name: Publishing and editorial validation
 on:
   pull_request:
-    paths: ['heinlein/**', 'tests/**', 'examples/**', '.codex/hooks/**', 'tools/**', 'editorial/**', 'pyproject.toml', 'uv.lock', '.github/workflows/python.yml']
+    paths: ['heinlein/**', 'studio/crates/repository-core/**', 'studio/Cargo.lock', 'studio/Cargo.toml', 'tests/**', 'examples/**', '.codex/hooks/**', 'tools/**', 'editorial/**', 'pyproject.toml', 'uv.lock', '.github/workflows/python.yml']
   push:
     branches: [main]
-    paths: ['heinlein/**', 'tests/**', 'examples/**', '.codex/hooks/**', 'tools/**', 'editorial/**', 'pyproject.toml', 'uv.lock', '.github/workflows/python.yml']
+    paths: ['heinlein/**', 'studio/crates/repository-core/**', 'studio/Cargo.lock', 'studio/Cargo.toml', 'tests/**', 'examples/**', '.codex/hooks/**', 'tools/**', 'editorial/**', 'pyproject.toml', 'uv.lock', '.github/workflows/python.yml']
 permissions:
   contents: read
 jobs:
@@ -17,6 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install locked Python dependencies
         run: |
           python -m pip install uv
