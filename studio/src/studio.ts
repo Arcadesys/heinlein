@@ -1,3 +1,4 @@
+import {createFirstStory} from './firstStory';
 import { createReviewPanel } from './reviewPanel';
 import { createDocumentDetails } from './documentDetails';
 import { createSceneNavigator } from './sceneNavigator';
@@ -166,6 +167,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   function setDirty(value: boolean) {
     dirty = value;
+    if (value) firstStory?.sourceChanged();
     updateSaveState();
     dirtySync = dirtySync.then(() => { if (!disposed) return core.setUnsavedChanges(value); }).catch(error => {
       if (disposed) return;
@@ -435,6 +437,16 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const manuscriptPane = el('section', '', 'panel manuscript');
   manuscriptPane.setAttribute('aria-label', 'Manuscript order');
   const manifests = el('div', '', 'manifest-picker');
+  const firstStoryEntry = button('First story', () => {void firstStory.open();}, 'first-story-entry');
+  firstStoryEntry.setAttribute('aria-haspopup', 'dialog');
+  const firstStory = createFirstStory(core, {session: () => repository,
+    problem: () => dirty || saving || recoveryPending || recoveryErrorMessage || structuralBusy || selecting || repositoryDetached ? 'Save your story and resolve recovery drafts before proofing or preparing a publishing copy.' : null,
+    settle: async () => {await dirtySync;},
+    openFolder: async () => {await selectRepository(() => core.pickRepository());},
+    draft: async () => {navigation.select('manuscript'); await openDrafting();},
+    review: () => {if (reviewPanel) {draftingQuestions?.close(); reviewPanel.open();} else {status.textContent = 'Open a scene, then choose Heinlein Review when you want advisory suggestions.';}},
+  });
+  corner.prepend(firstStoryEntry);
   const draftingEntry = button('ms drafting', () => { void openDrafting(); }, 'drafting-entry');
   draftingEntry.hidden = true;
   const outline = el('div');
@@ -454,7 +466,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   layout.append(navigation.element, preview);
   chromeReady = true;
   resetPreview();
-  root.replaceChildren(glow, layout, pill, status, goalCard, corner);
+  root.replaceChildren(glow, layout, pill, status, goalCard, corner, firstStory.element);
   const drafting = createDraftingPanel(core, {
     root, repository: () => repository, run: runStructural, verify: verifyStructuralBuffer,
     show: () => { outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
@@ -1128,6 +1140,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         reportDetachedRepository();
         return;
       }
+      firstStory.clear();
       repository = selected;
       repositoryDetached = false;
       writing.clearManuscript();
@@ -1467,6 +1480,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

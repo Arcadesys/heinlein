@@ -4,6 +4,48 @@ An additive native desktop editor with local autosave and explicit recovery deci
 folder, browse its files, and use a scene manifest to navigate the manuscript.
 The existing Python publisher and its CLI remain unchanged.
 
+## Your first story
+
+Choose **First story** for an optional guide from an idea to a publishing copy.
+It can help you choose a folder and start a manuscript, or resume work already
+underway. Each stage offers one next action, a readiness check and optional help.
+Use a light plan or discover the story while writing. Skip stages, return to them,
+or close and resume; resetting the guide asks for confirmation and leaves story
+files unchanged. Progress and planning answers stay in local app data, outside
+the manuscript. No checkbox edits prose or sends it to a provider.
+
+Revision separates the story/structure pass from sentence/voice work. Optional
+Heinlein Review remains advisory and runs only when requested. Proof applies to a
+saved revision; later source edits clear proof and release checks. Intentional
+style has no score or gate to pass.
+
+**Preview publishing copy** prepares a new, text-only snapshot of a drafting
+manuscript. Review all included scenes in order, metadata and text treatment.
+Scene frontmatter, links, images and include directives require a separately
+configured publishing project; the guide reports them rather than dropping them.
+Groups stay organizational. Supply your own author/rights information and
+explicitly approve the no-cover choice and the existing FREE PLAY / The Arcades
+branding (including its preset colophon). If you do not want that branding, use a
+separate manual publisher configuration; there is no generic unbranded preset.
+
+Choose an existing parent folder with the native picker. Only an additional
+native confirmation creates a **new** folder with `manuscript.md`, `heinlein.yaml`
+and a source-hash receipt. Existing folders/files are never replaced. Dirty,
+stale, missing or unsafe source and pending recovery stop the copy. Your original
+story remains authoritative; copies never synchronize in either direction.
+
+In the new copy folder, use the separately installed existing CLI:
+
+```sh
+heinlein build
+heinlein serve --host 127.0.0.1 --port 8765
+```
+
+Studio does not run these commands, share files, distribute a book or connect a
+publishing account. Check the actual HTML and chosen output before sharing. PDF
+needs Chrome; the other conversion formats use the existing Pandoc setup.
+See [the architecture boundary](../docs/architecture/studio-ms-drafting.md).
+
 ## Run
 
 macOS and Linux are the first supported platforms. Install Node.js 22+, stable

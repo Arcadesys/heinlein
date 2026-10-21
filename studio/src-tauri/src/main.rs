@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod drafting;
+mod first_story;
 #[cfg(all(test, unix))]
 mod persistence_tests;
 mod proposals;
@@ -51,6 +52,7 @@ struct BrowserState {
     recents: Mutex<RecentStore>,
     recovery: Mutex<Option<Arc<RecoveryStore>>>,
     drafting: Mutex<drafting::DraftingHost>,
+    first_story: Mutex<first_story::Host>,
 }
 
 fn id() -> String {
@@ -559,6 +561,11 @@ fn main() {
             proposals::review_proposal_revert,
             proposals::apply_proposal_review,
             proposals::cancel_proposal_review,
+            first_story::load_first_story,
+            first_story::save_first_story,
+            first_story::reset_first_story,
+            first_story::preview_publishing_copy,
+            first_story::confirm_publishing_copy,
             drafting::load_drafting,
             drafting::preview_drafting_change,
             drafting::apply_drafting_change,

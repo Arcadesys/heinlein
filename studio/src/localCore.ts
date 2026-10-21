@@ -1,3 +1,4 @@
+import type {FirstStoryState, PublishingMetadata, PublishingCopy} from './firstStory';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 export interface RecentRepository { id: string; name: string }
@@ -58,6 +59,11 @@ export interface ReviewEdit { id: string; path: string; fromUtf8: number; toUtf8
 export interface ReviewResult { reviewId: string; requestId: string; model: string; schemaVersion: 1; scope: 'scene' | 'chapter'; edits: ReviewEdit[] }
 export interface LocalCore {
   available(): boolean;
+  loadFirstStory?(repositoryId: string): Promise<FirstStoryState>;
+  saveFirstStory?(repositoryId: string, guide: FirstStoryState, markProof: boolean): Promise<FirstStoryState>;
+  resetFirstStory?(repositoryId: string): Promise<FirstStoryState | null>;
+  previewPublishingCopy?(repositoryId: string, metadata: PublishingMetadata): Promise<PublishingCopy | null>;
+  confirmPublishingCopy?(repositoryId: string, previewId: string): Promise<boolean>;
   requestReview?(request: ReviewRequest, connection: QuestionConnection): Promise<ReviewResult>;
   prepareReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<{proposalId: string}>;
   rejectReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<ReviewResult>;
@@ -105,6 +111,11 @@ export interface LocalCore {
 // no credentials, filesystem handles, or absolute root paths enter the renderer.
 export const localCore: LocalCore = {
   available: isTauri,
+  loadFirstStory: repositoryId => invoke('load_first_story', {repositoryId}),
+  saveFirstStory: (repositoryId, guide, markProof) => invoke('save_first_story', {repositoryId, guide, markProof}),
+  resetFirstStory: repositoryId => invoke('reset_first_story', {repositoryId}),
+  previewPublishingCopy: (repositoryId, metadata) => invoke('preview_publishing_copy', {repositoryId, metadata}),
+  confirmPublishingCopy: (repositoryId, previewId) => invoke('confirm_publishing_copy', {repositoryId, previewId}),
   requestReview: (request, connection) => invoke('request_review', {request, connection}),
   prepareReviewEdit: (repositoryId, reviewId, editId) => invoke('prepare_review_edit', {repositoryId, reviewId, editId}),
   rejectReviewEdit: (repositoryId, reviewId, editId) => invoke('reject_review_edit', {repositoryId, reviewId, editId}),
