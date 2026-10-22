@@ -71,12 +71,24 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         await request({ action: 'cancel', previewId: p.id });
         throw new Error('Writing or project changed. Prepare a new preview.');
     } cancelPlan(); plan = p.id; return p; }
-    async function load() { const view = generation; const value = await request<GitHubStatus>({ action: 'status' }); if (view !== generation || !element.open)
-        return; snapshot = value; project = null; if (options.session()?.githubWorkspaceId) {
-        project = await request<GitHubProject>({ action: 'workspace', repositoryId: session().id });
-        if (view !== generation || !element.open)
-            return;
-    } renderHome(); }
+    async function load() {
+        const view=generation;
+        const selected=options.session();
+        const value=await request<GitHubStatus>({action:'status'});
+        if(view!==generation||!element.open)return;
+        let selectedProject:GitHubProject|null=null;
+        let selectedError:string|null=null;
+        if(selected?.githubWorkspaceId){
+            try { selectedProject=await request<GitHubProject>({action:'workspace',repositoryId:selected.id}); }
+            catch(error){ selectedError=String(error); }
+        }
+        // An unavailable selected copy must not hide status/recovery controls.
+        // Keep awaited results local until their original view is still current.
+        if(view!==generation||!element.open)return;
+        snapshot=value;project=selectedProject;
+        renderHome();
+        if(selectedError)message.textContent=`The selected copy could not reopen. Use the recovery controls below when available. ${selectedError}`;
+    }
     function account(auth: GitHubAuth | null) {
         body.append(node('h4', 'GitHub account'), node('p', auth?.message ?? snapshot?.error ?? 'GitHub is unavailable. Local writing remains available.'));
         if (auth?.pending) {

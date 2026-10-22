@@ -60,3 +60,19 @@ it('incoming prose has labelled panes, no selected choice, and explicit resoluti
 it('dirty/recovery blocks action preparation and native unavailable has an explicit state', async () => { const f = fixture(); await f.p.open(); f.setProblem('Resolve recovery first.'); await f.click('Review changes on the original branch…'); expect(f.p.element.textContent).toContain('Resolve recovery first.'); expect(f.request.mock.calls.some(c => c[0].action === 'previewIncoming')).toBe(false); });
 it('Escape returns focus and stale load after project change cannot restore old data', async () => { const f = fixture(false); const opener = document.createElement('button'); document.body.append(opener); opener.focus(); await f.p.open(); f.p.element.dispatchEvent(new Event('cancel', { cancelable: true })); expect(f.p.element.open).toBe(false); expect(document.activeElement).toBe(opener); });
 it('reading-order conflicts show scene names with advanced IDs collapsed',async()=>{const {createGitHubConflictPanel}=await import('./githubConflictPanel');const p=createGitHubConflictPanel({id:'order',kind:'order',label:'Scene reading order',original:'["one","two"]',yours:'["two","one"]',github:'["one","two"]',resolution:null},async()=>{}, {one:'Opening (ms/1.md)',two:'Ending (ms/2.md)'});document.body.append(p.element);expect(p.element.querySelector('details pre')!.textContent).toBe('1. Opening (ms/1.md)\n2. Ending (ms/2.md)');const advanced=[...p.element.querySelectorAll('details')].find(d=>d.querySelector('summary')?.textContent==='Custom structure result (advanced)')!;expect(advanced.open).toBe(false);});
+it.each(['incoming','version'] as const)('selected %s recovery remains reachable when workspace loading rejects',async kind=>{
+    const f=fixture();const original=f.request.getMockImplementation()!;
+    f.request.mockImplementation(async request=>{
+        if(request.action==='status')return {...structuredClone(status),workspaces:[{workspace,error:'An interrupted operation needs recovery.',incomingRecovery:kind==='incoming',receipts:kind==='version'?[{id:'prepared-version',workspaceId:workspace.id,kind:'version',status:'prepared',head:'local',message:'Version needs recovery.',url:null}]:[]}]};
+        if(request.action==='workspace')throw new Error('An interrupted operation needs recovery.');
+        return original(request);
+    });
+    await f.p.open();
+    const recovery=kind==='incoming'?'Recover interrupted update for story…':'Recover local version for story…';
+    expect(f.p.element.textContent).toContain('interrupted operation');
+    await f.click(recovery);
+    expect(f.request.mock.calls).toContainEqual([{action:'recover',workspaceId:workspace.id,operationId:kind==='version'?'prepared-version':null}]);
+    await f.click('Close GitHub projects');await f.p.open();
+    expect([...f.p.element.querySelectorAll('button')].some(b=>b.textContent===recovery)).toBe(true);
+    expect(f.request.mock.calls.some(([request])=>request.action==='previewVersion'||request.action==='previewShare')).toBe(false);
+});

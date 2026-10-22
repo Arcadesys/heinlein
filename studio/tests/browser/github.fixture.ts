@@ -21,7 +21,9 @@ const workspace = { id: 'synthetic-workspace', repo, accountId: 9, authBinding: 
         base: string;
     } };
 const session: RepositorySession = { id: 'synthetic-session', name: 'example/synthetic-story', manifests: [], githubWorkspaceId: workspace.id };
-let opened = false;
+const recoveryMode=new URLSearchParams(location.search).get('recovery');
+let pendingWorkspaceRecovery=recoveryMode==='incoming'||recoveryMode==='version'?recoveryMode:null;
+let opened = !!pendingWorkspaceRecovery;
 let receipts: GitHubReceipt[] = [];
 let auth: GitHubAuth = { configured: true, account: null, confirmed: false, pending: null, message: 'Synthetic host: no real GitHub connection, files or OS authority.' };
 const calls: GitHubRequest[] = [];
@@ -32,7 +34,7 @@ const unavailable = async (): Promise<never> => { throw new Error('Synthetic bro
 async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
     calls.push(structuredClone(r));
     switch (r.action) {
-        case 'status': return { auth, error: null, workspaces: opened ? [{ workspace, error: null, incomingRecovery: false, receipts }] : [], app: { id: 5412628, clientId: 'synthetic-public', owner: 'Arcadesys', slug: 'heinlein-studio', installUrl: 'https://github.com/apps/heinlein-studio' } };
+        case 'status': return { auth, error: null, workspaces: opened ? [{ workspace, error: pendingWorkspaceRecovery?'Synthetic interrupted operation needs recovery.':null, incomingRecovery: pendingWorkspaceRecovery==='incoming', receipts:pendingWorkspaceRecovery==='version'?[{id:'synthetic-prepared-version',workspaceId:workspace.id,kind:'version',status:'prepared',head:workspace.headOid,message:'Synthetic local version needs recovery.',url:null}]:receipts }] : [], app: { id: 5412628, clientId: 'synthetic-public', owner: 'Arcadesys', slug: 'heinlein-studio', installUrl: 'https://github.com/apps/heinlein-studio' } };
         case 'connect':
             auth = { ...auth, pending: { userCode: 'SYNTHETIC', verificationUri: 'https://github.com/login/device', expiresAt: 9999999999, nextPollAt: 0 }, message: 'Synthetic code only. No real sign-in.' };
             return auth;
@@ -50,7 +52,8 @@ async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
         case 'reopen':
             opened = true;
             return session;
-        case 'workspace': return { workspace, changes: text === versioned ? [] : [change()], receipts };
+        case 'workspace': if(pendingWorkspaceRecovery)throw new Error('Synthetic interrupted operation needs recovery.');return { workspace, changes: text === versioned ? [] : [change()], receipts };
+        case 'recover': pendingWorkspaceRecovery=null;return null;
         case 'previewVersion':
             if (!r.paths.length || !r.identity.name || !r.identity.email || !r.message)
                 throw new Error('Select files and confirm your name, email and version message.');
@@ -86,6 +89,7 @@ async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
     }
 }
 const core: LocalCore = { available: () => true, githubRequest, pickRepository: unavailable, recentRepositories: async () => [], openRecentRepository: unavailable, listSystemFonts: async () => [], listDirectory: async () => [{ path: 'story.md', name: 'story.md', kind: 'file', sizeBytes: text.length }], loadManuscript: unavailable, readDocument: async (_id, path) => ({ path, text, contentHash: hash, sizeBytes: text.length, frontmatter: null, generatedCompatibility: false }), saveDocument: async (_id, path, _expected, source) => { text = source; hash += '-saved'; return { path, text, contentHash: hash, sizeBytes: text.length, frontmatter: null, generatedCompatibility: false }; }, readRecovery: async () => recovery, stageRecovery: async (_id, path, baseHash, source) => recovery = { id: 'synthetic-recovery', path, baseHash, text: source, updatedAt: 1 }, discardRecovery: async () => { recovery = null; }, setUnsavedChanges: async (v) => { dirty = v; }, requestClose: async () => { }, onCloseRequested: async () => () => { }, loadDrafting: async () => ({ manifestPath: 'ms/manuscript.json', revision: null, project: null, groups: [], scenes: [], untrackedPaths: ['story.md'], missingPaths: [], recoveryRequired: false }) };
-mountStudio(document.querySelector<HTMLElement>('#app')!, core);
+const app=mountStudio(document.querySelector<HTMLElement>('#app')!, core);
 // AO's preview can start directly at the real production panel on this synthetic host.
-if (new URLSearchParams(location.search).has('github')) document.querySelector<HTMLButtonElement>('.github-entry')?.click();
+if(pendingWorkspaceRecovery){auth={...auth,confirmed:true,account:{id:9,login:'synthetic-writer'}};void app.selectRepository(async()=>session).then(()=>document.querySelector<HTMLButtonElement>('.github-entry')?.click());}
+else if (new URLSearchParams(location.search).has('github')) document.querySelector<HTMLButtonElement>('.github-entry')?.click();

@@ -81,3 +81,17 @@ test('GitHub panel keyboard entry, Escape focus and high contrast reflow at 200 
     const axe = await new AxeBuilder({ page }).include('.github-panel').analyze();
     expect(axe.violations).toEqual([]);
 });
+for(const kind of ['incoming','version'] as const)test(`selected ${kind} recovery is keyboard reachable after workspace reopen rejects`,async({page})=>{
+    await page.goto(`/tests/browser/github.html?recovery=${kind}`);
+    const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('The selected copy could not reopen');
+    await expect(dialog.getByRole('button',{name:'Save a version on this computer…',exact:true})).toHaveCount(0);
+    const recovery=dialog.getByRole('button',{name:kind==='incoming'?'Recover interrupted update for synthetic-story…':'Recover local version for synthetic-story…',exact:true});
+    await expect(recovery).toBeEnabled();
+    const axe=await new AxeBuilder({page}).include('.github-panel').analyze();expect(axe.violations).toEqual([]);
+    for(let i=0;i<40&&!await recovery.evaluate(el=>el===document.activeElement);i++)await page.keyboard.press('Tab');
+    await expect(recovery).toBeFocused();await page.keyboard.press('Enter');
+    await expect(dialog.getByRole('button',{name:'Save a version on this computer…',exact:true})).toBeVisible();
+    const requests=await page.evaluate(()=>((window as any).githubFixture.calls as {action:string;workspaceId?:string;operationId?:string|null}[]).filter(r=>r.action==='recover'));
+    expect(requests).toEqual([{action:'recover',workspaceId:'synthetic-workspace',operationId:kind==='version'?'synthetic-prepared-version':null}]);
+});
