@@ -408,3 +408,78 @@ fn ready_pr_is_a_known_failure_not_an_uncertain_new_request() {
     assert_eq!(r.status, "failed");
     assert_eq!(api.create_calls.load(Ordering::SeqCst), 0);
 }
+#[test]
+fn feedback_preview_contains_sent_changes_against_the_pr_base() {
+    let f = Fixture::new();
+    let api = MockApi::default();
+    let (_auth, c, w) = setup(&f, &api);
+    let version = version(&f, &w);
+    let saved = operations::commit_version(&f.registry, &version, |_| Ok(())).unwrap();
+    let push = operations::share_preview(
+        &f.registry,
+        &api,
+        &c,
+        &w.id,
+        "push",
+        String::new(),
+        String::new(),
+    )
+    .unwrap();
+    assert_eq!(push.preview.commits, vec![saved.head.clone()]);
+    operations::send(&f.registry, &api, &c, &push, |_, w, _| {
+        *api.remote.lock().unwrap() = Some(w.head_oid.clone());
+        Ok(())
+    })
+    .unwrap();
+    let feedback = operations::share_preview(
+        &f.registry,
+        &api,
+        &c,
+        &w.id,
+        "feedback",
+        "Review my writing".into(),
+        "Please review the scene.".into(),
+    )
+    .unwrap();
+    assert_eq!(feedback.preview.commits, vec![saved.head.clone()]);
+    assert_eq!(feedback.preview.files.len(), 1);
+    assert_eq!(feedback.preview.files[0].path, "story.md");
+    assert_eq!(
+        feedback.preview.files[0].before_hash,
+        Some(github_workspace::hash(b"Original story.\n"))
+    );
+    assert_eq!(
+        feedback.preview.files[0].after_hash,
+        Some(github_workspace::hash(b"Author's new story.\n"))
+    );
+    // A later push remains relative to the sent writing tip, not the PR base.
+    std::fs::write(
+        f.registry.checkout(&w.id).unwrap().join("story.md"),
+        "Second local scene.\n",
+    )
+    .unwrap();
+    let second = operations::version_preview(
+        &f.registry,
+        &w.id,
+        vec!["story.md".into()],
+        identity(),
+        "Second version".into(),
+    )
+    .unwrap();
+    let second = operations::commit_version(&f.registry, &second, |_| Ok(())).unwrap();
+    let push = operations::share_preview(
+        &f.registry,
+        &api,
+        &c,
+        &w.id,
+        "push",
+        String::new(),
+        String::new(),
+    )
+    .unwrap();
+    assert_eq!(push.preview.commits, vec![second.head]);
+    assert_eq!(
+        push.preview.files[0].before_hash,
+        Some(github_workspace::hash(b"Author's new story.\n"))
+    );
+}

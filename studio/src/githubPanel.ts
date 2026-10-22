@@ -1,5 +1,5 @@
 import type { LocalCore, RepositorySession } from './localCore';
-import type { GitHubRequest, GitHubStatus, GitHubAuth, GitHubProject, GitHubOpen, GitHubVersion, GitHubShare, GitHubIncoming, GitHubIdentity, GitHubReceipt } from './githubTypes';
+import type { GitHubRequest, GitHubStatus, GitHubAuth, GitHubProject, GitHubOpen, GitHubVersion, GitHubShare, GitHubIncoming, GitHubIdentity, GitHubReceipt, GitHubRepositories } from './githubTypes';
 import { createGitHubConflictPanel } from './githubConflictPanel';
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '') => { const e = document.createElement(tag); e.textContent = text; return e; };
 type Options = {
@@ -71,12 +71,24 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         await request({ action: 'cancel', previewId: p.id });
         throw new Error('Writing or project changed. Prepare a new preview.');
     } cancelPlan(); plan = p.id; return p; }
-    async function load() { const view = generation; const value = await request<GitHubStatus>({ action: 'status' }); if (view !== generation || !element.open)
-        return; snapshot = value; project = null; if (options.session()?.githubWorkspaceId) {
-        project = await request<GitHubProject>({ action: 'workspace', repositoryId: session().id });
-        if (view !== generation || !element.open)
-            return;
-    } renderHome(); }
+    async function load() {
+        const view=generation;
+        const selected=options.session();
+        const value=await request<GitHubStatus>({action:'status'});
+        if(view!==generation||!element.open)return;
+        let selectedProject:GitHubProject|null=null;
+        let selectedError:string|null=null;
+        if(selected?.githubWorkspaceId){
+            try { selectedProject=await request<GitHubProject>({action:'workspace',repositoryId:selected.id}); }
+            catch(error){ selectedError=String(error); }
+        }
+        // An unavailable selected copy must not hide status/recovery controls.
+        // Keep awaited results local until their original view is still current.
+        if(view!==generation||!element.open)return;
+        snapshot=value;project=selectedProject;
+        renderHome();
+        if(selectedError)message.textContent=`The selected copy could not reopen. Use the recovery controls below when available. ${selectedError}`;
+    }
     function account(auth: GitHubAuth | null) {
         body.append(node('h4', 'GitHub account'), node('p', auth?.message ?? snapshot?.error ?? 'GitHub is unavailable. Local writing remains available.'));
         if (auth?.pending) {
@@ -92,6 +104,37 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         if (auth?.account || auth?.pending)
             body.append(button('Sign out of GitHub', async () => { cancelPlan(); snapshot!.auth = await request<GitHubAuth>({ action: 'signOut' }); renderHome(); }));
         body.append(button('Choose repositories for Heinlein on GitHub', async () => { await request({ action: 'openLink', kind: 'install' }); }), node('p', 'Heinlein Studio is the Arcadesys GitHub App. Install it only for repositories you choose. GitHub access is separate from AI or assistant access.'));
+    }
+    async function previewRepository(action:GitHubRequest) {
+        const p=await prepare<GitHubOpen>(action);
+        heading('Open this GitHub project?');
+        body.append(node('p',`${p.repository.owner}/${p.repository.name} · ${p.repository.private?'Private':'Public'} · account ${p.account.login}`),node('p',p.treatment),button('Open separate local copy…',async()=>{
+            await options.select(()=>request<RepositorySession|null>({action:'confirmOpen',previewId:p.id}));plan=null;close();
+        }),button('Cancel repository preview',async()=>{renderHome();}));focus();
+    }
+    function repositoryChooser() {
+        body.append(node('h4','Open a GitHub project'),node('p','Sign-in and repository access are separate. Choose only the repositories you want Heinlein to access on GitHub, then load the list here. Only repositories you can write to are offered.'));
+        const result=node('section');result.setAttribute('aria-label','Available GitHub repositories');
+        const refresh=button('Load repositories',async()=>{
+            result.replaceChildren(node('p','Loading repositories granted to Heinlein…'));
+            refresh.textContent='Refresh repository list';
+            try {
+                const p=await prepare<GitHubRepositories>({action:'repositories'});
+                if(p.account.id!==snapshot?.auth?.account?.id||!snapshot.auth.confirmed){cancelPlan();throw new Error('GitHub account changed. Confirm the account and refresh the list.');}
+                result.replaceChildren();
+                if(!p.repositories.length)result.append(node('p','No available repositories yet. Choose repositories for Heinlein on GitHub, select only the ones you want, and then refresh this list. Organization approval or SSO may also be required.'));
+                else {
+                    result.append(node('p',`Choose a repository for ${p.account.login}. Nothing is opened until you review and confirm.`));
+                    const list=node('ul');
+                    for(const repo of p.repositories){const item=node('li');item.append(node('p',`${repo.owner}/${repo.name} · ${repo.private?'Private':'Public'}`),button(`Preview ${repo.owner}/${repo.name}…`,()=>previewRepository({action:'previewListedRepository',listId:p.id,repositoryId:repo.id})));list.append(item);}
+                    result.append(list);
+                }
+                if(p.unavailable)result.append(node('p','Some repositories or installations are unavailable because access is limited, the repository is archived, or it has no default branch. Check access on GitHub or use another repository.'));
+            }catch(error){
+                if(element.open&&result.isConnected){result.replaceChildren(node('p',String(error)),node('p','Check repository access on GitHub, then refresh this list. You can also paste a repository URL below.'));}
+            }
+        });
+        body.append(refresh,result);
     }
     function renderHome() {
         cancelPlan();
@@ -114,8 +157,11 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
             }
         }
         account(snapshot.auth);
-        if (snapshot.auth?.confirmed)
-            body.append(field('GitHub repository URL', url, v => url = v), button('Preview repository…', async () => { const p = await prepare<GitHubOpen>({ action: 'previewOpen', url }); heading('Open this GitHub project?'); body.append(node('p', `${p.repository.owner}/${p.repository.name} · ${p.repository.private ? 'Private' : 'Public'} · account ${p.account.login}`), node('p', p.treatment), button('Open separate local copy…', async () => { await options.select(() => request<RepositorySession | null>({ action: 'confirmOpen', previewId: p.id })); plan = null; close(); }), button('Cancel repository preview', async () => { renderHome(); })); focus(); }));
+        if (snapshot.auth?.confirmed) {
+            repositoryChooser();
+            const fallback=node('details');fallback.append(node('summary','Open by repository URL instead'),field('GitHub repository URL',url,v=>url=v),button('Preview repository…',()=>previewRepository({action:'previewOpen',url})));
+            body.append(fallback);
+        }
         if (snapshot.workspaces.length) {
             body.append(node('h4', 'Copies on this computer'), node('p', 'Open these copies offline. Missing copies are never cloned over your writing.'));
             for (const item of snapshot.workspaces) {

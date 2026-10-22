@@ -39,6 +39,7 @@ struct Bound {
     plan: Plan,
 }
 enum Plan {
+    Repositories(gh::api::RepositoryList, u64, String),
     Open(gh::RepoInfo, u64, String),
     Version(operations::VersionPlan),
     Share(Box<operations::SharePlan>),
@@ -59,6 +60,11 @@ pub(crate) enum Request {
         user_id: u64,
     },
     SignOut,
+    Repositories,
+    PreviewListedRepository {
+        list_id: String,
+        repository_id: u64,
+    },
     OpenLink {
         kind: String,
     },
@@ -301,6 +307,22 @@ fn confirm(app: &tauri::AppHandle, title: &str, message: String) -> bool {
 fn serialized(v: impl Serialize) -> Result<Value> {
     serde_json::to_value(v).map_err(|_| "GitHub response unavailable".into())
 }
+fn listed_repository<'a>(
+    list: &'a gh::api::RepositoryList,
+    id: u64,
+    account: u64,
+    binding: &str,
+    user: &gh::auth::User,
+    current_binding: &str,
+) -> Result<&'a gh::RepoInfo> {
+    if account != user.id || binding != current_binding {
+        return Err("GitHub account changed. Refresh the repository list.".into());
+    }
+    list.repositories
+        .iter()
+        .find(|r| r.id == id)
+        .ok_or_else(|| "Choose a repository from a fresh list.".into())
+}
 fn open(app: &tauri::AppHandle, s: &Services, w: &Workspace) -> Result<Session> {
     s.registry.reopen(&w.id).map_err(|e| e.to_string())?;
     super::select(app, s.registry.checkout(&w.id).map_err(|e| e.to_string())?)
@@ -382,6 +404,70 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
     }
     let s = services(app)?;
     match request {
+        Request::Repositories => {
+            let c = s
+                .auth
+                .credential(&s.api, gh::auth::now())
+                .map_err(|e| e.to_string())?;
+            let list = s.api.repositories(&c).map_err(|e| match e {
+                gh::Error::Limit => "The repository list is too large to load safely. You can still paste a repository URL below.".into(),
+                gh::Error::Permission => "GitHub denied repository access. Check the selected repositories, organization approval or SSO on GitHub, then refresh the list.".into(),
+                other => other.to_string(),
+            })?;
+            current(&state, started)?;
+            let id = super::id();
+            let view = json!({"id":id,"account":c.account,"repositories":list.repositories,"unavailable":list.unavailable});
+            put(
+                app,
+                id,
+                None,
+                started,
+                Plan::Repositories(list, c.account.id, c.binding.clone()),
+            )?;
+            Ok(view)
+        }
+        Request::PreviewListedRepository {
+            list_id,
+            repository_id,
+        } => {
+            let bound = take(app, &list_id, None)?;
+            current(&state, bound.epoch)?;
+            let Plan::Repositories(list, account, binding) = bound.plan else {
+                return Err("Refresh the repository list before choosing a project".into());
+            };
+            let c = s
+                .auth
+                .credential(&s.api, gh::auth::now())
+                .map_err(|e| e.to_string())?;
+            let selected = listed_repository(
+                &list,
+                repository_id,
+                account,
+                &binding,
+                &c.account,
+                &c.binding,
+            )?;
+            let repo = s
+                .api
+                .repository_by_id(&c, selected.id)
+                .map_err(|e| e.to_string())?;
+            if &repo != selected {
+                return Err(
+                    "Repository access or details changed. Refresh the repository list.".into(),
+                );
+            }
+            current(&state, bound.epoch)?;
+            let id = super::id();
+            let view = json!({"id":id,"repository":repo,"account":c.account,"treatment":"A separate copy on this computer. Saving stays local until you explicitly send versions to GitHub."});
+            put(
+                app,
+                id,
+                None,
+                started,
+                Plan::Open(repo, c.account.id, c.binding.clone()),
+            )?;
+            Ok(view)
+        }
         Request::Connect => serialized(
             s.auth
                 .begin(&s.api, gh::auth::now())
@@ -818,6 +904,29 @@ mod tests {
 #[cfg(test)]
 mod authority_tests {
     use super::*;
+    #[test]
+    fn repository_choice_is_bound_to_native_list_account_and_connection() {
+        let Plan::Open(repo, _, _) = bound().plan else {
+            panic!()
+        };
+        let list = gh::api::RepositoryList {
+            repositories: vec![repo],
+            unavailable: 0,
+        };
+        let user = gh::auth::User {
+            id: 9,
+            login: "writer".into(),
+        };
+        assert_eq!(
+            listed_repository(&list, 42, 9, "binding", &user, "binding")
+                .unwrap()
+                .id,
+            42
+        );
+        assert!(listed_repository(&list, 43, 9, "binding", &user, "binding").is_err());
+        assert!(listed_repository(&list, 42, 10, "binding", &user, "binding").is_err());
+        assert!(listed_repository(&list, 42, 9, "old-connection", &user, "binding").is_err());
+    }
     fn bound() -> Bound {
         Bound {
             session: Some("opaque-session".into()),

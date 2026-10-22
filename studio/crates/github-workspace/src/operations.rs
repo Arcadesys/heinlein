@@ -385,10 +385,17 @@ pub fn share_preview(
     {
         return Err(Error::Changed);
     }
-    let base = remote_before.as_deref().unwrap_or(&w.base_oid);
+    let head = Oid::from_str(&w.head_oid)?;
+    // Pushes preview only the unsent range. Draft feedback previews the full PR
+    // comparison, even though its writing tip has already been sent.
+    let comparison = if kind == "feedback" {
+        repo.merge_base(head, Oid::from_str(&base_oid)?)?
+    } else {
+        Oid::from_str(remote_before.as_deref().unwrap_or(&w.base_oid))?
+    };
     let mut walk = repo.revwalk()?;
-    walk.push(Oid::from_str(&w.head_oid)?)?;
-    walk.hide(Oid::from_str(base)?)?;
+    walk.push(head)?;
+    walk.hide(comparison)?;
     let commits = walk
         .take(101)
         .map(|oid| oid.map(|o| o.to_string()).map_err(Error::from))
@@ -397,8 +404,8 @@ pub fn share_preview(
         return Err(Error::Limit);
     }
     let files = changes(
-        &transport::tree_files(&repo, Oid::from_str(base)?)?,
-        &transport::tree_files(&repo, Oid::from_str(&w.head_oid)?)?,
+        &transport::tree_files(&repo, comparison)?,
+        &transport::tree_files(&repo, head)?,
     );
     Ok(SharePlan{binding:c.binding.clone(),base_oid,preview:SharePreview{id:uuid::Uuid::new_v4().to_string(),workspace_id:w.id,kind:kind.into(),repository:w.repo.clone(),account:c.account.clone(),branch:w.branch,head:w.head_oid,base: w.pr.as_ref().map(|p|p.base.clone()).unwrap_or_else(||w.repo.default_branch.clone()),remote_before,commits,files,title,body,warning:"Sending commits or requesting feedback can trigger repository-configured GitHub automation. This is an explicit sharing action.".into()}})
 }

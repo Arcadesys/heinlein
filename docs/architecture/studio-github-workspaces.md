@@ -20,6 +20,22 @@ permissions are both checked. No App secret or private key belongs in this clien
 `HEINLEIN_GITHUB_CLIENT_ID` may override the public client ID; empty or invalid
 configuration disables connection. The expected App identity stays fixed.
 
+Repository discovery uses only the confirmed user token's `/user/installations`
+and `/user/installations/{id}/repositories` GET endpoints, filtered to the expected
+App and required installation/user permissions. Both endpoints paginate in fixed
+100-item pages; discovery caps each stream at ten pages, total requests at fifty,
+and unique eligible repositories at 1,000. It fails explicitly rather than
+silently truncating; URL entry remains available. Duplicate IDs are deduplicated,
+conflicting grants/metadata fail closed, and archived/disabled/empty repositories
+are unavailable. Response bodies, temporary clone tokens and credentials never
+enter list DTOs or errors. Empty, access/SSO, rate-limit and network states offer
+explicit access management/refresh without reconnecting or changing permissions.
+The returned native list token expires after five minutes and binds account,
+connection, repository/installation IDs and source generation. Selection consumes
+that token, revalidates current metadata/access by immutable ID, and creates the
+existing single-use open preview. Native confirmation and clone/source barriers
+remain required. No `/user/repos`, credential fallback or automatic install occurs.
+
 GitHub access is separate from ChatGPT/model access. Access and refresh credentials
 are stored only in the native OS credential store (macOS Keychain; Linux Secret
 Service). There is no plaintext or browser-storage fallback. Refresh is serialized,

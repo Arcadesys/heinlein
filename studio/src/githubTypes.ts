@@ -24,6 +24,12 @@ export interface GitHubRepo {
     defaultBranch: string;
     installationId: number;
 }
+export interface GitHubRepositories {
+    id: string;
+    account: GitHubUser;
+    repositories: GitHubRepo[];
+    unavailable: number;
+}
 export interface GitHubWorkspace {
     id: string;
     repo: GitHubRepo;
@@ -141,7 +147,11 @@ export interface GitHubProject {
     receipts: GitHubReceipt[];
 }
 export type GitHubRequest = {
-    action: 'status' | 'connect' | 'poll' | 'signOut';
+    action: 'status' | 'connect' | 'poll' | 'signOut' | 'repositories';
+} | {
+    action: 'previewListedRepository';
+    listId: string;
+    repositoryId: number;
 } | {
     action: 'confirmAccount';
     userId: number;
@@ -196,4 +206,4 @@ export type GitHubRequest = {
     workspaceId: string;
     operationId: string | null;
 };
-export type GitHubResponse = GitHubStatus | GitHubAuth | GitHubProject | GitHubOpen | GitHubVersion | GitHubShare | GitHubIncoming | GitHubReceipt | GitHubWorkspace | RepositorySession | null;
+export type GitHubResponse = GitHubStatus | GitHubAuth | GitHubRepositories | GitHubProject | GitHubOpen | GitHubVersion | GitHubShare | GitHubIncoming | GitHubReceipt | GitHubWorkspace | RepositorySession | null;
