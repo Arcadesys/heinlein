@@ -167,6 +167,11 @@ pub struct MutationGate {
     epoch: std::sync::atomic::AtomicU64,
 }
 impl MutationGate {
+    pub fn close_guard(&self) -> Result<std::sync::RwLockWriteGuard<'_, ()>> {
+        self.lock
+            .try_write()
+            .map_err(|_| "Finish the current save or manuscript operation before quitting".into())
+    }
     pub fn edit(&self) -> Result<std::sync::RwLockReadGuard<'_, ()>> {
         self.lock
             .read()

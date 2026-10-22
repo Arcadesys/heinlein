@@ -78,15 +78,26 @@ pub fn commit(repo: &git2::Repository, files: &Files, parents: &[git2::Oid]) -> 
 pub struct MemorySecrets {
     pub bytes: Mutex<Option<Vec<u8>>>,
     pub fail: AtomicBool,
+    pub read_error: Mutex<Option<Error>>,
+    pub write_error: Mutex<Option<Error>>,
+    pub writes: AtomicUsize,
+    pub deletes: AtomicUsize,
 }
 impl SecretStore for MemorySecrets {
     fn load(&self) -> Result<Option<Vec<u8>>> {
+        if let Some(error) = *self.read_error.lock().unwrap() {
+            return Err(error);
+        }
         if self.fail.load(Ordering::SeqCst) {
             return Err(Error::Auth);
         }
         Ok(self.bytes.lock().unwrap().clone())
     }
     fn save(&self, b: &[u8]) -> Result<()> {
+        self.writes.fetch_add(1, Ordering::SeqCst);
+        if let Some(error) = *self.write_error.lock().unwrap() {
+            return Err(error);
+        }
         if self.fail.load(Ordering::SeqCst) {
             return Err(Error::Auth);
         }
@@ -94,6 +105,7 @@ impl SecretStore for MemorySecrets {
         Ok(())
     }
     fn clear(&self) -> Result<()> {
+        self.deletes.fetch_add(1, Ordering::SeqCst);
         *self.bytes.lock().unwrap() = None;
         Ok(())
     }
@@ -102,6 +114,7 @@ pub struct MockApi {
     pub repo: Mutex<github_workspace::RepoInfo>,
     pub polls: AtomicUsize,
     pub refreshes: AtomicUsize,
+    pub refresh_error: Mutex<Option<Error>>,
     pub user_id: AtomicUsize,
     pub remote: Mutex<Option<String>>,
     pub base: Mutex<Option<String>>,
@@ -116,6 +129,7 @@ impl Default for MockApi {
             repo: Mutex::new(info()),
             polls: AtomicUsize::new(0),
             refreshes: AtomicUsize::new(0),
+            refresh_error: Mutex::new(None),
             user_id: AtomicUsize::new(9),
             remote: Mutex::new(None),
             base: Mutex::new(None),
@@ -147,6 +161,9 @@ impl Provider for MockApi {
     }
     fn refresh(&self, _: &str, _: &str) -> Result<TokenSet> {
         self.refreshes.fetch_add(1, Ordering::SeqCst);
+        if let Some(error) = *self.refresh_error.lock().unwrap() {
+            return Err(error);
+        }
         Ok(TokenSet {
             access_token: "rotated-secret".into(),
             refresh_token: Some("next-refresh-secret".into()),

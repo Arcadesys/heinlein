@@ -9,6 +9,7 @@ mod proposals;
 mod questions;
 mod recents;
 mod review_state;
+mod update;
 
 use recents::{load_recents, save_recents, Recent, RecentStore};
 use repository_core::{Document, Entry, Manuscript, RecoveryDraft, RecoveryStore, Repository};
@@ -134,6 +135,11 @@ fn private_question_auth_path(app: &tauri::AppHandle) -> Result<PathBuf, String>
     Ok(path)
 }
 fn select(app: &tauri::AppHandle, path: PathBuf) -> Result<Session, String> {
+    #[cfg(target_os = "macos")]
+    update::guard_repository(
+        &resolved_future_path(&path)?,
+        &app.path().home_dir().map_err(|_| "Home unavailable")?,
+    )?;
     let workspace = github::selection(app, &path)?;
     let mut session = select_repository(
         &app.state::<BrowserState>(),
@@ -467,6 +473,14 @@ fn request_close(
     discard: bool,
 ) -> Result<(), String> {
     check_window(&window)?;
+    let _selection = state
+        .selection_gate
+        .try_lock()
+        .map_err(|_| "Finish opening the project before quitting")?;
+    let _github = state.github.close_guard()?;
+    let _mutation = state.mutation_gate.close_guard()?;
+    let runtime = window.state::<update::Runtime>();
+    let _update = runtime.idle()?;
     if discard {
         state.unsaved_changes.store(false, Ordering::SeqCst);
     }
@@ -514,9 +528,20 @@ async fn list_system_fonts(window: tauri::WebviewWindow) -> Result<Vec<String>, 
     .map_err(|e| e.to_string())
 }
 fn main() {
+    let runtime = match update::Runtime::acquire() {
+        Ok(Some(runtime)) => runtime,
+        Ok(None) => return,
+        Err(_) => {
+            eprintln!(
+                "Heinlein startup safety gate is unavailable; writing and accounts are unchanged."
+            );
+            return;
+        }
+    };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(runtime)
         .manage(BrowserState::default())
         .manage(questions::QuestionHost::default())
         .setup(|app| {
@@ -526,6 +551,9 @@ fn main() {
                 .lock()
                 .map_err(|_| std::io::Error::other("Preferences unavailable"))? =
                 load_recents(&path);
+            app.state::<update::Runtime>()
+                .ready(app.handle())
+                .map_err(std::io::Error::other)?;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -552,6 +580,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             github::github_request,
+            update::update_request,
             questions::question_status,
             questions::request_review,
             questions::prepare_review_edit,

@@ -1,3 +1,4 @@
+import {createUpdatePanel} from './updatePanel';
 import {createGitHubPanel} from './githubPanel';
 import {createFirstStory} from './firstStory';
 import { createReviewPanel } from './reviewPanel';
@@ -447,6 +448,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     draft: async () => {navigation.select('manuscript'); await openDrafting();},
     review: () => {if (reviewPanel) {draftingQuestions?.close(); reviewPanel.open();} else {status.textContent = 'Open a scene, then choose Heinlein Review when you want advisory suggestions.';}},
   });
+  async function quitSafely() {
+    if(disposed||selecting||structuralBusy||saving||staging)return;
+    const revision=edits;
+    if(!await allowLeave()||disposed||revision!==edits||saving||structuralBusy||selecting||staging)return;
+    root.inert=true;
+    try{await dirtySync;if(!disposed&&revision===edits&&!saving&&!structuralBusy&&!selecting&&!staging)await core.requestClose(true)}finally{root.inert=false}
+  }
+  const updates=createUpdatePanel(core,{quit:quitSafely});
+  const updateEntry=button('Updates…',()=>{void updates.open();},'update-entry');updateEntry.setAttribute('aria-haspopup','dialog');
   const githubEntry = button('GitHub projects…', () => {void github.open();}, 'github-entry');
   githubEntry.setAttribute('aria-haspopup', 'dialog');
   const github = createGitHubPanel(core, {
@@ -462,7 +472,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       else {resetPreview(); await showDirectory('');}
     },
   });
-  corner.prepend(firstStoryEntry, githubEntry);
+  corner.prepend(firstStoryEntry, githubEntry, updateEntry);
   const draftingEntry = button('ms drafting', () => { void openDrafting(); }, 'drafting-entry');
   draftingEntry.hidden = true;
   const outline = el('div');
@@ -482,7 +492,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   layout.append(navigation.element, preview);
   chromeReady = true;
   resetPreview();
-  root.replaceChildren(glow, layout, pill, status, goalCard, corner, firstStory.element, github.element);
+  root.replaceChildren(glow, layout, pill, status, goalCard, corner, firstStory.element, github.element, updates.element);
   const drafting = createDraftingPanel(core, {
     root, repository: () => repository, run: runStructural, verify: verifyStructuralBuffer,
     show: () => { outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
@@ -1481,14 +1491,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     }).then(unlisten => { if (disposed) unlisten(); else dropUnlisten = unlisten; }).catch(reportError);
     if (core.onDraftingImportError) void core.onDraftingImportError(message => { if (!disposed) { status.textContent = `Native import failed: ${message}`; status.classList.add('error'); } }).then(unlisten => { if (disposed) unlisten(); else dropErrorUnlisten = unlisten; }).catch(reportError);
     void core.onCloseRequested(() => {
-      if (disposed) return;
-      const revision = edits;
-      void allowLeave().then(async allowed => {
-        if (disposed || !allowed || revision !== edits || saving) return;
-        root.inert = true;
-        try { await dirtySync; if (!disposed && revision === edits && !saving) await core.requestClose(true); }
-        finally { root.inert = false; }
-      }).catch(reportError);
+      void quitSafely().catch(reportError);
     }).then(unlisten => { if (disposed) unlisten(); else closeUnlisten = unlisten; }).catch(reportError);
   }
   else {
@@ -1496,6 +1499,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

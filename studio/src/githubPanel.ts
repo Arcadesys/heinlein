@@ -91,6 +91,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
     }
     function account(auth: GitHubAuth | null) {
         body.append(node('h4', 'GitHub account'), node('p', auth?.message ?? snapshot?.error ?? 'GitHub is unavailable. Local writing remains available.'));
+        if(!auth&&snapshot?.error)body.append(button('Retry saved GitHub connection',async()=>{await request({action:'retrySaved'});await load();}),node('p','Unlock the OS credential store or allow its access prompt, then retry. Do not sign out or reconnect to fix a store-access error.'));
         if (auth?.pending) {
             const p = auth.pending;
             body.append(node('p', `Enter code ${p.userCode} at GitHub. Return here after approving access.`), button('Open GitHub device page', async () => { await request({ action: 'openLink', kind: 'device' }); }), button('Check sign-in', async () => { snapshot!.auth = await request<GitHubAuth>({ action: 'poll' }); renderHome(); }));
@@ -101,6 +102,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         }
         else if (auth?.configured && !auth.confirmed)
             body.append(button('Connect GitHub…', async () => { snapshot!.auth = await request<GitHubAuth>({ action: 'connect' }); renderHome(); }));
+        if(auth?.confirmed)body.append(button('Reconnect GitHub…',async()=>{snapshot!.auth=await request<GitHubAuth>({action:'connect'});renderHome();}),node('p','Reconnect only if GitHub says renewal expired or access was revoked. A network or Keychain error does not require signing out.'));
         if (auth?.account || auth?.pending)
             body.append(button('Sign out of GitHub', async () => { cancelPlan(); snapshot!.auth = await request<GitHubAuth>({ action: 'signOut' }); renderHome(); }));
         body.append(button('Choose repositories for Heinlein on GitHub', async () => { await request({ action: 'openLink', kind: 'install' }); }), node('p', 'Heinlein Studio is the Arcadesys GitHub App. Install it only for repositories you choose. GitHub access is separate from AI or assistant access.'));

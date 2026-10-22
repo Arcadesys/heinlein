@@ -109,7 +109,7 @@ summary { min-height: 2.75rem; padding: .6rem 0; font-weight: 500; }
 .pill-bar { position: relative; width: 4rem; height: .25rem; border-radius: 999px; background: var(--surface-hover); overflow: hidden; }
 .pill-bar-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--gradient); transition: width .3s; }
 .pill-key { background: var(--surface); border-color: var(--border-strong); font-family: var(--font-mono) !important; }
-.status { position: absolute; top: 4.25rem; left: 50%; transform: translateX(-50%); z-index: 5; max-width: min(46rem, calc(100vw - 2rem)); padding: .5rem .9rem; border-radius: 999px; background: var(--chrome-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid var(--border); color: var(--fg-muted); font-size: .8125rem; text-align: center; overflow-wrap: anywhere; }
+.status { width: max-content; position: absolute; top: 4.25rem; left: 50%; transform: translateX(-50%); z-index: 5; max-width: min(46rem, calc(100vw - 2rem)); padding: .5rem .9rem; border-radius: 999px; background: var(--chrome-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid var(--border); color: var(--fg-muted); font-size: .8125rem; text-align: center; overflow-wrap: anywhere; }
 .status:empty { display: none; }
 .status.quiet:not(.error) { opacity: 0; pointer-events: none; transition: opacity .6s; }
 .status.error { color: var(--danger); border-color: var(--danger); border-radius: var(--radius); }
@@ -502,3 +502,7 @@ dialog { color: var(--fg); }
 .github-panel .github-conflict { border: 2px solid var(--fg-muted); padding: .7rem; }
 .github-panel [role=status]:empty { display: none; }
 .github-entry { min-height: 44px; }
+
+.update-panel { box-sizing:border-box; width:min(48rem,calc(100vw - 1rem)); max-width:calc(100vw - 1rem); max-height:calc(100dvh - 1rem); overflow:auto; overflow-wrap:anywhere; color:var(--fg); background:var(--bg); border:2px solid var(--fg); padding:1rem; font-size:1rem; }
+.update-panel button { min-height:48px; max-width:100%; padding:.7rem; margin:.4rem; font:inherit; white-space:normal; }
+.update-panel :focus-visible { outline:3px solid var(--fg); outline-offset:3px; }

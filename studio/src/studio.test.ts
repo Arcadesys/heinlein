@@ -274,6 +274,15 @@ describe('editing and loss protection', () => {
     callback(); await settle(); findButton('Discard changes').click(); await settle();
     expect(core.requestClose).toHaveBeenCalledWith(true); app.destroy();
   });
+  it('update scheduling uses the same author save-or-keep-editing guard before quit',async()=>{
+    const {core,app,change}=await setup();
+    HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')};HTMLDialogElement.prototype.close=function(){this.removeAttribute('open')};
+    core.updateRequest=vi.fn(async action=>({state:action==='schedule'?'scheduled':'available',commit:'a'.repeat(40),availableCommit:'b'.repeat(40)}));
+    change('Author words retained');findButton('Updates…').click();await settle();findButton('Update on next launch').click();await settle();
+    expect(core.requestClose).not.toHaveBeenCalled();findButton('Save and quit when ready').click();await settle();findButton('Keep editing').click();await settle();expect(core.requestClose).not.toHaveBeenCalled();
+    findButton('Save and quit when ready').click();await settle();findButton('Save and continue').click();await settle();
+    expect(core.saveDocument).toHaveBeenCalledWith(session.id,'scene.md','hash-1','Author words retained');expect(core.requestClose).toHaveBeenCalledWith(true);app.destroy();
+  });
   it('does not close over edits arriving during host synchronization', async () => {
     const {core, app, change} = await setup();
     let sync!: () => void;

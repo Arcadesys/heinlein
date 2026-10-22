@@ -51,6 +51,7 @@
     "allow-reset-first-story",
     "allow-preview-publishing-copy",
     "allow-confirm-publishing-copy",
-    "allow-github-request"
+    "allow-github-request",
+    "allow-update-request"
   ]
 }
