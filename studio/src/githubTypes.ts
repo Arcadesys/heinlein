@@ -147,7 +147,7 @@ export interface GitHubProject {
     receipts: GitHubReceipt[];
 }
 export type GitHubRequest = {
-    action: 'status' | 'connect' | 'poll' | 'signOut' | 'repositories';
+    action: 'status' | 'connect' | 'poll' | 'signOut' | 'repositories' | 'retrySaved';
 } | {
     action: 'previewListedRepository';
     listId: string;

@@ -1,3 +1,4 @@
+import type {UpdateStatus} from './updatePanel';
 import type {GitHubRequest,GitHubResponse} from './githubTypes';
 import type {FirstStoryState, PublishingMetadata, PublishingCopy} from './firstStory';
 import { invoke, isTauri } from '@tauri-apps/api/core';
@@ -60,6 +61,7 @@ export interface ReviewEdit { id: string; path: string; fromUtf8: number; toUtf8
 export interface ReviewResult { reviewId: string; requestId: string; model: string; schemaVersion: 1; scope: 'scene' | 'chapter'; edits: ReviewEdit[] }
 export interface LocalCore {
   available(): boolean;
+  updateRequest?(action: 'status'|'check'|'schedule'):Promise<UpdateStatus>;
   githubRequest?(request: GitHubRequest): Promise<GitHubResponse>;
   loadFirstStory?(repositoryId: string): Promise<FirstStoryState>;
   saveFirstStory?(repositoryId: string, guide: FirstStoryState, markProof: boolean): Promise<FirstStoryState>;
@@ -107,12 +109,15 @@ export interface LocalCore {
   discardRecovery(repositoryId: string, relativePath: string, recoveryId: string): Promise<void>;
   setUnsavedChanges(dirty: boolean): Promise<void>;
   requestClose(discard: boolean): Promise<void>;
+  finishQuitRequest?():Promise<void>;
+  onQuitRefused?(callback:(message:string)=>void):Promise<()=>void>;
   onCloseRequested(callback: () => void): Promise<() => void>;
 }
 // Root selection and guarded file writes belong to the native host;
 // no credentials, filesystem handles, or absolute root paths enter the renderer.
 export const localCore: LocalCore = {
   available: isTauri,
+  updateRequest: action=>invoke('update_request',{action}),
   githubRequest: request => invoke('github_request', {request}),
   loadFirstStory: repositoryId => invoke('load_first_story', {repositoryId}),
   saveFirstStory: (repositoryId, guide, markProof) => invoke('save_first_story', {repositoryId, guide, markProof}),
@@ -153,6 +158,8 @@ export const localCore: LocalCore = {
   discardRecovery: (repositoryId, relativePath, recoveryId) => invoke('discard_recovery', {repositoryId, relativePath, recoveryId}),
   setUnsavedChanges: dirty => invoke('set_unsaved_changes', {dirty}),
   requestClose: discard => invoke('request_close', {discard}),
+  finishQuitRequest:()=>invoke('quit_request_finished'),
+  onQuitRefused:callback=>listen<string>('quit-refused',event=>callback(event.payload)),
   onCloseRequested: callback => listen('close-requested', callback),
   pickRepository: () => invoke('pick_repository'),
   recentRepositories: () => invoke('recent_repositories'),

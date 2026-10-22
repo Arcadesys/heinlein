@@ -18,6 +18,7 @@
     "allow-discard-recovery",
     "allow-set-unsaved-changes",
     "allow-request-close",
+    "allow-quit-request-finished",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-load-drafting",
@@ -51,6 +52,7 @@
     "allow-reset-first-story",
     "allow-preview-publishing-copy",
     "allow-confirm-publishing-copy",
-    "allow-github-request"
+    "allow-github-request",
+    "allow-update-request"
   ]
 }

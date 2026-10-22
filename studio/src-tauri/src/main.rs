@@ -7,8 +7,12 @@ mod github;
 mod persistence_tests;
 mod proposals;
 mod questions;
+mod quit;
+#[cfg(target_os = "macos")]
+mod quit_macos;
 mod recents;
 mod review_state;
+mod update;
 
 use recents::{load_recents, save_recents, Recent, RecentStore};
 use repository_core::{Document, Entry, Manuscript, RecoveryDraft, RecoveryStore, Repository};
@@ -46,7 +50,8 @@ struct Selected {
 #[derive(Default)]
 struct BrowserState {
     unsaved_changes: AtomicBool,
-    close_authorized: AtomicBool,
+    close_authorized: quit::Gate,
+    quitting: AtomicBool,
     selection_gate: Mutex<()>,
     mutation_gate: proposals::authority::MutationGate,
     proposals: Mutex<proposals::ProposalHost>,
@@ -62,6 +67,13 @@ fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 fn check_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    if window
+        .state::<BrowserState>()
+        .quitting
+        .load(Ordering::SeqCst)
+    {
+        return Err("Heinlein is quitting".into());
+    }
     if window.label() != "main" {
         return Err("Unsupported window".into());
     }
@@ -134,6 +146,11 @@ fn private_question_auth_path(app: &tauri::AppHandle) -> Result<PathBuf, String>
     Ok(path)
 }
 fn select(app: &tauri::AppHandle, path: PathBuf) -> Result<Session, String> {
+    #[cfg(target_os = "macos")]
+    update::guard_repository(
+        &resolved_future_path(&path)?,
+        &app.path().home_dir().map_err(|_| "Home unavailable")?,
+    )?;
     let workspace = github::selection(app, &path)?;
     let mut session = select_repository(
         &app.state::<BrowserState>(),
@@ -154,6 +171,10 @@ fn select_repository(
     preferences: &Path,
     private_storage: &Path,
 ) -> Result<Session, String> {
+    if state.quitting.load(Ordering::SeqCst) {
+        return Err("Heinlein is quitting".into());
+    }
+    state.mutation_gate.note_activity();
     let repo = Repository::open(&path).map_err(|e| e.to_string())?;
     guard_auth_repository_separation(repo.root(), private_storage)?;
     let (manifests, warning) = match repo.discover() {
@@ -457,6 +478,7 @@ fn set_unsaved_changes(
     state.unsaved_changes.store(dirty, Ordering::SeqCst);
     if dirty {
         state.mutation_gate.invalidate();
+        state.mutation_gate.note_activity();
     }
     Ok(())
 }
@@ -467,17 +489,38 @@ fn request_close(
     discard: bool,
 ) -> Result<(), String> {
     check_window(&window)?;
+    let _selection = state
+        .selection_gate
+        .try_lock()
+        .map_err(|_| "Finish opening the project before quitting")?;
+    let _github = state.github.close_guard()?;
+    let _mutation = state.mutation_gate.close_guard()?;
+    let runtime = window.state::<update::Runtime>();
+    let _update = runtime.idle()?;
     if discard {
         state.unsaved_changes.store(false, Ordering::SeqCst);
     }
     if state.unsaved_changes.load(Ordering::SeqCst) {
         return Err("Save or discard changes before closing".into());
     }
-    state.close_authorized.store(true, Ordering::SeqCst);
-    if let Err(error) = window.close() {
-        state.close_authorized.store(false, Ordering::SeqCst);
-        return Err(error.to_string());
-    }
+    quit::authorize(
+        &state.close_authorized,
+        state.mutation_gate.activity(),
+        || Ok(()),
+    )?;
+    // The application event loop rechecks all guards when exit is delivered.
+    window.app_handle().exit(0);
+    Ok(())
+}
+#[tauri::command]
+fn quit_request_finished(
+    window: tauri::WebviewWindow,
+    state: State<'_, BrowserState>,
+) -> Result<(), String> {
+    check_window(&window)?;
+    quit::cancel(&state.close_authorized);
+    #[cfg(target_os = "macos")]
+    quit_macos::finished();
     Ok(())
 }
 #[tauri::command]
@@ -514,18 +557,41 @@ async fn list_system_fonts(window: tauri::WebviewWindow) -> Result<Vec<String>, 
     .map_err(|e| e.to_string())
 }
 fn main() {
+    let runtime = match update::Runtime::acquire() {
+        Ok(Some(runtime)) => runtime,
+        Ok(None) => return,
+        Err(_) => {
+            eprintln!(
+                "Heinlein startup safety gate is unavailable; writing and accounts are unchanged."
+            );
+            return;
+        }
+    };
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(runtime)
         .manage(BrowserState::default())
         .manage(questions::QuestionHost::default())
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.handle().clone();
+                quit_macos::install(move || {
+                    let window = handle.get_webview_window("main").ok_or("Quit window unavailable")?;
+                    window.emit("close-requested", ()).map_err(|_| String::from("Quit request unavailable"))
+                }).map_err(std::io::Error::other)?;
+            }
+
             let path = recent_file(app.handle()).map_err(std::io::Error::other)?;
             *app.state::<BrowserState>()
                 .recents
                 .lock()
                 .map_err(|_| std::io::Error::other("Preferences unavailable"))? =
                 load_recents(&path);
+            app.state::<update::Runtime>()
+                .ready(app.handle())
+                .map_err(std::io::Error::other)?;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -536,22 +602,13 @@ fn main() {
                     drafting::handle_drop(window.app_handle().clone(), paths.clone());
                 }
             }
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Every OS close goes through the renderer guard, even if its most
-                // recent dirty notification is still queued. Only request_close
-                // grants a one-shot bypass after that guard completes.
-                if !window
-                    .state::<BrowserState>()
-                    .close_authorized
-                    .swap(false, Ordering::SeqCst)
-                {
-                    api.prevent_close();
-                    let _ = window.emit("close-requested", ());
-                }
-            }
+            quit::handle_window_close(event, || {
+                let _ = window.emit("close-requested", ());
+            });
         })
         .invoke_handler(tauri::generate_handler![
             github::github_request,
+            update::update_request,
             questions::question_status,
             questions::request_review,
             questions::prepare_review_edit,
@@ -594,9 +651,54 @@ fn main() {
             discard_recovery,
             set_unsaved_changes,
             request_close,
+            quit_request_finished,
             load_manuscript,
             list_system_fonts
         ])
-        .run(tauri::generate_context!())
-        .expect("Heinlein Studio failed to start");
+        .build(tauri::generate_context!())
+        .expect("Heinlein Studio failed to start")
+        .run(|app, event| {
+            let state = app.state::<BrowserState>();
+            let activity = state.mutation_gate.activity();
+            quit::handle(
+                &event,
+                &state.close_authorized,
+                activity,
+                || {
+                    let _selection = state
+                        .selection_gate
+                        .try_lock()
+                        .map_err(|_| "Finish opening the project before quitting")?;
+                    let _github = state.github.close_guard()?;
+                    let _mutation = state.mutation_gate.close_guard()?;
+                    let runtime = app.state::<update::Runtime>();
+                    let _update = runtime.idle()?;
+                    if state.unsaved_changes.load(Ordering::SeqCst) {
+                        return Err("Save or discard changes before closing".into());
+                    }
+                    if state.mutation_gate.activity() != activity {
+                        return Err("Work changed before quitting".into());
+                    }
+                    // All mutation/auth/update entry locks are held. Seal before
+                    // releasing them so queued or new work cannot race actual exit.
+                    state.quitting.store(true, Ordering::SeqCst);
+                    state.mutation_gate.seal_for_exit();
+                    runtime.seal_for_exit();
+                    Ok(())
+                },
+                |granted| {
+                    #[cfg(target_os = "macos")]
+                    quit_macos::finished();
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                        if granted {
+                            let _ = window.emit("quit-refused", "Heinlein stayed open because work changed or a save/connection still needs attention. Finish or retry it, then choose Quit again.");
+                        } else {
+                            let _ = window.emit("close-requested", ());
+                        }
+                    }
+                },
+            );
+        });
 }

@@ -2,6 +2,7 @@ fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "github_request",
+            "update_request",
             "connect_question_account",
             "cancel_question_sign_in",
             "select_question_account",
@@ -44,6 +45,7 @@ fn main() {
             "discard_recovery",
             "set_unsaved_changes",
             "request_close",
+            "quit_request_finished",
             "load_manuscript",
             "list_system_fonts",
         ]),

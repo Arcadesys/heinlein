@@ -24,8 +24,26 @@ const CLIENT_ID: &str = "Iv23liSDqUlMHOEM7K9n";
 const INSTALL: &str = "https://github.com/apps/heinlein-studio";
 #[derive(Default)]
 pub(crate) struct Host {
+    operation: Mutex<()>,
     services: Mutex<Option<Arc<Services>>>,
     plans: Mutex<HashMap<String, Bound>>,
+}
+impl Host {
+    pub(crate) fn close_guard(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
+        let guard = self
+            .operation
+            .try_lock()
+            .map_err(|_| "Finish the GitHub operation before quitting")?;
+        if let Some(s) = self
+            .services
+            .lock()
+            .map_err(|_| "GitHub is unavailable")?
+            .as_ref()
+        {
+            s.auth.ready_to_quit().map_err(|e| e.to_string())?;
+        }
+        Ok(guard)
+    }
 }
 struct Services {
     registry: Registry,
@@ -60,6 +78,7 @@ pub(crate) enum Request {
         user_id: u64,
     },
     SignOut,
+    RetrySaved,
     Repositories,
     PreviewListedRepository {
         list_id: String,
@@ -329,6 +348,15 @@ fn open(app: &tauri::AppHandle, s: &Services, w: &Workspace) -> Result<Session> 
 }
 fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
     let state = app.state::<BrowserState>();
+    let _operation = state
+        .github
+        .operation
+        .try_lock()
+        .map_err(|_| "Another GitHub operation is running")?;
+    if state.quitting.load(Ordering::SeqCst) {
+        return Err("Heinlein is quitting".into());
+    }
+    state.mutation_gate.note_activity();
     let started = state.mutation_gate.generation();
     if let Request::Cancel { preview_id } = request {
         state
@@ -468,6 +496,7 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
             )?;
             Ok(view)
         }
+        Request::RetrySaved => serialized(s.auth.retry_saved().map_err(|e| e.to_string())?),
         Request::Connect => serialized(
             s.auth
                 .begin(&s.api, gh::auth::now())

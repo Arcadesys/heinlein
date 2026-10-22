@@ -1,10 +1,10 @@
 name: Studio drafting validation
 on:
   pull_request:
-    paths: ['studio/**', '.github/workflows/studio.yml']
+    paths: ['studio/**', 'tests/test_studio_updater.py', '.github/workflows/studio.yml']
   push:
     branches: [main]
-    paths: ['studio/**', '.github/workflows/studio.yml']
+    paths: ['studio/**', 'tests/test_studio_updater.py', '.github/workflows/studio.yml']
 permissions:
   contents: read
 jobs:
@@ -29,6 +29,13 @@ jobs:
       - name: Install Linux desktop libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Updater transaction and native file/signature boundaries (no Keychain)
+        run: python -m unittest discover -s ../tests -p test_studio_updater.py
+      - name: Synthetic probe retry tests (memory only; never execute Keychain main)
+        run: cargo test --locked --manifest-path macos/tests/keychain-probe/Cargo.toml
       - run: npm ci
       - run: npm test
       - name: Install theme smoke browser

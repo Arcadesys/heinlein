@@ -114,3 +114,8 @@ it('an unconfirmed account cannot list repositories and a stale selected preview
     expect(f.p.element.textContent).not.toContain('Open this GitHub project?');expect(f.hooks.select).not.toHaveBeenCalled();
     expect(f.request.mock.calls).toContainEqual([{action:'cancel',previewId:'late-open'}]);
 });
+it('unavailable secure store offers read-only retry without OAuth, signout or credential replacement',async()=>{
+ const f=fixture(false);const original=f.request.getMockImplementation()!;let locked=true;
+ f.request.mockImplementation(async r=>{if(r.action==='status'&&locked)return{...structuredClone(status),auth:null,error:'Secure credential access was cancelled. Saved connection retained.'};if(r.action==='retrySaved'){locked=false;return status.auth;}return original(r);});
+ await f.p.open();expect(f.p.element.textContent).toContain('Saved connection retained');expect(f.p.element.textContent).not.toContain('Connect GitHub…');await f.click('Retry saved GitHub connection');expect(f.p.element.textContent).toContain('Load repositories');expect(f.request.mock.calls.some(([r])=>r.action==='connect'||r.action==='signOut')).toBe(false);
+});

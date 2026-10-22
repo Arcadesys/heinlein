@@ -351,14 +351,24 @@ impl Provider for HttpGitHub {
         })
     }
     fn refresh(&self, client: &str, refresh: &str) -> Result<TokenSet> {
-        tokens(&self.form(
+        let value = self.form(
             "/login/oauth/access_token",
             &[
                 ("client_id", client),
                 ("grant_type", "refresh_token"),
                 ("refresh_token", refresh),
             ],
-        )?)
+        )?;
+        if matches!(
+            value["error"].as_str(),
+            Some("bad_refresh_token" | "expired_token" | "invalid_grant")
+        ) {
+            return Err(Error::Reconnect);
+        }
+        if value.get("error").is_some() {
+            return Err(Error::Network);
+        }
+        tokens(&value).map_err(|_| Error::Network)
     }
     fn user(&self, c: &Credential) -> Result<User> {
         let v = self.get(c, "/user")?;

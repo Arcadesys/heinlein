@@ -139,7 +139,11 @@ npm run tauri dev
 ```
 
 For an unsigned local executable: `npm run tauri build -- --no-bundle`.
-This milestone does not install, sign, distribute, or auto-update the app.
+The tracked [managed macOS updater](macos/README.md) provides local main-source
+updates for protocol-v1 installs, with full app staging/rollback and an inherited
+native lifetime lease. The legacy installation requires a separate supervised
+bootstrap; automatic installation refuses it. Ad-hoc signing may require macOS
+permission for existing Keychain items. This work does not change RC1 distribution.
 `npm run dev` alone serves the renderer for development; a normal browser has
 no repository access and displays a native-app requirement.
 

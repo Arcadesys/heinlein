@@ -1676,6 +1676,7 @@ dependencies = [
  "repository-core",
  "reqwest",
  "rustix",
+ "security-framework 3.7.0",
  "serde",
  "serde_json",
  "sha2",
@@ -1880,6 +1881,17 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "uuid",
+]
+
+[[package]]
+name = "heinlein-native-quit-probe"
+version = "0.1.0"
+dependencies = [
+ "github-workspace",
+ "serde_json",
+ "tauri",
+ "tauri-build",
  "uuid",
 ]
 
