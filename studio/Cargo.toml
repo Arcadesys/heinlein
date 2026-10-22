@@ -1,4 +1,4 @@
 [workspace]
-members = ["crates/github-workspace", "crates/repository-core", "crates/proposal-store", "crates/local-mcp", "crates/drafting-questions", "crates/chatgpt-auth", "src-tauri"]
+members = ["macos/tests/native-quit-probe", "crates/github-workspace", "crates/repository-core", "crates/proposal-store", "crates/local-mcp", "crates/drafting-questions", "crates/chatgpt-auth", "src-tauri"]
 default-members = ["crates/repository-core"]
 resolver = "2"

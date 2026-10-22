@@ -100,6 +100,47 @@ class UpdaterTests(unittest.TestCase):
     def tearDown(self):self.mac.close();self.temp.cleanup()
     def candidate(self):return bundle(self.p.staged(),B,2)
     def record(self,stage=None):return self.engine.install(stage or self.candidate(),{'commit':B,'tree':TREE,'generation':2},self.mac.validate(self.p.app))
+    def test_disposable_builds_are_removed_on_success_failure_and_partial_checkout(self):
+        for failure in [None,'build','sign','checkout']:
+            self.mac.close();self.mac.fail=failure
+            original=self.mac.checkout
+            if failure=='checkout':
+                def broken(*args):
+                    (args[-1]/'partial-source').write_text('fixture');raise u.Failure('source-archive')
+                self.mac.checkout=broken
+            self.engine.launch(ready_timeout=.1,rebuild=True)
+            self.mac.checkout=original
+            self.assertEqual(list(self.p.cache.glob('build-*')),[])
+            self.assertTrue(list(self.p.stages.glob('*/Heinlein Studio.app')))
+    def test_orphan_recovery_reaps_only_quiescent_disposable_work(self):
+        orphan=self.p.cache/('build-'+'a'*32);orphan.mkdir(mode=0o700);(orphan/'partial').write_text('fixture');u.atomic_json(orphan/'.build-owner-v1.json',{'phase':'idle'})
+        live=u.BuildTree(self.p);(live.root/'active').write_text('fixture')
+        backup=self.candidate();before=u.bundle_hash(backup)
+        u.BuildTree.reap(self.p);self.assertFalse(orphan.exists());self.assertTrue(live.root.exists());self.assertEqual(u.bundle_hash(backup),before)
+        live.__exit__();self.assertFalse(live.root.exists())
+    def test_uncertain_spawn_is_preserved_and_bounds_new_attempt_growth(self):
+        for c in ['a','b']:
+            root=self.p.cache/('build-'+c*32);root.mkdir(mode=0o700);u.atomic_json(root/'.build-owner-v1.json',{'phase':'spawning'})
+        with self.assertRaisesRegex(u.Failure,'build-recovery-required'):u.BuildTree(self.p)
+        self.assertEqual(len(list(self.p.cache.glob('build-*'))),2)
+    def test_real_build_subprocess_completion_and_timeout_release_disposable_tree(self):
+        for timeout in [False,True]:
+            with u.BuildTree(self.p) as build:
+                mac=u.Mac(self.p);mac.build_context=build
+                if timeout:
+                    with self.assertRaises(u.Failure):mac.run([sys.executable,'-c','import time;time.sleep(30)'],'fixture',cwd=build.root,timeout=.01)
+                else:self.assertEqual(mac.run([sys.executable,'-c','print("fixture")'],'fixture',cwd=build.root,output=True),'fixture')
+                self.assertEqual(u.read_json(build.state),{'phase':'idle'})
+            self.assertFalse(build.root.exists())
+    def test_crashed_parent_build_lease_and_group_preserve_live_child(self):
+        build=u.BuildTree(self.p)
+        child=subprocess.Popen([sys.executable,'-c','import sys;print("ready",flush=True);sys.stdin.buffer.read(1)'],start_new_session=True,stdin=subprocess.PIPE,stdout=subprocess.PIPE,pass_fds=(build.lease.file.fileno(),))
+        self.assertEqual(child.stdout.readline(),b'ready\n');u.atomic_json(build.state,{'phase':'child','group':child.pid});build.lease.close()
+        try:
+            u.BuildTree.reap(self.p);self.assertTrue(build.root.exists())
+            child.communicate(b'x');u.BuildTree.reap(self.p);self.assertFalse(build.root.exists())
+        finally:
+            if child.poll() is None:child.communicate(b'x')
     def test_complete_update_keeps_full_bundle_backup_and_public_receipt(self):
         result=self.engine.launch(ready_timeout=.1)
         self.assertEqual(result,{'state':'launched','commit':B});self.assertFalse(self.p.journal.exists())

@@ -51,7 +51,12 @@ def stage_bundle(root, destination, source, generation, platform):
 def stage_update(paths,platform):
     previous=platform.validate(paths.app,legacy=True);baseline=update.bundle_hash(paths.app)
     source,bare=platform.source(previous);source['generation']=previous.get('generation',0)+1
-    root=platform.checkout(source,bare);candidate=paths.staged();platform.build(root,candidate,source,source['generation'])
+    candidate=paths.staged()
+    with update.BuildTree(paths) as build:
+        platform.build_context=build
+        try:
+            root=platform.checkout(source,bare,build.root);platform.build(root,candidate,source,source['generation'])
+        finally:platform.build_context=None
     rollback=paths.staged();shutil.copytree(paths.app,rollback,symlinks=True)
     platform.validate(rollback,legacy=True)
     if update.bundle_hash(paths.app)!=baseline or update.bundle_hash(rollback)!=baseline:raise update.Failure('bundle-changed')

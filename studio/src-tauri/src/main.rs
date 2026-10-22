@@ -7,6 +7,7 @@ mod github;
 mod persistence_tests;
 mod proposals;
 mod questions;
+mod quit;
 mod recents;
 mod review_state;
 mod update;
@@ -487,11 +488,9 @@ fn request_close(
     if state.unsaved_changes.load(Ordering::SeqCst) {
         return Err("Save or discard changes before closing".into());
     }
-    state.close_authorized.store(true, Ordering::SeqCst);
-    if let Err(error) = window.close() {
-        state.close_authorized.store(false, Ordering::SeqCst);
-        return Err(error.to_string());
-    }
+    quit::authorize(&state.close_authorized, || Ok(()))?;
+    // The application event loop rechecks all guards when exit is delivered.
+    window.app_handle().exit(0);
     Ok(())
 }
 #[tauri::command]
@@ -564,19 +563,9 @@ fn main() {
                     drafting::handle_drop(window.app_handle().clone(), paths.clone());
                 }
             }
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Every OS close goes through the renderer guard, even if its most
-                // recent dirty notification is still queued. Only request_close
-                // grants a one-shot bypass after that guard completes.
-                if !window
-                    .state::<BrowserState>()
-                    .close_authorized
-                    .swap(false, Ordering::SeqCst)
-                {
-                    api.prevent_close();
-                    let _ = window.emit("close-requested", ());
-                }
-            }
+            quit::handle_window_close(event, || {
+                let _ = window.emit("close-requested", ());
+            });
         })
         .invoke_handler(tauri::generate_handler![
             github::github_request,
@@ -626,6 +615,34 @@ fn main() {
             load_manuscript,
             list_system_fonts
         ])
-        .run(tauri::generate_context!())
-        .expect("Heinlein Studio failed to start");
+        .build(tauri::generate_context!())
+        .expect("Heinlein Studio failed to start")
+        .run(|app, event| {
+            let state = app.state::<BrowserState>();
+            quit::handle(
+                &event,
+                &state.close_authorized,
+                || {
+                    let _selection = state
+                        .selection_gate
+                        .try_lock()
+                        .map_err(|_| "Finish opening the project before quitting")?;
+                    let _github = state.github.close_guard()?;
+                    let _mutation = state.mutation_gate.close_guard()?;
+                    let runtime = app.state::<update::Runtime>();
+                    let _update = runtime.idle()?;
+                    if state.unsaved_changes.load(Ordering::SeqCst) {
+                        return Err("Save or discard changes before closing".into());
+                    }
+                    Ok(())
+                },
+                || {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                        let _ = window.emit("close-requested", ());
+                    }
+                },
+            );
+        });
 }

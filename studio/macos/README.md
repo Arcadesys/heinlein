@@ -122,3 +122,48 @@ cleanup command rejects real service names and non-fixture profiles, invokes onl
 `cleanup` with no seed/stdin, reports typed access failures, and never enumerates
 or reads Keychain contents. OS approval may still be required. A failure does not
 claim either item was absent/deleted; retain the exact receipt for follow-up.
+
+
+## Native Quit and disposable builds
+
+Normal application Quit (menu/CmdQ/terminate) is intercepted at Tauri
+`RunEvent::ExitRequested`, in addition to window close. Both request the same
+author save flow. A renderer-approved exit grants one-shot permission only after
+native selection/GitHub/save/update guards pass; the application event loop
+consumes that permission and rechecks the guards before allowing exit. A newly
+pending renewal or save refuses exit and consumes the old grant, requiring fresh
+author permission after retry. No restart or forcequit bypass is introduced.
+
+Disposable `build-<UUID>` trees now have ownership leases and child-group state.
+Completion/failure/partial checkout cleans them; the next launch reaps quiescent
+interrupted work. Child commands inherit the lease and run in their own recorded
+process group; a still-live group or lease is preserved. A crash in the spawn /
+PID-record gap stays uncertain rather than being guessed safe. At two retained
+unknown/in-use trees, further builds stop instead of growing disk use; existing
+valid app launch remains available. Unknown historical trees need supervised
+maintenance. Separate `.heinlein-updates` app backups are never build GC targets.
+Only timeout of an updater-owned build group can terminate those build tools;
+this never targets the app/native writer process group.
+
+The explicit native fixture is a workspace package, not a Studio launch mode:
+
+```sh
+cd studio
+cargo build --locked --release -p heinlein-native-quit-probe
+# Worker3 only after isolation inspection: create a fresh canonical private
+# /private/tmp/heinlein-native-quit-<UUID> directory (mode700), then:
+target/release/heinlein-native-quit-probe /private/tmp/heinlein-native-quit-EXACT-UUID
+```
+
+It has unique app identity `me.thearcades.heinlein.synthetic-quit`, obvious test
+window/menu name and an incognito local-only webview. No OsStore is constructed;
+production Auth uses an in-memory store/provider, with only lock files in the
+temporary StateDir. It cannot call GitHub/model providers. It includes the exact
+production Quit route and extracted unchanged MutationGate. Its own AppKit
+`sendAction:terminate:` drives real Wry application ExitRequested (codeNone),
+not a physical keyboard or accessibility injection. The sequence refuses pending
+renewal, explicitly retries its memory write, refuses a save, consumes a grant
+when a new save races delivery, refuses reuse, and permits normal exit only after
+a fresh grant. A boolean-only receipt names those checks. Worker3 owns execution
+and cleanup of that fixture; compilation/unit tests alone are not live menu proof.
+No installed stable app, profile, real Keychain or RC1 is part of this fixture.

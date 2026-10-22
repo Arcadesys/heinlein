@@ -10,6 +10,7 @@ const messages:Record<string,string>={
   'startup-uncertain':'The app may still be starting. Nothing will be replaced or stopped while it may be running.',
   'rolled-back':'The previous valid app was restored. Your writing and saved accounts were not rolled back.',
   'fetch-failed':'The update source could not be checked. You can keep writing offline and explicitly check again later.',
+  'build-recovery-required':'Interrupted or in-use builds have reached the safety limit. Keep writing. Wait for an active build to finish, or arrange supervised updater-cache maintenance; retained app rollback bundles are unchanged.',
   'build-failed':'The new app could not be built. The previous app remains available.',
   'sign-failed':'The new app could not be signed. The previous app remains available.',
   'signature-failed':'App integrity verification failed. Keep the previous app and resolve the installation before updating.',

@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import plistlib
 import secrets
+import signal
 import shutil
 import stat
 import subprocess
@@ -143,6 +144,63 @@ class Lease:
     def __enter__(self): return self
     def __exit__(self, *_): self.close()
 
+def group_alive(group):
+    if not isinstance(group,int) or group<=1:return False
+    try:os.killpg(group,0);return True
+    except ProcessLookupError:return False
+    except PermissionError:return True
+
+class BuildTree:
+    """Disposable build ownership, independent of retained app rollback stages.
+
+    Lease plus child process-group state protects orphaned in-use work. A crash
+    in the spawn/record gap stays uncertain; cap retained uncertainty, never guess.
+    All production callers already hold the unchanged updater transaction lock.
+    """
+    def __init__(self,paths):
+        self.paths=paths;self.reap(paths)
+        if len(list(paths.cache.glob('build-*')))>=2:raise Failure('build-recovery-required')
+        self.root=paths.cache/('build-'+uuid.uuid4().hex);self.root.mkdir(mode=0o700)
+        self.lock_path=paths.cache/('.'+self.root.name+'.lock');self.lease=Lease(self.lock_path)
+        self.state=self.root/'.build-owner-v1.json';atomic_json(self.state,{'phase':'idle'})
+    @staticmethod
+    def cleanup(paths,root):
+        name=root.name.removeprefix('build-')
+        if len(name)!=32 or any(c not in '0123456789abcdef' for c in name) or root.is_symlink() or not root.is_dir():return
+        info=root.stat()
+        if info.st_uid!=os.getuid() or info.st_mode&0o077:return
+        lock_path=paths.cache/('.'+root.name+'.lock')
+        try:lease=Lease(lock_path)
+        except Failure:return
+        try:
+            state=read_json(root/'.build-owner-v1.json')
+            if state is None:
+                if any(root.iterdir()):return
+            elif not isinstance(state,dict) or state.get('phase')=='spawning' or state.get('phase') not in ('idle','child') or (state.get('phase')=='child' and (not isinstance(state.get('group'),int) or state['group']<=1)) or group_alive(state.get('group')):return
+            shutil.rmtree(root)  # fd-based stdlib rmtree never follows tree symlinks.
+        finally:lease.close()
+        lock_path.unlink(missing_ok=True);sync_dir(paths.cache)
+    @classmethod
+    def reap(cls,paths):
+        for root in paths.cache.glob('build-*'):
+            try:cls.cleanup(paths,root)
+            except (OSError,Failure):pass  # Unknown/inaccessible work is retained, and the cap prevents growth.
+    def run(self,command,timeout=None,**kwargs):
+        atomic_json(self.state,{'phase':'spawning'})
+        try:child=subprocess.Popen(command,start_new_session=True,pass_fds=(self.lease.file.fileno(),),**kwargs)
+        except OSError:
+            atomic_json(self.state,{'phase':'idle'});raise
+        atomic_json(self.state,{'phase':'child','group':child.pid})
+        try:stdout,stderr=child.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # Only the build's newly-created process group, never a writer app.
+            os.killpg(child.pid,signal.SIGKILL);child.communicate();raise
+        finally:
+            if child.poll() is not None and not group_alive(child.pid):atomic_json(self.state,{'phase':'idle'})
+        return subprocess.CompletedProcess(command,child.returncode,stdout,stderr)
+    def __enter__(self):return self
+    def __exit__(self,*_):self.lease.close();self.cleanup(self.paths,self.root)
+
 def environment(home):
     cargo=Path(home)/'.cargo/bin'
     tool_path=SAFE_PATH
@@ -154,7 +212,7 @@ def environment(home):
             'PYTHONNOUSERSITE': '1', 'CARGO_TERM_COLOR': 'never', 'NO_COLOR': '1'}
 
 class Mac:
-    def __init__(self, paths): self.paths = paths
+    def __init__(self, paths): self.paths = paths;self.build_context=None
     def tool(self, name):
         choices = {'git':['/usr/bin/git'], 'swift':['/usr/bin/xcrun'],
                    'npm':['/opt/homebrew/bin/npm','/usr/local/bin/npm'],
@@ -168,9 +226,10 @@ class Mac:
         raise Failure('toolchain-unavailable', name)
     def run(self, command, step, cwd=None, output=False, timeout=1800):
         try:
-            p = subprocess.run(command, cwd=cwd, env=environment(self.paths.home),
+            execute=self.build_context.run if self.build_context else subprocess.run
+            p = execute(command, cwd=cwd, env=environment(self.paths.home),
                 stdout=subprocess.PIPE if output else subprocess.DEVNULL,
-                stderr=subprocess.PIPE if output else subprocess.DEVNULL, timeout=timeout, check=False)
+                stderr=subprocess.PIPE if output else subprocess.DEVNULL, timeout=timeout)
             if p.returncode: raise Failure(step + '-failed', step)
             captured = (p.stdout + p.stderr) if output else b''
             value = p.stdout+b'\n'+p.stderr if output=='combined' else p.stderr if output=='stderr' else p.stdout if output else b''
@@ -206,13 +265,12 @@ class Mac:
         except (ValueError,configparser.Error):raise Failure('unsafe-source-cache') from None
         allowed={'repositoryformatversion','filemode','bare','ignorecase','precomposeunicode','logallrefupdates'}
         if parsed.sections()!=['core'] or not set(parsed['core']).issubset(allowed) or parsed['core'].get('bare')!='true':raise Failure('unsafe-source-cache')
-    def checkout(self, source, bare):
-        root = self.paths.cache / ('build-' + uuid.uuid4().hex)
-        root.mkdir(mode=0o700)
+    def checkout(self, source, bare, root):
         # Git archive cannot execute hooks/filters; validate every member before extraction.
         archive = root / 'source.tar'
         with archive.open('xb') as out:
-            p = subprocess.run([self.tool('git'),'--git-dir',str(bare),'archive',source['commit']],
+            execute=self.build_context.run if self.build_context else subprocess.run
+            p = execute([self.tool('git'),'--git-dir',str(bare),'archive',source['commit']],
                 env=environment(self.paths.home),stdout=out,stderr=subprocess.DEVNULL,timeout=120)
         if p.returncode or archive.stat().st_size > 256*1024*1024: raise Failure('source-archive')
         with tarfile.open(archive) as tar:
@@ -355,6 +413,7 @@ class Engine:
         return self.status('scheduled',**{k:v for k,v in status.items() if k!='state'})
     def launch(self, ready_timeout=15, rebuild=False):
         self.recover()
+        BuildTree.reap(self.p)
         lease=self.active()
         if lease is None:
             atomic_json(self.p.cache/'activate-v1.json',{'nonce':uuid.uuid4().hex})
@@ -375,8 +434,13 @@ class Engine:
                     source={**source,**scheduled}
                 if rebuild or source['commit']!=previous['commit']:
                     source['generation']=previous.get('generation',0)+1
-                    stage=self.p.staged();root=self.mac.checkout(source,bare)
-                    self.mac.build(root,stage,source,source['generation'])
+                    stage=self.p.staged()
+                    with BuildTree(self.p) as build:
+                        self.mac.build_context=build
+                        try:
+                            root=self.mac.checkout(source,bare,build.root)
+                            self.mac.build(root,stage,source,source['generation'])
+                        finally:self.mac.build_context=None
                     record=self.install(stage,source,previous,previous_hash)
             except Exception as error:
                 if self.p.journal.exists(): self.recover(held=lease)

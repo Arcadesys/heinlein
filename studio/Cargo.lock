@@ -1885,6 +1885,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "heinlein-native-quit-probe"
+version = "0.1.0"
+dependencies = [
+ "github-workspace",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "uuid",
+]
+
+[[package]]
 name = "heinlein-studio"
 version = "1.5.0-rc.1"
 dependencies = [
