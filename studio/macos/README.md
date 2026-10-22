@@ -84,8 +84,8 @@ process scans create an atomic fence. This source does not automate that bootstr
 Normal CI runs `python3 -m unittest discover -s tests -p test_studio_updater.py`,
 auth/native/renderer tests and browser accessibility checks. macOS file tests use
 only temporary code bundles (including actual signing and atomic exchange), never
-Keychain. Linux skips the two native macOS file tests. CI compiles the probe below
-but never executes it. Mock/path tests do not establish real OS-store retention.
+Keychain. Linux skips the two native macOS file tests. CI runs the probe’s memory-only retry unit tests below; it never executes its
+Keychain main. Mock/path tests do not establish real OS-store retention.
 
 Only after root GO, worker3 may build different A/B probes in separate target dirs:
 
@@ -107,3 +107,18 @@ for separately authorized cleanup. This proof does not test GitHub HTTPS/device
 flow, user account access, installed native UI or live author data. No genuine
 Keychain proof or installed update is claimed until this procedure is authorized
 and actually executed. VoiceOver and physical power-loss acceptance stay separate.
+
+
+After a successful proof or explicitly reported controlled abort, authorized
+worker3 can remove exactly a retained run’s two synthetic items without its seed:
+
+```sh
+python3 -I -S studio/macos/tests/probe_update.py --authorized-synthetic-keychain-test --probe-a /ABSOLUTE/RETAINED-FIXTURE/home/Applications/Heinlein\ Studio.app/Contents/MacOS/heinlein-native --cleanup-service me.thearcades.heinlein.synthetic-update-EXACT-UUID --cleanup-profile /ABSOLUTE/RETAINED-FIXTURE/profile
+```
+
+Use that run’s actual canonical private fixture path and exact UUID (including
+old aborted run `3529adfd-a979-4307-8234-0415db612b5b` only when authorized). The
+cleanup command rejects real service names and non-fixture profiles, invokes only
+`cleanup` with no seed/stdin, reports typed access failures, and never enumerates
+or reads Keychain contents. OS approval may still be required. A failure does not
+claim either item was absent/deleted; retain the exact receipt for follow-up.

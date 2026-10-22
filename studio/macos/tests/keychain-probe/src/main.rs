@@ -71,16 +71,62 @@ impl Provider for SyntheticApi {
         Err(Error::Network)
     }
 }
-fn run() -> Result<serde_json::Value> {
+fn prepare_initial(
+    auth: &Auth,
+    store: &dyn SecretStore,
+    expected: &str,
+    confirmed: bool,
+    stage: &mut &'static str,
+) -> Result<()> {
+    *stage = "store-read-before-write";
+    if let Some(raw) = store.load()? {
+        let record: serde_json::Value =
+            serde_json::from_slice(&raw).map_err(|_| Error::StoreInvalid)?;
+        // A retry may finish its own partial write, never replace an unknown item.
+        if record["version"] != 1
+            || record["client_id"] != "synthetic-public-client"
+            || record["user"]["id"] != 9
+            || record["access_token"].as_str() != Some(expected)
+        {
+            return Err(Error::Conflict);
+        }
+        let view = auth.view()?;
+        if !confirmed && view.confirmed {
+            return Err(Error::Conflict);
+        }
+    } else {
+        *stage = "synthetic-authorize";
+        auth.begin(
+            &SyntheticApi {
+                seed: expected.into(),
+            },
+            1000,
+        )?;
+        auth.poll(
+            &SyntheticApi {
+                seed: expected.into(),
+            },
+            1005,
+        )?;
+    }
+    if confirmed && !auth.view()?.confirmed {
+        *stage = "store-confirm";
+        auth.confirm(9)?;
+    }
+    Ok(())
+}
+fn run(stage: &mut &'static str) -> Result<serde_json::Value> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 4 {
         return Err(Error::Unsupported);
     }
+    *stage = "service-preflight";
     let service = &args[2];
     let suffix = service
         .strip_prefix("me.thearcades.heinlein.synthetic-update-")
         .ok_or(Error::Unsupported)?;
     uuid::Uuid::parse_str(suffix).map_err(|_| Error::Unsupported)?;
+    *stage = "profile-preflight";
     let root = PathBuf::from(&args[3]);
     if !root.is_absolute()
         || !root.starts_with(
@@ -91,6 +137,10 @@ fn run() -> Result<serde_json::Value> {
     {
         return Err(Error::Unsupported);
     }
+    if args[1] == "preflight" {
+        return Ok(serde_json::json!({"preflight":true,"allEqual":false}));
+    }
+    *stage = "seed-pipe";
     let mut seed = [0; 32];
     if args[1] != "cleanup" {
         std::io::stdin()
@@ -108,6 +158,7 @@ fn run() -> Result<serde_json::Value> {
                 "unconfirmed"
             }
         ))?);
+        *stage = "profile-open";
         let auth = Auth::new(
             "synthetic-public-client".into(),
             store.clone(),
@@ -118,34 +169,21 @@ fn run() -> Result<serde_json::Value> {
             }))?,
         )?;
         match args[1].as_str() {
-            "write" => {
-                auth.begin(
-                    &SyntheticApi {
-                        seed: expected.clone(),
-                    },
-                    1000,
-                )?;
-                auth.poll(
-                    &SyntheticApi {
-                        seed: expected.clone(),
-                    },
-                    1005,
-                )?;
-                if confirmed {
-                    auth.confirm(9)?;
-                }
-            }
+            "write" => prepare_initial(&auth, store.as_ref(), &expected, confirmed, stage)?,
             "read" => {}
             "cleanup" => {
+                *stage = "synthetic-cleanup";
                 store.clear()?;
                 continue;
             }
             _ => return Err(Error::Unsupported),
         }
+        *stage = "store-read-result";
         let view = auth.view()?;
         let raw = store.load()?.ok_or(Error::StoreInvalid)?;
         let record: serde_json::Value =
             serde_json::from_slice(&raw).map_err(|_| Error::StoreInvalid)?;
+        *stage = "record-equality";
         outcomes.push(
             view.account.is_some_and(|u| u.id == 9)
                 && view.confirmed == confirmed
@@ -153,6 +191,10 @@ fn run() -> Result<serde_json::Value> {
                 && record["access_token"].as_str() == Some(&expected),
         );
     }
+    if args[1] != "cleanup" && !outcomes.iter().all(|v| *v) {
+        return Err(Error::Conflict);
+    }
+    *stage = "ready-receipt";
     // Build marker changes code hashes. No seed/record/token/digest ever leaves this process.
     if args[1] == "read" && outcomes.iter().all(|v| *v) {
         if let (Ok(directory), Ok(nonce)) = (
@@ -197,25 +239,138 @@ fn run() -> Result<serde_json::Value> {
         serde_json::json!({"allEqual":outcomes.iter().all(|v|*v),"confirmedAndUnconfirmed":outcomes.len()==2,"cleanup":args[1]=="cleanup"}),
     )
 }
+fn diagnostic(error: Error, stage: &str) -> serde_json::Value {
+    let (code, os_status) = match error {
+        Error::StoreLocked => ("locked", Some(-25308)),
+        Error::StoreDenied => ("denied", Some(-25293)),
+        Error::StoreCancelled => ("cancelled", Some(-128)),
+        Error::StoreUnavailable => ("unavailable", None),
+        Error::StoreInvalid => ("invalid-record", None),
+        Error::Unsupported => ("preflight-rejected", None),
+        Error::Storage => ("profile-storage", None),
+        Error::Conflict => ("existing-item-mismatch", None),
+        _ => ("probe-failed", None),
+    };
+    serde_json::json!({"allEqual":false,"error":code,"stage":stage,"osStatus":os_status})
+}
 fn main() {
-    match run() {
+    let mut stage = "argument-preflight";
+    match run(&mut stage) {
         Ok(value) => {
             let _ = writeln!(std::io::stdout(), "{value}");
         }
         Err(error) => {
-            let code = match error {
-                Error::StoreLocked => "locked",
-                Error::StoreDenied => "denied",
-                Error::StoreCancelled => "cancelled",
-                Error::StoreUnavailable => "unavailable",
-                _ => "probe-failed",
-            };
-            let _ = writeln!(
-                std::io::stdout(),
-                "{}",
-                serde_json::json!({"allEqual":false,"error":code})
-            );
-            std::process::exit(1)
+            let _ = writeln!(std::io::stdout(), "{}", diagnostic(error, stage));
+            std::process::exit(1);
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    #[derive(Default)]
+    struct Memory {
+        bytes: Mutex<Option<Vec<u8>>>,
+        writes: Mutex<usize>,
+        fail_at: Mutex<Option<usize>>,
+        read_error: Mutex<Option<Error>>,
+    }
+    impl SecretStore for Memory {
+        fn load(&self) -> Result<Option<Vec<u8>>> {
+            if let Some(e) = *self.read_error.lock().unwrap() {
+                return Err(e);
+            }
+            Ok(self.bytes.lock().unwrap().clone())
+        }
+        fn save(&self, value: &[u8]) -> Result<()> {
+            let mut n = self.writes.lock().unwrap();
+            *n += 1;
+            if *self.fail_at.lock().unwrap() == Some(*n) {
+                return Err(Error::StoreDenied);
+            }
+            *self.bytes.lock().unwrap() = Some(value.to_vec());
+            Ok(())
+        }
+        fn clear(&self) -> Result<()> {
+            panic!("retry must never delete")
+        }
+    }
+    fn fixture() -> (Auth, Arc<Memory>, PathBuf) {
+        let path = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("heinlein-probe-unit-{}", uuid::Uuid::new_v4()));
+        let store = Arc::new(Memory::default());
+        let auth = Auth::new(
+            "synthetic-public-client".into(),
+            store.clone(),
+            StateDir::open(&path).unwrap(),
+        )
+        .unwrap();
+        (auth, store, path)
+    }
+    #[test]
+    fn partial_initial_confirmation_retries_same_item_without_overwriting_or_oauth() {
+        let (auth, store, path) = fixture();
+        let mut stage = "initial";
+        *store.fail_at.lock().unwrap() = Some(2);
+        assert!(matches!(
+            prepare_initial(&auth, store.as_ref(), "unit-only", true, &mut stage),
+            Err(Error::StoreDenied)
+        ));
+        assert_eq!(stage, "store-confirm");
+        assert!(!auth.view().unwrap().confirmed);
+        *store.fail_at.lock().unwrap() = None;
+        prepare_initial(&auth, store.as_ref(), "unit-only", true, &mut stage).unwrap();
+        assert!(auth.view().unwrap().confirmed);
+        let n = *store.writes.lock().unwrap();
+        prepare_initial(&auth, store.as_ref(), "unit-only", true, &mut stage).unwrap();
+        assert_eq!(*store.writes.lock().unwrap(), n);
+        drop(auth);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn unknown_item_is_never_overwritten_even_with_valid_synthetic_shape() {
+        let (auth, store, path) = fixture();
+        let mut stage = "initial";
+        prepare_initial(&auth, store.as_ref(), "first-unit-value", false, &mut stage).unwrap();
+        let original = store.load().unwrap();
+        let writes = *store.writes.lock().unwrap();
+        assert!(matches!(
+            prepare_initial(
+                &auth,
+                store.as_ref(),
+                "different-unit-value",
+                false,
+                &mut stage
+            ),
+            Err(Error::Conflict)
+        ));
+        assert_eq!(store.load().unwrap(), original);
+        assert_eq!(*store.writes.lock().unwrap(), writes);
+        drop(auth);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn locked_initial_read_exposes_stage_then_retry_writes_only_after_access_returns() {
+        let (auth, store, path) = fixture();
+        let mut stage = "initial";
+        *store.read_error.lock().unwrap() = Some(Error::StoreLocked);
+        assert!(matches!(
+            prepare_initial(&auth, store.as_ref(), "unit-only", false, &mut stage),
+            Err(Error::StoreLocked)
+        ));
+        assert_eq!(stage, "store-read-before-write");
+        assert_eq!(*store.writes.lock().unwrap(), 0);
+        let receipt = diagnostic(Error::StoreLocked, stage);
+        assert_eq!(receipt["osStatus"], -25308);
+        assert_eq!(receipt["error"], "locked");
+        assert!(!receipt.to_string().contains("unit-only"));
+        *store.read_error.lock().unwrap() = None;
+        prepare_initial(&auth, store.as_ref(), "unit-only", false, &mut stage).unwrap();
+        assert_eq!(*store.writes.lock().unwrap(), 1);
+        drop(auth);
+        std::fs::remove_dir_all(path).unwrap();
     }
 }

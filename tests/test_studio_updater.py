@@ -62,6 +62,37 @@ class FakeMac:
         for fd in self.children:os.close(fd)
         self.children=[]
 
+class ProbeHarnessTests(unittest.TestCase):
+    def setUp(self):
+        spec=importlib.util.spec_from_file_location('probe_harness',ROOT/'studio/macos/tests/probe_update.py');self.h=importlib.util.module_from_spec(spec);spec.loader.exec_module(self.h)
+    def test_initial_failure_reports_only_typed_stage_and_retries_same_probe(self):
+        calls=[];reports=[];answers=[]
+        def probe(mode):
+            calls.append(mode)
+            return (1,{'allEqual':False,'error':'locked','stage':'store-read-before-write','osStatus':-25308,'raw':'DO_NOT_LOG'}) if len(calls)==1 else (0,{'allEqual':True})
+        self.h.initial_write(probe,'synthetic-unit',report=lambda value,**_:reports.append(value),ask=lambda _:answers.append('retry') or '')
+        self.assertEqual(calls,['write','write']);self.assertEqual(len(answers),1);self.assertNotIn('DO_NOT_LOG',reports[0]);self.assertEqual(json.loads(reports[0])['stage'],'store-read-before-write')
+    def test_preflight_is_distinct_from_store_error_and_abort_preserves_unknown_items(self):
+        value=self.h.safe_failure({'error':'preflight-rejected','stage':'profile-preflight','osStatus':'private raw'})
+        self.assertEqual(value['stage'],'profile-preflight');self.assertIsNone(value['osStatus'])
+        for raw in [b'private invalid',b'[]',b'x'*5000]:self.assertEqual(self.h.decode_receipt(raw),{})
+        with self.assertRaisesRegex(SystemExit,'items unknown/retained'):
+            self.h.initial_write(lambda mode:(1,value),'synthetic-unit',report=lambda *a,**k:None,ask=lambda _:'q')
+    def test_cleanup_rejects_real_service_and_sanitizes_exact_item_denial(self):
+        with patch.object(self.h.subprocess,'run') as run:
+            with self.assertRaises(SystemExit):self.h.cleanup_exact('/fixture/probe','me.thearcades.heinlein.studio.github',Path('/private/tmp/profile'))
+            run.assert_not_called()
+        with tempfile.TemporaryDirectory(prefix='heinlein-synthetic-update-') as directory:
+            root=Path(directory).resolve();profile=root/'profile';profile.mkdir(mode=0o700);service='me.thearcades.heinlein.synthetic-update-3529adfd-a979-4307-8234-0415db612b5b'
+            receipt=type('Result',(),{'returncode':1,'stdout':b'{"error":"denied","stage":"synthetic-cleanup","raw":"DO_NOT_LOG"}'})()
+            with patch.object(self.h.subprocess,'run',return_value=receipt) as run:
+                result=self.h.cleanup_exact('/fixture/probe',service,profile)
+                self.assertFalse(result['cleanup']);self.assertNotIn('DO_NOT_LOG',json.dumps(result));self.assertEqual(run.call_args.args[0][1:],["cleanup",service,str(profile)])
+                self.assertEqual(run.call_args.kwargs['stdin'],self.h.subprocess.DEVNULL)
+    def test_probe_temp_preflight_uses_fixture_parent_not_inherited_user_temp(self):
+        env=self.h.probe_environment(Path('/private/unit-home'),Path('/private/tmp/heinlein-synthetic-unit'))
+        self.assertEqual(env['TMPDIR'],'/private/tmp');self.assertNotIn('GITHUB_TOKEN',env)
+
 class UpdaterTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.p=u.Paths(home=Path(self.temp.name)/'home');self.p.home.mkdir(mode=0o700);self.p.ensure();bundle(self.p.app,A)
