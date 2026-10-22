@@ -45,6 +45,7 @@ fn main() {
             "discard_recovery",
             "set_unsaved_changes",
             "request_close",
+            "quit_request_finished",
             "load_manuscript",
             "list_system_fonts",
         ]),

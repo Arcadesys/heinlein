@@ -109,6 +109,8 @@ export interface LocalCore {
   discardRecovery(repositoryId: string, relativePath: string, recoveryId: string): Promise<void>;
   setUnsavedChanges(dirty: boolean): Promise<void>;
   requestClose(discard: boolean): Promise<void>;
+  finishQuitRequest?():Promise<void>;
+  onQuitRefused?(callback:(message:string)=>void):Promise<()=>void>;
   onCloseRequested(callback: () => void): Promise<() => void>;
 }
 // Root selection and guarded file writes belong to the native host;
@@ -156,6 +158,8 @@ export const localCore: LocalCore = {
   discardRecovery: (repositoryId, relativePath, recoveryId) => invoke('discard_recovery', {repositoryId, relativePath, recoveryId}),
   setUnsavedChanges: dirty => invoke('set_unsaved_changes', {dirty}),
   requestClose: discard => invoke('request_close', {discard}),
+  finishQuitRequest:()=>invoke('quit_request_finished'),
+  onQuitRefused:callback=>listen<string>('quit-refused',event=>callback(event.payload)),
   onCloseRequested: callback => listen('close-requested', callback),
   pickRepository: () => invoke('pick_repository'),
   recentRepositories: () => invoke('recent_repositories'),

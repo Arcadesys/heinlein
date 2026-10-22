@@ -7,8 +7,11 @@ mod mutation_gate;
 #[path = "../../../../src-tauri/src/quit.rs"]
 mod quit;
 #[cfg(target_os = "macos")]
+#[path = "../../../../src-tauri/src/quit_macos.rs"]
+mod quit_macos;
+#[cfg(target_os = "macos")]
 mod native {
-    use super::{mutation_gate::MutationGate, quit};
+    use super::{mutation_gate::MutationGate, quit, quit_macos};
     use github_workspace::{
         api::Provider,
         auth::{Auth, Credential, DeviceCode, Poll, SecretStore, TokenSet, User},
@@ -131,46 +134,127 @@ mod native {
         let _save = gate.close_guard()?;
         auth.ready_to_quit().map_err(|e| e.to_string())
     }
-    // Dispatch only this process's standard native Quit action. No AX access,
-    // remote app messages, input injection or termination signal is involved.
-    fn native_quit() {
-        use std::ffi::{c_char, c_void};
-        #[link(name = "objc")]
+
+    fn progress(stage: &str) {
+        use std::io::Write;
+        println!("{}", serde_json::json!({"kind":"progress","stage":stage}));
+        let _ = std::io::stdout().flush();
+    }
+    static ACTION_FAILED: AtomicBool = AtomicBool::new(false);
+    fn schedule_native(action: usize) {
+        use std::ffi::c_void;
+        #[link(name = "System")]
         extern "C" {
-            fn objc_getClass(n: *const c_char) -> *mut c_void;
-            fn sel_registerName(n: *const c_char) -> *mut c_void;
-            fn objc_msgSend();
+            static _dispatch_main_q: c_void;
+            fn dispatch_async_f(
+                queue: *mut c_void,
+                context: *mut c_void,
+                work: extern "C" fn(*mut c_void),
+            );
+        }
+        extern "C" fn perform(context: *mut c_void) {
+            let result = std::panic::catch_unwind(|| {
+                progress("native-action-dispatched-after-callback");
+                let action = context as usize;
+                let ok = match action {
+                    0 => menu_quit() && menu_quit() && direct_quit(),
+                    1 => direct_quit(),
+                    _ => menu_quit(),
+                };
+                if !ok {
+                    ACTION_FAILED.store(true, Ordering::SeqCst);
+                }
+                progress("native-action-returned");
+            });
+            if result.is_err() {
+                ACTION_FAILED.store(true, Ordering::SeqCst);
+                progress("native-action-failed");
+            }
         }
         unsafe {
-            let app: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
-                std::mem::transmute(objc_msgSend as *const ());
-            let app = app(
-                objc_getClass(c"NSApplication".as_ptr()),
-                sel_registerName(c"sharedApplication".as_ptr()),
-            );
-            let send: unsafe extern "C" fn(
-                *mut c_void,
-                *mut c_void,
-                *mut c_void,
-                *mut c_void,
-                *mut c_void,
-            ) -> bool = std::mem::transmute(objc_msgSend as *const ());
-            assert!(send(
-                app,
-                sel_registerName(c"sendAction:to:from:".as_ptr()),
-                sel_registerName(c"terminate:".as_ptr()),
-                app,
-                std::ptr::null_mut()
-            ));
+            dispatch_async_f(
+                std::ptr::addr_of!(_dispatch_main_q).cast_mut(),
+                action as *mut c_void,
+                perform,
+            )
         }
     }
+    mod objc {
+        use std::ffi::{c_char, c_void};
+        pub type Object = *mut c_void;
+        #[link(name = "objc")]
+        extern "C" {
+            pub fn objc_getClass(n: *const c_char) -> Object;
+            pub fn sel_registerName(n: *const c_char) -> Object;
+            pub fn objc_msgSend();
+        }
+        pub unsafe fn id(object: Object, selector: &std::ffi::CStr) -> Object {
+            let f: unsafe extern "C" fn(Object, Object) -> Object =
+                std::mem::transmute(objc_msgSend as *const ());
+            f(object, sel_registerName(selector.as_ptr()))
+        }
+        pub unsafe fn app() -> Object {
+            id(
+                objc_getClass(c"NSApplication".as_ptr()),
+                c"sharedApplication",
+            )
+        }
+    }
+    fn direct_quit() -> bool {
+        unsafe {
+            use objc::*;
+            let app = app();
+            if app.is_null() {
+                return false;
+            }
+            let f: unsafe extern "C" fn(Object, Object, Object) =
+                std::mem::transmute(objc_msgSend as *const ());
+            f(
+                app,
+                sel_registerName(c"terminate:".as_ptr()),
+                std::ptr::null_mut(),
+            );
+            true
+        }
+    }
+    fn menu_quit() -> bool {
+        unsafe fn activate(menu: objc::Object, depth: u8) -> bool {
+            use objc::*;
+            if menu.is_null() || depth > 4 {
+                return false;
+            }
+            let count: unsafe extern "C" fn(Object, Object) -> isize =
+                std::mem::transmute(objc_msgSend as *const ());
+            let n = count(menu, sel_registerName(c"numberOfItems".as_ptr()));
+            if !(0..100).contains(&n) {
+                return false;
+            }
+            let item: unsafe extern "C" fn(Object, Object, isize) -> Object =
+                std::mem::transmute(objc_msgSend as *const ());
+            for index in 0..n {
+                let entry = item(menu, sel_registerName(c"itemAtIndex:".as_ptr()), index);
+                if id(entry, c"action") == sel_registerName(c"terminate:".as_ptr()) {
+                    let perform: unsafe extern "C" fn(Object, Object, isize) =
+                        std::mem::transmute(objc_msgSend as *const ());
+                    perform(
+                        menu,
+                        sel_registerName(c"performActionForItemAtIndex:".as_ptr()),
+                        index,
+                    );
+                    return true;
+                }
+                if activate(id(entry, c"submenu"), depth + 1) {
+                    return true;
+                }
+            }
+            false
+        }
+        unsafe { activate(objc::id(objc::app(), c"mainMenu"), 0) }
+    }
     pub fn run() {
+        progress("preflight");
         let args: Vec<String> = std::env::args().collect();
-        assert_eq!(
-            args.len(),
-            2,
-            "Pass the fresh canonical synthetic fixture root only"
-        );
+        assert_eq!(args.len(), 2, "Pass fresh canonical synthetic root");
         let root = PathBuf::from(&args[1]);
         assert!(
             root.is_absolute()
@@ -183,7 +267,12 @@ mod native {
         );
         use std::os::unix::fs::MetadataExt;
         let meta = root.metadata().unwrap();
-        assert_eq!(meta.uid(), rustix_uid());
+        unsafe {
+            extern "C" {
+                fn getuid() -> u32;
+            }
+            assert_eq!(meta.uid(), getuid())
+        }
         assert_eq!(meta.mode() & 0o077, 0);
         let store = Arc::new(Memory::default());
         let auth = Auth::new(
@@ -200,17 +289,40 @@ mod native {
             auth.credential(&Api, 4590),
             Err(Error::RotationNotSaved)
         ));
+        let original = store.value.lock().unwrap().clone();
         let gate = Arc::new(MutationGate::default());
-        let permission = AtomicBool::new(false);
-        let mut save_work = None;
+        let permission = quit::Gate::default();
+        let requested = Arc::new(AtomicBool::new(false));
+        let receiver = requested.clone();
         let mut phase = 0;
-        let mut pending = true;
+        let mut scheduled = true;
         let mut seen = Vec::new();
         let mut allowed = false;
+        let mut approved_exits = 0;
+        progress("building-disposable-app");
         let app = tauri::Builder::default()
             .menu(tauri::menu::Menu::default)
             .on_window_event(|_, event| quit::handle_window_close(event, || {}))
-            .setup(|app| {
+            .setup(move |app| {
+                let request = receiver.clone();
+                let handle = app.handle().clone();
+                quit_macos::install(move || {
+                    let (entries, returns, _, errors) = quit_macos::counters();
+                    assert_eq!(entries, returns);
+                    assert_eq!(errors, 0);
+                    progress("should-terminate-entered-and-returned-cancel");
+                    request.store(true, Ordering::SeqCst);
+                    progress("deferred-author-request-received");
+                    let handle = handle.clone();
+                    std::thread::spawn(move || {
+                        let _ = handle.run_on_main_thread(|| {});
+                    });
+                    Ok(())
+                })
+                .map_err(std::io::Error::other)?;
+                // Registration is idempotent; must not replace the retained callback.
+                quit_macos::install(|| Err("unexpected callback replacement".into()))
+                    .map_err(std::io::Error::other)?;
                 tauri::WebviewWindowBuilder::new(
                     app,
                     "synthetic-quit-only",
@@ -219,37 +331,152 @@ mod native {
                 .title("Heinlein synthetic Quit test — no writing or real accounts")
                 .incognito(true)
                 .build()?;
+                progress("native-adapter-and-window-ready");
                 Ok(())
             })
             .build(tauri::generate_context!())
             .unwrap();
-        let code=app.run_return(move|_app,event|{
-            if let tauri::RunEvent::ExitRequested{code,..}=&event {assert!(code.is_none(),"Expected own native menu action, not AppHandle.exit");}
-            let decision=quit::handle(&event,&permission,||ready(&auth,&gate),||{});
-            if let Some(exit)=decision {
-                if exit{assert_eq!(phase,5);allowed=true;seen.push("normal_native_exit_permitted_after_fresh_grant");}
-                else {
-                    match phase {
-                        0=>{assert!(quit::authorize(&permission,||ready(&auth,&gate)).is_err());seen.push("pending_rotation_refused");store.deny.store(false,Ordering::SeqCst);auth.retry_saved().unwrap();seen.push("explicit_retry_saved");save_work=Some(save(&gate));},
-                        1=>{assert!(quit::authorize(&permission,||ready(&auth,&gate)).is_err());seen.push("inflight_save_refused");finish(&mut save_work);quit::authorize(&permission,||ready(&auth,&gate)).unwrap();save_work=Some(save(&gate));},
-                        2=>{assert!(!permission.load(Ordering::SeqCst));seen.push("new_save_recheck_consumed_grant");finish(&mut save_work);},
-                        3=>{assert!(!permission.load(Ordering::SeqCst));seen.push("consumed_grant_not_reused");quit::authorize(&permission,||ready(&auth,&gate)).unwrap();},
-                        _=>panic!("unexpected refusal"),
-                    }
-                    phase+=1;if phase==4{phase=5;}pending=true;
+        let abort = Arc::new(AtomicBool::new(false));
+        let ended = Arc::new(AtomicBool::new(false));
+        let flag = abort.clone();
+        let done = ended.clone();
+        let h = app.handle().clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            if !done.load(Ordering::SeqCst) {
+                progress("timeout-orderly-test-abort-requested");
+                flag.store(true, Ordering::SeqCst);
+                h.exit(73);
+            }
+        });
+        let flag = abort.clone();
+        let h = app.handle().clone();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::stdin()
+                .lock()
+                .lines()
+                .map_while(std::result::Result::ok)
+            {
+                if line.trim() == "abort" {
+                    progress("operator-orderly-test-abort-requested");
+                    flag.store(true, Ordering::SeqCst);
+                    h.exit(73);
+                    break;
                 }
             }
-            if matches!(event,tauri::RunEvent::Ready|tauri::RunEvent::MainEventsCleared)&&pending {pending=false;native_quit();}
-            if matches!(event,tauri::RunEvent::Exit){assert!(allowed);assert_eq!(seen.len(),6);println!("{}",serde_json::json!({"nativeQuitPassed":true,"nativeUserExitCodeNone":true,"checks":seen,"physicalKeyboard":false,"osStoreUsed":false,"networkUsed":false,"appId":"me.thearcades.heinlein.synthetic-quit"}));}
         });
-        assert_eq!(code, 0);
-    }
-    fn rustix_uid() -> u32 {
-        unsafe {
-            extern "C" {
-                fn getuid() -> u32;
+        let code = app.run_return(move |app, event| {
+            if abort.load(Ordering::SeqCst) {
+                if matches!(event, tauri::RunEvent::Exit) {
+                    ended.store(true, Ordering::SeqCst);
+                    println!("{}", serde_json::json!({"nativeQuitPassed":false,"aborted":true,"stage":"orderly-test-abort"}));
+                }
+                return;
             }
-            getuid()
+            if matches!(event, tauri::RunEvent::Ready) {
+                progress("event-loop-ready");
+            }
+            let activity = gate.activity();
+            let decision = quit::handle(&event, &permission, activity, || {
+                let _exclusive = gate.close_guard()?;
+                auth.ready_to_quit().map_err(|e| e.to_string())?;
+                if gate.activity() != activity {
+                    return Err("new work".into());
+                }
+                gate.seal_for_exit();
+                Ok(())
+            }, |_| {});
+            if let Some(exit) = decision {
+                if let tauri::RunEvent::ExitRequested { code, .. } = &event {
+                    assert_eq!(*code, Some(0));
+                }
+                if exit {
+                    assert_eq!(phase, 5);
+                    approved_exits += 1;
+                    allowed = true;
+                    assert!(gate.edit().is_err());
+                    seen.push("fresh-grant-revalidated-quiesced-normal-exit");
+                    progress("final-one-shot-consumed-and-exit-approved");
+                } else {
+                    match phase {
+                        2 => {
+                            assert!(!quit::consume(&permission, gate.activity(), || Ok(())).0);
+                            seen.push("settled-new-save-invalidated-and-consumed-grant");
+                            quit_macos::finished();
+                            phase = 3;
+                            app.exit(0);
+                        }
+                        3 => {
+                            seen.push("consumed-grant-not-reused");
+                            quit_macos::finished();
+                            phase = 4;
+                            scheduled = true;
+                        }
+                        _ => panic!("unexpected programmatic refusal"),
+                    }
+                }
+            }
+            if requested.swap(false, Ordering::SeqCst) {
+                assert!(!ACTION_FAILED.load(Ordering::SeqCst));
+                match phase {
+                    0 => {
+                        assert_eq!(quit_macos::counters(), (3, 3, 1, 0));
+                        assert!(quit::authorize(&permission, gate.activity(), || ready(&auth, &gate)).is_err());
+                        assert_eq!(*store.value.lock().unwrap(), original);
+                        seen.push("native-menu-and-direct-terminate-cancel-coalesced");
+                        seen.push("pending-rotation-preserved-and-author-cancel-reset");
+                        quit::cancel(&permission);
+                        quit_macos::finished();
+                        progress("pending-rotation-refused-author-cancelled");
+                        phase = 1;
+                        scheduled = true;
+                    }
+                    1 => {
+                        store.deny.store(false, Ordering::SeqCst);
+                        auth.retry_saved().unwrap();
+                        seen.push("explicit-memory-credential-retry-succeeded");
+                        let mut save_work = Some(save(&gate));
+                        assert!(quit::authorize(&permission, gate.activity(), || ready(&auth, &gate)).is_err());
+                        seen.push("native-quit-refused-active-save");
+                        finish(&mut save_work);
+                        quit_macos::finished();
+                        progress("explicit-retry-succeeded-active-save-refused");
+                        phase = 2;
+                        scheduled = true;
+                    }
+                    2 => {
+                        quit::authorize(&permission, gate.activity(), || ready(&auth, &gate)).unwrap();
+                        let mut save_work = Some(save(&gate));
+                        finish(&mut save_work);
+                        progress("new-work-after-author-grant");
+                        app.exit(0);
+                    }
+                    4 => {
+                        quit::authorize(&permission, gate.activity(), || ready(&auth, &gate)).unwrap();
+                        phase = 5;
+                        app.exit(0);
+                    }
+                    _ => panic!("duplicate or unexpected author request"),
+                }
+            }
+            if matches!(event, tauri::RunEvent::Ready | tauri::RunEvent::MainEventsCleared) && scheduled {
+                scheduled = false;
+                schedule_native(if phase == 0 { 0 } else if phase == 1 || phase == 4 { 1 } else { 2 });
+            }
+            if matches!(event, tauri::RunEvent::Exit) {
+                ended.store(true, Ordering::SeqCst);
+                assert!(allowed);
+                assert_eq!(approved_exits, 1);
+                assert_eq!(seen.len(), 7);
+                let counts = quit_macos::counters();
+                assert_eq!(counts.0, counts.1);
+                assert_eq!(counts.3, 0);
+                println!("{}", serde_json::json!({"nativeQuitPassed":true,"nativeMenuAndDirectTerminate":true,"shouldTerminateAlwaysCancelled":true,"deferredAuthorRequests":counts.2,"nativeAttempts":counts.0,"approvedProgrammaticExits":approved_exits,"checks":seen,"physicalKeyboard":false,"osStoreUsed":false,"networkUsed":false,"appId":"me.thearcades.heinlein.synthetic-quit"}));
+            }
+        });
+        if code != 0 {
+            std::process::exit(code)
         }
     }
 }

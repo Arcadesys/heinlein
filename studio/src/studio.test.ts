@@ -274,6 +274,35 @@ describe('editing and loss protection', () => {
     callback(); await settle(); findButton('Discard changes').click(); await settle();
     expect(core.requestClose).toHaveBeenCalledWith(true); app.destroy();
   });
+  it('coalesces native quit requests and resets cancellation and final refusal for retry', async () => {
+    const {core, app} = await setup();
+    core.finishQuitRequest = vi.fn(async () => {});
+    let refused!: (message: string) => void;
+    // Listener is installed during mount; remount with the explicit native event.
+    app.destroy();
+    core.onQuitRefused = vi.fn(async listener => {refused = listener; return () => {};});
+    const next = mountStudio(document.body.firstElementChild as HTMLElement, core); await settle();
+    await next.selectRepository(async () => ({...session, manifests: []}));
+    await next.showDocument('scene.md');
+    const view = EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
+    view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: 'Keep my draft'}});
+    const callback = vi.mocked(core.onCloseRequested).mock.calls.at(-1)![0];
+    callback(); callback(); await settle();
+    expect(document.querySelectorAll('dialog[aria-label="Unsaved changes"]')).toHaveLength(1);
+    findButton('Keep editing').click(); await settle();
+    expect(core.finishQuitRequest).toHaveBeenCalledOnce();
+    expect((document.body.firstElementChild as HTMLElement).inert).toBe(false);
+    callback(); await settle(); findButton('Discard changes').click(); await settle();
+    expect(core.requestClose).toHaveBeenCalledOnce();
+    expect((document.body.firstElementChild as HTMLElement).inert).toBe(true);
+    callback(); await settle(); expect(core.requestClose).toHaveBeenCalledOnce();
+    refused('A new save needs attention');
+    expect((document.body.firstElementChild as HTMLElement).inert).toBe(false);
+    expect(document.querySelector('.status')?.textContent).toBe('A new save needs attention');
+    callback(); await settle(); findButton('Discard changes').click(); await settle();
+    expect(core.requestClose).toHaveBeenCalledTimes(2);
+    next.destroy();
+  });
   it('update scheduling uses the same author save-or-keep-editing guard before quit',async()=>{
     const {core,app,change}=await setup();
     HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')};HTMLDialogElement.prototype.close=function(){this.removeAttribute('open')};

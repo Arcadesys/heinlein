@@ -18,6 +18,7 @@
     "allow-discard-recovery",
     "allow-set-unsaved-changes",
     "allow-request-close",
+    "allow-quit-request-finished",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-load-drafting",

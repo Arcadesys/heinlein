@@ -110,6 +110,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let saveButton: HTMLButtonElement | null = null;
   let dirtyBadge: HTMLElement | null = null;
   let guardPending: Promise<boolean> | null = null;
+  let quitRefusedUnlisten:(()=>void)|null=null;
+  let quitInProgress=false;
   let closeUnlisten: (() => void) | null = null;
   let dirtySync = Promise.resolve();
   let saveNoticeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -449,11 +451,26 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     review: () => {if (reviewPanel) {draftingQuestions?.close(); reviewPanel.open();} else {status.textContent = 'Open a scene, then choose Heinlein Review when you want advisory suggestions.';}},
   });
   async function quitSafely() {
-    if(disposed||selecting||structuralBusy||saving||staging)return;
-    const revision=edits;
-    if(!await allowLeave()||disposed||revision!==edits||saving||structuralBusy||selecting||staging)return;
-    root.inert=true;
-    try{await dirtySync;if(!disposed&&revision===edits&&!saving&&!structuralBusy&&!selecting&&!staging)await core.requestClose(true)}finally{root.inert=false}
+    if (quitInProgress) return;
+    quitInProgress = true;
+    let requested = false;
+    try {
+      if (disposed || selecting || structuralBusy || saving || staging) return;
+      const revision = edits;
+      if (!await allowLeave() || disposed || revision !== edits || saving || structuralBusy || selecting || staging) return;
+      root.inert = true;
+      await dirtySync;
+      if (!disposed && revision === edits && !saving && !structuralBusy && !selecting && !staging) {
+        await core.requestClose(true);
+        requested = true;
+      }
+    } finally {
+      if (!requested) {
+        quitInProgress = false;
+        root.inert = false;
+        await core.finishQuitRequest?.();
+      }
+    }
   }
   const updates=createUpdatePanel(core,{quit:quitSafely});
   const updateEntry=button('Updates…',()=>{void updates.open();},'update-entry');updateEntry.setAttribute('aria-haspopup','dialog');
@@ -1490,6 +1507,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       void drafting.importExternal(selection);
     }).then(unlisten => { if (disposed) unlisten(); else dropUnlisten = unlisten; }).catch(reportError);
     if (core.onDraftingImportError) void core.onDraftingImportError(message => { if (!disposed) { status.textContent = `Native import failed: ${message}`; status.classList.add('error'); } }).then(unlisten => { if (disposed) unlisten(); else dropErrorUnlisten = unlisten; }).catch(reportError);
+    if(core.onQuitRefused)void core.onQuitRefused(message=>{root.inert=false;quitInProgress=false;status.textContent=message;}).then(unlisten=>{if(disposed)unlisten();else quitRefusedUnlisten=unlisten;}).catch(reportError);
     void core.onCloseRequested(() => {
       void quitSafely().catch(reportError);
     }).then(unlisten => { if (disposed) unlisten(); else closeUnlisten = unlisten; }).catch(reportError);
@@ -1499,6 +1517,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

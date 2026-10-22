@@ -126,11 +126,19 @@ claim either item was absent/deleted; retain the exact receipt for follow-up.
 
 ## Native Quit and disposable builds
 
-Normal application Quit (menu/CmdQ/terminate) is intercepted at Tauri
-`RunEvent::ExitRequested`, in addition to window close. Both request the same
-author save flow. A renderer-approved exit grants one-shot permission only after
+Native AppKit Quit (menu/CmdQ/Dock/terminate) is cancelled immediately by a
+missing-selector-only `applicationShouldTerminate:` extension on the verified
+pinned Tao delegate. It preserves the delegate and existing lifecycle methods;
+any changed class, inherited selector, dependency pin or registration failure
+stops startup before writing. The callback only coalesces and queues a main-loop
+request, returning `NSTerminateCancel`; deferred work enters the existing author
+save flow. Window close uses that same flow. Cancellation resets coalescing so a
+later Quit can retry. No synchronous application exit occurs inside the delegate. A renderer-approved exit grants one-shot permission only after
 native selection/GitHub/save/update guards pass; the application event loop
-consumes that permission and rechecks the guards before allowing exit. A newly
+consumes that permission and rechecks the guards before allowing exit. New
+activity invalidates the grant even after a save has completed. Final guards
+seal new or queued mutations, GitHub operations and update work before releasing
+their locks. The renderer remains inert until exit or a native refusal message. A newly
 pending renewal or save refuses exit and consumes the old grant, requiring fresh
 author permission after retry. No restart or forcequit bypass is introduced.
 
@@ -159,11 +167,19 @@ It has unique app identity `me.thearcades.heinlein.synthetic-quit`, obvious test
 window/menu name and an incognito local-only webview. No OsStore is constructed;
 production Auth uses an in-memory store/provider, with only lock files in the
 temporary StateDir. It cannot call GitHub/model providers. It includes the exact
-production Quit route and extracted unchanged MutationGate. Its own AppKit
-`sendAction:terminate:` drives real Wry application ExitRequested (codeNone),
+production AppKit adapter, Quit gate and MutationGate. After the current native
+callback returns, a queued main-loop turn activates its own actual Quit menu
+selector and directly invokes its own `terminate:`. Both must return Cancel and
+remain responsive. Approved author work subsequently posts the preventable Wry
+`ExitRequested` with `Some(0)`; these are separate native and programmatic legs,
 not a physical keyboard or accessibility injection. The sequence refuses pending
 renewal, explicitly retries its memory write, refuses a save, consumes a grant
 when a new save races delivery, refuses reuse, and permits normal exit only after
-a fresh grant. A boolean-only receipt names those checks. Worker3 owns execution
+a fresh grant. Flushed bounded stages identify the last completed boundary and
+a boolean-only final receipt names those checks. Send literal `abort` on its own
+stdin for an orderly test-only failed exit. Its 30-second watchdog also requests
+that failed exit; timeout/abort never counts as passing. If the event loop itself
+hangs, stop and retain the exact process receipt for separately authorized
+cleanup; do not launch another fixture or kill broad process matches. Worker3 owns execution
 and cleanup of that fixture; compilation/unit tests alone are not live menu proof.
 No installed stable app, profile, real Keychain or RC1 is part of this fixture.

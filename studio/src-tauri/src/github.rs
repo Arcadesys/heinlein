@@ -353,6 +353,10 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
         .operation
         .try_lock()
         .map_err(|_| "Another GitHub operation is running")?;
+    if state.quitting.load(Ordering::SeqCst) {
+        return Err("Heinlein is quitting".into());
+    }
+    state.mutation_gate.note_activity();
     let started = state.mutation_gate.generation();
     if let Request::Cancel { preview_id } = request {
         state

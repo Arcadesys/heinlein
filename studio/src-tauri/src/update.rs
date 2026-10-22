@@ -14,6 +14,7 @@ pub(crate) struct Runtime {
     bundle: Option<PathBuf>,
     cache: Option<PathBuf>,
     operation: Mutex<()>,
+    exiting: std::sync::atomic::AtomicBool,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,6 +178,7 @@ impl Runtime {
                 bundle: Some(bundle.to_owned()),
                 cache: Some(cache),
                 operation: Mutex::new(()),
+                exiting: std::sync::atomic::AtomicBool::new(false),
             }))
         }
         #[cfg(not(target_os = "macos"))]
@@ -223,6 +225,10 @@ impl Runtime {
             .try_lock()
             .map_err(|_| "Wait for the update check before quitting".into())
     }
+    pub(crate) fn seal_for_exit(&self) {
+        self.exiting
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
     fn execute(&self, action: Action) -> Result<Status, String> {
         let Some(bundle) = &self.bundle else {
             return Ok(unavailable());
@@ -231,6 +237,9 @@ impl Runtime {
             .operation
             .try_lock()
             .map_err(|_| "An update check is already running")?;
+        if self.exiting.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("Heinlein is quitting".into());
+        }
         // Use OS verification before executing bundled updater code. No deep re-sign.
         if !std::process::Command::new("/usr/bin/codesign")
             .args(["--verify", "--deep", "--strict"])
@@ -318,9 +327,16 @@ pub(crate) async fn update_request(
     action: Action,
 ) -> Result<Status, String> {
     super::check_window(&window)?;
-    tauri::async_runtime::spawn_blocking(move || app.state::<Runtime>().execute(action))
-        .await
-        .map_err(|_| String::from("Update check interrupted"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<super::BrowserState>();
+        if state.quitting.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("Heinlein is quitting".into());
+        }
+        state.mutation_gate.note_activity();
+        app.state::<Runtime>().execute(action)
+    })
+    .await
+    .map_err(|_| String::from("Update check interrupted"))?
 }
 #[cfg(test)]
 mod tests {
