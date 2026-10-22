@@ -19,3 +19,8 @@ it('unavailable and failed checks never trigger scheduling or quit',async()=>{
  const f=fixture();f.request.mockResolvedValueOnce({state:'unavailable'} as any);await f.panel.open();expect([...f.panel.element.querySelectorAll('button')].find(b=>b.textContent==='Check for updates')!.disabled).toBe(true);
  f.request.mockRejectedValueOnce(new Error('synthetic private provider output'));await f.panel.open();expect(f.panel.element.textContent).not.toContain('synthetic private');expect(f.quit).not.toHaveBeenCalled();
 });
+
+it('a refused quit keeps the app open and gives the saved-connection retry action',async()=>{
+ const f=fixture();f.request.mockResolvedValueOnce({state:'scheduled'} as any);await f.panel.open();f.quit.mockRejectedValueOnce(new Error('private native detail'));await f.click('Save and quit when ready');
+ expect(f.panel.element.hasAttribute('open')).toBe(true);expect(f.panel.element.textContent).toContain('Retry saved GitHub connection');expect(f.panel.element.textContent).not.toContain('private native detail');expect(f.request.mock.calls).toEqual([['status']]);
+});

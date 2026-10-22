@@ -25,7 +25,7 @@ export function createUpdatePanel(core:LocalCore,options:{quit:()=>Promise<void>
   const exit=button('Close updates',async()=>close());
   const check=button('Check for updates',async()=>load('check'));
   const schedule=button('Update on next launch',async()=>load('schedule'));
-  const quit=button('Save and quit when ready',async()=>{await options.quit()});
+  const quit=button('Save and quit when ready',async()=>{try{await options.quit()}catch{status.textContent='Heinlein could not quit safely. Keep the app open and finish any save or GitHub operation. If a renewed connection was not saved, close Updates, open GitHub projects and choose Retry saved GitHub connection before quitting again.'}});
   function render(value:UpdateStatus){
     status.textContent=messages[value.state]??'The update could not finish safely. Keep writing with the previous app, then explicitly check again.';
     details.textContent=`Main-source channel${value.commit?` · Installed ${value.commit.slice(0,12)}`:''}${value.availableCommit?` · Available ${value.availableCommit.slice(0,12)}`:''}${value.generation!=null?` · Install ${value.generation}`:''}. Saved GitHub credentials stay in the same OS store. macOS may ask you to allow access after an ad-hoc signed update; this is not a sign-out.`;
