@@ -75,8 +75,12 @@ read-only check action and never retry automatically. After closed/merged feedba
 review the original branch before starting a fresh feedback branch.
 
 Only existing nonempty github.com repos, ordinary Markdown and schema-v2 ms
-workspaces are supported. No SSH, forks, LFS/submodules, arbitrary branch switching,
-force push, repo creation, default-branch writes or merge/release action. Unsafe or
+workspaces are supported. Choose/create a working branch, commit exact saved files, send, and create a draft
+or ready PR with separate confirmations. Local branches retain unsent commits.
+Marking a draft ready is separate from merging. In-app merge remains unavailable
+until this connection can prove no rule bypass; Open on GitHub is available.
+No SSH, forks, LFS/submodules, force push, repo creation, default-branch writes or
+release action. Unsafe or
 unsupported source is rejected. Reopen existing managed copies without a network;
 missing copies are never recloned over drafts. Technical contracts and evidence
 limits are in [GitHub workspaces](../docs/architecture/studio-github-workspaces.md).

@@ -122,6 +122,10 @@ pub struct MockApi {
     pub create_calls: AtomicUsize,
     pub fail_create: AtomicBool,
     pub denied: AtomicBool,
+    pub detail: Mutex<Option<github_workspace::api::PullDetail>>,
+    pub proved: AtomicBool,
+    pub mutations: AtomicUsize,
+    pub mutation_mode: AtomicUsize,
 }
 impl Default for MockApi {
     fn default() -> Self {
@@ -137,10 +141,85 @@ impl Default for MockApi {
             create_calls: AtomicUsize::new(0),
             fail_create: AtomicBool::new(false),
             denied: AtomicBool::new(false),
+            detail: Mutex::new(None),
+            proved: AtomicBool::new(false),
+            mutations: AtomicUsize::new(0),
+            mutation_mode: AtomicUsize::new(0),
         }
     }
 }
 impl Provider for MockApi {
+    fn pull_detail(
+        &self,
+        _: &Credential,
+        _: &github_workspace::RepoInfo,
+        _: u64,
+    ) -> Result<github_workspace::api::PullDetail> {
+        self.detail.lock().unwrap().clone().ok_or(Error::Missing)
+    }
+    fn merge_policy(
+        &self,
+        c: &Credential,
+        r: &github_workspace::RepoInfo,
+        p: &github_workspace::api::PullDetail,
+    ) -> Result<github_workspace::api::MergePolicy> {
+        use github_workspace::api::MergePolicy;
+        Ok(if self.proved.load(Ordering::SeqCst) {
+            MergePolicy::VerifiedNoBypass {
+                repository_id: r.id,
+                account_id: c.account.id,
+                base_ref: p.pull.base.clone(),
+                base_oid: p.base.clone(),
+                head_oid: p.head.clone(),
+            }
+        } else {
+            MergePolicy::Unknown
+        })
+    }
+    fn mark_ready(
+        &self,
+        _: &Credential,
+        _: &github_workspace::RepoInfo,
+        _: &github_workspace::api::PullDetail,
+        _: &str,
+    ) -> Result<()> {
+        self.mutations.fetch_add(1, Ordering::SeqCst);
+        match self.mutation_mode.load(Ordering::SeqCst) {
+            1 => return Err(Error::Network),
+            3 => return Err(Error::Permission),
+            _ => {}
+        }
+        self.detail.lock().unwrap().as_mut().unwrap().pull.draft = false;
+        if self.mutation_mode.load(Ordering::SeqCst) == 2 {
+            Err(Error::Network)
+        } else {
+            Ok(())
+        }
+    }
+    fn merge_sync(
+        &self,
+        _: &Credential,
+        _: &github_workspace::RepoInfo,
+        p: &github_workspace::api::PullDetail,
+        _: &str,
+    ) -> Result<String> {
+        self.mutations.fetch_add(1, Ordering::SeqCst);
+        match self.mutation_mode.load(Ordering::SeqCst) {
+            1 => return Err(Error::Network),
+            3 => return Err(Error::Permission),
+            _ => {}
+        }
+        let mut detail = self.detail.lock().unwrap();
+        let d = detail.as_mut().unwrap();
+        d.pull.merged = true;
+        d.pull.state = "closed".into();
+        d.merge_commit = Some(p.head.clone());
+        if self.mutation_mode.load(Ordering::SeqCst) == 2 {
+            Err(Error::Network)
+        } else {
+            Ok(p.head.clone())
+        }
+    }
     fn device_start(&self, _: &str) -> Result<DeviceCode> {
         Ok(DeviceCode {
             device_code: "device-secret".into(),
@@ -207,6 +286,22 @@ impl Provider for MockApi {
         _: &str,
     ) -> Result<Vec<(PullRequest, String)>> {
         Ok(self.prs.lock().unwrap().clone())
+    }
+    fn create_pull(
+        &self,
+        c: &Credential,
+        r: &github_workspace::RepoInfo,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+        draft: bool,
+    ) -> Result<PullRequest> {
+        let result = self.create_draft(c, r, head, base, title, body);
+        let mut prs = self.prs.lock().unwrap();
+        let p = &mut prs.last_mut().unwrap().0;
+        p.draft = draft;
+        result.map(|_| p.clone())
     }
     fn create_draft(
         &self,

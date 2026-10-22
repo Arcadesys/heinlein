@@ -62,6 +62,8 @@ enum Plan {
     Version(operations::VersionPlan),
     Share(Box<operations::SharePlan>),
     Incoming(Box<IncomingPlan>),
+    Branch(Box<gh::branches::Plan>),
+    Pull(Box<gh::pull_actions::Plan>),
 }
 #[derive(Deserialize)]
 #[serde(
@@ -101,6 +103,23 @@ pub(crate) enum Request {
     },
     Workspace {
         repository_id: String,
+    },
+    PullStatus {
+        repository_id: String,
+    },
+    PreviewPullAction {
+        repository_id: String,
+        kind: String,
+        method: String,
+    },
+    Branches {
+        repository_id: String,
+    },
+    PreviewBranch {
+        repository_id: String,
+        starting_branch: String,
+        name: String,
+        create: bool,
     },
     PreviewVersion {
         repository_id: String,
@@ -411,6 +430,8 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
         current(&state, epoch)?;
         if let Some(id) = operation_id {
             operations::recover_local_version(&r, &workspace_id, &id).map_err(|e| e.to_string())?;
+        } else if gh::branches::pending(&r, &workspace_id).map_err(|e| e.to_string())? {
+            gh::branches::recover(&r, &workspace_id).map_err(|e| e.to_string())?;
         } else if incoming::pending(&r, &workspace_id).map_err(|e| e.to_string())? {
             incoming::rollback(&r, &workspace_id).map_err(|e| e.to_string())?;
         } else {
@@ -421,7 +442,7 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
     }
     if let Request::Status = request {
         let r = registry(app)?;
-        let workspaces=r.list().map_err(|e|e.to_string())?.into_iter().map(|w|{let error=r.reopen(&w.id).err().map(|e|e.to_string());let receipts=r.directory(&w.id).and_then(|d|journal::receipts(&d)).map_err(|e|e.to_string())?;Ok(json!({"workspace":w,"error":error,"incomingRecovery":incoming::pending(&r,&w.id).map_err(|e|e.to_string())?,"branchRecovery":operations::branch_pending(&r,&w.id).map_err(|e|e.to_string())?,"receipts":receipts}))}).collect::<Result<Vec<_>>>()?;
+        let workspaces=r.list().map_err(|e|e.to_string())?.into_iter().map(|w|{let error=r.reopen(&w.id).err().map(|e|e.to_string());let receipts=r.directory(&w.id).and_then(|d|journal::receipts(&d)).map_err(|e|e.to_string())?;Ok(json!({"workspace":w,"error":error,"incomingRecovery":incoming::pending(&r,&w.id).map_err(|e|e.to_string())?,"branchRecovery":(operations::branch_pending(&r,&w.id).map_err(|e|e.to_string())? || gh::branches::pending(&r,&w.id).map_err(|e|e.to_string())?),"receipts":receipts}))}).collect::<Result<Vec<_>>>()?;
         let (auth, error) =
             match services(app).and_then(|s| s.auth.view().map_err(|e| e.to_string())) {
                 Ok(a) => (Some(a), None),
@@ -612,6 +633,83 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
                 json!({"workspace":w,"changes":operations::changes(&tracked,&disk),"receipts":journal::receipts(&s.registry.directory(&w.id).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?}),
             )
         }
+        Request::PullStatus { repository_id } => {
+            let (w, _) = selected(app, &s, &repository_id)?;
+            let c = s
+                .auth
+                .credential(&s.api, gh::auth::now())
+                .map_err(|e| e.to_string())?;
+            serialized(
+                gh::pull_actions::status(&s.registry, &s.api, &c, &w.id)
+                    .map_err(|e| e.to_string())?,
+            )
+        }
+        Request::PreviewPullAction {
+            repository_id,
+            kind,
+            method,
+        } => {
+            let (w, _) = selected(app, &s, &repository_id)?;
+            current(&state, started)?;
+            let c = s
+                .auth
+                .credential(&s.api, gh::auth::now())
+                .map_err(|e| e.to_string())?;
+            let p = gh::pull_actions::preview(&s.registry, &s.api, &c, &w.id, &kind, &method)
+                .map_err(|e| e.to_string())?;
+            let view = serialized(&p.preview)?;
+            put(
+                app,
+                p.preview.id.clone(),
+                Some(repository_id),
+                started,
+                Plan::Pull(Box::new(p)),
+            )?;
+            Ok(view)
+        }
+        Request::Branches { repository_id } => {
+            let (w, _) = selected(app, &s, &repository_id)?;
+            let c = s
+                .auth
+                .credential(&s.api, gh::auth::now())
+                .map_err(|e| e.to_string())?;
+            serialized(
+                gh::branches::choices(&s.registry, &s.api, &c, &w.id).map_err(|e| e.to_string())?,
+            )
+        }
+        Request::PreviewBranch {
+            repository_id,
+            starting_branch,
+            name,
+            create,
+        } => {
+            let (w, _) = selected(app, &s, &repository_id)?;
+            current(&state, started)?;
+            let c = s
+                .auth
+                .credential(&s.api, gh::auth::now())
+                .map_err(|e| e.to_string())?;
+            let p = gh::branches::preview(
+                &s.registry,
+                &s.api,
+                &c,
+                &w.id,
+                &starting_branch,
+                &name,
+                create,
+                |git, branch| gh::transport::fetch(git, &w.repo.clone_url(), branch, &c),
+            )
+            .map_err(|e| e.to_string())?;
+            let view = serialized(&p.preview)?;
+            put(
+                app,
+                p.preview.id.clone(),
+                Some(repository_id),
+                started,
+                Plan::Branch(Box::new(p)),
+            )?;
+            Ok(view)
+        }
         Request::PreviewVersion {
             repository_id,
             paths,
@@ -740,13 +838,17 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
                     let prompt = if p.preview.kind == "push" {
                         "Send these local versions?"
                     } else {
-                        "Create a draft feedback request?"
+                        if p.preview.kind == "feedback" { "Create a draft feedback request?" } else { "Create a pull request ready for review?" }
                     };
                     let visibility = if w.repo.private { "private" } else { "public" };
                     let message=format!("{}\nAccount: {}\nRepository: {}/{} ({})\nBranch: {}\nBase: {}\n{} commits\nFiles:\n{}\nTitle: {}\nBody: {}\n{}",
                         prompt,p.preview.account.login,w.repo.owner,w.repo.name,visibility,w.branch,p.preview.base,p.preview.commits.len(),
                         describe(&p.preview.files),p.preview.title,p.preview.body,p.preview.warning);
                     ("Send to GitHub", message)
+                }
+                Plan::Pull(p) => ("Confirm pull request action",format!("Action: {}\nAccount: {}\nRepository: {}/{}\nPR: #{}\nHead: {} ({})\nTarget: {} ({})\nMethod: {}\n{}",p.preview.kind,p.preview.account.login,p.preview.repository.owner,p.preview.repository.name,p.preview.detail.pull.number,p.preview.detail.pull.head,p.preview.detail.head,p.preview.detail.pull.base,p.preview.detail.base,p.preview.method,p.preview.warning)),
+                Plan::Branch(p)=>{
+                    ("Switch local Git branch",format!("Account: {}\nRepository: {}/{}\nFrom: {}\nWorking branch: {}\nStarting branch: {}\nCommit: {}\nTarget for future PR: {}\nFiles:\n{}\n{}",p.preview.account.login,p.preview.repository.owner,p.preview.repository.name,p.preview.from_branch,p.preview.branch,p.preview.starting_branch,p.preview.head,p.preview.base,describe(&p.preview.files),p.preview.treatment))
                 }
                 Plan::Incoming(p) => {
                     let author = identity
@@ -772,6 +874,52 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
             let recovery = super::recovery_store(app)?;
             let check = || current(&state, b.epoch);
             let v = match b.plan {
+                Plan::Pull(p) => {
+                    let tracked = gh::transport::tree_files(
+                        &s.registry.reopen(&w.id).map_err(|e| e.to_string())?.1,
+                        w.head_oid.parse().map_err(|_| "Invalid version")?,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let paths = tracked
+                        .keys()
+                        .filter(|p| p.as_str() != "ms/manuscript.json")
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    root.check_workspace_clean(&paths, &recovery)
+                        .map_err(|e| e.to_string())?;
+                    let c = s
+                        .auth
+                        .credential(&s.api, gh::auth::now())
+                        .map_err(|e| e.to_string())?;
+                    serialized(
+                        gh::pull_actions::apply(&s.registry, &s.api, &c, &p, || {
+                            check().map_err(|_| gh::Error::Changed)
+                        })
+                        .map_err(|e| e.to_string())?,
+                    )
+                }
+                Plan::Branch(p) => {
+                    let paths = gh::transport::tree_files(
+                        &s.registry.reopen(&w.id).map_err(|e| e.to_string())?.1,
+                        w.head_oid.parse().map_err(|_| "Invalid version")?,
+                    )
+                    .map_err(|e| e.to_string())?
+                    .keys()
+                    .filter(|p| p.as_str() != "ms/manuscript.json")
+                    .cloned()
+                    .collect::<Vec<_>>();
+                    root.check_workspace_clean(&paths, &recovery)
+                        .map_err(|e| e.to_string())?;
+                    let c = s
+                        .auth
+                        .credential(&s.api, gh::auth::now())
+                        .map_err(|e| e.to_string())?;
+                    let next = gh::branches::apply(&s.registry, &s.api, &c, &p, || {
+                        check().map_err(|_| gh::Error::Changed)
+                    })
+                    .map_err(|e| e.to_string())?;
+                    serialized(open(app, &s, &next)?)
+                }
                 Plan::Version(p) => serialized(
                     operations::commit_version(&s.registry, &p, |paths| {
                         check().map_err(|_| gh::Error::Changed)?;
@@ -808,14 +956,8 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
                     check()?;
                     serialized(
                         operations::send(&s.registry, &s.api, &c, &p, |git, w, c| {
-                            gh::transport::push(
-                                git,
-                                &w.repo.clone_url(),
-                                &w.branch,
-                                w.head_oid.parse()?,
-                                w.remote_oid.as_ref().map(|v| v.parse()).transpose()?,
-                                c,
-                            )
+                            let authority = gh::branches::authority(&s.registry, w, c)?;
+                            gh::transport::push(git, c, &authority)
                         })
                         .map_err(|e| e.to_string())?,
                     )
@@ -853,8 +995,18 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
                 .credential(&s.api, gh::auth::now())
                 .map_err(|e| e.to_string())?;
             serialized(
-                operations::reconcile(&s.registry, &s.api, &c, &w.id, &operation_id)
-                    .map_err(|e| e.to_string())?,
+                {
+                    let dir = s.registry.directory(&w.id).map_err(|e| e.to_string())?;
+                    let receipt = journal::Receipt::load(&dir, &operation_id)
+                        .map_err(|e| e.to_string())?
+                        .ok_or("Operation not found")?;
+                    if ["ready", "merge"].contains(&receipt.kind.as_str()) {
+                        gh::pull_actions::reconcile(&s.registry, &s.api, &c, &w.id, &operation_id)
+                    } else {
+                        operations::reconcile(&s.registry, &s.api, &c, &w.id, &operation_id)
+                    }
+                }
+                .map_err(|e| e.to_string())?,
             )
         }
         Request::PreviewRebind { workspace_id } => {

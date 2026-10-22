@@ -119,3 +119,35 @@ it('unavailable secure store offers read-only retry without OAuth, signout or cr
  f.request.mockImplementation(async r=>{if(r.action==='status'&&locked)return{...structuredClone(status),auth:null,error:'Secure credential access was cancelled. Saved connection retained.'};if(r.action==='retrySaved'){locked=false;return status.auth;}return original(r);});
  await f.p.open();expect(f.p.element.textContent).toContain('Saved connection retained');expect(f.p.element.textContent).not.toContain('Connect GitHub…');await f.click('Retry saved GitHub connection');expect(f.p.element.textContent).toContain('Load repositories');expect(f.request.mock.calls.some(([r])=>r.action==='connect'||r.action==='signOut')).toBe(false);
 });
+it('working branch preview requires explicit confirmation through the save/selection barrier',async()=>{
+ const f=fixture();const original=f.request.getMockImplementation()!;
+ f.request.mockImplementation(async r=>{
+  if(r.action==='branches')return [{name:workspace.branch,head:'local',local:true,defaultBranch:false},{name:'main',head:'base',local:false,defaultBranch:true}];
+  if(r.action==='previewBranch')return {id:'branch-plan',workspaceId:workspace.id,account:{id:9,login:'writer'},repository:repo,fromBranch:workspace.branch,branch:r.name,startingBranch:r.startingBranch,head:'local',base:'main',files:[],treatment:'Retain all local commits.'};
+  return original(r);
+ });
+ await f.p.open();await f.click('Choose or create a working branch…');f.fill('New working branch name','revision/ending');await f.click('Preview branch change');
+ expect(f.request.mock.calls.at(-1)![0]).toMatchObject({action:'previewBranch',name:'revision/ending',create:true});expect(f.hooks.select).not.toHaveBeenCalled();
+ await f.click('Confirm local branch change…');expect(f.hooks.select).toHaveBeenCalledOnce();expect(f.request.mock.calls).toContainEqual([{action:'confirm',repositoryId:'session',previewId:'branch-plan',identity:null}]);
+});
+it('ready and merge remain separate with persistent disabled reasons and no accidental merge request',async()=>{
+ const f=fixture();const original=f.request.getMockImplementation()!;
+ const pr={number:1,url:'https://github.com/example/story/pull/1',state:'open',merged:false,draft:true,head:workspace.branch,base:'main'};
+ f.request.mockImplementation(async r=>{
+  if(r.action==='workspace')return {workspace:{...workspace,pr},changes:[],receipts:[]};
+  if(r.action==='pullStatus')return {detail:{pull:pr,nodeId:'PR_test',head:'local',base:'base',stack:'standalone'},readyAllowed:true,mergeAllowed:false,reason:'No proof that account bypass is disabled. Open on GitHub.',checks:'Checks unknown.'};
+  if(r.action==='previewPullAction')return {id:'ready-plan',kind:r.kind,account:{id:9,login:'writer'},repository:repo,detail:{pull:pr,nodeId:'PR_test',head:'local',base:'base',stack:'standalone'},method:r.method,warning:'No merge or new commits.'};
+  return original(r);
+ });
+ await f.p.open();await f.click('Pull request status and actions…');
+ const merge=[...f.p.element.querySelectorAll('button')].find(b=>b.textContent==='Preview single pull request merge…')!;expect(merge.disabled).toBe(true);expect(merge.getAttribute('aria-describedby')).toBe('github-merge-unavailable');
+ await f.click('Refresh pull request status');expect([...f.p.element.querySelectorAll('button')].find(b=>b.textContent===merge.textContent)!.disabled).toBe(true);
+ await f.click('Mark draft ready for review…');expect(f.p.element.textContent).toContain('No merge or new commits.');expect(f.request.mock.calls.filter(([r])=>r.action==='previewPullAction')).toHaveLength(1);
+ await f.click('Confirm ready for review…');expect(f.request.mock.calls).toContainEqual([{action:'confirm',repositoryId:'session',previewId:'ready-plan',identity:null}]);
+});
+it('a delayed branch list cannot replace a changed view or writing',async()=>{
+ const f=fixture();const original=f.request.getMockImplementation()!;let resolve!:(v:GitHubResponse)=>void;
+ f.request.mockImplementation(r=>r.action==='branches'?new Promise(done=>resolve=done):original(r));
+ await f.p.open();void f.click('Choose or create a working branch…');await tick();f.p.sourceChanged();resolve([{name:'main',head:'base',local:false,defaultBranch:true}]);await tick();expect(f.p.element.textContent).not.toContain('New working branch name');
+ expect(f.request.mock.calls.some(([r])=>r.action==='previewBranch')).toBe(false);
+});

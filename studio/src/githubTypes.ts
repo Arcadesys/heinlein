@@ -35,6 +35,7 @@ export interface GitHubWorkspace {
     repo: GitHubRepo;
     accountId: number;
     authBinding: string;
+    baseBranch?: string | null;
     baseOid: string;
     headOid: string;
     remoteOid: string | null;
@@ -168,8 +169,19 @@ export type GitHubRequest = {
     action: 'reopen' | 'previewRebind';
     workspaceId: string;
 } | {
-    action: 'workspace' | 'freshBranch' | 'openFeedback';
+    action: 'workspace' | 'freshBranch' | 'openFeedback' | 'branches' | 'pullStatus';
     repositoryId: string;
+} | {
+    action: 'previewBranch';
+    repositoryId: string;
+    startingBranch: string;
+    name: string;
+    create: boolean;
+} | {
+    action: 'previewPullAction';
+    repositoryId: string;
+    kind: 'ready' | 'merge';
+    method: string;
 } | {
     action: 'previewVersion';
     repositoryId: string;
@@ -179,7 +191,7 @@ export type GitHubRequest = {
 } | {
     action: 'previewShare';
     repositoryId: string;
-    kind: 'push' | 'feedback';
+    kind: 'push' | 'feedback' | 'pullRequest';
     title: string;
     body: string;
 } | {
@@ -206,4 +218,10 @@ export type GitHubRequest = {
     workspaceId: string;
     operationId: string | null;
 };
-export type GitHubResponse = GitHubStatus | GitHubAuth | GitHubRepositories | GitHubProject | GitHubOpen | GitHubVersion | GitHubShare | GitHubIncoming | GitHubReceipt | GitHubWorkspace | RepositorySession | null;
+export type GitHubResponse = GitHubStatus | GitHubAuth | GitHubRepositories | GitHubProject | GitHubOpen | GitHubVersion | GitHubShare | GitHubIncoming | GitHubReceipt | GitHubWorkspace | GitHubBranchChoice[] | GitHubBranchPreview | GitHubPullStatus | GitHubPullPreview | RepositorySession | null;
+
+export interface GitHubBranchChoice { name:string; head:string; local:boolean; defaultBranch:boolean; }
+export interface GitHubBranchPreview { id:string; workspaceId:string; account:GitHubUser; repository:GitHubRepo; fromBranch:string; branch:string; startingBranch:string; head:string; base:string; files:GitHubChange[]; treatment:string; }
+export interface GitHubPullDetail { pull:NonNullable<GitHubWorkspace['pr']>; nodeId:string; head:string; base:string; stack:string; }
+export interface GitHubPullStatus { detail:GitHubPullDetail; readyAllowed:boolean; mergeAllowed:boolean; reason:string; checks:string; }
+export interface GitHubPullPreview { id:string; kind:string; account:GitHubUser; repository:GitHubRepo; detail:GitHubPullDetail; method:string; warning:string; }

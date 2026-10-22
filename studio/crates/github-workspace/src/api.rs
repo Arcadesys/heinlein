@@ -14,7 +14,80 @@ pub struct RepositoryList {
     pub unavailable: usize,
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Branch {
+    pub name: String,
+    pub head: String,
+    pub protected: bool,
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PullDetail {
+    pub pull: PullRequest,
+    pub node_id: String,
+    pub head: String,
+    pub base: String,
+    pub head_repo_id: u64,
+    pub base_repo_id: u64,
+    pub mergeable: Option<bool>,
+    pub merge_state: String,
+    pub merge_commit: Option<String>,
+    pub stack: StackState,
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StackState {
+    Standalone,
+    Present,
+    Unknown,
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "state", rename_all = "camelCase", deny_unknown_fields)]
+pub enum MergePolicy {
+    Unknown,
+    VerifiedNoBypass {
+        repository_id: u64,
+        account_id: u64,
+        base_ref: String,
+        base_oid: String,
+        head_oid: String,
+    },
+}
 pub trait Provider: Send + Sync {
+    // The explicit draft flag extends the existing fixed PR request fields.
+    #[allow(clippy::too_many_arguments)]
+    fn create_pull(
+        &self,
+        c: &Credential,
+        r: &RepoInfo,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+        draft: bool,
+    ) -> Result<PullRequest> {
+        if draft {
+            self.create_draft(c, r, head, base, title, body)
+        } else {
+            Err(Error::Unsupported)
+        }
+    }
+    fn pull_detail(&self, _: &Credential, _: &RepoInfo, _: u64) -> Result<PullDetail> {
+        Err(Error::Unsupported)
+    }
+    fn mark_ready(&self, _: &Credential, _: &RepoInfo, _: &PullDetail, _: &str) -> Result<()> {
+        Err(Error::Unsupported)
+    }
+    fn merge_policy(&self, _: &Credential, _: &RepoInfo, _: &PullDetail) -> Result<MergePolicy> {
+        Ok(MergePolicy::Unknown)
+    }
+    fn merge_sync(&self, _: &Credential, _: &RepoInfo, _: &PullDetail, _: &str) -> Result<String> {
+        Err(Error::Unsupported)
+    }
+    fn branches(&self, _: &Credential, _: &RepoInfo) -> Result<Vec<Branch>> {
+        Err(Error::Unsupported)
+    }
     fn device_start(&self, client: &str) -> Result<DeviceCode>;
     fn device_poll(&self, client: &str, code: &str) -> Result<Poll>;
     fn refresh(&self, client: &str, token: &str) -> Result<TokenSet>;
@@ -75,7 +148,9 @@ impl HttpGitHub {
                 403 | 404 => Error::Permission,
                 429 => Error::RateLimit,
                 301 | 302 | 307 | 308 => Error::Changed,
-                422 => Error::Unsupported,
+                405 => Error::MergeUnavailable,
+                409 => Error::Changed,
+                400 | 422 => Error::Unsupported,
                 _ => Error::Network,
             });
         }
@@ -83,7 +158,12 @@ impl HttpGitHub {
             .content_length()
             .is_some_and(|len| len > 2 * 1024 * 1024)
         {
-            return Err(Error::Limit);
+            return Err(crate::transport::budget(
+                "GitHub API",
+                "response bytes",
+                response.content_length().unwrap_or(0) as usize,
+                2 * 1024 * 1024,
+            ));
         }
         let mut bytes = Vec::new();
         response
@@ -91,17 +171,25 @@ impl HttpGitHub {
             .read_to_end(&mut bytes)
             .map_err(|_| Error::Network)?;
         if bytes.len() > 2 * 1024 * 1024 {
-            return Err(Error::Limit);
+            return Err(crate::transport::budget(
+                "GitHub API",
+                "response bytes",
+                bytes.len(),
+                2 * 1024 * 1024,
+            ));
         }
         serde_json::from_slice(&bytes).map_err(|_| Error::Network)
     }
     fn get(&self, credential: &Credential, path: &str) -> Result<Value> {
+        self.get_version(credential, path, "2022-11-28")
+    }
+    fn get_version(&self, credential: &Credential, path: &str, version: &str) -> Result<Value> {
         self.json(
             self.client
                 .get(format!("https://api.github.com{path}"))
                 .bearer_auth(credential.value()?)
                 .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28"),
+                .header("X-GitHub-Api-Version", version),
         )
     }
     fn form(&self, path: &str, values: &[(&str, &str)]) -> Result<Value> {
@@ -184,7 +272,12 @@ fn discover_repositories(mut fetch: impl FnMut(&str) -> Result<Value>) -> Result
     let mut get = |path: &str| {
         requests += 1;
         if requests > 50 {
-            return Err(Error::Limit);
+            return Err(crate::transport::budget(
+                "repository discovery",
+                "pagination or count",
+                requests,
+                50,
+            ));
         }
         fetch(path)
     };
@@ -195,7 +288,12 @@ fn discover_repositories(mut fetch: impl FnMut(&str) -> Result<Value>) -> Result
         let response = get(&format!("/user/installations?per_page=100&page={page}"))?;
         let items = response["installations"].as_array().ok_or(Error::Network)?;
         if items.len() > 100 {
-            return Err(Error::Limit);
+            return Err(crate::transport::budget(
+                "repository discovery",
+                "page items",
+                items.len(),
+                100,
+            ));
         }
         for installation in items {
             if installation["app_id"].as_u64() != Some(5412628) {
@@ -225,7 +323,12 @@ fn discover_repositories(mut fetch: impl FnMut(&str) -> Result<Value>) -> Result
                 ))?;
                 let entries = response["repositories"].as_array().ok_or(Error::Network)?;
                 if entries.len() > 100 {
-                    return Err(Error::Limit);
+                    return Err(crate::transport::budget(
+                        "repository discovery",
+                        "page items",
+                        entries.len(),
+                        100,
+                    ));
                 }
                 for entry in entries {
                     if entry["permissions"]["push"] != true
@@ -243,14 +346,24 @@ fn discover_repositories(mut fetch: impl FnMut(&str) -> Result<Value>) -> Result
                         }
                     }
                     if repositories.len() > 1000 {
-                        return Err(Error::Limit);
+                        return Err(crate::transport::budget(
+                            "repository discovery",
+                            "repository count",
+                            repositories.len(),
+                            1000,
+                        ));
                     }
                 }
                 if entries.len() < 100 {
                     break;
                 }
                 if repo_page == 10 {
-                    return Err(Error::Limit);
+                    return Err(crate::transport::budget(
+                        "repository discovery",
+                        "repository pages",
+                        11,
+                        10,
+                    ));
                 }
             }
         }
@@ -263,7 +376,12 @@ fn discover_repositories(mut fetch: impl FnMut(&str) -> Result<Value>) -> Result
             });
         }
     }
-    Err(Error::Limit)
+    Err(crate::transport::budget(
+        "repository discovery",
+        "installation pages",
+        11,
+        10,
+    ))
 }
 
 fn text(v: &Value, key: &str) -> Result<String> {
@@ -320,6 +438,152 @@ fn segment(input: &str) -> String {
     url::form_urlencoded::byte_serialize(input.as_bytes()).collect()
 }
 impl Provider for HttpGitHub {
+    fn create_pull(
+        &self,
+        c: &Credential,
+        r: &RepoInfo,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+        draft: bool,
+    ) -> Result<PullRequest> {
+        r.validate()?;
+        crate::transport::valid_ref(head)?;
+        crate::transport::valid_ref(base)?;
+        let v = self.json(
+            self.client
+                .post(format!(
+                    "https://api.github.com/repos/{}/{}/pulls",
+                    r.owner, r.name
+                ))
+                .bearer_auth(c.value()?)
+                .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2026-03-10")
+                .json(&json!({"head":head,"base":base,"title":title,"body":body,"draft":draft})),
+        )?;
+        let p = pull(&v)?;
+        validate_pull(r, &p)?;
+        if p.draft != draft
+            || p.head != head
+            || p.base != base
+            || v["head"]["repo"]["id"].as_u64() != Some(r.id)
+            || v["base"]["repo"]["id"].as_u64() != Some(r.id)
+        {
+            return Err(Error::Uncertain);
+        }
+        Ok(p)
+    }
+    fn pull_detail(&self, c: &Credential, r: &RepoInfo, number: u64) -> Result<PullDetail> {
+        r.validate()?;
+        if number == 0 {
+            return Err(Error::Unsupported);
+        }
+        let v = self.get_version(
+            c,
+            &format!("/repos/{}/{}/pulls/{number}", r.owner, r.name),
+            "2026-03-10",
+        )?;
+        pull_detail_value(r, number, &v)
+    }
+    fn mark_ready(&self, c: &Credential, r: &RepoInfo, p: &PullDetail, id: &str) -> Result<()> {
+        crate::uuid_id(id)?;
+        r.validate()?;
+        if p.head_repo_id != r.id || p.base_repo_id != r.id || !p.pull.draft {
+            return Err(Error::Changed);
+        }
+        let v=self.json(self.client.post("https://api.github.com/graphql").bearer_auth(c.value()?).header("Accept","application/vnd.github+json").json(&json!({"query":"mutation($input:MarkPullRequestReadyForReviewInput!){markPullRequestReadyForReview(input:$input){clientMutationId pullRequest{id isDraft headRefOid}}}","variables":{"input":{"pullRequestId":p.node_id,"clientMutationId":id}}})))?;
+        let result = &v["data"]["markPullRequestReadyForReview"];
+        if v.get("errors").is_some()
+            || result["clientMutationId"] != id
+            || result["pullRequest"]["id"] != p.node_id
+            || result["pullRequest"]["isDraft"] != false
+            || result["pullRequest"]["headRefOid"] != p.head
+        {
+            return Err(Error::Uncertain);
+        }
+        Ok(())
+    }
+    fn merge_sync(
+        &self,
+        c: &Credential,
+        r: &RepoInfo,
+        p: &PullDetail,
+        method: &str,
+    ) -> Result<String> {
+        r.validate()?;
+        if p.head_repo_id != r.id
+            || p.base_repo_id != r.id
+            || p.stack != StackState::Standalone
+            || !["merge", "squash", "rebase"].contains(&method)
+        {
+            return Err(Error::Unsupported);
+        }
+        // Caller must establish native no-bypass eligibility first. This is the
+        // explicit single-PR endpoint, never a fallback to/from async merging.
+        let v = self.json(
+            self.client
+                .put(format!(
+                    "https://api.github.com/repos/{}/{}/pulls/{}/merge",
+                    r.owner, r.name, p.pull.number
+                ))
+                .bearer_auth(c.value()?)
+                .header("Accept", "application/vnd.github+json")
+                .header("X-GitHub-Api-Version", "2026-03-10")
+                .json(&json!({"sha":p.head,"merge_method":method})),
+        )?;
+        if v["merged"] != true {
+            return Err(Error::Uncertain);
+        }
+        let oid = text(&v, "sha").map_err(|_| Error::Uncertain)?;
+        git2::Oid::from_str(&oid).map_err(|_| Error::Uncertain)?;
+        Ok(oid)
+    }
+    fn branches(&self, c: &Credential, r: &RepoInfo) -> Result<Vec<Branch>> {
+        r.validate()?;
+        let mut result = std::collections::BTreeMap::new();
+        for page in 1..=10 {
+            let data = self.get(
+                c,
+                &format!(
+                    "/repos/{}/{}/branches?per_page=100&page={page}",
+                    r.owner, r.name
+                ),
+            )?;
+            let rows = data.as_array().ok_or(Error::Network)?;
+            if rows.len() > 100 {
+                return Err(crate::transport::budget(
+                    "branch list",
+                    "page items",
+                    rows.len(),
+                    100,
+                ));
+            }
+            for row in rows {
+                let name = text(row, "name")?;
+                crate::transport::valid_ref(&name)?;
+                let head = text(&row["commit"], "sha")?;
+                git2::Oid::from_str(&head).map_err(|_| Error::Network)?;
+                let protected = row["protected"].as_bool().ok_or(Error::Network)?;
+                if let Some(old) = result.insert(
+                    name.clone(),
+                    Branch {
+                        name,
+                        head: head.clone(),
+                        protected,
+                    },
+                ) {
+                    if old.head != head || old.protected != protected {
+                        return Err(Error::Changed);
+                    }
+                }
+            }
+            if rows.len() < 100 {
+                return Ok(result.into_values().collect());
+            }
+        }
+        Err(crate::transport::budget("branch list", "pages", 11, 10))
+    }
     fn device_start(&self, client: &str) -> Result<DeviceCode> {
         let v = self.form(
             "/login/device/code",
@@ -411,7 +675,12 @@ impl Provider for HttpGitHub {
             .read_to_end(&mut bytes)
             .map_err(|_| Error::Network)?;
         if bytes.len() > 2 * 1024 * 1024 {
-            return Err(Error::Limit);
+            return Err(crate::transport::budget(
+                "GitHub API",
+                "response bytes",
+                bytes.len(),
+                2 * 1024 * 1024,
+            ));
         }
         let v: Value = serde_json::from_slice(&bytes).map_err(|_| Error::Network)?;
         let oid = text(&v["object"], "sha")?;
@@ -476,6 +745,40 @@ impl Provider for HttpGitHub {
         Ok(p)
     }
 }
+fn pull_detail_value(r: &RepoInfo, number: u64, v: &Value) -> Result<PullDetail> {
+    let p = pull(v)?;
+    validate_pull(r, &p)?;
+    let head = text(&v["head"], "sha")?;
+    let base = text(&v["base"], "sha")?;
+    git2::Oid::from_str(&head)?;
+    git2::Oid::from_str(&base)?;
+    let head_repo_id = v["head"]["repo"]["id"].as_u64().ok_or(Error::Unsupported)?;
+    let base_repo_id = v["base"]["repo"]["id"].as_u64().ok_or(Error::Unsupported)?;
+    if p.number != number || head_repo_id != r.id || base_repo_id != r.id {
+        return Err(Error::Changed);
+    }
+    let merge_commit = v["merge_commit_sha"].as_str().map(str::to_owned);
+    if let Some(oid) = &merge_commit {
+        git2::Oid::from_str(oid)?;
+    }
+    Ok(PullDetail {
+        pull: p,
+        node_id: text(v, "node_id")?,
+        head,
+        base,
+        head_repo_id,
+        base_repo_id,
+        mergeable: v["mergeable"].as_bool(),
+        merge_state: v["mergeable_state"].as_str().unwrap_or("unknown").into(),
+        merge_commit,
+        stack: match v.get("stack") {
+            Some(Value::Null) => StackState::Standalone,
+            Some(Value::Object(_)) => StackState::Present,
+            _ => StackState::Unknown,
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,7 +898,7 @@ mod tests {
                 calls += 1;
                 Ok(json!({"installations":vec![json!({"app_id":1});100]}))
             }),
-            Err(Error::Limit)
+            Err(Error::Budget { .. })
         ));
         assert_eq!(calls, 10);
         let mut calls = 0;
@@ -608,7 +911,7 @@ mod tests {
                     json!({"repositories":[]})
                 })
             }),
-            Err(Error::Limit)
+            Err(Error::Budget { .. })
         ));
         assert_eq!(calls, 50);
         assert!(matches!(
@@ -641,7 +944,15 @@ mod tests {
             assert_eq!(api.json(api.client.get(u)).unwrap_err(), error);
         }
         let u = server("200 OK", &"x".repeat(2 * 1024 * 1024 + 1), "");
-        assert_eq!(api.json(api.client.get(u)).unwrap_err(), Error::Limit);
+        assert_eq!(
+            api.json(api.client.get(u)).unwrap_err(),
+            crate::transport::budget(
+                "GitHub API",
+                "response bytes",
+                2 * 1024 * 1024 + 1,
+                2 * 1024 * 1024
+            )
+        );
     }
     #[test]
     fn actual_http_redirect_is_never_followed() {
@@ -670,5 +981,35 @@ mod tests {
         assert!(validate_pull(&r, &pull(&v).unwrap()).is_err());
         v["html_url"] = json!("https://name:secret@github.com/example/story/pull/1");
         assert!(pull(&v).is_err());
+    }
+    #[test]
+    fn pull_metadata_decodes_explicit_standalone_and_fails_closed_for_unknown_stack() {
+        let r = RepoInfo {
+            id: 42,
+            owner: "writer".into(),
+            name: "story".into(),
+            private: true,
+            default_branch: "main".into(),
+            installation_id: 7,
+        };
+        let mut v = json!({"number":1,"html_url":"https://github.com/writer/story/pull/1","state":"open","merged":false,"draft":false,"node_id":"PR_synthetic","head":{"ref":"revision/story","sha":"1111111111111111111111111111111111111111","repo":{"id":42}},"base":{"ref":"main","sha":"2222222222222222222222222222222222222222","repo":{"id":42}},"mergeable":true,"mergeable_state":"clean","merge_commit_sha":null});
+        assert!(matches!(
+            pull_detail_value(&r, 1, &v).unwrap().stack,
+            StackState::Unknown
+        ));
+        v["stack"] = Value::Null;
+        assert!(matches!(
+            pull_detail_value(&r, 1, &v).unwrap().stack,
+            StackState::Standalone
+        ));
+        for stack in [json!({"id":1}), json!({}), json!(true), json!([])] {
+            v["stack"] = stack;
+            assert!(!matches!(
+                pull_detail_value(&r, 1, &v).unwrap().stack,
+                StackState::Standalone
+            ));
+        }
+        v["head"]["repo"]["id"] = json!(99);
+        assert!(matches!(pull_detail_value(&r, 1, &v), Err(Error::Changed)));
     }
 }

@@ -62,6 +62,20 @@ pub fn author_path(path: &str) -> bool {
         && !path.split('/').any(|s| s.starts_with('.'))
 }
 pub fn disk_files(root: &repository_core::Repository, tracked: &Files) -> Result<Files> {
+    // Passive files are never silently added, removed or rewritten by a text
+    // commit. Validate raw bytes without loading the whole repository in RAM.
+    for (path, entry) in tracked.entries.iter().filter(|(_, e)| !e.editable) {
+        let target = root.root().join(path);
+        let meta = std::fs::symlink_metadata(&target).map_err(|_| Error::Changed)?;
+        if !meta.is_file()
+            || meta.file_type().is_symlink()
+            || target.canonicalize().map_err(|_| Error::Changed)? != target
+            || meta.len() != entry.size as u64
+            || Oid::hash_file(git2::ObjectType::Blob, &target)? != entry.oid
+        {
+            return Err(Error::Changed);
+        }
+    }
     let mut disk = tracked.clone();
     for path in tracked.keys().filter(|p| author_path(p)) {
         match root.read(path) {
@@ -88,6 +102,13 @@ pub fn disk_files(root: &repository_core::Repository, tracked: &Files) -> Result
             if e.kind == "directory" {
                 dirs.push(e.path)
             } else if author_path(&e.path) {
+                if tracked
+                    .entries
+                    .get(&e.path)
+                    .is_some_and(|entry| !entry.editable)
+                {
+                    continue;
+                }
                 let d = root.read(&e.path).map_err(|_| Error::Changed)?;
                 if !d.generated_compatibility {
                     disk.insert(e.path, d.text.into_bytes());
@@ -100,24 +121,43 @@ pub fn disk_files(root: &repository_core::Repository, tracked: &Files) -> Result
     Ok(disk)
 }
 pub fn changes(before: &Files, after: &Files) -> Vec<FileChange> {
+    fn signature(files: &Files, path: &str) -> Option<(u32, String)> {
+        let entry = files.entries.get(path);
+        match files.get(path) {
+            Some(bytes) => Some((entry.map(|e| e.mode).unwrap_or(0o100644), hash(bytes))),
+            None => entry
+                .filter(|e| !e.editable)
+                .map(|e| (e.mode, e.oid.to_string())),
+        }
+    }
     let keys = before
         .keys()
         .chain(after.keys())
+        .chain(before.entries.keys())
+        .chain(after.entries.keys())
         .collect::<std::collections::BTreeSet<_>>();
     keys.into_iter()
-        .filter(|p| before.get(*p) != after.get(*p))
-        .map(|p| FileChange {
-            path: p.clone(),
-            kind: if !before.contains_key(p) {
+        .filter_map(|path| {
+            let old = signature(before, path);
+            let new = signature(after, path);
+            if old == new {
+                return None;
+            }
+            let kind = if old.is_none() {
                 "add"
-            } else if !after.contains_key(p) {
+            } else if new.is_none() {
                 "delete"
+            } else if old.as_ref().map(|p| &p.1) == new.as_ref().map(|p| &p.1) {
+                "mode"
             } else {
                 "edit"
-            }
-            .into(),
-            before_hash: before.get(p).map(|b| hash(b)),
-            after_hash: after.get(p).map(|b| hash(b)),
+            };
+            Some(FileChange {
+                path: path.clone(),
+                kind: kind.into(),
+                before_hash: old.map(|p| p.1),
+                after_hash: new.map(|p| p.1),
+            })
         })
         .collect()
 }
@@ -138,6 +178,7 @@ pub fn version_preview(
     }
     let (w, repo) = registry.reopen(id)?;
     let _lock = registry.directory(id)?.lock("workspace.lock")?;
+    crate::branches::local_authorized(registry, &w)?;
     let head = Oid::from_str(&w.head_oid)?;
     let before = transport::tree_files(&repo, head)?;
     let root =
@@ -207,6 +248,7 @@ pub fn commit_version(
     if repo.head()?.target().map(|o| o.to_string()).as_deref() != Some(&w.head_oid) {
         return Err(Error::Recovery);
     }
+    crate::branches::local_authorized(registry, &w)?;
     if w.head_oid != plan.preview.head {
         return Err(Error::Changed);
     }
@@ -275,6 +317,9 @@ fn finish_commit(
     Ok(receipt)
 }
 pub fn tree_preserving_modes(repo: &Repository, base: Oid, files: &Files) -> Result<Oid> {
+    if !files.entries.is_empty() {
+        return transport::snapshot_tree(repo, files);
+    }
     transport::validate_files(files)?;
     let tree = repo.find_commit(base)?.tree()?;
     let mut index = git2::Index::new()?;
@@ -334,13 +379,22 @@ pub fn check_remote(api: &dyn Provider, c: &Credential, w: &Workspace) -> Result
         return Err(Error::Changed);
     }
     let base = api
-        .head(c, &info, &info.default_branch)?
+        .head(
+            c,
+            &info,
+            w.base_branch.as_deref().unwrap_or(&info.default_branch),
+        )?
         .ok_or(Error::Changed)?;
     if base != w.base_oid {
         return Err(Error::Changed);
     }
     if let Some(pr) = &w.pr {
-        let all = api.pulls(c, &info, &w.branch, &info.default_branch)?;
+        let all = api.pulls(
+            c,
+            &info,
+            &w.branch,
+            w.base_branch.as_deref().unwrap_or(&info.default_branch),
+        )?;
         let found = all
             .iter()
             .find(|(p, _)| p.number == pr.number)
@@ -364,7 +418,10 @@ pub fn share_preview(
     title: String,
     body: String,
 ) -> Result<SharePlan> {
-    if !["push", "feedback"].contains(&kind) || title.len() > 200 || body.len() > 8000 {
+    if !["push", "feedback", "pullRequest"].contains(&kind)
+        || title.len() > 200
+        || body.len() > 8000
+    {
         return Err(Error::Unsupported);
     }
     let (w, repo) = registry.reopen(id)?;
@@ -375,20 +432,20 @@ pub fn share_preview(
     {
         return Err(Error::Uncertain);
     }
+    crate::branches::local_authorized(registry, &w)?;
     let base_oid = check_remote(api, c, &w)?;
     let remote_before = api.head(c, &w.repo, &w.branch)?;
     if remote_before != w.remote_oid {
         return Err(Error::Changed);
     }
-    if kind == "feedback"
-        && (remote_before.as_deref() != Some(&w.head_oid) || title.trim().is_empty())
+    if kind != "push" && (remote_before.as_deref() != Some(&w.head_oid) || title.trim().is_empty())
     {
         return Err(Error::Changed);
     }
     let head = Oid::from_str(&w.head_oid)?;
     // Pushes preview only the unsent range. Draft feedback previews the full PR
     // comparison, even though its writing tip has already been sent.
-    let comparison = if kind == "feedback" {
+    let comparison = if kind != "push" {
         repo.merge_base(head, Oid::from_str(&base_oid)?)?
     } else {
         Oid::from_str(remote_before.as_deref().unwrap_or(&w.base_oid))?
@@ -407,7 +464,7 @@ pub fn share_preview(
         &transport::tree_files(&repo, comparison)?,
         &transport::tree_files(&repo, head)?,
     );
-    Ok(SharePlan{binding:c.binding.clone(),base_oid,preview:SharePreview{id:uuid::Uuid::new_v4().to_string(),workspace_id:w.id,kind:kind.into(),repository:w.repo.clone(),account:c.account.clone(),branch:w.branch,head:w.head_oid,base: w.pr.as_ref().map(|p|p.base.clone()).unwrap_or_else(||w.repo.default_branch.clone()),remote_before,commits,files,title,body,warning:"Sending commits or requesting feedback can trigger repository-configured GitHub automation. This is an explicit sharing action.".into()}})
+    Ok(SharePlan{binding:c.binding.clone(),base_oid,preview:SharePreview{id:uuid::Uuid::new_v4().to_string(),workspace_id:w.id,kind:kind.into(),repository:w.repo.clone(),account:c.account.clone(),branch:w.branch,head:w.head_oid,base: w.pr.as_ref().map(|p|p.base.clone()).unwrap_or_else(||w.base_branch.clone().unwrap_or_else(||w.repo.default_branch.clone())),remote_before,commits,files,title,body,warning:"Sending commits or requesting feedback can trigger repository-configured GitHub automation. This is an explicit sharing action.".into()}})
 }
 fn validate_share(
     registry: &Registry,
@@ -416,6 +473,7 @@ fn validate_share(
     p: &SharePlan,
 ) -> Result<(Workspace, Repository)> {
     let (w, repo) = registry.reopen(&p.preview.workspace_id)?;
+    crate::branches::local_authorized(registry, &w)?;
     if w.head_oid != p.preview.head
         || w.repo != p.preview.repository
         || w.branch != p.preview.branch
@@ -472,7 +530,7 @@ pub fn send(
             .iter()
             .find(|(pr, _)| pr.state == "open" && pr.head == w.branch && pr.base == p.preview.base)
         {
-            if !pr.draft {
+            if p.preview.kind == "feedback" && !pr.draft {
                 r.status = "failed".into();
                 r.message="An existing ready pull request cannot be substituted for draft feedback. No request was created.".into();
                 r.save(&dir)?;
@@ -486,20 +544,26 @@ pub fn send(
                 "Feedback request already open; later versions continue on the same branch.".into();
         } else {
             let body = format!("{}\n\n{marker}", p.preview.body);
-            match api.create_draft(
+            match api.create_pull(
                 c,
                 &w.repo,
                 &w.branch,
                 &p.preview.base,
                 &p.preview.title,
                 &body,
+                p.preview.kind == "feedback",
             ) {
                 Ok(pr) => {
                     w.pr = Some(pr.clone());
                     r.url = Some(pr.url);
                     r.pr_number = Some(pr.number);
                     r.status = "succeeded".into();
-                    r.message = "Draft feedback request open.".into();
+                    r.message = if p.preview.kind == "feedback" {
+                        "Draft pull request open."
+                    } else {
+                        "Pull request ready for review is open."
+                    }
+                    .into();
                 }
                 Err(Error::Unsupported | Error::Permission) => {
                     r.status = "failed".into();
@@ -540,13 +604,17 @@ pub fn reconcile(
             w.remote_oid = Some(r.head.clone());
             registry.save(&w)?;
         }
-    } else if r.kind == "feedback" {
+    } else if ["feedback", "pullRequest"].contains(&r.kind.as_str()) {
         let marker = format!("<!-- heinlein-operation:{} -->", r.id);
-        let all = api.pulls(c, &w.repo, &r.branch, &w.repo.default_branch)?;
+        let base = w.base_branch.as_deref().unwrap_or(&w.repo.default_branch);
+        let all = api.pulls(c, &w.repo, &r.branch, base)?;
         let found = all
             .iter()
             .filter(|(p, b)| {
-                p.head == r.branch && p.base == w.repo.default_branch && b.contains(&marker)
+                p.head == r.branch
+                    && p.base == base
+                    && (r.kind != "feedback" || p.draft)
+                    && b.contains(&marker)
             })
             .collect::<Vec<_>>();
         if found.len() == 1 {
@@ -678,6 +746,7 @@ fn finish_branch(
         Err(_) => return Err(Error::Storage),
     }
     repo.set_head(&after)?;
+    crate::branches::grant_legacy_transition(registry, &r.before, &r.after)?;
     registry.save(&r.after)?;
     dir.write("branch-transaction.json", &Option::<BranchRecord>::None)?;
     Ok(r.after.clone())
