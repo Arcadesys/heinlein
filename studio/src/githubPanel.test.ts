@@ -18,7 +18,7 @@ function fixture(selected = true) {
         case 'status': return structuredClone(status);
         case 'workspace': return { workspace, changes: [{ path: 'story.md', kind: 'edit', beforeHash: 'old', afterHash: 'new' }], receipts: [] };
         case 'previewVersion': return { id: 'version', workspaceId: 'workspace', head: 'local', files: [{ path: 'story.md', kind: 'edit', beforeHash: 'old', afterHash: 'new' }], identity: r.identity, message: r.message };
-        case 'previewOpen': return { id: 'open', repository: repo, account: { id: 9, login: 'writer' }, treatment: 'Separate local copy' };
+        case 'previewOpen': case 'previewListedRepository': return { id: 'open', repository: repo, account: { id: 9, login: 'writer' }, treatment: 'Separate local copy' };
         case 'previewShare': return { id: 'share', workspaceId: 'workspace', head: 'local', files: [], identity: { name: '', email: '' }, message: '', kind: r.kind, repository: repo, account: { id: 9, login: 'writer' }, branch: workspace.branch, base: 'main', commits: ['local'], title: r.title, body: r.body, warning: 'Sending may run repository automation.' };
         case 'previewIncoming': return structuredClone(incoming);
         case 'resolve': return { ...incoming, ready: true, conflicts: [{ ...incoming.conflicts[0], resolution: r.resolution }] };
@@ -75,4 +75,42 @@ it.each(['incoming','version'] as const)('selected %s recovery remains reachable
     await f.click('Close GitHub projects');await f.p.open();
     expect([...f.p.element.querySelectorAll('button')].some(b=>b.textContent===recovery)).toBe(true);
     expect(f.request.mock.calls.some(([request])=>request.action==='previewVersion'||request.action==='previewShare')).toBe(false);
+});
+it('connected writers can load granted repositories and select one through a bound preview',async()=>{
+    const f=fixture(false);const original=f.request.getMockImplementation()!;
+    f.request.mockImplementation(async r=>r.action==='repositories'?{id:'list',account:status.auth!.account!,repositories:[repo],unavailable:0}:original(r));
+    await f.p.open();await f.click('Load repositories');
+    await f.click('Preview example/story…');
+    expect(f.request.mock.calls).toContainEqual([{action:'previewListedRepository',listId:'list',repositoryId:42}]);
+    expect(f.p.element.textContent).toContain('Open this GitHub project?');
+    expect(f.hooks.select).not.toHaveBeenCalled();
+    await f.click('Open separate local copy…');expect(f.hooks.select).toHaveBeenCalledOnce();
+});
+it('repository access is separate from sign-in, with empty/error and explicit refresh paths',async()=>{
+    const f=fixture(false);const original=f.request.getMockImplementation()!;let attempt=0;
+    f.request.mockImplementation(async r=>{if(r.action!=='repositories')return original(r);if(attempt++===0)return {id:'empty-list',account:status.auth!.account!,repositories:[],unavailable:1};throw new Error('GitHub has limited requests. Wait, then explicitly check again.');});
+    await f.p.open();await f.click('Load repositories');expect(f.p.element.textContent).toContain('No available repositories yet');expect(f.p.element.textContent).toContain('Organization approval or SSO');
+    await f.click('Choose repositories for Heinlein on GitHub');expect(f.request.mock.calls).toContainEqual([{action:'openLink',kind:'install'}]);
+    await f.click('Refresh repository list');expect(f.p.element.textContent).toContain('GitHub has limited requests');
+    expect(f.request.mock.calls.some(([r])=>['connect','signOut','confirmOpen'].includes(r.action))).toBe(false);
+});
+it.each(['close','source','account'] as const)('a delayed repository list cannot restore stale %s authority',async change=>{
+    const f=fixture(false);await f.p.open();let finish!:(v:GitHubResponse)=>void;
+    f.request.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));await f.click('Load repositories');
+    if(change==='source')f.p.sourceChanged();
+    else if(change==='close')f.p.clear();
+    finish({id:'late-list',account:{id:change==='account'?999:9,login:'writer'},repositories:[repo],unavailable:0});await tick();
+    expect([...f.p.element.querySelectorAll('button')].some(b=>b.textContent==='Preview example/story…')).toBe(false);
+    expect(f.request.mock.calls).toContainEqual([{action:'cancel',previewId:'late-list'}]);
+});
+it('an unconfirmed account cannot list repositories and a stale selected preview never opens',async()=>{
+    const f=fixture(false);const original=f.request.getMockImplementation()!;
+    f.request.mockImplementation(async r=>r.action==='status'?{...structuredClone(status),auth:{...status.auth!,confirmed:false}}:original(r));
+    await f.p.open();expect(f.p.element.textContent).toContain('Use this GitHub account…');expect(f.p.element.textContent).not.toContain('Load repositories');
+    f.request.mockImplementation(async r=>r.action==='repositories'?{id:'list',account:status.auth!.account!,repositories:[repo],unavailable:0}:original(r));
+    await f.p.open();await f.click('Load repositories');let finish!:(v:GitHubResponse)=>void;
+    f.request.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));await f.click('Preview example/story…');
+    f.p.sourceChanged();finish({id:'late-open',repository:repo,account:status.auth!.account!,treatment:'Separate local copy'});await tick();
+    expect(f.p.element.textContent).not.toContain('Open this GitHub project?');expect(f.hooks.select).not.toHaveBeenCalled();
+    expect(f.request.mock.calls).toContainEqual([{action:'cancel',previewId:'late-open'}]);
 });

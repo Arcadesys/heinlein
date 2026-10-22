@@ -5,7 +5,15 @@ use crate::{
     Error, RepoInfo, Result,
 };
 use serde_json::{json, Value};
-use std::io::Read;
+use std::{collections::HashMap, io::Read};
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryList {
+    pub repositories: Vec<RepoInfo>,
+    pub unavailable: usize,
+}
+
 pub trait Provider: Send + Sync {
     fn device_start(&self, client: &str) -> Result<DeviceCode>;
     fn device_poll(&self, client: &str, code: &str) -> Result<Poll>;
@@ -56,6 +64,14 @@ impl HttpGitHub {
         if !status.is_success() {
             return Err(match status.as_u16() {
                 401 => Error::Auth,
+                403 if response
+                    .headers()
+                    .get("x-ratelimit-remaining")
+                    .is_some_and(|v| v == "0") =>
+                {
+                    Error::RateLimit
+                }
+                403 if response.headers().contains_key("x-github-sso") => Error::Sso,
                 403 | 404 => Error::Permission,
                 429 => Error::RateLimit,
                 301 | 302 | 307 | 308 => Error::Changed,
@@ -96,7 +112,19 @@ impl HttpGitHub {
                 .form(values),
         )
     }
+    /// Read only repositories granted to this App and writable by the confirmed user.
+    /// Numeric pagination never follows provider-controlled Link URLs.
+    pub fn repositories(&self, c: &Credential) -> Result<RepositoryList> {
+        discover_repositories(|path| self.get(c, path))
+    }
+
     fn repo(&self, c: &Credential, value: Value) -> Result<RepoInfo> {
+        if value["archived"] == true
+            || value["disabled"] == true
+            || value["default_branch"].as_str().is_none_or(str::is_empty)
+        {
+            return Err(Error::Unsupported);
+        }
         if !value["permissions"]["push"].as_bool().unwrap_or(false) {
             return Err(Error::Permission);
         }
@@ -110,6 +138,7 @@ impl HttpGitHub {
                 .ok_or(Error::Permission)?;
             for installation in list {
                 if installation["app_id"].as_u64() != Some(5412628)
+                    || !installation["suspended_at"].is_null()
                     || installation["permissions"]["contents"] != "write"
                     || installation["permissions"]["pull_requests"] != "write"
                 {
@@ -132,21 +161,111 @@ impl HttpGitHub {
                 break;
             }
         }
-        let repo = RepoInfo {
-            id,
-            owner: text(&value["owner"], "login")?,
-            name: text(&value, "name")?,
-            private: value["private"].as_bool().ok_or(Error::Permission)?,
-            default_branch: text(&value, "default_branch")?,
-            installation_id: installation_id.ok_or(Error::Permission)?,
-        };
-        repo.validate()?;
-        if value["clone_url"] != repo.clone_url() {
-            return Err(Error::InvalidUrl);
-        }
-        Ok(repo)
+        repository_info(&value, installation_id.ok_or(Error::Permission)?)
     }
 }
+fn repository_info(value: &Value, installation_id: u64) -> Result<RepoInfo> {
+    let repo = RepoInfo {
+        id: value["id"].as_u64().ok_or(Error::Permission)?,
+        owner: text(&value["owner"], "login")?,
+        name: text(value, "name")?,
+        private: value["private"].as_bool().ok_or(Error::Permission)?,
+        default_branch: text(value, "default_branch")?,
+        installation_id,
+    };
+    repo.validate()?;
+    if value["clone_url"] != repo.clone_url() {
+        return Err(Error::InvalidUrl);
+    }
+    Ok(repo)
+}
+fn discover_repositories(mut fetch: impl FnMut(&str) -> Result<Value>) -> Result<RepositoryList> {
+    let mut requests = 0;
+    let mut get = |path: &str| {
+        requests += 1;
+        if requests > 50 {
+            return Err(Error::Limit);
+        }
+        fetch(path)
+    };
+    let mut installations = HashMap::new();
+    let mut repositories = HashMap::new();
+    let mut unavailable = 0;
+    for page in 1..=10 {
+        let response = get(&format!("/user/installations?per_page=100&page={page}"))?;
+        let items = response["installations"].as_array().ok_or(Error::Network)?;
+        if items.len() > 100 {
+            return Err(Error::Limit);
+        }
+        for installation in items {
+            if installation["app_id"].as_u64() != Some(5412628) {
+                continue;
+            }
+            let id = installation["id"]
+                .as_u64()
+                .filter(|id| *id > 0)
+                .ok_or(Error::Network)?;
+            let grant = json!([installation["permissions"], installation["suspended_at"]]);
+            if let Some(previous) = installations.insert(id, grant.clone()) {
+                if previous != grant {
+                    return Err(Error::Changed);
+                }
+                continue;
+            }
+            if !installation["suspended_at"].is_null()
+                || installation["permissions"]["contents"] != "write"
+                || installation["permissions"]["pull_requests"] != "write"
+            {
+                unavailable += 1;
+                continue;
+            }
+            for repo_page in 1..=10 {
+                let response = get(&format!(
+                    "/user/installations/{id}/repositories?per_page=100&page={repo_page}"
+                ))?;
+                let entries = response["repositories"].as_array().ok_or(Error::Network)?;
+                if entries.len() > 100 {
+                    return Err(Error::Limit);
+                }
+                for entry in entries {
+                    if entry["permissions"]["push"] != true
+                        || entry["archived"] == true
+                        || entry["disabled"] == true
+                        || entry["default_branch"].as_str().is_none_or(str::is_empty)
+                    {
+                        unavailable += 1;
+                        continue;
+                    }
+                    let repo = repository_info(entry, id)?;
+                    if let Some(previous) = repositories.insert(repo.id, repo.clone()) {
+                        if previous != repo {
+                            return Err(Error::Changed);
+                        }
+                    }
+                    if repositories.len() > 1000 {
+                        return Err(Error::Limit);
+                    }
+                }
+                if entries.len() < 100 {
+                    break;
+                }
+                if repo_page == 10 {
+                    return Err(Error::Limit);
+                }
+            }
+        }
+        if items.len() < 100 {
+            let mut repositories: Vec<RepoInfo> = repositories.into_values().collect();
+            repositories.sort_by_key(|r| (r.owner.to_lowercase(), r.name.to_lowercase(), r.id));
+            return Ok(RepositoryList {
+                repositories,
+                unavailable,
+            });
+        }
+    }
+    Err(Error::Limit)
+}
+
 fn text(v: &Value, key: &str) -> Result<String> {
     v[key]
         .as_str()
@@ -369,6 +488,128 @@ mod tests {
         });
         url
     }
+    fn installation(id: u64) -> Value {
+        json!({"id":id,"app_id":5412628,"suspended_at":null,"permissions":{"contents":"write","pull_requests":"write"}})
+    }
+    fn entry(id: u64) -> Value {
+        json!({"id":id,"owner":{"login":"writer"},"name":format!("story-{id}"),"private":true,"default_branch":"main","clone_url":format!("https://github.com/writer/story-{id}.git"),"permissions":{"push":true}})
+    }
+    #[test]
+    fn discovery_paginates_both_grants_and_repositories_without_broad_personal_listing() {
+        let mut paths = Vec::new();
+        let list = discover_repositories(|path| {
+            paths.push(path.to_owned());
+            Ok(match path {
+                "/user/installations?per_page=100&page=1" => {
+                    json!({"installations":vec![installation(7);100]})
+                }
+                "/user/installations?per_page=100&page=2" => {
+                    json!({"installations":[installation(7),installation(8),{"id":9,"app_id":1}]})
+                }
+                "/user/installations/7/repositories?per_page=100&page=1" => {
+                    json!({"repositories":vec![entry(42);100]})
+                }
+                "/user/installations/7/repositories?per_page=100&page=2" => {
+                    json!({"repositories":[entry(43)]})
+                }
+                "/user/installations/8/repositories?per_page=100&page=1" => {
+                    json!({"repositories":[entry(44)]})
+                }
+                _ => panic!("Unexpected discovery endpoint"),
+            })
+        })
+        .unwrap();
+        assert_eq!(
+            list.repositories.iter().map(|r| r.id).collect::<Vec<_>>(),
+            [42, 43, 44]
+        );
+        assert_eq!(paths.len(), 5);
+        assert_eq!(list.repositories[2].installation_id, 8);
+    }
+    #[test]
+    fn discovery_distinguishes_empty_inaccessible_and_provider_failure() {
+        assert!(discover_repositories(|_| Ok(json!({"installations":[]})))
+            .unwrap()
+            .repositories
+            .is_empty());
+        let mut read_only = entry(42);
+        read_only["permissions"]["push"] = json!(false);
+        let mut archived = entry(43);
+        archived["archived"] = json!(true);
+        let mut suspended = installation(8);
+        suspended["suspended_at"] = json!("2026-10-22");
+        let list = discover_repositories(|p| {
+            Ok(if p.starts_with("/user/installations?") {
+                json!({"installations":[installation(7),suspended]})
+            } else {
+                json!({"repositories":[read_only,archived]})
+            })
+        })
+        .unwrap();
+        assert!(list.repositories.is_empty());
+        assert_eq!(list.unavailable, 3);
+        for error in [
+            Error::Auth,
+            Error::Permission,
+            Error::RateLimit,
+            Error::Network,
+        ] {
+            assert!(matches!(discover_repositories(|_|Err(error)),Err(e) if e==error));
+        }
+    }
+    #[test]
+    fn discovery_rejects_changed_grants_conflicting_identity_and_unbounded_pagination() {
+        let mut changed = installation(7);
+        changed["permissions"]["contents"] = json!("read");
+        assert!(matches!(
+            discover_repositories(|p| Ok(if p.starts_with("/user/installations?") {
+                json!({"installations":[installation(7),changed]})
+            } else {
+                json!({"repositories":[]})
+            })),
+            Err(Error::Changed)
+        ));
+        let mut renamed = entry(42);
+        renamed["private"] = json!(false);
+        assert!(matches!(
+            discover_repositories(|p| Ok(if p.starts_with("/user/installations?") {
+                json!({"installations":[installation(7)]})
+            } else {
+                json!({"repositories":[entry(42),renamed]})
+            })),
+            Err(Error::Changed)
+        ));
+        let mut calls = 0;
+        assert!(matches!(
+            discover_repositories(|_| {
+                calls += 1;
+                Ok(json!({"installations":vec![json!({"app_id":1});100]}))
+            }),
+            Err(Error::Limit)
+        ));
+        assert_eq!(calls, 10);
+        let mut calls = 0;
+        assert!(matches!(
+            discover_repositories(|path| {
+                calls += 1;
+                Ok(if path.starts_with("/user/installations?") {
+                    json!({"installations":(1..=50).map(installation).collect::<Vec<_>>()})
+                } else {
+                    json!({"repositories":[]})
+                })
+            }),
+            Err(Error::Limit)
+        ));
+        assert_eq!(calls, 50);
+        assert!(matches!(
+            discover_repositories(|path| if path.starts_with("/user/installations?") {
+                Ok(json!({"installations":[installation(7)]}))
+            } else {
+                Err(Error::Permission)
+            }),
+            Err(Error::Permission)
+        ));
+    }
     #[test]
     fn actual_http_json_is_bounded_and_error_bodies_are_private() {
         let api = HttpGitHub::new().unwrap();
@@ -380,6 +621,13 @@ mod tests {
             ("429 Too Many Requests", Error::RateLimit),
         ] {
             let u = server(code, "PRIVATE_TOKEN_OR_AUTHOR_TEXT", "");
+            assert_eq!(api.json(api.client.get(u)).unwrap_err(), error);
+        }
+        for (headers, error) in [
+            ("X-RateLimit-Remaining: 0\r\n", Error::RateLimit),
+            ("X-GitHub-SSO: required\r\n", Error::Sso),
+        ] {
+            let u = server("403 Forbidden", "PRIVATE_PROVIDER_BODY", headers);
             assert_eq!(api.json(api.client.get(u)).unwrap_err(), error);
         }
         let u = server("200 OK", &"x".repeat(2 * 1024 * 1024 + 1), "");

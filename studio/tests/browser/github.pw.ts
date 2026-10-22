@@ -12,8 +12,8 @@ test('GitHub synthetic account, exact-file version, send, draft feedback and exp
     await expect(dialog).toContainText('SYNTHETIC');
     await activate(dialog.getByRole('button', { name: 'Check sign-in', exact: true }));
     await activate(dialog.getByRole('button', { name: 'Use this GitHub account…', exact: true }));
-    await type(dialog.getByLabel('GitHub repository URL', { exact: true }),'https://github.com/example/synthetic-story');
-    await activate(dialog.getByRole('button', { name: 'Preview repository…', exact: true }));
+    await activate(dialog.getByRole('button', { name: 'Load repositories', exact: true }));
+    await activate(dialog.getByRole('button', { name: 'Preview example/synthetic-story…', exact: true }));
     await expect(dialog).toContainText('Private');
     await activate(dialog.getByRole('button', { name: 'Open separate local copy…', exact: true }));
     await expect(dialog).not.toBeVisible();
@@ -94,4 +94,25 @@ for(const kind of ['incoming','version'] as const)test(`selected ${kind} recover
     await expect(dialog.getByRole('button',{name:'Save a version on this computer…',exact:true})).toBeVisible();
     const requests=await page.evaluate(()=>((window as any).githubFixture.calls as {action:string;workspaceId?:string;operationId?:string|null}[]).filter(r=>r.action==='recover'));
     expect(requests).toEqual([{action:'recover',workspaceId:'synthetic-workspace',operationId:kind==='version'?'synthetic-prepared-version':null}]);
+});
+for(const mode of ['empty','error'] as const)test(`repository picker ${mode} state has accessible refresh and URL fallback at 200 percent`,async({page})=>{
+    await page.goto(`/tests/browser/github.html?repository-list=${mode}`);
+    for(let i=0;i<5;i++)await page.keyboard.press(process.platform==='darwin'?'Meta+=':'Control+=');
+    await page.getByRole('button',{name:'GitHub projects…',exact:true}).click();
+    const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});
+    for(const name of ['Connect GitHub…','Check sign-in','Use this GitHub account…'])await dialog.getByRole('button',{name,exact:true}).click();
+    const load=dialog.getByRole('button',{name:'Load repositories',exact:true});
+    for(let i=0;i<50&&!await load.evaluate(el=>el===document.activeElement);i++)await page.keyboard.press('Tab');
+    await expect(load).toBeFocused();await page.keyboard.press('Enter');
+    await expect(dialog).toContainText(mode==='empty'?'No available repositories yet':'GitHub could not be reached');
+    await expect(dialog.getByRole('button',{name:'Choose repositories for Heinlein on GitHub',exact:true})).toBeEnabled();
+    const refresh=dialog.getByRole('button',{name:'Refresh repository list',exact:true});await expect(refresh).toBeEnabled();
+    await refresh.press('Enter');
+    if(mode==='error')await expect(dialog.getByRole('button',{name:'Preview example/synthetic-story…',exact:true})).toBeVisible();
+    const fallback=dialog.locator('summary',{hasText:'Open by repository URL instead'});await fallback.focus();await page.keyboard.press('Enter');
+    await expect(dialog.getByLabel('GitHub repository URL',{exact:true})).toBeVisible();
+    const bounds=await dialog.evaluate(el=>({scroll:el.scrollWidth,client:el.clientWidth}));expect(bounds.scroll).toBeLessThanOrEqual(bounds.client+1);
+    expect((await new AxeBuilder({page}).include('.github-panel').analyze()).violations).toEqual([]);
+    const authCalls=await page.evaluate(()=>((window as any).githubFixture.calls as {action:string}[]).filter(r=>r.action==='connect'||r.action==='signOut'));
+    expect(authCalls).toEqual([{action:'connect'}]);
 });

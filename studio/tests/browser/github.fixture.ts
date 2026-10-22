@@ -26,6 +26,7 @@ let pendingWorkspaceRecovery=recoveryMode==='incoming'||recoveryMode==='version'
 let opened = !!pendingWorkspaceRecovery;
 let receipts: GitHubReceipt[] = [];
 let auth: GitHubAuth = { configured: true, account: null, confirmed: false, pending: null, message: 'Synthetic host: no real GitHub connection, files or OS authority.' };
+let repositoryLoads=0;
 const calls: GitHubRequest[] = [];
 Object.assign(window, { githubFixture: { calls, workspace, synthetic: true } });
 const change = () => ({ path: 'story.md', kind: 'edit', beforeHash: 'versioned', afterHash: hash });
@@ -47,6 +48,8 @@ async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
         case 'signOut':
             auth = { ...auth, account: null, confirmed: false, pending: null };
             return auth;
+        case 'repositories': {const mode=new URLSearchParams(location.search).get('repository-list');if(mode==='error'&&repositoryLoads++===0)throw new Error('GitHub could not be reached. Local writing remains available.');return {id:'synthetic-list',account:auth.account!,repositories:mode==='empty'?[]:[repo],unavailable:0};}
+        case 'previewListedRepository':
         case 'previewOpen': return { id: 'synthetic-open', repository: repo, account: auth.account!, treatment: 'Separate synthetic copy. No filesystem access.' };
         case 'confirmOpen':
         case 'reopen':

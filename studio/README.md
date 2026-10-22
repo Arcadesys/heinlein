@@ -51,6 +51,14 @@ Contents and Pull requests write access; your account also needs write access.
 GitHub connection is separate from your assistant account. Credentials stay in
 macOS Keychain or Linux Secret Service; no browser or plaintext fallback is used.
 
+After confirming the account, choose **Load repositories**, then **Preview** beside
+the project you want. Review its account, name and visibility before opening the
+separate local copy. If none appear, use **Choose repositories for Heinlein on
+GitHub**, grant only your chosen repositories, and **Refresh repository list**.
+An organization may require approval or SSO. Signing in again is not needed just
+to refresh access. **Open by repository URL instead** remains available. Loading,
+previewing and opening a copy never sends writing to GitHub.
+
 Continue writing offline. **Save a version on this computer** selects exactly which
 saved writing files, author name/email and message to commit locally. **Send local
 versions to GitHub** explicitly pushes the separate working branch. **Request
