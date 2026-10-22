@@ -5,9 +5,11 @@ mod drafting;
 mod fuzz_support;
 mod publishing_copy;
 mod recovery;
+pub mod workspace_update;
 pub use drafting::{
-    DraftingChange, DraftingChangeView, DraftingExternalFile, DraftingGroup, DraftingPlan,
-    DraftingPreview, DraftingScene, DraftingState, DraftingUndo,
+    parse_workspace_manifest, DraftingChange, DraftingChangeView, DraftingExternalFile,
+    DraftingGroup, DraftingPlan, DraftingPreview, DraftingScene, DraftingState, DraftingUndo,
+    Manifest as WorkspaceManifest,
 };
 pub use publishing_copy::{
     PublishingMetadata, PublishingPlan, PublishingPreview, PublishingSource,

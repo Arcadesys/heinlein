@@ -42,6 +42,40 @@ Release notes and checksums identify the exact source commit and observed
 architecture/signing. A successful package build is not OS picker, VoiceOver,
 provider, live Linux or power-loss acceptance.
 
+## GitHub projects
+
+Choose **GitHub projects…** to open an existing github.com repository as a separate
+copy on this computer. Connect the Arcadesys **Heinlein Studio** GitHub App, install
+it only for chosen repositories, and confirm your GitHub account. The App needs
+Contents and Pull requests write access; your account also needs write access.
+GitHub connection is separate from your assistant account. Credentials stay in
+macOS Keychain or Linux Secret Service; no browser or plaintext fallback is used.
+
+Continue writing offline. **Save a version on this computer** selects exactly which
+saved writing files, author name/email and message to commit locally. **Send local
+versions to GitHub** explicitly pushes the separate working branch. **Request
+feedback** creates a draft pull request. Each sharing action previews its account,
+visibility, branch and files and requires native confirmation. GitHub automation
+may run when you send. Saving locally never means sent or published.
+
+**Review incoming changes** previews the whole result. Conflicting passages show
+Original / Your writing / GitHub writing; explicitly choose a version or write your
+own result. Structure and reading order use scene identities. Save local changes
+as a version before applying an incoming batch. Cancel preserves source. Interrupted
+operations block reopening until explicit recovery; unknown network results have a
+read-only check action and never retry automatically. After closed/merged feedback,
+review the original branch before starting a fresh feedback branch.
+
+Only existing nonempty github.com repos, ordinary Markdown and schema-v2 ms
+workspaces are supported. No SSH, forks, LFS/submodules, arbitrary branch switching,
+force push, repo creation, default-branch writes or merge/release action. Unsafe or
+unsupported source is rejected. Reopen existing managed copies without a network;
+missing copies are never recloned over drafts. Technical contracts and evidence
+limits are in [GitHub workspaces](../docs/architecture/studio-github-workspaces.md).
+The public client ID is configured natively; an empty/invalid
+`HEINLEIN_GITHUB_CLIENT_ID` disables connection without fake login. Linux builds
+also require `libdbus-1-dev` and a running Secret Service for connected actions.
+
 ## Your first story
 
 Choose **First story** for an optional guide from an idea to a publishing copy.
@@ -205,7 +239,7 @@ still need author review after path changes. Export and publication are deferred
 ```sh
 npm test
 npm run build
-cargo test -p repository-core
+cargo test -p repository-core -p github-workspace
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```

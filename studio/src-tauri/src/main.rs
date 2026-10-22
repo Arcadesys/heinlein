@@ -2,6 +2,7 @@
 
 mod drafting;
 mod first_story;
+mod github;
 #[cfg(all(test, unix))]
 mod persistence_tests;
 mod proposals;
@@ -36,6 +37,7 @@ struct Session {
     name: String,
     manifests: Vec<String>,
     warning: Option<String>,
+    github_workspace_id: Option<String>,
 }
 struct Selected {
     id: String,
@@ -53,6 +55,7 @@ struct BrowserState {
     recovery: Mutex<Option<Arc<RecoveryStore>>>,
     drafting: Mutex<drafting::DraftingHost>,
     first_story: Mutex<first_story::Host>,
+    github: github::Host,
 }
 
 fn id() -> String {
@@ -131,12 +134,18 @@ fn private_question_auth_path(app: &tauri::AppHandle) -> Result<PathBuf, String>
     Ok(path)
 }
 fn select(app: &tauri::AppHandle, path: PathBuf) -> Result<Session, String> {
-    select_repository(
+    let workspace = github::selection(app, &path)?;
+    let mut session = select_repository(
         &app.state::<BrowserState>(),
         path,
         &recent_file(app)?,
         &auth_path(app)?,
-    )
+    )?;
+    if let Some(w) = workspace {
+        session.github_workspace_id = Some(w.id);
+        session.name = format!("{}/{}", w.repo.owner, w.repo.name);
+    }
+    Ok(session)
 }
 // Keep the native selection transaction testable without a window or real preferences.
 fn select_repository(
@@ -168,6 +177,7 @@ fn select_repository(
         name: name.clone(),
         manifests,
         warning,
+        github_workspace_id: None,
     };
     // Don't commit a new selected root if its recent-folder persistence failed.
     let mut recent_guard = state
@@ -292,6 +302,7 @@ fn with_repository<T>(
     };
     // Keep authorization/root bound to this operation, but release selection state
     // before filesystem I/O. A slow manuscript fsync cannot block recovery staging.
+    let _workspace = github::edit_lock(app, repo.root())?;
     operation(&repo)
 }
 #[tauri::command]
@@ -540,6 +551,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            github::github_request,
             questions::question_status,
             questions::request_review,
             questions::prepare_review_edit,

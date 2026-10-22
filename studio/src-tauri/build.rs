@@ -1,6 +1,7 @@
 fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "github_request",
             "connect_question_account",
             "cancel_question_sign_in",
             "select_question_account",

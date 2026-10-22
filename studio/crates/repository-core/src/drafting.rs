@@ -40,12 +40,12 @@ pub struct DraftingGroup {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Manifest {
-    schema_version: u32,
-    id: String,
-    project: String,
-    groups: Vec<DraftingGroup>,
-    scenes: Vec<DraftingScene>,
+pub struct Manifest {
+    pub schema_version: u32,
+    pub id: String,
+    pub project: String,
+    pub groups: Vec<DraftingGroup>,
+    pub scenes: Vec<DraftingScene>,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -177,16 +177,16 @@ impl DraftingExternalFile {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Bytes {
-    text: String,
-    mode: u32,
+pub(crate) struct Bytes {
+    pub(crate) text: String,
+    pub(crate) mode: u32,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Edit {
-    path: String,
-    before: Option<Bytes>,
-    after: Option<Bytes>,
+pub(crate) struct Edit {
+    pub(crate) path: String,
+    pub(crate) before: Option<Bytes>,
+    pub(crate) after: Option<Bytes>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -339,6 +339,15 @@ fn validate_manifest(value: &Manifest) -> Result<()> {
         }
     }
     Ok(())
+}
+/// Validate a GitHub incoming schema-v2 candidate without writing any files.
+pub fn parse_workspace_manifest(text: &str) -> Result<Manifest> {
+    if text.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(Error::TooLarge);
+    }
+    let manifest: Manifest = serde_json::from_str(text).map_err(|_| Error::InvalidManifest)?;
+    validate_manifest(&manifest)?;
+    Ok(manifest)
 }
 fn manifest_text(value: &Manifest) -> Result<String> {
     validate_manifest(value)?;
@@ -1212,7 +1221,7 @@ impl Repository {
         }
         Ok(())
     }
-    fn snapshot(&self, path: &str) -> Result<Option<Bytes>> {
+    pub(crate) fn snapshot(&self, path: &str) -> Result<Option<Bytes>> {
         let max = if path == MANIFEST {
             MAX_MANIFEST_BYTES
         } else {
@@ -1511,7 +1520,7 @@ impl Repository {
         Ok(held)
     }
     #[cfg(unix)]
-    fn write_transition(&self, edit: &Edit) -> Result<()> {
+    pub(crate) fn write_transition(&self, edit: &Edit) -> Result<()> {
         if self.snapshot(&edit.path)? != edit.before {
             return Err(Error::DraftingChanged);
         }

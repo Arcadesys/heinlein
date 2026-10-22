@@ -1,3 +1,4 @@
+import {createGitHubPanel} from './githubPanel';
 import {createFirstStory} from './firstStory';
 import { createReviewPanel } from './reviewPanel';
 import { createDocumentDetails } from './documentDetails';
@@ -167,7 +168,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   function setDirty(value: boolean) {
     dirty = value;
-    if (value) firstStory?.sourceChanged();
+    if (value) { firstStory?.sourceChanged(); github?.sourceChanged(); }
     updateSaveState();
     dirtySync = dirtySync.then(() => { if (!disposed) return core.setUnsavedChanges(value); }).catch(error => {
       if (disposed) return;
@@ -446,7 +447,22 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     draft: async () => {navigation.select('manuscript'); await openDrafting();},
     review: () => {if (reviewPanel) {draftingQuestions?.close(); reviewPanel.open();} else {status.textContent = 'Open a scene, then choose Heinlein Review when you want advisory suggestions.';}},
   });
-  corner.prepend(firstStoryEntry);
+  const githubEntry = button('GitHub projects…', () => {void github.open();}, 'github-entry');
+  githubEntry.setAttribute('aria-haspopup', 'dialog');
+  const github = createGitHubPanel(core, {
+    session: () => repository,
+    problem: () => dirty || saving || recoveryPending || recoveryErrorMessage || structuralBusy || selecting || repositoryDetached ? 'Save your writing and resolve recovery before preparing a GitHub action.' : null,
+    settle: async () => {await dirtySync; if (writeInFlight) await writeInFlight; await stageQueue;},
+    select: selectRepository,
+    authorAction: async action => {let executed = false; await runStructural(async () => {await action(); executed = true;}); if (!executed) throw new Error('GitHub action stopped. Check the local save or recovery status before trying again.');},
+    incomingChanged: async () => {
+      verifyStructuralBuffer(); firstStory.sourceChanged(); reviewPanel?.clear(); proposals.clear(); manuscriptSearch.invalidate();
+      const previous = drafting.state; const next = await drafting.load();
+      if (next) await draftingChanged(next, previous, []);
+      else {resetPreview(); await showDirectory('');}
+    },
+  });
+  corner.prepend(firstStoryEntry, githubEntry);
   const draftingEntry = button('ms drafting', () => { void openDrafting(); }, 'drafting-entry');
   draftingEntry.hidden = true;
   const outline = el('div');
@@ -466,7 +482,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   layout.append(navigation.element, preview);
   chromeReady = true;
   resetPreview();
-  root.replaceChildren(glow, layout, pill, status, goalCard, corner, firstStory.element);
+  root.replaceChildren(glow, layout, pill, status, goalCard, corner, firstStory.element, github.element);
   const drafting = createDraftingPanel(core, {
     root, repository: () => repository, run: runStructural, verify: verifyStructuralBuffer,
     show: () => { outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
@@ -677,7 +693,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     }
   }
   async function draftingChanged(state: DraftingState, previous: DraftingState | null, changes: DraftingFileChange[], focusPath?: string) {
-    verifyStructuralBuffer();
+    verifyStructuralBuffer(); github.sourceChanged(); firstStory.sourceChanged();
     currentBook = null; searchScopeRevision++; manuscriptSearch.invalidate();
     const oldPath = opened?.path;
     const oldScene = previous?.scenes.find(scene => scene.path === oldPath);
@@ -1140,7 +1156,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         reportDetachedRepository();
         return;
       }
-      firstStory.clear();
+      firstStory.clear(); github.clear();
       repository = selected;
       repositoryDetached = false;
       writing.clearManuscript();
@@ -1480,6 +1496,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

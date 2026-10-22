@@ -50,6 +50,7 @@
     "allow-save-first-story",
     "allow-reset-first-story",
     "allow-preview-publishing-copy",
-    "allow-confirm-publishing-copy"
+    "allow-confirm-publishing-copy",
+    "allow-github-request"
   ]
 }
