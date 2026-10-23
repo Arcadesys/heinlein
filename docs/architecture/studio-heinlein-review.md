@@ -88,6 +88,12 @@ repeated identical passages remain distinct; no text searching or guessed rebase
 is permitted. External saves, path/scene reassignment, unrelated edits or Undo
 block the affected source, while other files remain available.
 
+Refresh and reopen compare the cached and persisted review revisions. A newer
+record is validated/restored before replacing the cache, including clearing its
+prepared candidates; rollback or invalid data preserves the old cache and fails
+closed. Legacy session-only reviews do not require a version-2 record. Retained
+native plans still recheck current decisions and the final persisted revision.
+
 On reopen, native code validates the record, definition/patch hashes and completed
 receipt chain against current disk hashes. Receipt-before-record crashes are
 reconciled informationally without replaying Approve. Stored JSON and receipts
