@@ -132,6 +132,14 @@ pub struct DraftingPreview {
     pub changes: Vec<DraftingChangeView>,
     pub warnings: Vec<String>,
 }
+/// Exact standalone snapshot supplied by trusted native placement authority.
+#[derive(Debug, Clone)]
+pub struct LiteralScene {
+    pub id: String,
+    pub title: String,
+    pub path: String,
+    pub text: String,
+}
 /// Only constructed by the native host from an OS-authorized file selection/drop.
 #[derive(Debug, Clone)]
 pub struct DraftingExternalFile {
@@ -663,6 +671,38 @@ impl Repository {
         external: &[DraftingExternalFile],
         recovery: &RecoveryStore,
     ) -> Result<DraftingPlan> {
+        self.preview_drafting_inner(expected_revision, change, external, recovery, None)
+    }
+    /// Native retained standalone text, never a pretend OS-selected external file.
+    pub fn preview_literal_scene(
+        &self,
+        expected_revision: Option<&str>,
+        project: Option<String>,
+        scene: LiteralScene,
+        recovery: &RecoveryStore,
+    ) -> Result<DraftingPlan> {
+        if uuid::Uuid::parse_str(&scene.id).is_err() {
+            return Err(Error::InvalidManifest);
+        }
+        let change = match project {
+            Some(project) => DraftingChange::Initialize { project },
+            None => DraftingChange::CreateScene {
+                title: scene.title.clone(),
+                path: scene.path.clone(),
+                group_id: None,
+                before_id: None,
+            },
+        };
+        self.preview_drafting_inner(expected_revision, change, &[], recovery, Some(scene))
+    }
+    fn preview_drafting_inner(
+        &self,
+        expected_revision: Option<&str>,
+        change: DraftingChange,
+        external: &[DraftingExternalFile],
+        recovery: &RecoveryStore,
+        literal: Option<LiteralScene>,
+    ) -> Result<DraftingPlan> {
         let _gate = self.save_gate.lock().map_err(|_| Error::Io)?;
         let state = self.load_drafting()?;
         if state.revision.as_deref() != expected_revision {
@@ -728,6 +768,21 @@ impl Repository {
                 title(&project)?;
                 manifest.project = project;
                 self.reconcile_members(&mut manifest, &members, &mut plan)?;
+                if let Some(scene) = &literal {
+                    title(&scene.title)?;
+                    scene_path(&scene.path)?;
+                    self.add_new_file(&mut plan, &scene.path, scene.text.clone(), None)?;
+                    insert_scene(
+                        &mut manifest,
+                        DraftingScene {
+                            id: scene.id.clone(),
+                            title: scene.title.clone(),
+                            path: scene.path.clone(),
+                            group_id: None,
+                        },
+                        &None,
+                    )?;
+                }
                 plan.preview.summary = "Create the manuscript index for ms/".into();
             }
             DraftingChange::CreateScene {
@@ -738,11 +793,16 @@ impl Repository {
             } => {
                 title(&name)?;
                 scene_path(&path)?;
-                self.add_new_file(&mut plan, &path, "".into(), None)?;
+                self.add_new_file(
+                    &mut plan,
+                    &path,
+                    literal.as_ref().map(|s| s.text.clone()).unwrap_or_default(),
+                    None,
+                )?;
                 insert_scene(
                     &mut manifest,
                     DraftingScene {
-                        id: uuid(),
+                        id: literal.as_ref().map(|s| s.id.clone()).unwrap_or_else(uuid),
                         title: name,
                         path,
                         group_id,

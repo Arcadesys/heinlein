@@ -515,3 +515,32 @@ dialog { color: var(--fg); }
 .heinlein-review-panel :is(p,h3,h4,button,summary) { overflow-wrap: anywhere; }
 .heinlein-review-panel .review-saved { display: grid; gap: .5rem; }
 .heinlein-review-panel textarea { width: 100%; min-height: 6rem; box-sizing: border-box; }
+
+/* Standalone text is readable before choosing any permanent destination. */
+.standalone-page { min-width: 0; width: 100%; }
+.standalone-page p, .standalone-dialog p, .standalone-dialog label { font-size: max(1rem, 20px); line-height: 1.6; overflow-wrap: anywhere; }
+.standalone-toolbar { display: flex; flex-wrap: wrap; gap: .65rem; margin-block: 1rem; }
+.standalone-toolbar button, .standalone-dialog button, .standalone-dialog input, .standalone-dialog select { min-height: 44px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.standalone-editor { min-height: 50vh; min-width: 0; }
+.standalone-editor .cm-content { min-height: 45vh; }
+.standalone-dialog { max-width: min(48rem, calc(100vw - 1rem)); box-sizing: border-box; }
+.standalone-dialog label { display: grid; gap: .4rem; margin-block: 1rem; }
+.standalone-snapshot { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; font-size: 1rem; }
+.draft-list-item { padding-block: .5rem; border-block-end: 2px solid currentColor; }
+.draft-list-item button { width: 100%; text-align: start; }
+.standalone-actions summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; padding: .4rem .65rem; border: 2px solid currentColor; border-radius: .4rem; }
+.standalone-actions[open] { display: grid; gap: .6rem; }
+.standalone-dialog label { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.standalone-dialog input, .standalone-dialog select { width: 100%; min-width: 0; box-sizing: border-box; }
+.standalone-dialog button, .standalone-dialog pre { min-width: 0; max-width: 100%; box-sizing: border-box; }
+/* Draft entry must remain usable at 320px/200%: no floating chrome over prose. */
+.studio.standalone-writing { overflow-y: auto; }
+.standalone-writing > .workspace { position: relative; inset: auto; }
+.standalone-writing .navigator { position: relative; inset: auto; width: auto; padding: .5rem .75rem; pointer-events: auto; }
+.standalone-writing .navigation-drawer { max-height: 60vh; }
+.standalone-writing .preview, .standalone-writing .workspace.navigation-open .preview { position: relative; inset: auto; overflow: visible; padding: .5rem .75rem; scroll-padding-top: 0; }
+.standalone-writing > .status-pill, .standalone-writing > .status, .standalone-writing > .corner-actions { position: relative; inset: auto; transform: none; width: auto; max-width: calc(100% - 1rem); margin: .5rem; border-radius: .6rem; white-space: normal; box-sizing: border-box; }
+.standalone-writing > .status-pill { flex-wrap: wrap; }
+.standalone-writing > .status-pill > * { flex: 0 1 auto; min-width: 0; }
+.standalone-writing > .corner-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.standalone-writing > .corner-actions button { min-height: 44px; }

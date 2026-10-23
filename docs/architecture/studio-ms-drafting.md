@@ -133,3 +133,17 @@ commands. Inspect the HTML and chosen format before sharing. The normal Python
 suite's `tests/test_first_story_handoff.py` runs the production Rust example and
 existing CLI to verify HTML/EPUB title/order/provenance and unchanged source.
 This is core-snapshot-to-CLI proof, not native IPC, picker or screen-reader proof.
+
+## Standalone writing before a destination
+
+Studio can mount its raw-text editor without selecting a repository. This is a
+standalone document, not an implicit `ms` project. The native private store and
+writer lease preserve it independently of recent folders. Choosing a destination
+is an explicit copy operation; it does not retarget the editor. See
+[Standalone drafts](studio-standalone-drafts.md) for preservation, recovery and
+placement boundaries.
+
+The narrow `LiteralScene` core operation creates a new source scene from a
+native-retained exact UTF-8 snapshot in the existing scene/manifest transaction.
+It neither imports an unselected external file nor creates an empty scene followed
+by a separate save. Ordinary Create scene keeps its existing empty-body contract.

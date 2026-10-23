@@ -197,3 +197,25 @@ fn size_limit_failure_does_not_commit_new_selection_or_in_memory_recents() {
         old_recents
     );
 }
+
+#[test]
+fn standalone_private_store_is_never_a_selected_project_or_recent_folder() {
+    let fixture = Fixture::new();
+    let drafts = fixture.root.join("standalone-drafts-v1");
+    fs::create_dir(&drafts).unwrap();
+    fs::write(drafts.join("synthetic.json"), b"private draft record").unwrap();
+    let state = fixture.state();
+    assert!(select_repository(
+        &state,
+        drafts.clone(),
+        &fixture.preferences,
+        &fixture.private_storage
+    )
+    .is_err());
+    assert!(state.selected.lock().unwrap().is_none());
+    assert!(!fixture.preferences.exists());
+    assert_eq!(
+        fs::read(drafts.join("synthetic.json")).unwrap(),
+        b"private draft record"
+    );
+}

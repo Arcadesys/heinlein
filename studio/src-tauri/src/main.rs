@@ -14,6 +14,7 @@ mod recents;
 #[cfg(test)]
 mod review_integration_tests;
 mod review_state;
+mod standalone;
 mod update;
 
 use recents::{load_recents, save_recents, Recent, RecentStore};
@@ -62,6 +63,7 @@ struct BrowserState {
     recovery: Mutex<Option<Arc<RecoveryStore>>>,
     drafting: Mutex<drafting::DraftingHost>,
     first_story: Mutex<first_story::Host>,
+    standalone: Mutex<standalone::Host>,
     github: github::Host,
 }
 
@@ -179,6 +181,9 @@ fn select_repository(
     state.mutation_gate.note_activity();
     let repo = Repository::open(&path).map_err(|e| e.to_string())?;
     guard_auth_repository_separation(repo.root(), private_storage)?;
+    if let Some(parent) = private_storage.parent() {
+        guard_auth_repository_separation(repo.root(), &parent.join("standalone-drafts-v1"))?;
+    }
     let (manifests, warning) = match repo.discover() {
         Ok(paths) => (paths, None),
         Err(error) => (
@@ -609,6 +614,7 @@ fn main() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            standalone::standalone_request,
             github::github_request,
             update::update_request,
             questions::question_status,

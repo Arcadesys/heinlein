@@ -30,6 +30,7 @@ fn main() {
             "review_proposal_revert",
             "apply_proposal_review",
             "cancel_proposal_review",
+            "standalone_request",
             "load_first_story",
             "save_first_story",
             "reset_first_story",

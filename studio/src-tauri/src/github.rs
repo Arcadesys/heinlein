@@ -202,6 +202,7 @@ pub(crate) fn selection(app: &tauri::AppHandle, path: &Path) -> Result<Option<Wo
         "github-auth-v1",
         "chatgpt-auth",
         "draft-recovery-v1",
+        "standalone-drafts-v1",
         "pending-proposals-v1",
         "proposal-receipts-v1",
         "first-story-v1",
