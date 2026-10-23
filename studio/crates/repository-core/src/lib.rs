@@ -5,6 +5,10 @@ mod drafting;
 mod fuzz_support;
 mod publishing_copy;
 mod recovery;
+pub mod standalone;
+#[cfg(unix)]
+pub mod standalone_placement;
+pub use drafting::LiteralScene;
 pub mod workspace_update;
 pub use drafting::{
     parse_workspace_manifest, DraftingChange, DraftingChangeView, DraftingExternalFile,

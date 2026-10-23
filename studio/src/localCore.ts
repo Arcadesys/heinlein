@@ -1,3 +1,4 @@
+import type {DraftRequest,DraftResponse} from './standaloneDrafts';
 import type {UpdateStatus} from './updatePanel';
 import type {GitHubRequest,GitHubResponse} from './githubTypes';
 import type {FirstStoryState, PublishingMetadata, PublishingCopy} from './firstStory';
@@ -63,6 +64,7 @@ export interface ReviewRequest { requestId: string; repositoryId: string; scope:
 export interface ReviewEdit { location?:{line:number;column:number}; id: string; path: string; fromUtf8: number; toUtf8: number; original: string; replacement: string; reason: string; role: 'proofreader' | 'editor'; status: 'pending' | 'prepared' | 'accepted' | 'rejected' | 'supersededByAuthorChoice' | 'blockedByAppliedDecision'; proposalId: string | null; fingerprint?:string;comments?:string[];provenance?:{instanceId:string;definitionId:string;definitionVersion:number;displayName:string;requestId:string;model:string;accountId:string;accountGeneration:number}[];patch?:string;patchHash?:string;conflictGroup?:string|null;selected?:boolean;sourceStale?:boolean }
 export interface ReviewResult { reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
 export interface LocalCore {
+  standalone?(request:DraftRequest):Promise<DraftResponse>;
   available(): boolean;
   updateRequest?(action: 'status'|'check'|'schedule'):Promise<UpdateStatus>;
   githubRequest?(request: GitHubRequest): Promise<GitHubResponse>;
@@ -172,6 +174,7 @@ export const localCore: LocalCore = {
   stageRecovery: (repositoryId, relativePath, expectedHash, text) => invoke('stage_recovery', {repositoryId, relativePath, expectedHash, text}),
   discardRecovery: (repositoryId, relativePath, recoveryId) => invoke('discard_recovery', {repositoryId, relativePath, recoveryId}),
   setUnsavedChanges: dirty => invoke('set_unsaved_changes', {dirty}),
+  standalone: request => invoke('standalone_request', {request}),
   requestClose: discard => invoke('request_close', {discard}),
   finishQuitRequest:()=>invoke('quit_request_finished'),
   onQuitRefused:callback=>listen<string>('quit-refused',event=>callback(event.payload)),

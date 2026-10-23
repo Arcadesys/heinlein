@@ -53,6 +53,7 @@
     "allow-preview-publishing-copy",
     "allow-confirm-publishing-copy",
     "allow-github-request",
-    "allow-update-request"
+    "allow-update-request",
+    "allow-standalone-request"
   ]
 }
