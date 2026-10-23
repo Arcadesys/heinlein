@@ -195,24 +195,51 @@ fn opened(host: &mut Host, id: &str) -> Result<Value, String> {
         json!({"loaded":loaded,"handle":handle,"readOnlyReason":reason,"pending":store.pending(id)?}),
     )
 }
+// Capture only native-retained destination data, never renderer-supplied roots.
+fn placement_intent(
+    draft: &repository_core::standalone::Draft,
+    target: &Target,
+    scene_id: String,
+) -> PlacementIntent {
+    let (kind, path) = match target {
+        Target::File(t) => ("file", t.path()),
+        Target::Existing(repo, _, relative) => ("existingProject", repo.root().join(relative)),
+        Target::New(t, _, _, name) => ("newProject", t.path().join("ms").join(name)),
+    };
+    let (project_root, scene_path) = match target {
+        Target::File(_) => (None, None),
+        Target::Existing(repo, _, relative) => (
+            Some(repo.root().to_string_lossy().into_owned()),
+            Some(relative.clone()),
+        ),
+        Target::New(t, _, _, name) => (
+            Some(t.path().to_string_lossy().into_owned()),
+            Some(format!("ms/{name}")),
+        ),
+    };
+    PlacementIntent {
+        schema_version: 1,
+        id: id(),
+        draft_id: draft.id.clone(),
+        source_revision: draft.revision,
+        source_hash: draft.text_hash.clone(),
+        kind: kind.into(),
+        destination: path.to_string_lossy().into(),
+        scene_id: Some(scene_id),
+        project_key: None,
+        project_root,
+        scene_path,
+    }
+}
 fn verify_intent(intent: &PlacementIntent) -> Result<(), String> {
     if intent.kind == "file" {
         DraftDestination::open(Path::new(&intent.destination))?.verify_file(&intent.source_hash)
     } else {
-        let path = Path::new(&intent.destination);
-        let root = path
-            .parent()
-            .and_then(Path::parent)
-            .ok_or("Placement path unavailable")?;
+        let (root, relative) = intent.scene_location()?;
         let repo = Repository::open(root).map_err(|e| e.to_string())?;
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| "Placement path unavailable")?
-            .to_str()
-            .ok_or("Placement path unavailable")?;
         verify_scene(
             &repo,
-            relative,
+            &relative,
             intent
                 .scene_id
                 .as_deref()
@@ -224,19 +251,21 @@ fn verify_intent(intent: &PlacementIntent) -> Result<(), String> {
 /// Reopening is not a replay: independent destination edits remain current.
 fn current_placed_copy(intent: &PlacementIntent) -> Result<(PathBuf, String, bool), String> {
     let path = Path::new(&intent.destination);
-    let root = if intent.kind == "file" {
-        path.parent()
+    let (root, relative) = if intent.kind == "file" {
+        (
+            path.parent()
+                .ok_or("Destination unavailable")?
+                .to_path_buf(),
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .ok_or("Destination unavailable")?
+                .to_string(),
+        )
     } else {
-        path.parent().and_then(Path::parent)
-    }
-    .ok_or("Destination unavailable")?;
-    let relative = path
-        .strip_prefix(root)
-        .map_err(|_| "Destination unavailable")?
-        .to_str()
-        .ok_or("Destination unavailable")?;
-    let repo = Repository::open(root).map_err(|e| e.to_string())?;
-    let doc = repo.read(relative).map_err(|e| e.to_string())?;
+        intent.scene_location()?
+    };
+    let repo = Repository::open(&root).map_err(|e| e.to_string())?;
+    let doc = repo.read(&relative).map_err(|e| e.to_string())?;
     if doc.generated_compatibility {
         return Err("Open the source scene instead of generated output.".into());
     }
@@ -245,16 +274,12 @@ fn current_placed_copy(intent: &PlacementIntent) -> Result<(PathBuf, String, boo
     } else {
         verify_scene(
             &repo,
-            relative,
+            &relative,
             intent.scene_id.as_deref().ok_or("Scene unavailable")?,
             &doc.content_hash,
         )?;
     }
-    Ok((
-        root.into(),
-        relative.into(),
-        doc.content_hash != intent.source_hash,
-    ))
+    Ok((root, relative, doc.content_hash != intent.source_hash))
 }
 #[tauri::command]
 pub(crate) async fn standalone_request(
@@ -491,17 +516,7 @@ fn execute(app: &tauri::AppHandle, request: Request) -> Result<Value, String> {
                 _ => return Err("Choose File, Existing project, or New project.".into()),
             };
             safe_destination(app, &path)?;
-            let intent = PlacementIntent {
-                schema_version: 1,
-                id: id(),
-                draft_id: draft.id,
-                source_revision: revision,
-                source_hash: hash,
-                kind: destination,
-                destination: path.to_string_lossy().into(),
-                scene_id: Some(scene_id),
-                project_key: None,
-            };
+            let intent = placement_intent(&draft, &target, scene_id);
             let token = id();
             let preview = json!({"token":token,"destination":intent.destination,"revision":revision,"text":draft.text,"hash":intent.source_hash});
             host.plans.clear();
@@ -642,6 +657,8 @@ fn execute(app: &tauri::AppHandle, request: Request) -> Result<Value, String> {
                 destination: receipt.destination.clone(),
                 scene_id: receipt.scene_id.clone(),
                 project_key: None,
+                project_root: receipt.project_root.clone(),
+                scene_path: receipt.scene_path.clone(),
             };
             safe_destination(app, Path::new(&intent.destination))?;
             let (parent, relative, changed) = current_placed_copy(&intent)?;
@@ -742,6 +759,8 @@ mod tests {
             destination: path.to_string_lossy().into(),
             scene_id: None,
             project_key: None,
+            project_root: None,
+            scene_path: None,
         };
         let store = host.store.as_ref().unwrap();
         store.intent(lease(&host, &h).unwrap(), &intent).unwrap();
@@ -785,8 +804,79 @@ mod tests {
             destination: link.to_string_lossy().into(),
             scene_id: None,
             project_key: None,
+            project_root: None,
+            scene_path: None,
         };
         assert!(current_placed_copy(&intent).is_err());
         assert_eq!(std::fs::read_to_string(actual).unwrap(), "outside bytes");
+    }
+    #[test]
+    fn nested_scene_placement_reconciles_after_restart_and_reopens_from_selected_root() {
+        let (t, host, h, d) = fixture();
+        let recovery = repository_core::RecoveryStore::open(t.path().join("recovery")).unwrap();
+        let root = t.path().join("project");
+        std::fs::create_dir(&root).unwrap();
+        let repo = Arc::new(Repository::open(&root).unwrap());
+        let initial = repo
+            .preview_literal_scene(
+                None,
+                Some("Project".into()),
+                LiteralScene {
+                    id: id(),
+                    title: "First".into(),
+                    path: "ms/first.md".into(),
+                    text: "First unchanged".into(),
+                },
+                &recovery,
+            )
+            .unwrap();
+        repo.apply_drafting(&initial, &recovery).unwrap();
+        let before = repo.load_drafting().unwrap();
+        let scene_id = id();
+        let relative = "ms/chapter/scene.md";
+        let plan = repo
+            .preview_literal_scene(
+                before.revision.as_deref(),
+                None,
+                LiteralScene {
+                    id: scene_id.clone(),
+                    title: "Nested".into(),
+                    path: relative.into(),
+                    text: d.text.clone(),
+                },
+                &recovery,
+            )
+            .unwrap();
+        let target = Target::Existing(repo.clone(), plan.clone(), relative.into());
+        let intent = placement_intent(&d, &target, scene_id);
+        let store = host.store.as_ref().unwrap();
+        store.intent(lease(&host, &h).unwrap(), &intent).unwrap();
+        repo.apply_drafting(&plan, &recovery).unwrap();
+        verify_intent(&intent).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join(relative)).unwrap(),
+            d.text
+        );
+        drop(host);
+        let store = DraftStore::open(t.path().join("isolated-drafts")).unwrap();
+        let lease = store.acquire(&d.id).unwrap();
+        let intents = store.pending(&d.id).unwrap();
+        assert_eq!(intents.len(), 1);
+        verify_intent(&intents[0]).unwrap();
+        let kept = store.finish_placement(&lease, &intents[0]).unwrap();
+        assert_eq!(kept.text, d.text);
+        assert_eq!(kept.placements[0].project_root.as_deref(), root.to_str());
+        assert_eq!(kept.placements[0].scene_path.as_deref(), Some(relative));
+        assert_eq!(store.read(&d.id).unwrap().draft.placements, kept.placements);
+        assert!(store.pending(&d.id).unwrap().is_empty());
+        let location = current_placed_copy(&intents[0]).unwrap();
+        assert_eq!(location.0, root);
+        assert_eq!(location.1, relative);
+        assert!(!location.2);
+        assert_eq!(repo.load_drafting().unwrap().scenes.len(), 2);
+        assert_eq!(
+            std::fs::read_to_string(root.join("ms/first.md")).unwrap(),
+            "First unchanged"
+        );
     }
 }

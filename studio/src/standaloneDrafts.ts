@@ -16,6 +16,8 @@ export interface StandaloneDraft {
         sourceRevision: number;
         sourceHash: string;
         sceneId: string | null;
+        projectRoot?:string|null;
+        scenePath?:string|null;
         completedAt: number;
     }[];
 }
@@ -270,11 +272,14 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
         if (busy)
             return;
         busy = true;
+        const opener=document.activeElement;
         try {
             const rows = await send<DraftSummary[]>({ kind: 'list' });
             const d = dialog('Drafts on this Mac');
             d.append(node('p', 'These drafts have no expiry. Discarded drafts can be restored.'));
-            const close = () => { d.remove(); editor?.view.focus(); };
+            let selection=0;
+            const close = () => { selection++;d.remove();if(editor)editor.view.focus();else if(opener instanceof HTMLElement&&opener.isConnected)opener.focus(); };
+            const problem=node('p');problem.setAttribute('role','alert');d.append(problem);
             d.append(btn('Back to writing', close), btn('New draft', () => { close(); void newDraft(); }));
             for (const state of ['active', 'discarded', 'unavailable']) {
                 const items = rows.filter(r => r.state === state);
@@ -285,16 +290,14 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
                     const line = node('div');
                     line.className = 'draft-list-item';
                     const open = btn(`${row.label ?? 'Untitled draft'} · ${new Date(row.updatedAt).toLocaleString()} · ${row.preview}`, () => void (async () => {
-                        if (!await flush())
-                            return;
+                        const request=++selection;
                         try {
+                            if (!await hooks.leave()||request!==selection||!d.isConnected)return;
                             const opened = await send<DraftOpened>({ kind: 'open', id: row.id });
-                            close();
-                            mount(opened);
+                            if(request!==selection||!d.isConnected){if(opened.handle)await send({kind:'release',handle:opened.handle});return;}
+                            close();mount(opened);
                         }
-                        catch (e) {
-                            report(errorText(e));
-                        }
+                        catch (e) {problem.textContent=errorText(e);report(errorText(e));}
                     })());
                     if (row.id === session?.loaded.draft.id)
                         open.disabled = true;

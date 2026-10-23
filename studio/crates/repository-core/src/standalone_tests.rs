@@ -278,3 +278,73 @@ fn interrupted_no_replace_link_is_reconciled_without_relaxing_hardlink_guard() {
     assert!(store.read(&d.id).is_err());
     drop(lease);
 }
+#[test]
+fn project_locations_preserve_native_root_and_compatible_plain_legacy_records() {
+    let (t, store) = fixture();
+    let (lease, first) = store.create("exact original — text").unwrap();
+    let root = t.path().join("chosen-project");
+    let scene = uuid::Uuid::new_v4().to_string();
+    let mut intent = PlacementIntent {
+        schema_version: 1,
+        id: uuid::Uuid::new_v4().to_string(),
+        draft_id: first.id.clone(),
+        source_revision: first.revision,
+        source_hash: first.text_hash.clone(),
+        kind: "existingProject".into(),
+        destination: root.join("ms/plain.md").to_string_lossy().into(),
+        scene_id: Some(scene.clone()),
+        project_key: None,
+        project_root: None,
+        scene_path: None,
+    };
+    let legacy = serde_json::to_value(&intent).unwrap();
+    assert!(legacy.get("projectRoot").is_none());
+    let loaded: PlacementIntent = serde_json::from_value(legacy).unwrap();
+    assert_eq!(
+        loaded.scene_location().unwrap(),
+        (root.clone(), "ms/plain.md".into())
+    );
+    let mut record = first.clone();
+    record.placements.push(PlacementReceipt {
+        id: intent.id.clone(),
+        kind: intent.kind.clone(),
+        destination: intent.destination.clone(),
+        source_revision: 1,
+        source_hash: first.text_hash.clone(),
+        scene_id: Some(scene),
+        project_root: None,
+        scene_path: None,
+        completed_at: 0,
+    });
+    store
+        .atomic(&format!("{}.json", first.id), &record, false)
+        .unwrap();
+    assert_eq!(
+        store.read(&first.id).unwrap().draft.placements,
+        record.placements
+    );
+    intent.id = uuid::Uuid::new_v4().to_string();
+    intent.destination = root.join("ms/chapter/scene.md").to_string_lossy().into();
+    assert!(intent.scene_location().is_err());
+    intent.project_root = Some(root.to_string_lossy().into());
+    intent.scene_path = Some("ms/chapter/scene.md".into());
+    store.intent(&lease, &intent).unwrap();
+    drop(lease);
+    drop(store);
+    let store = DraftStore::open(t.path().join("drafts")).unwrap();
+    let lease = store.acquire(&first.id).unwrap();
+    let pending = store.pending(&first.id).unwrap();
+    assert_eq!(
+        pending[0].scene_location().unwrap(),
+        (root.clone(), "ms/chapter/scene.md".into())
+    );
+    assert_eq!(store.read(&first.id).unwrap().draft.text, first.text);
+    store.cancel_intent(&lease, &intent.id).unwrap();
+    intent.id = uuid::Uuid::new_v4().to_string();
+    intent.project_root = Some(t.path().join("wrong-project").to_string_lossy().into());
+    assert!(store.intent(&lease, &intent).is_err());
+    intent.project_root = Some(root.to_string_lossy().into());
+    intent.scene_path = Some("ms/../escape.md".into());
+    assert!(store.intent(&lease, &intent).is_err());
+    assert!(store.pending(&first.id).unwrap().is_empty());
+}

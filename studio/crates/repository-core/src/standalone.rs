@@ -43,6 +43,57 @@ fn now() -> u64 {
 fn valid_id(id: &str) -> bool {
     uuid::Uuid::parse_str(id).is_ok()
 }
+/// Location metadata is read-only evidence, not authority to write a destination.
+fn project_location(
+    kind: &str,
+    destination: &str,
+    root: Option<&str>,
+    relative: Option<&str>,
+) -> Result<Option<(PathBuf, String)>> {
+    if kind == "file" {
+        return if root.is_none() && relative.is_none() {
+            Ok(None)
+        } else {
+            Err(error())
+        };
+    }
+    let path = Path::new(destination);
+    let (root, relative) = match (root, relative) {
+        (Some(root), Some(relative)) => (PathBuf::from(root), relative.to_string()),
+        (None, None) => {
+            // Compatibility for earlier plain ms/file receipts. Never guess a root for
+            // an older nested receipt that did not retain its selected project identity.
+            let parent=path.parent().filter(|p|p.file_name()==Some(std::ffi::OsStr::new("ms"))).ok_or("This older placement has no verified project root. The original is retained; inspect the copy before retrying.")?;
+            let root = parent.parent().ok_or_else(error)?.to_path_buf();
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or_else(error)?;
+            (root, format!("ms/{name}"))
+        }
+        _ => return Err(error()),
+    };
+    if !root.is_absolute()
+        || root.as_os_str().len() > 4096
+        || root.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+        || relative.len() > 4096
+        || !relative.starts_with("ms/")
+        || relative.contains(['\\', ':'])
+        || relative.chars().any(char::is_control)
+        || relative
+            .split('/')
+            .any(|s| s.is_empty() || matches!(s, "." | ".."))
+        || root.join(&relative) != path
+    {
+        return Err(error());
+    }
+    Ok(Some((root, relative)))
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlacementReceipt {
@@ -52,6 +103,10 @@ pub struct PlacementReceipt {
     pub source_revision: u64,
     pub source_hash: String,
     pub scene_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scene_path: Option<String>,
     pub completed_at: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -85,6 +140,12 @@ impl Draft {
             return Err(error());
         }
         for p in &self.placements {
+            project_location(
+                &p.kind,
+                &p.destination,
+                p.project_root.as_deref(),
+                p.scene_path.as_deref(),
+            )?;
             if !valid_id(&p.id)
                 || p.source_revision == 0
                 || p.source_hash.len() != 64
@@ -129,10 +190,30 @@ pub struct PlacementIntent {
     pub kind: String,
     pub destination: String,
     pub scene_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scene_path: Option<String>,
     pub project_key: Option<String>,
 }
 impl PlacementIntent {
+    pub fn scene_location(&self) -> Result<(PathBuf, String)> {
+        self.validate()?;
+        project_location(
+            &self.kind,
+            &self.destination,
+            self.project_root.as_deref(),
+            self.scene_path.as_deref(),
+        )?
+        .ok_or_else(error)
+    }
     fn validate(&self) -> Result<()> {
+        project_location(
+            &self.kind,
+            &self.destination,
+            self.project_root.as_deref(),
+            self.scene_path.as_deref(),
+        )?;
         if self.schema_version != 1
             || !valid_id(&self.id)
             || !valid_id(&self.draft_id)
@@ -714,6 +795,8 @@ impl DraftStore {
             source_revision: intent.source_revision,
             source_hash: intent.source_hash.clone(),
             scene_id: intent.scene_id.clone(),
+            project_root: intent.project_root.clone(),
+            scene_path: intent.scene_path.clone(),
             completed_at: now(),
         });
         self.publish(lease, &before, next)

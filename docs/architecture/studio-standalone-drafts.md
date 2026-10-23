@@ -99,3 +99,14 @@ bytes and source-scene membership, so independent later edits are not mistaken
 for a request to restore the original receipt snapshot. The original receipt is
 immutable. Editor/project file-size limits still apply when opening a large
 placed file; the complete private draft and verified copy are retained.
+
+
+Review hardening: selecting a saved draft always runs the host project leave
+guard, even while standalone mode is inactive. Cancellation or a failed project
+save retains that editor; late responses after closing Drafts cannot switch it.
+Project placement intents/receipts retain the native-selected project root and
+relative scene path, including nested scenes. Both are revalidated against the
+exact destination on reload; no renderer-supplied root becomes write authority.
+Earlier plain `ms/file` records load without new fields. Older nested records
+without a retained root fail explicitly for inspection instead of guessing a
+project or replaying a write. Failed location validation retains the original.

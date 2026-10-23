@@ -10,13 +10,13 @@ const settle = async () => {
     for (let i = 0; i < 30; i++)
         await Promise.resolve();
 };
-function setup(bridge = syntheticDraftBridge()) {
+function setup(bridge = syntheticDraftBridge(), leave?:()=>Promise<boolean>) {
     const root = document.createElement('div'), parent = document.createElement('section');
     root.append(parent);
     document.body.append(root);
     let app: ReturnType<typeof createStandaloneDrafts>;
     let sync = Promise.resolve();
-    app = createStandaloneDrafts(bridge.core, { root, parent, dirty: v => { sync = sync.then(() => bridge.core.setUnsavedChanges(v)); }, sync: () => sync, leave: () => app.flush(), openCopy: vi.fn() });
+    app = createStandaloneDrafts(bridge.core, { root, parent, dirty: v => { sync = sync.then(() => bridge.core.setUnsavedChanges(v)); }, sync: () => sync, leave: leave??(()=>app.flush()), openCopy: vi.fn() });
     apps.push(app);
     app.mount();
     const view = () => EditorView.findFromDOM(parent.querySelector('.cm-editor')!)!;
@@ -124,4 +124,14 @@ describe('standalone preservation', () => {
         expect(x.button('Place copy…')).toBeUndefined();
         expect(x.bridge.calls.some(c => c.kind === 'cancelPreview')).toBe(true);
     });
+    it('listed drafts cannot bypass the inactive standalone host leave guard',async()=>{
+      const leave=vi.fn(async()=>false);const x=setup(undefined,leave);x.type('saved standalone');await x.app.flush();x.app.detach();const project=document.createElement('pre');project.textContent='UNSAVED project — exact';x.parent.replaceChildren(project);
+      await x.app.list();[...x.root.querySelectorAll('dialog button')].find(b=>b.textContent?.includes('saved standalone'))!.dispatchEvent(new MouseEvent('click',{bubbles:true}));await settle();
+      expect(leave).toHaveBeenCalledOnce();expect(project.isConnected).toBe(true);expect(x.parent.textContent).toBe('UNSAVED project — exact');expect(x.bridge.calls.filter(c=>c.kind==='open')).toHaveLength(0);
+    });
+
+    it('cancelling Drafts during a pending host leave never opens a late draft',async()=>{
+      let finish!:(ok:boolean)=>void;const x=setup(undefined,()=>new Promise<boolean>(resolve=>finish=resolve));x.type('saved standalone');await x.app.flush();x.app.detach();const project=document.createElement('pre');project.textContent='project buffer';x.parent.replaceChildren(project);await x.app.list();[...x.root.querySelectorAll('dialog button')].find(b=>b.textContent?.includes('saved standalone'))!.dispatchEvent(new MouseEvent('click',{bubbles:true}));await settle();x.button('Back to writing').click();finish(true);await settle();expect(project.isConnected).toBe(true);expect(x.bridge.calls.filter(c=>c.kind==='open')).toHaveLength(0);
+    });
+
 });

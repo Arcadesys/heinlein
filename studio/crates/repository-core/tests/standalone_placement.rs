@@ -123,6 +123,8 @@ fn lost_receipt_reconciles_without_copy_replay_even_after_original_edits_and_res
         destination: path.to_string_lossy().into(),
         scene_id: None,
         project_key: None,
+        project_root: None,
+        scene_path: None,
     };
     store.intent(&lease, &intent).unwrap();
     DraftDestination::open(&path)
