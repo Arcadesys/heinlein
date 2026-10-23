@@ -45,11 +45,11 @@ pub fn validate_revision_selection(
     to: usize,
     selected: &str,
 ) -> Result<(), QuestionError> {
-    if from >= to
+    if from > to
         || to > source.len()
         || !boundary(source, from)
         || !boundary(source, to)
-        || selected.is_empty()
+        || (selected.is_empty() && from != to)
         || selected.len() > MAX_CONTEXT_BYTES
         || source.get(from..to) != Some(selected)
         || from < frontmatter_end(source)?
@@ -112,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_stale_or_split_ranges_and_empty_targets() {
+    fn rejects_stale_or_split_ranges_and_allows_explicit_insertion() {
         let source = "é🦊\r\nx";
         for (from, to, selected) in [
             (1, 2, "é"),
@@ -120,12 +120,16 @@ mod tests {
             (0, 7, "é🦊\r"),
             (7, 8, "\n"),
             (0, 2, "e"),
-            (0, 0, ""),
             (0, 99, "x"),
         ] {
             assert!(validate_revision_selection(source, from, to, selected).is_err());
         }
         assert!(validate_revision_selection(source, 0, 6, "é🦊").is_ok());
+        assert_eq!(
+            splice_revision(source, 0, 0, "", "New ").unwrap(),
+            "New é🦊\r\nx"
+        );
+        assert!(splice_revision(source, 0, 0, "", "").is_err());
     }
 
     #[test]

@@ -149,6 +149,9 @@ impl QuestionError {
         error
     }
 
+    pub fn review_persistence() -> Self {
+        Self::new("reviewStorage","Review progress could not be safely retained. Reopen the saved review and inspect coverage before continuing; nothing is automatically retried.")
+    }
     pub fn is_usage_limit(&self) -> bool {
         self.provider_code == Some("subscription_sharing_usage_limit_exceeded")
     }
@@ -212,6 +215,7 @@ impl std::fmt::Display for QuestionError {
 impl std::error::Error for QuestionError {}
 
 /// A short-lived native-only credential. Intentionally has no Debug or Serialize.
+#[derive(Clone)]
 pub struct Configuration {
     authorization: HeaderValue,
     model: String,
@@ -1451,3 +1455,5 @@ mod tests;
 
 #[cfg(test)]
 mod connection_fuzz;
+
+pub mod review_workflow;

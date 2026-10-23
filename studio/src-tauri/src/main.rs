@@ -11,6 +11,8 @@ mod quit;
 #[cfg(target_os = "macos")]
 mod quit_macos;
 mod recents;
+#[cfg(test)]
+mod review_integration_tests;
 mod review_state;
 mod update;
 
@@ -614,6 +616,8 @@ fn main() {
             questions::prepare_review_edit,
             questions::reject_review_edit,
             questions::get_review,
+            questions::review_definitions, questions::preview_review, questions::continue_review,
+            questions::list_reviews, questions::choose_review_edit, questions::approve_review_edit,
             questions::ask_question,
             questions::suggest_question_revision,
             questions::cancel_question,

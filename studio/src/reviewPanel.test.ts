@@ -47,3 +47,12 @@ describe('Heinlein review panel author-controlled workflow', () => {
   it('refreshes individual decisions changed through the generic native proposals panel', async () => {const core = await start(); await run(); const request = core.requestReview.mock.calls[0][0]; core.getReview.mockResolvedValue({...response(request), edits: [{...response(request).edits[0], status: 'rejected'}]} as never); button('Refresh review').click(); await vi.waitFor(() => expect(panel!.element.textContent).toContain('Rejected · local receipt retained.')); expect(panel!.element.querySelectorAll('button[data-edit-action="accept"]')).toHaveLength(0); expect(core.requestReview).toHaveBeenCalledOnce(); expect(core.saveDocument).not.toHaveBeenCalled(); expect(core.applyProposalReview).not.toHaveBeenCalled();});
 
 });
+it('dismisses a durably rejected suggestion from pending cards while retaining its JSON audit',async()=>{
+ const core=bridge();
+ core.rejectReviewEdit.mockImplementation(async()=>({...response({requestId:'run',scope:'scene'} as Request),edits:[{...response({requestId:'run',scope:'scene'} as Request).edits[0],status:'rejected'}]} as never));
+ await start(core);await run();button('Reject edit').click();
+ await vi.waitFor(()=>expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(0));
+ expect(panel!.element.querySelector('pre')?.textContent).toBeTruthy();
+ expect(panel!.element.textContent).toContain('"status": "rejected"');
+ expect(core.applyProposalReview).not.toHaveBeenCalled();
+});
