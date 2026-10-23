@@ -1,0 +1,25 @@
+import {test,expect} from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+test('renderer Quit cancellation and native refusal preserve keyboard writing at 200 percent',async({page})=>{
+  await page.goto('/tests/browser/first-story.html?draft');
+  const editor=page.getByRole('textbox',{name:'Markdown editor'});
+  await expect(editor).toBeVisible();
+  for(let i=0;i<5;i++)await page.keyboard.press(process.platform==='darwin'?'Meta+=':'Control+=');
+  await expect(page.locator('html')).toHaveAttribute('data-zoom','200');
+  await editor.focus();await page.keyboard.press('End');await page.keyboard.type(' Keep this unsaved writing.');
+  await page.evaluate(()=>{(window as any).quitFixture.close();(window as any).quitFixture.close();});
+  const dialog=page.getByRole('dialog',{name:'Unsaved changes',exact:true});await expect(dialog).toBeVisible();
+  const keep=dialog.getByRole('button',{name:'Keep editing',exact:true});await keep.focus();await page.keyboard.press('Enter');await expect(dialog).not.toBeVisible();
+  await expect(editor).toContainText('Keep this unsaved writing.');
+  expect(await page.evaluate(()=>(window as any).firstStoryFixtureRecords.cancellations)).toBe(1);
+  await page.evaluate(()=>(window as any).quitFixture.close());await expect(dialog).toBeVisible();
+  expect((await new AxeBuilder({page}).include('dialog[aria-label="Unsaved changes"]').analyze()).violations).toEqual([]);
+  const bounds=await dialog.evaluate(el=>({left:el.getBoundingClientRect().left,right:el.getBoundingClientRect().right,width:innerWidth,scroll:el.scrollWidth,client:el.clientWidth}));expect(bounds.left).toBeGreaterThanOrEqual(0);expect(bounds.right).toBeLessThanOrEqual(bounds.width);expect(bounds.scroll).toBeLessThanOrEqual(bounds.client+1);
+  await dialog.getByRole('button',{name:'Discard changes',exact:true}).focus();await page.keyboard.press('Enter');await expect(dialog).not.toBeVisible();
+  await expect(page.locator('#app')).toHaveJSProperty('inert',true);
+  await page.evaluate(()=>(window as any).quitFixture.refuse());
+  await expect(page.locator('#app')).toHaveJSProperty('inert',false);
+  await expect(page.locator('.status')).toContainText('new save needs attention');
+  await editor.focus();await page.keyboard.type(' Still here.');await expect(editor).toContainText('Still here.');
+  expect(await page.evaluate(()=>(window as any).firstStoryFixtureRecords.quits)).toBe(1);
+});

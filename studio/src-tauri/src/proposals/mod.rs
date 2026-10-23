@@ -155,6 +155,9 @@ pub(crate) async fn apply_proposal_review(
                 )
             })?
         };
+        if review.kind == "apply" {
+            super::questions::guard_review_proposal(&app, &repository_id, &review.origin)?;
+        }
         // A renderer request alone is not author approval. Dialog content comes
         // only from the retained plan. No authority lock is held while it is open:
         // real dirty notifications can invalidate the plan during confirmation.
@@ -178,6 +181,12 @@ pub(crate) async fn apply_proposal_review(
                 .cancel(&repository_id, &binding.review_id);
             return Ok(None);
         }
+        let review_revision = if review.kind == "apply" {
+            super::questions::guard_review_proposal(&app, &repository_id, &review.origin)?
+        } else {
+            None
+        }; // Guarded revert uses its own live receipt/expected-source authority.
+
         let _mutation = state.mutation_gate.author_operation()?;
         let mut host = state
             .proposals
@@ -192,20 +201,36 @@ pub(crate) async fn apply_proposal_review(
         // Check the live plan, its monotonic TTL, dirty state, recovery and source
         // again after the native author action. Never refresh its reviewed bytes.
         let epoch = host.epoch;
-        with_repository(&app, &repository_id, |repo| {
-            host.authority.apply_confirmed(
-                repo,
-                &repository_id,
-                &receipts,
-                &recovery,
-                &binding,
-                || {
-                    state.unsaved_changes.load(Ordering::SeqCst)
-                        || epoch != state.mutation_gate.generation()
-                },
-            )
-        })
-        .map(Some)
+        let outcome = with_repository(&app, &repository_id, |repo| {
+            let mut apply = || {
+                host.authority.apply_confirmed(
+                    repo,
+                    &repository_id,
+                    &receipts,
+                    &recovery,
+                    &binding,
+                    || {
+                        state.unsaved_changes.load(Ordering::SeqCst)
+                            || epoch != state.mutation_gate.generation()
+                    },
+                )
+            };
+            if let (Some(revision), Some(attribution)) =
+                (review_revision, review.origin.review.as_ref())
+            {
+                super::questions::review_records(&app)?.with_revision(
+                    repo,
+                    &attribution.review_id,
+                    revision,
+                    apply,
+                )
+            } else {
+                apply()
+            }
+        })?;
+        drop(host);
+        super::questions::record_review_apply(&app, &repository_id, &outcome.receipt);
+        Ok(Some(outcome))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -243,10 +268,21 @@ pub(crate) async fn reject_proposal(
             .lock()
             .map_err(|_| "Proposal review unavailable")?;
         let (store, receipts) = stores(&app)?;
-        with_repository(&app, &repository_id, |repo| {
+        let receipt = with_repository(&app, &repository_id, |repo| {
             host.authority.reject(repo, &store, &receipts, &proposal_id)
-        })
+        })?;
+        drop(host);
+        super::questions::record_review_rejection(&app, &repository_id, &receipt);
+        Ok(receipt)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+pub(crate) fn review_receipts(
+    app: &tauri::AppHandle,
+    repo: &repository_core::Repository,
+) -> Result<Vec<authority::Receipt>, String> {
+    let (_, receipts) = stores(app)?;
+    receipts.with_lock(repo, || receipts.read_all(repo))
 }

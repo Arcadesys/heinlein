@@ -396,6 +396,151 @@ fn open_directory(path: &Path, create: bool) -> Result<File> {
     Ok(directory)
 }
 
+/// Private atomic consolidated-review data. Disk records never grant approval.
+pub struct ReviewStore(ProposalStore);
+impl ReviewStore {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Ok(Self(ProposalStore::open(path)?))
+    }
+    fn value(&self, key: &str) -> Result<serde_json::Value> {
+        let fd = openat(
+            &self.0.directory,
+            key,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|e| {
+            if e == rustix::io::Errno::NOENT {
+                Error::NotFound
+            } else {
+                Error::InvalidStorage
+            }
+        })?;
+        let file = File::from(fd);
+        private_metadata(&file, false)?;
+        if file.metadata().map_err(|_| Error::StorageIo)?.len() > MAX_RECORD_BYTES {
+            return Err(Error::LimitExceeded);
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_RECORD_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| Error::StorageIo)?;
+        serde_json::from_slice(&bytes).map_err(|_| Error::InvalidProposal)
+    }
+    /// Hold the review revision stable only for the final local apply, never a dialog.
+    pub fn with_revision<T>(
+        &self,
+        repo: &Repository,
+        id: &str,
+        revision: u64,
+        operation: impl FnOnce() -> std::result::Result<T, String>,
+    ) -> std::result::Result<T, String> {
+        let _gate = self
+            .0
+            .gate
+            .lock()
+            .map_err(|_| Error::StorageIo.to_string())?;
+        let _lock = self.0.lock().map_err(|e| e.to_string())?;
+        self.0.check_repository(repo).map_err(|e| e.to_string())?;
+        let key = record_key(&repo.project_key(), id).map_err(|e| e.to_string())?;
+        if self
+            .value(&key)
+            .map_err(|e| e.to_string())?
+            .get("revision")
+            .and_then(|v| v.as_u64())
+            != Some(revision)
+        {
+            return Err(
+                "Review membership changed in another process; inspect its alternatives again"
+                    .into(),
+            );
+        }
+        operation()
+    }
+    pub fn load<T: serde::de::DeserializeOwned>(&self, repo: &Repository, id: &str) -> Result<T> {
+        let _gate = self.0.gate.lock().map_err(|_| Error::StorageIo)?;
+        let _lock = self.0.lock()?;
+        self.0.check_repository(repo)?;
+        serde_json::from_value(self.value(&record_key(&repo.project_key(), id)?)?)
+            .map_err(|_| Error::InvalidProposal)
+    }
+    pub fn list<T: serde::de::DeserializeOwned>(&self, repo: &Repository) -> Result<Vec<T>> {
+        let _gate = self.0.gate.lock().map_err(|_| Error::StorageIo)?;
+        let _lock = self.0.lock()?;
+        self.0.check_repository(repo)?;
+        let prefix = format!("{}-", repo.project_key());
+        let (names, _) = self.0.inventory()?;
+        names
+            .into_iter()
+            .filter(|n| n.starts_with(&prefix))
+            .map(|n| serde_json::from_value(self.value(&n)?).map_err(|_| Error::InvalidProposal))
+            .collect()
+    }
+    /// Revision CAS prevents another host from restoring a dismissed finding.
+    pub fn save<T: Serialize>(
+        &self,
+        repo: &Repository,
+        id: &str,
+        expected: Option<u64>,
+        record: &T,
+    ) -> Result<()> {
+        let _gate = self.0.gate.lock().map_err(|_| Error::StorageIo)?;
+        let _lock = self.0.lock()?;
+        self.0.check_repository(repo)?;
+        let key = record_key(&repo.project_key(), id)?;
+        let value = serde_json::to_value(record).map_err(|_| Error::InvalidProposal)?;
+        let revision = value
+            .get("revision")
+            .and_then(|v| v.as_u64())
+            .ok_or(Error::InvalidProposal)?;
+        match self.value(&key) {
+            Ok(old)
+                if old.get("revision").and_then(|v| v.as_u64()) == expected
+                    && expected.is_some() => {}
+            Err(Error::NotFound) if expected.is_none() => {}
+            _ => return Err(Error::Conflict),
+        }
+        if Some(revision) != expected.unwrap_or(0).checked_add(1) {
+            return Err(Error::Conflict);
+        }
+        let bytes = serde_json::to_vec(&value).map_err(|_| Error::InvalidProposal)?;
+        let (names, total) = self.0.inventory()?;
+        if bytes.len() as u64 > MAX_RECORD_BYTES
+            || total + bytes.len() as u64 > MAX_STORE_BYTES
+            || (!names.contains(&key) && names.len() >= MAX_PROPOSALS)
+        {
+            return Err(Error::LimitExceeded);
+        }
+        let temporary = format!(".heinlein-proposal-{}.tmp", uuid::Uuid::new_v4());
+        let result = (|| {
+            let fd = openat(
+                &self.0.directory,
+                temporary.as_str(),
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::from_bits_truncate(0o600),
+            )
+            .map_err(|_| Error::StorageIo)?;
+            let mut file = File::from(fd);
+            file.write_all(&bytes).map_err(|_| Error::StorageIo)?;
+            file.sync_all().map_err(|_| Error::StorageIo)?;
+            self.0.check_directory()?;
+            renameat(
+                &self.0.directory,
+                temporary.as_str(),
+                &self.0.directory,
+                key.as_str(),
+            )
+            .map_err(|_| Error::StorageIo)?;
+            self.0
+                .directory
+                .sync_all()
+                .map_err(|_| Error::StorageUncertain)
+        })();
+        let _ = unlinkat(&self.0.directory, temporary.as_str(), AtFlags::empty());
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

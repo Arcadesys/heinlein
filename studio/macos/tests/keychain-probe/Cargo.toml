@@ -1,0 +1,10 @@
+[package]
+name = "heinlein-synthetic-keychain-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[workspace]
+[dependencies]
+github-workspace = { path = "../../../crates/github-workspace" }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }

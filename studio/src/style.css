@@ -48,7 +48,7 @@ button:disabled { cursor: default; opacity: .5; }
 button:disabled:hover { border-color: var(--border); }
 button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-.primary { background: var(--gradient); border: 0; color: #fff; font-weight: 600; padding: .65rem 1.2rem; }
+.primary { background: var(--gradient); border: 0; color: var(--on-accent, #fff); font-weight: 600; padding: .65rem 1.2rem; }
 .primary:hover { filter: brightness(1.08); }
 .primary:disabled:hover { filter: none; }
 .ghost { border-color: transparent; color: var(--fg-muted); }
@@ -109,11 +109,12 @@ summary { min-height: 2.75rem; padding: .6rem 0; font-weight: 500; }
 .pill-bar { position: relative; width: 4rem; height: .25rem; border-radius: 999px; background: var(--surface-hover); overflow: hidden; }
 .pill-bar-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--gradient); transition: width .3s; }
 .pill-key { background: var(--surface); border-color: var(--border-strong); font-family: var(--font-mono) !important; }
-.status { position: absolute; top: 4.25rem; left: 50%; transform: translateX(-50%); z-index: 5; max-width: min(46rem, calc(100vw - 2rem)); padding: .5rem .9rem; border-radius: 999px; background: var(--chrome-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid var(--border); color: var(--fg-muted); font-size: .8125rem; text-align: center; overflow-wrap: anywhere; }
+.status { width: max-content; position: absolute; top: 4.25rem; left: 50%; transform: translateX(-50%); z-index: 5; max-width: min(46rem, calc(100vw - 2rem)); padding: .5rem .9rem; border-radius: 999px; background: var(--chrome-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid var(--border); color: var(--fg-muted); font-size: .8125rem; text-align: center; overflow-wrap: anywhere; }
 .status:empty { display: none; }
 .status.quiet:not(.error) { opacity: 0; pointer-events: none; transition: opacity .6s; }
 .status.error { color: var(--danger); border-color: var(--danger); border-radius: var(--radius); }
-.corner-actions { position: absolute; right: 1.25rem; bottom: 1.1rem; z-index: 2; display: flex; gap: .25rem; padding: 2px; border-radius: 999px; background: var(--chrome-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+/* Global actions remain above the navigator when enlarged text makes them overlap. */
+.corner-actions { position: absolute; right: 1.25rem; bottom: 1.1rem; z-index: 4; display: flex; gap: .25rem; padding: 2px; border-radius: 999px; background: var(--chrome-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
 .corner-actions button { min-height: 2.25rem; border-color: transparent; color: var(--fg-muted); font: 400 .75rem var(--font-mono); padding: .25rem .6rem; }
 .corner-actions button:hover { color: var(--accent); }
 .corner-actions kbd { margin-left: .4rem; }
@@ -173,7 +174,7 @@ summary { min-height: 2.75rem; padding: .6rem 0; font-weight: 500; }
 .editor-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem; margin: 0 0 2rem; }
 .editor-toolbar button { min-height: 2.25rem; border-color: transparent; color: var(--fg-muted); font-size: .8125rem; padding: .3rem .6rem; }
 .editor-toolbar button:hover:not(:disabled) { color: var(--accent); background: var(--surface); }
-.editor-toolbar button.primary { color: #fff; }
+.editor-toolbar button.primary { color: var(--on-accent, #fff); }
 /* The status pill shows save state; the toolbar badge stays for screen readers only. */
 .editor-toolbar .badge { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .markdown-editor { border: 0; }
@@ -446,3 +447,128 @@ dialog { color: var(--fg); }
 .question-thread-controls { display: grid; gap: .65rem; min-width: 0; }
 .question-thread-controls label { display: grid; gap: .4rem; font-weight: 600; }
 .question-thread-controls select, .question-thread-controls button { min-height: 2.75rem; }
+/* Theme output may only change validated tokens. Controls and layout remain application-owned. */
+.theme-builder { display: grid; gap: 1rem; min-width: 0; font-size: 1rem; line-height: 1.6; }
+.theme-builder textarea { width: 100%; min-width: 0; resize: vertical; }
+.theme-builder label { font-weight: 600; }
+.theme-builder details { min-width: 0; }
+.theme-actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+.theme-code { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; max-height: 22rem; overflow-y: auto; padding: 1rem; border: 1px solid var(--border-strong); font: 1rem/1.6 var(--font-mono); }
+.theme-live-sample { display: grid; gap: 1rem; padding: 1.25rem; min-width: 0; background: var(--bg); color: var(--fg); border: 2px solid var(--border); border-radius: var(--radius); font-size: 1.1875rem; line-height: 1.75; }
+.theme-live-sample input { width: 100%; min-width: 0; }
+.theme-live-sample .muted { font-size: 1rem; }
+.theme-sample-warning { color: var(--warn); }
+.theme-sample-danger { color: var(--danger); }
+:root[data-custom-theme] .stage-glow { display: none; }
+:root[data-custom-theme] .primary:hover, .theme-scope[data-custom-theme] .primary:hover { filter: none; }
+:root[data-custom-theme] input::placeholder, :root[data-custom-theme] textarea::placeholder { opacity: 1; }
+@media (max-width: 760px) {
+  .settings-main { overflow-y: auto; }
+  .settings-preview { padding: 1rem; }
+  .settings-body { padding: 1rem; flex: none; overflow: visible; }
+  .settings-category { width: auto; }
+  .theme-actions > button { flex: 1 1 12rem; }
+}
+
+.theme-hover-sample { background: var(--surface); }
+.theme-hover-sample:hover { background: var(--surface-hover); color: var(--accent); }
+.theme-selected-sample { background: var(--selection); color: var(--fg); }
+:root[data-custom-theme] button:disabled, .theme-scope[data-custom-theme] button:disabled { opacity: 1; color: var(--fg-muted); background: var(--surface); }
+/* Do not interpolate old foreground colours over a newly accepted background. */
+:root[data-custom-theme], :root[data-custom-theme] button, :root[data-custom-theme] input,
+.theme-scope[data-custom-theme] button { transition: none; }
+:root[data-custom-theme] ::selection, .theme-scope[data-custom-theme] ::selection {
+  color: var(--fg); background: var(--selection);
+}
+
+/* Non-modal advisory review keeps the manuscript editor usable while inference runs. */
+.heinlein-review-panel { position: fixed; z-index: 12; inset: 5rem 1rem 1rem auto; width: min(32rem, calc(100vw - 2rem)); overflow: auto; padding: 1.25rem; background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: 0 1rem 3rem #0005; }
+.heinlein-review-panel[hidden] { display: none; }
+.heinlein-review-panel h2 { margin-top: 0; }
+.heinlein-review-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18rem; overflow: auto; }
+.review-edit { border-top: 1px solid var(--border); padding-block: 1rem; }
+.review-edit h3, .review-edit h4 { margin-block: .5rem; }
+.review-edit button { margin: .25rem; }
+
+/* Optional story guide: large targets, one column, no colour-only progress. */
+.first-story { color: var(--fg); background: var(--bg); border: 2px solid var(--border); border-radius: 12px; width: min(46rem, calc(100vw - 1rem)); max-width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); padding: clamp(.75rem, 3vw, 2rem); overflow: auto; font-size: max(18px, 1rem); line-height: 1.6; box-sizing: border-box; }
+.first-story::backdrop { background: #000b; }
+.first-story h2 { font-size: 1.65em; line-height: 1.25; }
+.first-story h3 { font-size: 1.2em; line-height: 1.4; }
+.first-story :is(p, label, button, pre, li, summary) { overflow-wrap: anywhere; }
+.first-story :is(label, fieldset, details, section) { display: block; margin-block: 1rem; min-width: 0; }
+.first-story label :is(input:not([type=checkbox]), textarea, select) { display: block; width: 100%; box-sizing: border-box; min-height: 48px; margin-top: .4rem; padding: .6rem; color: var(--fg); background: var(--surface, var(--bg)); border: 2px solid var(--fg-muted); font: inherit; }
+.first-story textarea { min-height: 8rem; }
+.first-story button { min-height: 48px; max-width: 100%; padding: .6rem .8rem; margin: .3rem .4rem .3rem 0; font: inherit; white-space: normal; text-align: start; }
+.first-story nav { display: flex; flex-wrap: wrap; gap: .3rem; }
+.first-story nav button { flex: 1 1 13rem; border: 2px solid var(--border); }
+.first-story [aria-current=step] { font-weight: 800; text-decoration: underline; border-color: var(--fg); }
+.first-story .guide-check { display: flex; align-items: start; gap: .7rem; min-height: 48px; }
+.first-story input[type=checkbox] { flex: 0 0 auto; width: 24px; height: 24px; margin-top: .4rem; }
+.first-story :focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+.first-story summary { cursor: pointer; min-height: 48px; }
+.first-story pre { white-space: pre-wrap; max-width: 100%; border: 1px solid var(--border); padding: .6rem; font-size: .9em; }
+.first-story .guide-confirm { border: 2px solid var(--fg); padding: .8rem; }
+.first-story .guide-status:empty { display: none; }
+.corner-actions:has(.first-story-entry) { flex-wrap: wrap; max-width: calc(100vw - 1rem); border-radius: .8rem; }
+.corner-actions .first-story-entry { min-height: 44px; font-weight: 600; color: var(--fg); }
+
+/* GitHub native authority UI: stacked source panes, generous labelled controls. */
+.github-panel { color: var(--fg); background: var(--bg); border: 2px solid var(--fg); border-radius: .6rem; box-sizing: border-box; width: min(56rem, calc(100vw - 1rem)); max-width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); padding: clamp(.7rem, 3vw, 1.5rem); overflow: auto; overflow-wrap: anywhere; font-size: 1rem; }
+.github-panel::backdrop { background: #000b; }
+.github-panel :is(h2,h3,h4) { line-height: 1.3; margin-block: .8rem; }
+.github-panel :is(label,details,section) { display: block; min-width: 0; margin-block: 1rem; }
+.github-panel label :is(input:not([type=checkbox]),textarea) { display: block; width: 100%; box-sizing: border-box; min-height: 48px; margin-top: .4rem; padding: .6rem; color: var(--fg); background: var(--surface, var(--bg)); border: 2px solid var(--fg-muted); font: inherit; }
+.github-panel label:has(input[type=checkbox]) { display: flex; gap: .7rem; align-items: start; min-height: 48px; }
+.github-panel input[type=checkbox] { flex: 0 0 auto; width: 24px; height: 24px; }
+.github-panel textarea { min-height: 8rem; }
+.github-panel :is(button,summary,a) { display: inline-block; box-sizing: border-box; min-height: 48px; max-width: 100%; padding: .6rem .8rem; margin: .3rem .4rem .3rem 0; font: inherit; white-space: normal; text-align: start; }
+.github-panel summary { display: list-item; cursor: pointer; }
+.github-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; border: 1px solid var(--fg-muted); padding: .6rem; font: inherit; }
+.github-panel :focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+.github-panel :disabled { opacity: .7; }
+.github-panel .github-conflict { border: 2px solid var(--fg-muted); padding: .7rem; }
+.github-panel [role=status]:empty { display: none; }
+.github-entry { min-height: 44px; }
+
+.update-panel { box-sizing:border-box; width:min(48rem,calc(100vw - 1rem)); max-width:calc(100vw - 1rem); max-height:calc(100dvh - 1rem); overflow:auto; overflow-wrap:anywhere; color:var(--fg); background:var(--bg); border:2px solid var(--fg); padding:1rem; font-size:1rem; }
+.update-panel button { min-height:48px; max-width:100%; padding:.7rem; margin:.4rem; font:inherit; white-space:normal; }
+.update-panel :focus-visible { outline:3px solid var(--fg); outline-offset:3px; }
+/* Review controls and diffs remain usable with large text and narrow reflow. */
+.heinlein-review-panel :is(button,select,input:not([type=checkbox]):not([type=radio]),textarea) { min-height: 44px; max-width: 100%; font: inherit; }
+.heinlein-review-panel label { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-block: .75rem; min-height: 44px; overflow-wrap: anywhere; }
+.heinlein-review-panel label:has(select), .heinlein-review-panel label:has(textarea) { align-items: stretch; flex-direction: column; }
+.heinlein-review-panel :is(input[type=checkbox],input[type=radio]) { width: 1.5rem; height: 1.5rem; flex: 0 0 auto; }
+.heinlein-review-panel :is(button,select,textarea,input):focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+.heinlein-review-panel :is(p,h3,h4,button,summary) { overflow-wrap: anywhere; }
+.heinlein-review-panel .review-saved { display: grid; gap: .5rem; }
+.heinlein-review-panel textarea { width: 100%; min-height: 6rem; box-sizing: border-box; }
+
+/* Standalone text is readable before choosing any permanent destination. */
+.standalone-page { min-width: 0; width: 100%; }
+.standalone-page p, .standalone-dialog p, .standalone-dialog label { font-size: max(1rem, 20px); line-height: 1.6; overflow-wrap: anywhere; }
+.standalone-toolbar { display: flex; flex-wrap: wrap; gap: .65rem; margin-block: 1rem; }
+.standalone-toolbar button, .standalone-dialog button, .standalone-dialog input, .standalone-dialog select { min-height: 44px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.standalone-editor { min-height: 50vh; min-width: 0; }
+.standalone-editor .cm-content { min-height: 45vh; }
+.standalone-dialog { max-width: min(48rem, calc(100vw - 1rem)); box-sizing: border-box; }
+.standalone-dialog label { display: grid; gap: .4rem; margin-block: 1rem; }
+.standalone-snapshot { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; font-size: 1rem; }
+.draft-list-item { padding-block: .5rem; border-block-end: 2px solid currentColor; }
+.draft-list-item button { width: 100%; text-align: start; }
+.standalone-actions summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; padding: .4rem .65rem; border: 2px solid currentColor; border-radius: .4rem; }
+.standalone-actions[open] { display: grid; gap: .6rem; }
+.standalone-dialog label { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.standalone-dialog input, .standalone-dialog select { width: 100%; min-width: 0; box-sizing: border-box; }
+.standalone-dialog button, .standalone-dialog pre { min-width: 0; max-width: 100%; box-sizing: border-box; }
+/* Draft entry must remain usable at 320px/200%: no floating chrome over prose. */
+.studio.standalone-writing { overflow-y: auto; }
+.standalone-writing > .workspace { position: relative; inset: auto; }
+.standalone-writing .navigator { position: relative; inset: auto; width: auto; padding: .5rem .75rem; pointer-events: auto; }
+.standalone-writing .navigation-drawer { max-height: 60vh; }
+.standalone-writing .preview, .standalone-writing .workspace.navigation-open .preview { position: relative; inset: auto; overflow: visible; padding: .5rem .75rem; scroll-padding-top: 0; }
+.standalone-writing > .status-pill, .standalone-writing > .status, .standalone-writing > .corner-actions { position: relative; inset: auto; transform: none; width: auto; max-width: calc(100% - 1rem); margin: .5rem; border-radius: .6rem; white-space: normal; box-sizing: border-box; }
+.standalone-writing > .status-pill { flex-wrap: wrap; }
+.standalone-writing > .status-pill > * { flex: 0 1 auto; min-width: 0; }
+.standalone-writing > .corner-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.standalone-writing > .corner-actions button { min-height: 44px; }

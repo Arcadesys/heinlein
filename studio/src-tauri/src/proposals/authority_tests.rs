@@ -777,3 +777,169 @@ fn concurrent_reject_and_apply_have_exactly_one_winner() {
         assert_eq!(f.text(), if applied.is_ok() { AFTER } else { BEFORE });
     }
 }
+
+#[test]
+fn unsaved_review_snapshot_rejection_audits_without_source_or_apply_authority() {
+    let f = Fixture::new();
+    let mut host = Authority::default();
+    let mut p = f.proposal.clone();
+    p.id = id();
+    p.base_text = "Unsaved original prose.".into();
+    p.replacement_text = "Unsaved revised prose.".into();
+    p.base_hash = proposal_store::text_hash(&p.base_text);
+    p.replacement_hash = proposal_store::text_hash(&p.replacement_text);
+    p.diff_hash = diff_hash(&p.path, &p.base_text, &p.replacement_text);
+    let receipt = host
+        .reject_snapshot(&f.repo, &f.receipts, p.clone())
+        .unwrap();
+    assert_eq!(receipt.kind, "reject");
+    assert_eq!(receipt.status, "rejected");
+    assert_eq!(f.repo.read("scene.md").unwrap().text, BEFORE);
+    assert!(host.reject_snapshot(&f.repo, &f.receipts, p).is_err());
+    assert!(host
+        .review_revert(&f.repo, "session", &f.recovery, &receipt.id, false)
+        .is_err());
+    assert_eq!(
+        host.list(&f.repo, "session", &f.store, &f.receipts)
+            .unwrap()
+            .receipts
+            .len(),
+        1
+    );
+}
+
+/// Replayable synthetic manuscript-safety campaign. No provider or real files.
+#[test]
+fn seeded_review_authority_state_machine_never_writes_without_matching_confirmation() {
+    for seed in 1u64..=64 {
+        let f = Fixture::new();
+        let mut rng = seed ^ 0x4845494e4c45494e;
+        let mut host = Authority::default();
+        let mut displayed: Option<Review> = None;
+        let mut completed: Option<String> = None;
+        let mut expected = BEFORE.to_owned();
+        for step in 0..48 {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            let action = rng % 10;
+            match action {
+                0 => {
+                    displayed = host
+                        .review(
+                            &f.repo,
+                            "session",
+                            &f.store,
+                            &f.receipts,
+                            &f.recovery,
+                            &f.proposal.id,
+                            false,
+                        )
+                        .ok();
+                }
+                1 => {
+                    if let Some(review) = displayed.take() {
+                        if let Ok(outcome) = f.apply(&mut host, &review) {
+                            if outcome.receipt.status == "completed" {
+                                expected = review.replacement_text.clone();
+                                completed = Some(outcome.receipt.id);
+                            }
+                        }
+                    }
+                }
+                2 => {
+                    let _ = host.reject(&f.repo, &f.store, &f.receipts, &f.proposal.id);
+                }
+                3 => {
+                    expected = format!("External author bytes {seed}:{step} — 🦊\r\n");
+                    fs::write(f.repo.root().join("scene.md"), &expected).unwrap();
+                }
+                4 => {
+                    if let Some(id) = &completed {
+                        if let Ok(review) =
+                            host.review_revert(&f.repo, "session", &f.recovery, id, false)
+                        {
+                            if let Ok(outcome) = f.apply(&mut host, &review) {
+                                if outcome.receipt.status == "completed" {
+                                    expected = review.replacement_text;
+                                }
+                            }
+                        }
+                    }
+                }
+                5 => {
+                    host = Authority::default(); /* retained renderer reviews cannot recreate authority */
+                }
+                6 => {
+                    if let Some(review) = &displayed {
+                        let mut binding = review.binding();
+                        binding.replacement_hash = "0".repeat(64);
+                        assert!(
+                            host.apply_confirmed(
+                                &f.repo,
+                                "session",
+                                &f.receipts,
+                                &f.recovery,
+                                &binding,
+                                || false
+                            )
+                            .is_err(),
+                            "seed {seed} step {step}"
+                        );
+                    }
+                }
+                7 => {
+                    if let Some(review) = displayed.take() {
+                        host.cancel("session", &review.id);
+                    }
+                }
+                8 => {
+                    assert!(host
+                        .review(
+                            &f.repo,
+                            "session",
+                            &f.store,
+                            &f.receipts,
+                            &f.recovery,
+                            &f.proposal.id,
+                            true
+                        )
+                        .is_err());
+                }
+                _ => {
+                    if let Some(review) = &displayed {
+                        assert!(host
+                            .apply_confirmed(
+                                &f.repo,
+                                "wrong-session",
+                                &f.receipts,
+                                &f.recovery,
+                                &review.binding(),
+                                || false
+                            )
+                            .is_err());
+                    }
+                }
+            }
+            assert_eq!(
+                f.repo.read("scene.md").unwrap().text,
+                expected,
+                "seed {seed} step {step} action {action}: unapproved or incorrect manuscript bytes"
+            );
+            let records = host
+                .list(&f.repo, "session", &f.store, &f.receipts)
+                .unwrap()
+                .receipts;
+            let ids: HashSet<_> = records.iter().map(|r| &r.id).collect();
+            assert_eq!(
+                ids.len(),
+                records.len(),
+                "seed {seed} step {step}: duplicate receipt"
+            );
+            assert!(
+                records.iter().filter(|r| r.kind == "apply").count() <= 1,
+                "seed {seed}: repeated proposal application"
+            );
+        }
+    }
+}

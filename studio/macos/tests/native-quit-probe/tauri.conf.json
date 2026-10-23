@@ -1,0 +1,21 @@
+{
+  "productName": "Heinlein synthetic quit test",
+  "version": "0.1.0",
+  "identifier": "me.thearcades.heinlein.synthetic-quit",
+  "build": {
+    "frontendDist": "assets"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "capabilities": [],
+      "csp": "default-src 'self'; connect-src 'none'; object-src 'none'; form-action 'none'"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../../../src-tauri/icons/icon.png"
+    ]
+  }
+}

@@ -40,12 +40,12 @@ pub struct DraftingGroup {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Manifest {
-    schema_version: u32,
-    id: String,
-    project: String,
-    groups: Vec<DraftingGroup>,
-    scenes: Vec<DraftingScene>,
+pub struct Manifest {
+    pub schema_version: u32,
+    pub id: String,
+    pub project: String,
+    pub groups: Vec<DraftingGroup>,
+    pub scenes: Vec<DraftingScene>,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -132,6 +132,14 @@ pub struct DraftingPreview {
     pub changes: Vec<DraftingChangeView>,
     pub warnings: Vec<String>,
 }
+/// Exact standalone snapshot supplied by trusted native placement authority.
+#[derive(Debug, Clone)]
+pub struct LiteralScene {
+    pub id: String,
+    pub title: String,
+    pub path: String,
+    pub text: String,
+}
 /// Only constructed by the native host from an OS-authorized file selection/drop.
 #[derive(Debug, Clone)]
 pub struct DraftingExternalFile {
@@ -177,16 +185,16 @@ impl DraftingExternalFile {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Bytes {
-    text: String,
-    mode: u32,
+pub(crate) struct Bytes {
+    pub(crate) text: String,
+    pub(crate) mode: u32,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Edit {
-    path: String,
-    before: Option<Bytes>,
-    after: Option<Bytes>,
+pub(crate) struct Edit {
+    pub(crate) path: String,
+    pub(crate) before: Option<Bytes>,
+    pub(crate) after: Option<Bytes>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -339,6 +347,15 @@ fn validate_manifest(value: &Manifest) -> Result<()> {
         }
     }
     Ok(())
+}
+/// Validate a GitHub incoming schema-v2 candidate without writing any files.
+pub fn parse_workspace_manifest(text: &str) -> Result<Manifest> {
+    if text.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(Error::TooLarge);
+    }
+    let manifest: Manifest = serde_json::from_str(text).map_err(|_| Error::InvalidManifest)?;
+    validate_manifest(&manifest)?;
+    Ok(manifest)
 }
 fn manifest_text(value: &Manifest) -> Result<String> {
     validate_manifest(value)?;
@@ -654,6 +671,38 @@ impl Repository {
         external: &[DraftingExternalFile],
         recovery: &RecoveryStore,
     ) -> Result<DraftingPlan> {
+        self.preview_drafting_inner(expected_revision, change, external, recovery, None)
+    }
+    /// Native retained standalone text, never a pretend OS-selected external file.
+    pub fn preview_literal_scene(
+        &self,
+        expected_revision: Option<&str>,
+        project: Option<String>,
+        scene: LiteralScene,
+        recovery: &RecoveryStore,
+    ) -> Result<DraftingPlan> {
+        if uuid::Uuid::parse_str(&scene.id).is_err() {
+            return Err(Error::InvalidManifest);
+        }
+        let change = match project {
+            Some(project) => DraftingChange::Initialize { project },
+            None => DraftingChange::CreateScene {
+                title: scene.title.clone(),
+                path: scene.path.clone(),
+                group_id: None,
+                before_id: None,
+            },
+        };
+        self.preview_drafting_inner(expected_revision, change, &[], recovery, Some(scene))
+    }
+    fn preview_drafting_inner(
+        &self,
+        expected_revision: Option<&str>,
+        change: DraftingChange,
+        external: &[DraftingExternalFile],
+        recovery: &RecoveryStore,
+        literal: Option<LiteralScene>,
+    ) -> Result<DraftingPlan> {
         let _gate = self.save_gate.lock().map_err(|_| Error::Io)?;
         let state = self.load_drafting()?;
         if state.revision.as_deref() != expected_revision {
@@ -719,6 +768,21 @@ impl Repository {
                 title(&project)?;
                 manifest.project = project;
                 self.reconcile_members(&mut manifest, &members, &mut plan)?;
+                if let Some(scene) = &literal {
+                    title(&scene.title)?;
+                    scene_path(&scene.path)?;
+                    self.add_new_file(&mut plan, &scene.path, scene.text.clone(), None)?;
+                    insert_scene(
+                        &mut manifest,
+                        DraftingScene {
+                            id: scene.id.clone(),
+                            title: scene.title.clone(),
+                            path: scene.path.clone(),
+                            group_id: None,
+                        },
+                        &None,
+                    )?;
+                }
                 plan.preview.summary = "Create the manuscript index for ms/".into();
             }
             DraftingChange::CreateScene {
@@ -729,11 +793,16 @@ impl Repository {
             } => {
                 title(&name)?;
                 scene_path(&path)?;
-                self.add_new_file(&mut plan, &path, "".into(), None)?;
+                self.add_new_file(
+                    &mut plan,
+                    &path,
+                    literal.as_ref().map(|s| s.text.clone()).unwrap_or_default(),
+                    None,
+                )?;
                 insert_scene(
                     &mut manifest,
                     DraftingScene {
-                        id: uuid(),
+                        id: literal.as_ref().map(|s| s.id.clone()).unwrap_or_else(uuid),
                         title: name,
                         path,
                         group_id,
@@ -1212,7 +1281,7 @@ impl Repository {
         }
         Ok(())
     }
-    fn snapshot(&self, path: &str) -> Result<Option<Bytes>> {
+    pub(crate) fn snapshot(&self, path: &str) -> Result<Option<Bytes>> {
         let max = if path == MANIFEST {
             MAX_MANIFEST_BYTES
         } else {
@@ -1511,7 +1580,7 @@ impl Repository {
         Ok(held)
     }
     #[cfg(unix)]
-    fn write_transition(&self, edit: &Edit) -> Result<()> {
+    pub(crate) fn write_transition(&self, edit: &Edit) -> Result<()> {
         if self.snapshot(&edit.path)? != edit.before {
             return Err(Error::DraftingChanged);
         }

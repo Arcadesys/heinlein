@@ -1,10 +1,10 @@
 name: Studio drafting validation
 on:
   pull_request:
-    paths: ['studio/**', '.github/workflows/studio.yml']
+    paths: ['studio/**', 'tests/test_studio_updater.py', '.github/workflows/studio.yml']
   push:
     branches: [main]
-    paths: ['studio/**', '.github/workflows/studio.yml']
+    paths: ['studio/**', 'tests/test_studio_updater.py', '.github/workflows/studio.yml']
 permissions:
   contents: read
 jobs:
@@ -28,17 +28,32 @@ jobs:
           components: rustfmt, clippy
       - name: Install Linux desktop libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Updater transaction and native file/signature boundaries (no Keychain)
+        run: python -m unittest discover -s ../tests -p test_studio_updater.py
+      - name: Synthetic probe retry tests (memory only; never execute Keychain main)
+        run: cargo test --locked --manifest-path macos/tests/keychain-probe/Cargo.toml
       - run: npm ci
       - run: npm test
+      - name: Install theme smoke browser
+        run: npx playwright install --with-deps chromium
+      - name: Theme browser acceptance (synthetic provider, desktop and 320px)
+        run: npm run test:theme:browser
       - run: npm run build
       - run: cargo fmt --all -- --check
-      - run: cargo test --locked -p repository-core -p proposal-store -p heinlein-local-mcp -p drafting-questions -p heinlein-chatgpt-auth
+      - run: cargo test --locked -p repository-core -p proposal-store -p heinlein-local-mcp -p drafting-questions -p heinlein-chatgpt-auth -p github-workspace
       - name: Native question boundary regressions
-        run: cargo test --locked -p heinlein-studio --bin heinlein-studio questions::tests
+        run: cargo test --locked -p heinlein-studio --bin heinlein-studio
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Native proposal authority regressions
         run: |
           cargo test --locked --manifest-path crates/proposal-authority-test-harness/Cargo.toml
           cargo clippy --locked --manifest-path crates/proposal-authority-test-harness/Cargo.toml --all-targets -- -D warnings
+      - name: Targeted review lineage regressions
+        run: |
+          cargo test --locked --manifest-path crates/review-state-test-harness/Cargo.toml
+          cargo clippy --locked --manifest-path crates/review-state-test-harness/Cargo.toml --all-targets -- -D warnings
       - run: npm run tauri build -- --no-bundle

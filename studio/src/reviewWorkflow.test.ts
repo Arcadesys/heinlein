@@ -1,0 +1,54 @@
+// @vitest-environment jsdom
+import { it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createReviewPanel } from './reviewPanel';
+import type { LocalCore, ReviewResult, ReviewRequest, ReviewerDefinition, ProposalOutcome } from './localCore';
+const defs: ReviewerDefinition[] = [{ id: 'contextual', version: 1, displayName: 'Story and clarity review', instructions: 'Keep intentional voice.' }, { id: 'mechanical', version: 1, displayName: 'Mechanical review', instructions: 'Clear mechanical issues only.' }];
+const source = '🐺 bad / bad / keep — exactly.\r\n';
+const scope = { repositoryId: 'repo', scope: 'scene' as const, label: 'scene.md', snapshots: [{ path: 'scene.md', source, sourceHash: 'a'.repeat(64) }] };
+let panel: ReturnType<typeof createReviewPanel> | undefined;
+const tick = () => new Promise(r => setTimeout(r, 0));
+function fixture() {
+    let record: ReviewResult | null = null;
+    const coverage = [{ id: 'chunk', sourceIndex: 0, fromUtf8: 0, toUtf8: new TextEncoder().encode(source).length, windowFrom: 0, windowTo: new TextEncoder().encode(source).length, reviewer: 0, status: 'queued', requestId: null, error: null }];
+    const make = (request: ReviewRequest): ReviewResult => ({ schemaVersion: 2, reviewId: 'review-stable', requestId: request.requestId, model: 'chosen-model', scope: 'scene', revision: 1, projectKey: 'b'.repeat(64), workflow: { definitions: request.workflow!.reviewers.map((id, i) => ({ instanceId: `reviewer-${i + 1}`, definition: structuredClone(defs.find(d => d.id === id)!), hash: 'c'.repeat(64) })), sources: [{ id: 'source', path: 'scene.md', sourceHash: 'a'.repeat(64), readOnly: false, order: 0 }], coverage: coverage.map(c => ({ ...c, status: 'completed', requestId: 'call-1' })), decisions: [], accountId: 'selected-account', accountGeneration: 3, contextNotice: 'This call sees bounded context, not the whole work at once.' }, edits: [['first', 5, 8, 'good', 'group'], ['alternative', 5, 8, 'fine', 'group'], ['unrelated', 11, 14, 'great', null]].map(([id, from, to, replacement, group]) => ({ id: String(id), path: 'scene.md', fromUtf8: Number(from), toUtf8: Number(to), original: 'bad', replacement: String(replacement), reason: `Comment ${id}`, role: 'editor', status: 'pending', proposalId: null, conflictGroup: group as string | null, selected: false, patch: JSON.stringify({ path: 'scene.md', fromUtf8: from, toUtf8: to, before: 'bad', replacement }), patchHash: 'd'.repeat(64), comments: [`Comment ${id}`], provenance: [{ instanceId: 'reviewer-1', definitionId: 'contextual', definitionVersion: 1, displayName: 'Story and clarity review', requestId: 'call-1', model: 'chosen-model', accountId: 'selected-account', accountGeneration: 3 }] })) });
+    const core = { available: () => true, questionStatus: vi.fn(async () => ({ configured: true, model: 'chosen-model', selectedModel: 'chosen-model', models: [{ slug: 'chosen-model', displayName: 'Chosen model' }], accounts: [{ id: 'selected-account', label: 'Writer', signedIn: true, planEnabled: true }], activeAccountId: 'selected-account', generation: 3, usageLimited: false, signInPending: false, message: 'Ready' })), reviewDefinitions: vi.fn(async () => structuredClone(defs)), previewReview: vi.fn(async () => structuredClone(coverage)), listReviews: vi.fn(async () => record ? [structuredClone(record)] : []), requestReview: vi.fn(async (r: ReviewRequest) => { record = make(r); return structuredClone(record); }), getReview: vi.fn(async () => structuredClone(record!)), chooseReviewEdit: vi.fn(async (_repo: string, _review: string, id: string) => { record!.edits.forEach(e => e.selected = e.id === id); return structuredClone(record!); }), rejectReviewEdit: vi.fn(async (_repo: string, _review: string, id: string) => { record!.edits.find(e => e.id === id)!.status = 'rejected'; return structuredClone(record!); }), approveReviewEdit: vi.fn(async (_repo: string, _review: string, id: string) => { const winner = record!.edits.find(e => e.id === id)!; winner.status = 'accepted'; record!.edits.filter(e => e.conflictGroup && e.conflictGroup === winner.conflictGroup && e.id !== id).forEach(e => e.status = 'supersededByAuthorChoice'); return null as ProposalOutcome | null; }), cancelQuestion: vi.fn(async () => true) };
+    const hooks = { capture: () => scope, unavailable: () => null, reviewProposal: vi.fn(async () => { }), openConnection: vi.fn(), focusEditor: vi.fn() };
+    panel = createReviewPanel(core as unknown as LocalCore, hooks);
+    document.body.append(panel.element);
+    const button = (name: string) => [...panel!.element.querySelectorAll('button')].find(b => b.textContent === name)!;
+    const click = async (name: string) => { button(name).click(); await tick(); };
+    const start = async () => { panel!.open(); await vi.waitFor(() => expect(panel!.element.querySelector('[aria-label="Number of reviewers"]')).toBeTruthy()); await click('Preview reviewer batch'); await vi.waitFor(() => expect(button('Run Heinlein Review').disabled).toBe(false)); await click('Run Heinlein Review'); await vi.waitFor(() => expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(3)); };
+    return { core, hooks, button, click, start, record: () => record! };
+}
+beforeEach(() => { HTMLElement.prototype.scrollIntoView = vi.fn(); document.body.replaceChildren(); });
+afterEach(() => { panel?.destroy(); panel = undefined; });
+it('requires explicit scope/reviewer batch preview and uses only selected connection', async () => { const f = fixture(); panel!.open(); await vi.waitFor(() => expect(panel!.element.querySelector('[aria-label="Number of reviewers"]')).toBeTruthy()); expect(f.button('Run Heinlein Review').disabled).toBe(true); const count = panel!.element.querySelector<HTMLSelectElement>('[aria-label="Number of reviewers"]')!; count.value = '3'; count.dispatchEvent(new Event('change')); await f.click('Preview reviewer batch'); expect(f.core.requestReview).not.toHaveBeenCalled(); await f.click('Run Heinlein Review'); expect(f.core.requestReview.mock.calls[0][0].workflow!.reviewers).toHaveLength(3); expect((f.core.requestReview.mock.calls[0] as unknown[])[1]).toMatchObject({ accountId: 'selected-account', model: 'chosen-model', generation: 3 }); });
+it('requires explicit conflict choice and approves directly through native exact-patch route', async () => { const f = fixture(); await f.start(); const card = panel!.element.querySelector<HTMLElement>('[data-finding-id="first"]')!; expect(card.querySelector<HTMLButtonElement>('[data-edit-action="accept"]')!.disabled).toBe(true); expect(panel!.element.querySelectorAll('input[type=radio]:checked')).toHaveLength(0); card.querySelector<HTMLInputElement>('input[type=radio]')!.click(); await tick(); expect(f.core.approveReviewEdit).not.toHaveBeenCalled(); card.remove(); const chosen = panel!.element.querySelector<HTMLElement>('[data-finding-id="first"]')!; chosen.querySelector<HTMLButtonElement>('[data-edit-action="accept"]')!.click(); await tick(); expect(f.core.approveReviewEdit).toHaveBeenCalledWith('repo', 'review-stable', 'first'); expect(f.hooks.reviewProposal).not.toHaveBeenCalled(); expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(1); expect(panel!.element.textContent).toContain('supersededByAuthorChoice'); });
+it('waits for durable rejection before hiding, keeps errors visible, then reopens dismissed state without rerun', async () => {
+    const f = fixture();
+    await f.start();
+    let resolve!: (v: ReviewResult) => void;
+    f.core.rejectReviewEdit.mockImplementationOnce(() => new Promise(r => resolve = r));
+    const card = panel!.element.querySelector<HTMLElement>('[data-finding-id="unrelated"]')!;
+    card.querySelector<HTMLButtonElement>('[data-edit-action="reject"]')!.click();
+    await tick();
+    expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(3);
+    f.record().edits.find(e => e.id === 'unrelated')!.status = 'rejected';
+    resolve(structuredClone(f.record()));
+    await tick();
+    expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(2);
+    expect(document.activeElement?.tagName).toBe('BUTTON');
+    await f.click('Close review');
+    panel!.open();
+    await vi.waitFor(() => expect(f.button('Reopen saved review review-stable')).toBeTruthy());
+    await f.click('Reopen saved review review-stable');
+    expect(panel!.element.querySelector('[data-finding-id="unrelated"]')).toBeNull();
+    expect(f.core.requestReview).toHaveBeenCalledOnce();
+    expect(panel!.element.textContent).toContain('"status": "rejected"');
+    f.core.rejectReviewEdit.mockRejectedValueOnce(new Error('Storage did not confirm rejection'));
+    panel!.element.querySelector<HTMLButtonElement>('[data-finding-id="first"] [data-edit-action="reject"]')!.click();
+    await tick();
+    expect(panel!.element.querySelector('[data-finding-id="first"]')).toBeTruthy();
+    expect(panel!.element.textContent).toContain('Storage did not confirm rejection');
+});
+it('discards a preview returned after panel closes without submitting inference', async () => { const f = fixture(); let resolve!: (v: ReturnType<typeof f.core.previewReview> extends Promise<infer T> ? T : never) => void; f.core.previewReview.mockImplementationOnce(() => new Promise(r => resolve = r)); panel!.open(); await vi.waitFor(() => expect(panel!.element.querySelector('[aria-label="Number of reviewers"]')).toBeTruthy()); f.button('Preview reviewer batch').click(); await tick(); panel!.clear(); resolve([]); await tick(); expect(panel!.element.hidden).toBe(true); expect(f.core.requestReview).not.toHaveBeenCalled(); });

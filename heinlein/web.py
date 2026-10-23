@@ -184,7 +184,8 @@ def create_app(workspace: Path) -> FastAPI:
         if pdir is None:
             raise HTTPException(status_code=404, detail="project not found")
         filename = _validate_filename(filename)
-        f = _safe_file(pdir / "dist", filename)
+        dist = _safe_subdir(pdir, "dist")
+        f = _safe_file(dist, filename) if dist is not None else None
         if f is None or f.suffix.lower() not in ARTIFACT_EXTS:
             raise HTTPException(status_code=404, detail="artifact not found")
         ctype, _ = mimetypes.guess_type(f.name)
@@ -196,7 +197,11 @@ def create_app(workspace: Path) -> FastAPI:
         if pdir is None:
             raise HTTPException(status_code=404, detail="project not found")
         # Inline the HTML output so the iframe doesn't need a separate route per asset.
-        html_files = list((pdir / "dist").glob("*.html")) if (pdir / "dist").is_dir() else []
+        dist = _safe_subdir(pdir, "dist")
+        html_files = [
+            safe for path in dist.glob("*.html")
+            if (safe := _safe_file(dist, path.name)) is not None
+        ] if dist is not None else []
         if not html_files:
             raise HTTPException(status_code=404, detail="no html preview built")
         return HTMLResponse(html_files[0].read_text(encoding="utf-8"))

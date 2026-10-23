@@ -1,7 +1,11 @@
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
+import type {DraftRequest,DraftResponse} from './standaloneDrafts';
+import type {UpdateStatus} from './updatePanel';
+import type {GitHubRequest,GitHubResponse} from './githubTypes';
+import type {FirstStoryState, PublishingMetadata, PublishingCopy} from './firstStory';
 import { listen } from '@tauri-apps/api/event';
 export interface RecentRepository { id: string; name: string }
-export interface RepositorySession extends RecentRepository { projectKey?: string; manifests: string[]; warning?: string | null }
+export interface RepositorySession extends RecentRepository { projectKey?: string; manifests: string[]; warning?: string | null; githubWorkspaceId?: string | null }
 export interface Entry { path: string; name: string; kind: 'directory' | 'file'; sizeBytes: number }
 export interface Document { path: string; text: string; sizeBytes: number; frontmatter: string | null; generatedCompatibility: boolean; contentHash: string }
 export interface RecoveryDraft { id: string; path: string; baseHash: string; text: string; updatedAt: number; actor?: 'author'; client?: 'studio' }
@@ -32,7 +36,7 @@ export interface DraftingResult { state: DraftingState; undoId: string | null }
 export interface DraftingSelection { id: string; files: {name: string; sizeBytes: number}[] }
 export type ProposalOrigin =
   | { kind: 'localMcp'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedLocalProcess' }
-  | { kind: 'nativeOpenAi'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedProviderMetadata'; provider: 'openai'; model: string; requestId: string };
+  | { kind: 'nativeOpenAi'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedProviderMetadata'; provider: 'openai'; model: string; requestId: string; review?:{reviewId:string;findingId:string;fingerprint:string;competing:string[]} };
 export interface ProposalSummary { id: string; path: string; baseHash: string; replacementHash: string; diffHash: string; origin: ProposalOrigin; createdAtMs: number }
 export interface ProposalReview { id: string; kind: 'apply' | 'revert'; proposalId: string; path: string; baseHash: string; replacementHash: string; diffHash: string; baseText: string; replacementText: string; origin: ProposalOrigin; expiresAtMs: number; parentReceiptId: string | null }
 export interface ProposalBinding { reviewId: string; proposalId: string; baseHash: string; replacementHash: string; diffHash: string }
@@ -56,11 +60,36 @@ export interface ChatThread { schemaVersion: number; id: string; title: string; 
 export interface ChatTarget { repositoryId: string; threadId: string; sourcePath: string }
 export interface ChatEvent { schemaVersion: number; requestId: string; kind: 'question' | 'answer' | 'error'; createdAt: number; data: unknown }
 export interface ChatTranscript { thread: ChatThread; events: ChatEvent[] }
+export interface ReviewSnapshot { path: string; source: string; sourceHash: string;sceneId?:string|null }
+export interface ReviewerDefinition {id:string; version:number; displayName:string; instructions:string}
+export interface ReviewOptions {reviewers:string[]; context:ReviewSnapshot[]; contextNote:string; ranges:{path:string;fromUtf8:number;toUtf8:number}[];reviewId?:string|null}
+export interface ReviewCoverage {contextRanges?:{sourceIndex:number;fromUtf8:number;toUtf8:number}[];id:string; sourceIndex:number;fromUtf8:number;toUtf8:number;windowFrom:number;windowTo:number;reviewer:number;status:string;requestId:string|null;error:string|null}
+export interface ReviewRequest { requestId: string; repositoryId: string; scope: 'scene' | 'chapter'; snapshots: ReviewSnapshot[]; workflow?:ReviewOptions|null }
+export interface ReviewEdit { location?:{line:number;column:number}; id: string; path: string; fromUtf8: number; toUtf8: number; original: string; replacement: string; reason: string; role: 'proofreader' | 'editor'; status: 'pending' | 'prepared' | 'accepted' | 'rejected' | 'supersededByAuthorChoice' | 'blockedByAppliedDecision'; proposalId: string | null; fingerprint?:string;comments?:string[];provenance?:{instanceId:string;definitionId:string;definitionVersion:number;displayName:string;requestId:string;model:string;accountId:string;accountGeneration:number}[];patch?:string;patchHash?:string;conflictGroup?:string|null;selected?:boolean;sourceStale?:boolean }
+export interface ReviewResult { reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
 export interface LocalCore {
+  standalone?(request:DraftRequest):Promise<DraftResponse>;
   available(): boolean;
   listChatThreads?(repositoryId: string): Promise<ChatThread[]>;
   createChatThread?(repositoryId: string, title: string): Promise<ChatThread>;
   readChatThread?(repositoryId: string, threadId: string): Promise<ChatTranscript>;
+updateRequest?(action: 'status'|'check'|'schedule'):Promise<UpdateStatus>;
+  githubRequest?(request: GitHubRequest): Promise<GitHubResponse>;
+  loadFirstStory?(repositoryId: string): Promise<FirstStoryState>;
+  saveFirstStory?(repositoryId: string, guide: FirstStoryState, markProof: boolean): Promise<FirstStoryState>;
+  resetFirstStory?(repositoryId: string): Promise<FirstStoryState | null>;
+  previewPublishingCopy?(repositoryId: string, metadata: PublishingMetadata): Promise<PublishingCopy | null>;
+  confirmPublishingCopy?(repositoryId: string, previewId: string): Promise<boolean>;
+  requestReview?(request: ReviewRequest, connection: QuestionConnection): Promise<ReviewResult>;
+  reviewDefinitions?():Promise<ReviewerDefinition[]>;
+  previewReview?(request:ReviewRequest):Promise<ReviewCoverage[]>;
+  listReviews?(repositoryId:string):Promise<ReviewResult[]>;
+  chooseReviewEdit?(repositoryId:string,reviewId:string,editId:string):Promise<ReviewResult>;
+  approveReviewEdit?(repositoryId:string,reviewId:string,editId:string):Promise<ProposalOutcome|null>;
+  continueReview?(repositoryId:string,reviewId:string,requestId:string,connection:QuestionConnection):Promise<ReviewResult>;
+  prepareReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<{proposalId: string}>;
+  rejectReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<ReviewResult>;
+  getReview?(repositoryId: string, reviewId: string): Promise<ReviewResult>;
   questionStatus?(): Promise<QuestionStatus>;
   askQuestion?(request: QuestionRequest, connection: QuestionConnection, onProgress?: (text: string) => void, chat?: ChatTarget): Promise<QuestionAnswer>;
   suggestQuestionRevision?(request: QuestionRequest, connection: QuestionConnection, target: QuestionRevisionTarget): Promise<QuestionRevisionAnswer>;
@@ -98,6 +127,8 @@ export interface LocalCore {
   discardRecovery(repositoryId: string, relativePath: string, recoveryId: string): Promise<void>;
   setUnsavedChanges(dirty: boolean): Promise<void>;
   requestClose(discard: boolean): Promise<void>;
+  finishQuitRequest?():Promise<void>;
+  onQuitRefused?(callback:(message:string)=>void):Promise<()=>void>;
   onCloseRequested(callback: () => void): Promise<() => void>;
 }
 // Root selection and guarded file writes belong to the native host;
@@ -107,6 +138,23 @@ export const localCore: LocalCore = {
   listChatThreads: repositoryId => invoke('list_chat_threads', {repositoryId}),
   createChatThread: (repositoryId, title) => invoke('create_chat_thread', {repositoryId, title}),
   readChatThread: (repositoryId, threadId) => invoke('read_chat_thread', {repositoryId, threadId}),
+updateRequest: action=>invoke('update_request',{action}),
+  githubRequest: request => invoke('github_request', {request}),
+  loadFirstStory: repositoryId => invoke('load_first_story', {repositoryId}),
+  saveFirstStory: (repositoryId, guide, markProof) => invoke('save_first_story', {repositoryId, guide, markProof}),
+  resetFirstStory: repositoryId => invoke('reset_first_story', {repositoryId}),
+  previewPublishingCopy: (repositoryId, metadata) => invoke('preview_publishing_copy', {repositoryId, metadata}),
+  confirmPublishingCopy: (repositoryId, previewId) => invoke('confirm_publishing_copy', {repositoryId, previewId}),
+  requestReview: (request, connection) => invoke('request_review', {request, connection}),
+  reviewDefinitions:()=>invoke('review_definitions'),
+  previewReview:request=>invoke('preview_review',{request}),
+  listReviews:repositoryId=>invoke('list_reviews',{repositoryId}),
+  chooseReviewEdit:(repositoryId,reviewId,editId)=>invoke('choose_review_edit',{repositoryId,reviewId,editId}),
+  approveReviewEdit:(repositoryId,reviewId,editId)=>invoke('approve_review_edit',{repositoryId,reviewId,editId}),
+  continueReview:(repositoryId,reviewId,requestId,connection)=>invoke('continue_review',{repositoryId,reviewId,requestId,connection}),
+  prepareReviewEdit: (repositoryId, reviewId, editId) => invoke('prepare_review_edit', {repositoryId, reviewId, editId}),
+  rejectReviewEdit: (repositoryId, reviewId, editId) => invoke('reject_review_edit', {repositoryId, reviewId, editId}),
+  getReview: (repositoryId, reviewId) => invoke('get_review', {repositoryId, reviewId}),
   questionStatus: () => invoke('question_status'),
   askQuestion: (request, connection, onProgress, chat) => {
     const channel = new Channel<string>();
@@ -140,7 +188,10 @@ export const localCore: LocalCore = {
   stageRecovery: (repositoryId, relativePath, expectedHash, text) => invoke('stage_recovery', {repositoryId, relativePath, expectedHash, text}),
   discardRecovery: (repositoryId, relativePath, recoveryId) => invoke('discard_recovery', {repositoryId, relativePath, recoveryId}),
   setUnsavedChanges: dirty => invoke('set_unsaved_changes', {dirty}),
+  standalone: request => invoke('standalone_request', {request}),
   requestClose: discard => invoke('request_close', {discard}),
+  finishQuitRequest:()=>invoke('quit_request_finished'),
+  onQuitRefused:callback=>listen<string>('quit-refused',event=>callback(event.payload)),
   onCloseRequested: callback => listen('close-requested', callback),
   pickRepository: () => invoke('pick_repository'),
   recentRepositories: () => invoke('recent_repositories'),

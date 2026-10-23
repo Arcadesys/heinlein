@@ -8,7 +8,7 @@ use std::{fmt, path::Path};
 #[cfg(unix)]
 mod storage;
 #[cfg(unix)]
-pub use storage::ProposalStore;
+pub use storage::{ProposalStore, ReviewStore};
 
 pub const MAX_PROPOSALS: usize = 256;
 pub const MAX_STORE_BYTES: u64 = 64 * 1024 * 1024;
@@ -54,8 +54,20 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReviewAttribution {
+    pub review_id: String,
+    pub finding_id: String,
+    pub fingerprint: String,
+    #[serde(default)]
+    pub scene_id: Option<String>,
+    pub competing: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ProposalOrigin {
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<ReviewAttribution>,
     pub session_id: String,
     pub client_label: String,
     pub identity_assurance: String,
@@ -72,6 +84,7 @@ impl ProposalOrigin {
     pub fn local_mcp(session_id: String, client_label: String) -> Self {
         Self {
             kind: "localMcp".into(),
+            review: None,
             session_id,
             client_label,
             identity_assurance: "unverifiedLocalProcess".into(),
@@ -85,6 +98,7 @@ impl ProposalOrigin {
     pub fn native_openai(model: String, request_id: String) -> Self {
         Self {
             kind: "nativeOpenAi".into(),
+            review: None,
             session_id: String::new(),
             client_label: String::new(),
             identity_assurance: "unverifiedProviderMetadata".into(),
@@ -94,6 +108,20 @@ impl ProposalOrigin {
         }
     }
     fn validate(&self) -> Result<()> {
+        if let Some(r) = &self.review {
+            if self.kind != "nativeOpenAi"
+                || !valid_id(&r.review_id)
+                || !valid_metadata(&r.finding_id)
+                || !valid_hash(&r.fingerprint)
+                || r.scene_id.as_ref().is_some_and(|id| {
+                    id.is_empty() || id.len() > 128 || id.chars().any(char::is_control)
+                })
+                || r.competing.len() > 1024
+                || r.competing.iter().any(|id| !valid_metadata(id))
+            {
+                return Err(Error::InvalidProposal);
+            }
+        }
         let valid = match self.kind.as_str() {
             "localMcp" => {
                 valid_id(&self.session_id)

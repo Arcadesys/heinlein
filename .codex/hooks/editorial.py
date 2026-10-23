@@ -71,7 +71,8 @@ def lint(lines):
             if pattern.search(text):
                 findings.append((lineno, code, explanation))
         # Multiple tiny full sentences in one line is often synthetic emphasis.
-        fragments = re.findall(r"(?:^|[.!?]\s+)([A-Z][^.!?]{1,26}[.!?])", text)
+        # Inspect the prior delimiter without consuming the next sentence's anchor.
+        fragments = re.findall(r"(?:^|(?<=[.!?])\s+)([A-Z][^.!?]{1,26}[.!?])", text)
         if len(fragments) >= 3:
             findings.append((lineno, "fragment-stack", "Three or more very short sentences in succession"))
     return findings

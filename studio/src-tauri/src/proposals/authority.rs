@@ -111,6 +111,8 @@ impl Review {
                 self.origin.client_label, self.origin.session_id
             )
         };
+        let conflicts=self.origin.review.as_ref().map(|r|format!("\nSelected review finding: {}\nCompeting alternatives dismissed only if this apply completes: {}",r.finding_id,r.competing.join(", "))).unwrap_or_default();
+        let origin = format!("{origin}{conflicts}");
         format!("{} the exact whole-scene change reviewed in Studio?\n\nScene: {}\nProposal: {}\n{}\n\nBase SHA-256: {}\nReplacement SHA-256: {}\nDiff SHA-256: {}\n\nThis author action changes a working draft, not a release approval.", if self.kind == "revert" { "Revert" } else { "Apply" }, self.path, self.proposal_id, origin, self.base_hash, self.replacement_hash, self.diff_hash)
     }
 }
@@ -158,32 +160,9 @@ struct Undo {
     repository_id: String,
     review: Review,
 }
-/// Ordinary save and recovery staging may overlap. Confirmed author operations
-/// exclusively pause both. Dirty notifications only advance an atomic epoch and
-/// never wait on filesystem I/O or a native dialog.
-#[derive(Default)]
-pub struct MutationGate {
-    lock: std::sync::RwLock<()>,
-    epoch: std::sync::atomic::AtomicU64,
-}
-impl MutationGate {
-    pub fn edit(&self) -> Result<std::sync::RwLockReadGuard<'_, ()>> {
-        self.lock
-            .read()
-            .map_err(|_| "Editor operations unavailable".into())
-    }
-    pub fn author_operation(&self) -> Result<std::sync::RwLockWriteGuard<'_, ()>> {
-        self.lock
-            .write()
-            .map_err(|_| "Editor operations unavailable".into())
-    }
-    pub fn invalidate(&self) {
-        self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    }
-    pub fn generation(&self) -> u64 {
-        self.epoch.load(std::sync::atomic::Ordering::SeqCst)
-    }
-}
+#[path = "../mutation_gate.rs"]
+mod mutation_gate;
+pub use mutation_gate::MutationGate;
 #[derive(Default)]
 pub struct Authority {
     plan: Option<Plan>,
@@ -236,6 +215,18 @@ impl Authority {
         let proposal = proposals
             .get(repo, proposal_id)
             .map_err(|e| e.to_string())?;
+        receipts.with_lock(repo, || receipts.write_rejection(repo, proposal))
+    }
+    /// A rejection-only audit of an advisory snapshot, including an unsaved one.
+    /// This route cannot issue review, apply, or revert authority.
+    pub fn reject_snapshot(
+        &mut self,
+        repo: &Repository,
+        receipts: &ReceiptStore,
+        proposal: PendingProposal,
+    ) -> Result<Receipt> {
+        self.plan = None;
+        proposal.validate().map_err(|e| e.to_string())?;
         receipts.with_lock(repo, || receipts.write_rejection(repo, proposal))
     }
     // Explicit native repository, storage and editor inputs keep authority boundaries visible.
@@ -414,6 +405,25 @@ impl Authority {
     }
 }
 fn check_source(repo: &Repository, review: &Review) -> Result<()> {
+    if let Some(id) = review
+        .origin
+        .review
+        .as_ref()
+        .and_then(|r| r.scene_id.as_ref())
+    {
+        let state = repo.load_drafting().map_err(|e| e.to_string())?;
+        if state.recovery_required
+            || !state
+                .scenes
+                .iter()
+                .any(|scene| &scene.id == id && scene.path == review.path)
+        {
+            return Err(
+                "The reviewed scene mapping changed; request a fresh review for this source".into(),
+            );
+        }
+    }
+
     let current = repo.read(&review.path).map_err(|e| e.to_string())?;
     if current.generated_compatibility {
         return Err("Generated compatibility scenes cannot be changed".into());
