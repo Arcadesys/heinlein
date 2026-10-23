@@ -1125,29 +1125,24 @@ fn ensure_review(
 ) -> Result<(), String> {
     let store = review_records(app)?;
     let records = super::proposals::review_receipts(app, repo)?;
-    if !slot
-        .as_ref()
-        .is_some_and(|s| s.matches(repository_id, review_id))
-    {
-        let saved: crate::review_state::ReviewSession =
-            store.load(repo, review_id).map_err(|e| e.to_string())?;
-        if saved.id() != review_id {
-            return Err("Review identity changed".into());
-        }
-        *slot = Some(
-            saved.restore(&repo.project_key(), repository_id, |candidate| {
-                records.iter().any(|r| {
-                    r.proposal_id == candidate.id
-                        && r.origin.review == candidate.origin.review
-                        && r.kind == "apply"
-                        && r.status == "completed"
-                        && r.base_hash == candidate.base_hash
-                        && r.replacement_hash == candidate.replacement_hash
-                        && r.diff_hash == candidate.diff_hash
-                })
-            })?,
-        );
-    }
+    crate::review_state::ReviewSession::refresh_cached(
+        slot,
+        &store,
+        repo,
+        repository_id,
+        review_id,
+        |candidate| {
+            records.iter().any(|r| {
+                r.proposal_id == candidate.id
+                    && r.origin.review == candidate.origin.review
+                    && r.kind == "apply"
+                    && r.status == "completed"
+                    && r.base_hash == candidate.base_hash
+                    && r.replacement_hash == candidate.replacement_hash
+                    && r.diff_hash == candidate.diff_hash
+            })
+        },
+    )?;
     let session = slot.as_mut().ok_or("Review unavailable")?;
     session.reconcile_receipts(
         &records

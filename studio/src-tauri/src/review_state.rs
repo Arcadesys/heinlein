@@ -1151,6 +1151,41 @@ impl ReviewSession {
         }
         self.check_choice(&a.finding_id)
     }
+    /// Refresh informational state only. Restore never recreates native plans.
+    pub fn refresh_cached(
+        slot: &mut Option<Self>,
+        store: &proposal_store::ReviewStore,
+        repo: &repository_core::Repository,
+        repository_id: &str,
+        review_id: &str,
+        verified: impl Fn(&PendingProposal) -> bool,
+    ) -> Result<bool, String> {
+        let current = slot
+            .as_ref()
+            .filter(|s| s.matches(repository_id, review_id));
+        // Legacy reviews are intentionally session-only and have no v2 record.
+        if current.is_some_and(|s| s.schema_version == 1) {
+            return Ok(false);
+        }
+        let saved: Self = store.load(repo, review_id).map_err(|e| e.to_string())?;
+        if saved.id() != review_id {
+            return Err("Review identity changed".into());
+        }
+        if let Some(current) = current {
+            if saved.revision < current.revision {
+                return Err("The saved review revision moved backwards; preserve its records and inspect before continuing".into());
+            }
+            if saved.revision == current.revision {
+                return Ok(false);
+            }
+        }
+        // Restore first: invalid newer data must leave the existing cache intact.
+        // This clears prepared candidates; retained native plans are still subject
+        // to the current finding/choice/hash and final record-revision barriers.
+        let restored = saved.restore(&repo.project_key(), repository_id, verified)?;
+        *slot = Some(restored);
+        Ok(true)
+    }
     pub fn revision_data(&self) -> (String, u64) {
         (self.id().into(), self.revision)
     }
