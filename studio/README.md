@@ -361,12 +361,19 @@ native WebKit persistence, screen-reader acceptance or resolution of issue #22.
 
 ## Heinlein Review
 
-Choose **Heinlein Review** in a source scene or mapped assembled chapter to
-preview its exact snapshot, then **Run Heinlein Review**. A proofreader/editor
-pass returns versioned JSON and targeted before/after suggestions. Accept or
-reject each individually; accepting still requires the existing exact proposal
-review and separate native confirmation. Unsaved text can be reviewed, but must
-be saved unchanged before acceptance. The current bound is 16 scenes / 16,000
-UTF-8 bytes, with no automatic truncation. Larger chapters require reviewing
-individual source scenes. See [the review contract](../docs/architecture/studio-heinlein-review.md)
-for scope, limits, stale protection and verification boundaries.
+Choose **Heinlein Review** in a source scene or mapped assembled chapter. Choose
+editable sources versus read-only context, one to three reviewer instances and
+optional author notes, then **Preview reviewer batch**. **Run Heinlein Review**
+uses only your selected ChatGPT account/model, at most eight serial calls per
+explicit batch. Continue explicitly for remaining coverage; partial results stay
+available. Combined selected context is bounded to 1 MiB and 128 windows, with no
+silent truncation or automatic retry.
+
+The consolidated versioned JSON contains exact prepared patches, comments,
+locations, immutable reviewer snapshots, coverage and decisions. **Approve…**
+applies an exact patch only after the existing native final confirmation. Choose
+conflicting alternatives explicitly; unrelated suggestions remain usable after
+approved byte shifts. **Reject edit** persists before dismissal, including across
+reopen/restart/regenerated duplicates. Saved review reload never runs providers.
+See [the review contract](../docs/architecture/studio-heinlein-review.md) for
+limits, lineage, source safety and synthetic versus native/live evidence.

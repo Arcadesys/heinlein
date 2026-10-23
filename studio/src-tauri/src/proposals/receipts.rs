@@ -148,7 +148,7 @@ impl ReceiptStore {
         Err("Proposal receipts currently require macOS or Linux".into())
     }
     #[cfg(unix)]
-    pub(super) fn with_lock<T>(
+    pub(crate) fn with_lock<T>(
         &self,
         repo: &Repository,
         operation: impl FnOnce() -> Result<T>,
@@ -164,7 +164,7 @@ impl ReceiptStore {
         operation()
     }
     #[cfg(not(unix))]
-    pub(super) fn with_lock<T>(
+    pub(crate) fn with_lock<T>(
         &self,
         _repo: &Repository,
         _operation: impl FnOnce() -> Result<T>,
@@ -282,7 +282,7 @@ impl ReceiptStore {
         Ok(())
     }
     #[cfg(unix)]
-    pub(super) fn read_all(&self, repo: &Repository) -> Result<Vec<Receipt>> {
+    pub(crate) fn read_all(&self, repo: &Repository) -> Result<Vec<Receipt>> {
         self.check(repo)?;
         let (names, _) = self.inventory()?;
         let prefix = format!("{}-", repo.project_key());
@@ -337,7 +337,7 @@ impl ReceiptStore {
         Ok(records)
     }
     #[cfg(not(unix))]
-    pub(super) fn read_all(&self, _repo: &Repository) -> Result<Vec<Receipt>> {
+    pub(crate) fn read_all(&self, _repo: &Repository) -> Result<Vec<Receipt>> {
         Err("Unsupported platform".into())
     }
     pub(super) fn require_unattempted(&self, repo: &Repository, proposal_id: &str) -> Result<()> {

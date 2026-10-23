@@ -35,7 +35,7 @@ export interface DraftingResult { state: DraftingState; undoId: string | null }
 export interface DraftingSelection { id: string; files: {name: string; sizeBytes: number}[] }
 export type ProposalOrigin =
   | { kind: 'localMcp'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedLocalProcess' }
-  | { kind: 'nativeOpenAi'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedProviderMetadata'; provider: 'openai'; model: string; requestId: string };
+  | { kind: 'nativeOpenAi'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedProviderMetadata'; provider: 'openai'; model: string; requestId: string; review?:{reviewId:string;findingId:string;fingerprint:string;competing:string[]} };
 export interface ProposalSummary { id: string; path: string; baseHash: string; replacementHash: string; diffHash: string; origin: ProposalOrigin; createdAtMs: number }
 export interface ProposalReview { id: string; kind: 'apply' | 'revert'; proposalId: string; path: string; baseHash: string; replacementHash: string; diffHash: string; baseText: string; replacementText: string; origin: ProposalOrigin; expiresAtMs: number; parentReceiptId: string | null }
 export interface ProposalBinding { reviewId: string; proposalId: string; baseHash: string; replacementHash: string; diffHash: string }
@@ -55,10 +55,13 @@ export interface QuestionRequest { requestId: string; question: string; context:
 export interface QuestionRevisionTarget { repositoryId: string; path: string; sourceHash: string; fromUtf8: number; toUtf8: number; selectedText: string }
 export interface QuestionRevisionAnswer extends QuestionAnswer { proposalId: string; replacementText: string }
 export interface QuestionAnswer { requestId: string; text: string; model: string; inputTokens?: number | null; outputTokens?: number | null; incomplete: boolean }
-export interface ReviewSnapshot { path: string; source: string; sourceHash: string }
-export interface ReviewRequest { requestId: string; repositoryId: string; scope: 'scene' | 'chapter'; snapshots: ReviewSnapshot[] }
-export interface ReviewEdit { id: string; path: string; fromUtf8: number; toUtf8: number; original: string; replacement: string; reason: string; role: 'proofreader' | 'editor'; status: 'pending' | 'prepared' | 'accepted' | 'rejected'; proposalId: string | null }
-export interface ReviewResult { reviewId: string; requestId: string; model: string; schemaVersion: 1; scope: 'scene' | 'chapter'; edits: ReviewEdit[] }
+export interface ReviewSnapshot { path: string; source: string; sourceHash: string;sceneId?:string|null }
+export interface ReviewerDefinition {id:string; version:number; displayName:string; instructions:string}
+export interface ReviewOptions {reviewers:string[]; context:ReviewSnapshot[]; contextNote:string; ranges:{path:string;fromUtf8:number;toUtf8:number}[];reviewId?:string|null}
+export interface ReviewCoverage {contextRanges?:{sourceIndex:number;fromUtf8:number;toUtf8:number}[];id:string; sourceIndex:number;fromUtf8:number;toUtf8:number;windowFrom:number;windowTo:number;reviewer:number;status:string;requestId:string|null;error:string|null}
+export interface ReviewRequest { requestId: string; repositoryId: string; scope: 'scene' | 'chapter'; snapshots: ReviewSnapshot[]; workflow?:ReviewOptions|null }
+export interface ReviewEdit { location?:{line:number;column:number}; id: string; path: string; fromUtf8: number; toUtf8: number; original: string; replacement: string; reason: string; role: 'proofreader' | 'editor'; status: 'pending' | 'prepared' | 'accepted' | 'rejected' | 'supersededByAuthorChoice' | 'blockedByAppliedDecision'; proposalId: string | null; fingerprint?:string;comments?:string[];provenance?:{instanceId:string;definitionId:string;definitionVersion:number;displayName:string;requestId:string;model:string;accountId:string;accountGeneration:number}[];patch?:string;patchHash?:string;conflictGroup?:string|null;selected?:boolean;sourceStale?:boolean }
+export interface ReviewResult { reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
 export interface LocalCore {
   available(): boolean;
   updateRequest?(action: 'status'|'check'|'schedule'):Promise<UpdateStatus>;
@@ -69,6 +72,12 @@ export interface LocalCore {
   previewPublishingCopy?(repositoryId: string, metadata: PublishingMetadata): Promise<PublishingCopy | null>;
   confirmPublishingCopy?(repositoryId: string, previewId: string): Promise<boolean>;
   requestReview?(request: ReviewRequest, connection: QuestionConnection): Promise<ReviewResult>;
+  reviewDefinitions?():Promise<ReviewerDefinition[]>;
+  previewReview?(request:ReviewRequest):Promise<ReviewCoverage[]>;
+  listReviews?(repositoryId:string):Promise<ReviewResult[]>;
+  chooseReviewEdit?(repositoryId:string,reviewId:string,editId:string):Promise<ReviewResult>;
+  approveReviewEdit?(repositoryId:string,reviewId:string,editId:string):Promise<ProposalOutcome|null>;
+  continueReview?(repositoryId:string,reviewId:string,requestId:string,connection:QuestionConnection):Promise<ReviewResult>;
   prepareReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<{proposalId: string}>;
   rejectReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<ReviewResult>;
   getReview?(repositoryId: string, reviewId: string): Promise<ReviewResult>;
@@ -125,6 +134,12 @@ export const localCore: LocalCore = {
   previewPublishingCopy: (repositoryId, metadata) => invoke('preview_publishing_copy', {repositoryId, metadata}),
   confirmPublishingCopy: (repositoryId, previewId) => invoke('confirm_publishing_copy', {repositoryId, previewId}),
   requestReview: (request, connection) => invoke('request_review', {request, connection}),
+  reviewDefinitions:()=>invoke('review_definitions'),
+  previewReview:request=>invoke('preview_review',{request}),
+  listReviews:repositoryId=>invoke('list_reviews',{repositoryId}),
+  chooseReviewEdit:(repositoryId,reviewId,editId)=>invoke('choose_review_edit',{repositoryId,reviewId,editId}),
+  approveReviewEdit:(repositoryId,reviewId,editId)=>invoke('approve_review_edit',{repositoryId,reviewId,editId}),
+  continueReview:(repositoryId,reviewId,requestId,connection)=>invoke('continue_review',{repositoryId,reviewId,requestId,connection}),
   prepareReviewEdit: (repositoryId, reviewId, editId) => invoke('prepare_review_edit', {repositoryId, reviewId, editId}),
   rejectReviewEdit: (repositoryId, reviewId, editId) => invoke('reject_review_edit', {repositoryId, reviewId, editId}),
   getReview: (repositoryId, reviewId) => invoke('get_review', {repositoryId, reviewId}),

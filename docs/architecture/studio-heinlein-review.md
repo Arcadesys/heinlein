@@ -1,86 +1,112 @@
-# Heinlein Review MVP
+# Heinlein Review: author-approved revision workflow
 
-Heinlein Review is a bounded advisory module, separate from ordinary drafting
-questions. The button captures the current editable source scene, or the ordered
-source-scene snapshots underlying a mapped assembled chapter. A scene means its
-source Markdown file; the Scenes drawer's `---` passage anchors do not redefine
-this scope. Generated chapter exports and unmapped read-only files are never
-review edit targets.
+Heinlein Review extends the existing selected-account provider, proposal store
+and native approval authority. It is advisory. No style finding is a publication
+gate, and no reviewer can save, publish, expand context or choose another account.
 
 ## Author flow
 
-1. Choose **Heinlein Review** to inspect the exact captured sources. Unsaved editor
-   text is included in scene review. No provider request or implicit save happens.
-2. Choose **Run Heinlein Review** to send that snapshot through the existing
-   selected ChatGPT account/model. The first MVP uses one proofreader/editor pass,
-   returning separately attributed findings. It is not a configurable agent team.
-3. Inspect the versioned JSON and each edit's original text, replacement and
-   reason. **Accept edit** prepares the existing whole-source comparison, followed
-   by the existing separate native author confirmation. **Reject edit** records a
-   local immutable rejection receipt without changing manuscript content.
-4. Save matching unsaved text before acceptance. Acceptance requires exact saved
-   bytes, clean recovery and the existing one-use authority bindings. Ordinary
-   typing and saving remain usable while review inference runs.
+1. Open **Heinlein Review** in an editable source scene or mapped assembled
+   chapter. The captured text includes unsaved editor text; no implicit save or
+   provider request occurs. Generated/unmapped exports cannot be edit targets.
+2. Choose editable source files; unchecked captured files are read-only context.
+   Optional author notes are also read-only. Choose one to three reviewer
+   instances (one initially), then **Preview reviewer batch**. Inspect the exact
+   sources, core/context byte ranges, reviewer definitions and call count.
+3. **Run Heinlein Review** sends at most eight serial calls through the existing
+   explicitly selected ChatGPT account/model. **Continue next reviewer batch**
+   authorizes another bounded batch on the same captured scope and definition
+   snapshots. There is no aggregator model, automatic retry or account fallback.
+4. Each pending card shows its file, original UTF-8 byte range, full before/after
+   diff, comments and reviewer provenance. Captured line/column is derived from the
+   immutable baseline (one-based Unicode characters); byte ranges remain authority. **Approve…** prepares this exact patch
+   and opens the ONE existing native final confirmation. There is no manual copy
+   or separate comparison step. Save matching text and resolve recovery first.
+5. Overlapping/dependent suggestions have no default winner. Choosing an
+   alternative does not apply it. Final approval names the chosen finding and
+   all competing alternatives to dismiss; changed membership invalidates it.
+   Competitors become `supersededByAuthorChoice`, with audit retained.
+6. **Reject edit** durably records rejection before the card disappears. Reload
+   saved reviews after navigation or restart without running reviewers again.
+   Versioned JSON/history retains accepted, rejected, superseded and blocked
+   findings. Exact rejected fingerprints stay dismissed in regenerated results.
 
-Connection setup opens the existing Questions account controls; reopen Review
-and capture a fresh snapshot afterward. Opening another document or repository
-clears the panel and cancels its in-flight request locally. Cancel and timeout
-cannot recall already transmitted text or guarantee that usage was not charged.
-Retry is explicit and uses the same previewed snapshot with a new request ID.
+## Definitions, bounds and truthful coverage
 
-## Boundaries and contract
+Reviewer definitions are data: stable ID, version, display name and bounded
+instructions. Mechanical and contextual definitions seed this version. Every run
+stores the exact selected snapshots/hashes and distinct instance IDs. A later
+custom-definition menu is deliberately outside this implementation. Definition
+text is untrusted review data and grants no tools, file access or write authority.
+A definition change cannot rewrite an existing run's provenance.
 
-- `requestReview`, `prepareReviewEdit`, `rejectReviewEdit`, and `getReview` form the
-  module interface. Custom agent configuration and multi-stage orchestration are
-  future work, not extra UI in this MVP
-- Schema version 1; at most 16 source scenes, 16,000 UTF-8 source bytes total,
-  32 nonoverlapping edits, 4,000 bytes per original/replacement and 1,000 bytes per
-  reason. Oversize scopes fail explicitly; there is no truncation or chunking
-- Provider response is strict JSON, with no unknown fields. Scene indexes map
-  only to supplied sources; offsets use raw UTF-8 bytes. Repeated text is bound by
-  exact position. Invalid boundaries, overlaps, unchanged replacements,
-  frontmatter edits, incomplete output and unsafe controls fail closed
-- Original em dashes are protected. This conservative MVP declines edits whose
-  original or replacement includes an em dash. Authorial fragments, repetition,
-  sexuality and identity are not generic editing errors. Manuscript contents are
-  untrusted data, with no tools or instruction authority
-- Existing provider transport has a 60-second deadline and 2,000 output-token
-  budget; the renderer also cancels locally after 65 seconds. Only source text
-  and numeric scene indexes enter the review payload, not local paths, repository
-  IDs or hashes. No account keys, new service or fallback billing route is added
+Combined selected text, read-only context and notes are limited to 1 MiB; notes
+are at most 4,000 UTF-8 bytes. There are at most 128 editable/context windows
+(384 calls with three reviewers) and 1,024 retained findings. Oversize inputs
+fail explicitly without truncation. Each call keeps the existing 16,000-byte
+text bound, 32 edits, 4,000 bytes per before/replacement and bounded output. Core
+and neighboring context boundaries preserve UTF-8/CRLF. Read-only context is
+windowed too: every selected byte is covered, but one call does NOT see the whole
+work. When context needs more windows, editable cores can be revisited with a
+different window. The preview discloses this limited global context.
 
-## Targeted acceptance, audit and undo
+Coverage records queued, running, completed, failed, cancelled and not-run calls
+individually. Each running intent and settled result is persisted before the next
+call. Valid siblings survive schema failures/cancellation. Interrupted running
+calls are not automatically repeated; preserve the record and explicitly start
+a fresh review if needed. Finding-cap failure retains the whole valid prior
+result, never a silently truncated call. Incomplete coverage is not a complete
+review, and zero findings is valid. An active batch must settle before approval.
 
-The native host retains one bounded review session. Each target becomes an
-existing pending proposal only when the author asks to accept it. This is not
-approval. Whole-scene base/replacement/diff hashes and a short-lived one-use
-review continue to gate the final native confirmation. Unsaved rejection uses a
-rejection-only audit helper and grants no apply or revert capability.
+Provider JSON is strict and uses indexed sources, not private paths or project
+IDs. Native code validates ranges, exact before text, core scope, protected
+frontmatter/em dashes and selected model. Native call IDs and available provider
+response IDs are recorded separately. Responses cannot edit read-only context.
+Intentional fragments, repetition, sexuality, identity and em dashes remain
+protected author choices. Austen's profile is opt-in, not a default identity.
 
-Nonoverlapping edits can be accepted in any order. The native session advances
-its expected source only after its own trusted successful apply, and adjusts
-later original offsets using only these accepted edits. Arbitrary changed text,
-external writes, unrelated proposals or Undo are never used as a rebasing input.
-One prepared edit must be completed or rejected before another is prepared.
-Canceling a comparison leaves that prepared edit available for reopening.
+## Consolidated record, lineage and persistence
 
-Completed applies retain existing attributed receipts and guarded same-session
-reverts in **Proposed revisions**. A revert changes the source and can invalidate
-remaining review findings; run a new review rather than silently rebasing them.
-Receipts never reconstruct session authority. The UI survives its own approved
-source reload so additional findings remain usable, but ordinary navigation
-clears it. Native snapshots last until another review replaces them or the app
-exits; proposal/decision records persist under existing local storage rules.
+Private `review-records-v2` records use schema version 2, stable native review and
+finding IDs, project/source hashes, ordered source manifests, baseline text once
+per source, editable ranges/read-only context, definition snapshots, coverage,
+canonical patch/hash, comments, provenance, choices and immutable decision
+entries. Existing proposal receipts/journals remain the source-write audit.
+Atomic private writes use revision compare-and-swap; a record-write failure must
+not hide rejection. No review data is written inside the manuscript repository.
 
-## Verification
+Identical source/range/before/replacement findings deduplicate deterministically
+with all comments/provenance. Distinct overlaps, same-point insertions, insertions
+at replacement boundaries and demonstrable adjacent dependencies become explicit
+conflicts. Late exact duplicates inherit terminal status. Late conflicts with an
+applied decision are blocked for fresh review rather than composed.
 
-Tests cover strict schema/invalid JSON, out-of-scope edits, Unicode and newline
-boundaries, overlaps, protected frontmatter/em dashes, unsafe aggregate edits,
-trusted sequential/reverse acceptance, rejection-only audit, snapshot capture,
-unsaved text, cancel/retry/error recovery, late answers, navigation, concurrent
-local typing/save, and native confirmation wiring. These are synthetic and
-mocked provider tests. They do not establish real account plan/model support,
-live review quality, native OS dialogue usability or macOS accessibility.
+The immutable baseline plus this review's verified accepted-patch ledger advances
+only its own source lineage. An earlier Unicode-length change shifts later
+nonoverlapping ranges by the recorded byte delta. Reverse order, other files and
+repeated identical passages remain distinct; no text searching or guessed rebase
+is permitted. External saves, path/scene reassignment, unrelated edits or Undo
+block the affected source, while other files remain available.
+
+On reopen, native code validates the record, definition/patch hashes and completed
+receipt chain against current disk hashes. Receipt-before-record crashes are
+reconciled informationally without replaying Approve. Stored JSON and receipts
+never mint a native apply capability: every approval still needs a fresh
+session-bound one-shot plan, final native author confirmation and source/save/
+recovery/mutation/revision checks. Competing decisions cannot change during the
+final local write. Existing guarded same-session reverts remain in **Proposed
+revisions**; reverting makes affected remaining source lineage stale.
+
+## Verification boundaries
+
+Focused tests use synthetic text, local private temp stores and mocked provider
+responses. Native integration exercises production proposal/file/receipt gates,
+including restart and crash gaps, without driving an OS dialog. Real Chromium
+exercises the production Studio/panel on an explicitly synthetic browser host,
+including keyboard, 200% text, 320px reflow, axe, explicit conflict choice,
+sequential approvals and rejection after reload. Its confirmation surrogate is
+NOT native UI proof. Live provider quality/usage, native WebKit/dialog/VoiceOver
+and other OS runtime acceptance remain separate manual checks.
 
 ## Deterministic safety campaigns (2026-10-16)
 

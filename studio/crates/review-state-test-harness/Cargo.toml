@@ -13,3 +13,5 @@ proposal-store = { path = "../proposal-store" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
+
+repository-core = { path = "../repository-core" }

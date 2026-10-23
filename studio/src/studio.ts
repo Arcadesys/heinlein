@@ -518,7 +518,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   });
   const proposals = createProposalPanel(core, {
     root, repository: () => repository, run: runProposal,
-    changed: async path => {
+    changed: proposalChanged,
+    report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
+  });
+  async function proposalChanged(path:string) {
       // A late editor event must never be discarded by an applied proposal refresh.
       if (dirty || edits !== proposalEditRevision || recoveryPending || recovery) {
         writePaused = 'conflict'; updateSaveState();
@@ -527,9 +530,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       resetPreview();
       if (!await showDocument(path, true)) throw new Error('The operation was recorded, but the scene could not be safely reopened. Reload it before editing');
       if (drafting.state) await writing.setManuscript(core, repository!, drafting.state);
-    },
-    report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
-  });
+  }
   function selectionQuestionState() {
     if (disposed || !editor || !opened || !repository || editor.view.state.selection.ranges.length !== 1) return null;
     const range = editor.view.state.selection.main;
@@ -596,6 +597,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       return null;
     },
     reviewProposal: async (id, guard) => {reviewApplying = true; try {await proposals.reviewProposal(id, guard);} finally {reviewApplying = false;}},
+    approveReview: async (run,guard)=>{reviewApplying=true;let outcome:import('./localCore').ProposalOutcome|null=null;try{await runProposal(async()=>{const problem=guard();if(problem)throw new Error(problem);outcome=await run();if(outcome&&outcome.receipt.status!=='failed')await proposalChanged(outcome.receipt.path);});return outcome;}finally{reviewApplying=false;}},
     openConnection: () => {reviewPanel?.clear(); if (draftingQuestions) {root.append(draftingQuestions.element); draftingQuestions.open();}},
     focusEditor: () => (editor ?? chapterEditor)?.view.focus(),
   });
