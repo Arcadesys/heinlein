@@ -518,3 +518,202 @@ fn identical_whole_source_diff_cannot_substitute_a_different_repeated_passage_re
         .is_err());
     assert_eq!(f.repo.read("scene.md").unwrap().text, p.replacement_text);
 }
+
+#[test]
+fn refreshing_a_cached_review_imports_other_host_decisions_and_restores_valid_operations() {
+    let from = BEFORE.find("Bad").unwrap();
+    let other = BEFORE.rfind("Same").unwrap();
+    let f = Fixture::new(vec![
+        (from, from + 3, "Good"),
+        (from, from + 3, "Clear"),
+        (other, other + 4, "Other"),
+    ]);
+    let ids = f.ids();
+    let review_id = f.session.id().to_owned();
+    let mut a = None;
+    let mut b = None;
+    ReviewSession::refresh_cached(&mut a, &f.records, &f.repo, "host-a", &review_id, |_| false)
+        .unwrap();
+    ReviewSession::refresh_cached(&mut b, &f.records, &f.repo, "host-b", &review_id, |_| false)
+        .unwrap();
+    let a_state = a.as_mut().unwrap();
+    a_state.choose(&ids[0]).unwrap();
+    let p = a_state.candidate(&ids[0], &f.repo.project_key()).unwrap();
+    let old = f
+        .proposals
+        .submit(
+            &f.repo,
+            &p.path,
+            &p.base_hash,
+            &p.replacement_text,
+            p.origin,
+        )
+        .unwrap();
+    a_state.prepared(&ids[0], old.clone()).unwrap();
+    a_state.persist(&f.records, &f.repo).unwrap();
+    // Host B refreshes A's revision, changes the selected alternative and
+    // durably rejects an unrelated finding while A retains its old cache.
+    assert!(ReviewSession::refresh_cached(
+        &mut b,
+        &f.records,
+        &f.repo,
+        "host-b",
+        &review_id,
+        |_| false
+    )
+    .unwrap());
+    let b_state = b.as_mut().unwrap();
+    b_state.choose(&ids[1]).unwrap();
+    let rejection = b_state
+        .rejection_candidate(&ids[2], &f.repo.project_key())
+        .unwrap();
+    let receipt = Authority::default()
+        .reject_snapshot(&f.repo, &f.receipts, rejection)
+        .unwrap();
+    b_state.rejected(&ids[2], receipt.proposal_id).unwrap();
+    b_state.persist(&f.records, &f.repo).unwrap();
+    let old_revision = a.as_ref().unwrap().revision;
+    assert!(ReviewSession::refresh_cached(
+        &mut a,
+        &f.records,
+        &f.repo,
+        "host-a",
+        &review_id,
+        |_| false
+    )
+    .unwrap());
+    let a = a.as_mut().unwrap();
+    assert!(a.revision > old_revision);
+    let view = serde_json::to_value(a.view()).unwrap();
+    assert_eq!(view["edits"][2]["status"], "rejected");
+    assert_eq!(view["edits"][1]["selected"], true);
+    assert!(!a.is_prepared(&ids[0]));
+    assert!(a
+        .validate_binding(old.origin.review.as_ref().unwrap())
+        .is_err());
+    let p = a.candidate(&ids[1], &f.repo.project_key()).unwrap();
+    let p = f
+        .proposals
+        .submit(
+            &f.repo,
+            &p.path,
+            &p.base_hash,
+            &p.replacement_text,
+            p.origin,
+        )
+        .unwrap();
+    a.prepared(&ids[1], p.clone()).unwrap();
+    a.persist(&f.records, &f.repo).unwrap();
+    let mut host = Authority::default();
+    let plan = host
+        .review(
+            &f.repo,
+            "host-a",
+            &f.proposals,
+            &f.receipts,
+            &f.recovery,
+            &p.id,
+            false,
+        )
+        .unwrap();
+    let outcome = f
+        .records
+        .with_revision(&f.repo, &review_id, a.revision, || {
+            host.apply_confirmed(
+                &f.repo,
+                "host-a",
+                &f.receipts,
+                &f.recovery,
+                &plan.binding(),
+                || false,
+            )
+        })
+        .unwrap();
+    assert_eq!(outcome.receipt.status, "completed");
+    assert_eq!(
+        f.repo.read("scene.md").unwrap().text,
+        BEFORE.replacen("Bad", "Clear", 1)
+    );
+}
+
+#[test]
+fn refresh_refuses_rolled_back_or_invalid_records_without_replacing_the_cache() {
+    let from = BEFORE.find("Bad").unwrap();
+    let f = Fixture::new(vec![(from, from + 3, "Good")]);
+    let id = f.session.id().to_owned();
+    let finding = f.ids()[0].clone();
+    let mut slot = None;
+    ReviewSession::refresh_cached(&mut slot, &f.records, &f.repo, "host-a", &id, |_| false)
+        .unwrap();
+    let path = f
+        ._temp
+        .path()
+        .join("review-records")
+        .join(format!("{}-{id}.json", f.repo.project_key()));
+    let old = fs::read(&path).unwrap();
+    let current = slot.as_mut().unwrap();
+    let p = current
+        .rejection_candidate(&finding, &f.repo.project_key())
+        .unwrap();
+    let receipt = Authority::default()
+        .reject_snapshot(&f.repo, &f.receipts, p)
+        .unwrap();
+    current.rejected(&finding, receipt.proposal_id).unwrap();
+    current.persist(&f.records, &f.repo).unwrap();
+    let revision = current.revision;
+    assert!(
+        !ReviewSession::refresh_cached(&mut slot, &f.records, &f.repo, "host-a", &id, |_| false)
+            .unwrap()
+    );
+    fs::write(&path, &old).unwrap();
+    assert!(
+        ReviewSession::refresh_cached(&mut slot, &f.records, &f.repo, "host-a", &id, |_| false)
+            .is_err()
+    );
+    assert_eq!(slot.as_ref().unwrap().revision, revision);
+    let mut invalid: Value = serde_json::from_slice(&old).unwrap();
+    invalid["revision"] = (revision + 1).into();
+    invalid["result"]["workflow"]["definitions"][0]["hash"] = "bad".into();
+    fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+    assert!(
+        ReviewSession::refresh_cached(&mut slot, &f.records, &f.repo, "host-a", &id, |_| false)
+            .is_err()
+    );
+    assert_eq!(slot.as_ref().unwrap().revision, revision);
+    assert_eq!(
+        serde_json::to_value(slot.as_ref().unwrap().view()).unwrap()["edits"][0]["status"],
+        "rejected"
+    );
+    assert_eq!(f.repo.read("scene.md").unwrap().text, BEFORE);
+}
+#[test]
+fn refreshing_a_matching_legacy_review_does_not_require_a_v2_record() {
+    let from = BEFORE.find("Bad").unwrap();
+    let f = Fixture::new(vec![(from, from + 3, "Good")]);
+    let mut request = f.session.request.clone();
+    request.workflow = None;
+    let legacy = ReviewSession::new(
+        request,
+        ReviewOutput {
+            schema_version: 1,
+            edits: vec![],
+        },
+        "test-model".into(),
+    )
+    .unwrap();
+    let id = legacy.id().to_owned();
+    let mut slot = Some(legacy);
+    assert!(!ReviewSession::refresh_cached(
+        &mut slot,
+        &f.records,
+        &f.repo,
+        "session-a",
+        &id,
+        |_| false
+    )
+    .unwrap());
+    assert_eq!(
+        serde_json::to_value(slot.unwrap().view()).unwrap()["schemaVersion"],
+        1
+    );
+}
