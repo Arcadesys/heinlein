@@ -84,3 +84,14 @@ with unknown exit, second advanced through real Save and native Cancel but watch
 aborted73 before ACK release. Neither is normal-Quit/reopen acceptance. The second
 attempt's LF oracle was wrong; its stalled diagnostic/latch promise was not identified
 conclusively from available logs. Do not relabel either attempt after later success.
+
+Receipt provenance: the driver records SHA256 of supplied and signed/executed bytes,
+but has no reliable binary-bound source metadata. It therefore records JSON null for
+source, tree and uncommittedFixture. A source/binary binding requires independent
+build-time evidence; a binary hash alone cannot establish it. Historical native
+receipts remain historical and are not rewritten or represented as runs of this
+updated metadata helper. Its non-executing synthetic-byte regression runs in CI:
+
+```sh
+python3 -m unittest discover -s macos/tests/native-standalone-probe -p test_driver.py
+```

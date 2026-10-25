@@ -80,6 +80,14 @@ def run_phase(binary, root, phase, record):
     return {'pid': child.pid, 'exit': code, 'result': result, 'orderedDiagnostics': lines}
 
 
+def binary_receipt(binary, executable):
+    """Describe bytes without executing either input."""
+    # Hashes identify bytes, not their source commit/tree or checkout dirty state.
+    return {'source': None, 'tree': None, 'uncommittedFixture': None,
+            'binary': str(binary), 'binarySha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+            'executedBinary': str(executable), 'executedBinarySha256': hashlib.sha256(executable.read_bytes()).hexdigest()}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
@@ -108,8 +116,8 @@ def main():
         'CFBundleVersion': '1', 'CFBundleShortVersionString': '0.0.0'}))
     subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', '--identifier', identifier, str(app)], check=True, capture_output=True)
     subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(app)], check=True, capture_output=True)
-    receipt = {'bundle': str(app), 'identifier': identifier, 'signature': 'ad-hoc; strict verified', 'source':  '77f5474188cc36dd8af1173c8149867bcb056a9f', 'tree': 'ef6b8765212ce0056e94b42738733cd1ee3b861d',
-               'uncommittedFixture': True, 'binary': str(binary), 'binarySha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'executedBinary': str(executable), 'executedBinarySha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
+    receipt = {**binary_receipt(binary, executable),
+               'bundle': str(app), 'identifier': identifier, 'signature': 'ad-hoc; strict verified',
                'root': str(root), 'physicalKeyboard': False, 'VoiceOver': False, 'installedApp': False, 'phases': []}
     # Write progress after each clean child exit; failure keeps exact diagnostic root.
     try:
