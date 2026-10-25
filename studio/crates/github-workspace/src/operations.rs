@@ -177,7 +177,7 @@ pub fn version_preview(
         return Err(Error::Unsupported);
     }
     let (w, repo) = registry.reopen(id)?;
-    let _lock = registry.directory(id)?.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
     crate::branches::local_authorized(registry, &w)?;
     let head = Oid::from_str(&w.head_oid)?;
     let before = transport::tree_files(&repo, head)?;
@@ -232,11 +232,11 @@ pub fn commit_version(
 ) -> Result<Receipt> {
     let id = &plan.preview.workspace_id;
     let dir = registry.directory(id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
     let mut w = registry.get(id)?;
     let repo = transport::open(&dir, &registry.checkout(id)?)?;
     if let Some(r) = Receipt::load(&dir, &plan.preview.id)? {
-        return finish_commit(registry, &mut w, &repo, r);
+        return finish_commit(registry, &_lock, &mut w, &repo, r);
     }
     if crate::incoming::pending(registry, id)?
         || crate::journal::receipts(&dir)?
@@ -282,10 +282,11 @@ pub fn commit_version(
         message: "Local version prepared; nothing has been sent to GitHub.".into(),
     };
     receipt.save(&dir)?;
-    finish_commit(registry, &mut w, &repo, receipt)
+    finish_commit(registry, &_lock, &mut w, &repo, receipt)
 }
 fn finish_commit(
     registry: &Registry,
+    lock: &crate::registry::WorkspaceLock,
     w: &mut Workspace,
     repo: &Repository,
     mut receipt: Receipt,
@@ -309,8 +310,9 @@ fn finish_commit(
     } else if current != new {
         return Err(Error::Changed);
     }
+    let before = w.clone();
     w.head_oid = receipt.head.clone();
-    registry.save(w)?;
+    registry.save_locked(lock, &before, w)?;
     receipt.status = "succeeded".into();
     receipt.message = "Version saved on this computer. Nothing has been sent to GitHub.".into();
     receipt.save(&registry.directory(&w.id)?)?;
@@ -425,7 +427,7 @@ pub fn share_preview(
         return Err(Error::Unsupported);
     }
     let (w, repo) = registry.reopen(id)?;
-    let _lock = registry.directory(id)?.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
     if crate::journal::receipts(&registry.directory(id)?)?
         .iter()
         .any(|r| r.status == "unknown")
@@ -493,11 +495,12 @@ pub fn send(
     transport: impl FnOnce(&Repository, &Workspace, &Credential) -> Result<()>,
 ) -> Result<Receipt> {
     let dir = registry.directory(&p.preview.workspace_id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(&p.preview.workspace_id)?;
     if let Some(r) = Receipt::load(&dir, &p.preview.id)? {
         return Ok(r);
     }
     let (mut w, repo) = validate_share(registry, api, c, p)?;
+    let before = w.clone();
     let mut r = Receipt {
         id: p.preview.id.clone(),
         workspace_id: w.id.clone(),
@@ -516,7 +519,7 @@ pub fn send(
         let result = transport(&repo, &w, c);
         if result.is_ok() && api.head(c, &w.repo, &w.branch)?.as_deref() == Some(&w.head_oid) {
             w.remote_oid = Some(w.head_oid.clone());
-            registry.save(&w)?;
+            registry.save_locked(&_lock, &before, &w)?;
             r.status = "succeeded".into();
             r.message = "Sent to GitHub on your separate writing branch.".into();
         } else if matches!(result, Err(Error::Permission | Error::Changed)) {
@@ -572,7 +575,7 @@ pub fn send(
                 Err(_) => {}
             }
         }
-        registry.save(&w)?;
+        registry.save_locked(&_lock, &before, &w)?;
     }
     r.save(&dir)?;
     Ok(r)
@@ -585,8 +588,10 @@ pub fn reconcile(
     operation: &str,
 ) -> Result<Receipt> {
     let dir = registry.directory(id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
+    registry.recover_metadata_locked(&_lock)?;
     let mut w = registry.get(id)?;
+    let before = w.clone();
     if c.account.id != w.account_id
         || c.binding != w.auth_binding
         || api.repository_by_id(c, w.repo.id)? != w.repo
@@ -602,7 +607,7 @@ pub fn reconcile(
             r.status = "succeeded".into();
             r.message = "GitHub has this exact version. It was not sent again.".into();
             w.remote_oid = Some(r.head.clone());
-            registry.save(&w)?;
+            registry.save_locked(&_lock, &before, &w)?;
         }
     } else if ["feedback", "pullRequest"].contains(&r.kind.as_str()) {
         let marker = format!("<!-- heinlein-operation:{} -->", r.id);
@@ -625,7 +630,7 @@ pub fn reconcile(
             r.message =
                 "Found the existing feedback request. No second request was created.".into();
             w.pr = Some(pr.clone());
-            registry.save(&w)?;
+            registry.save_locked(&_lock, &before, &w)?;
         }
     }
     r.save(&dir)?;
@@ -639,9 +644,9 @@ pub fn rebind(
     id: &str,
     approved: &crate::RepoInfo,
 ) -> Result<Workspace> {
-    let dir = registry.directory(id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
     let (mut w, _) = registry.reopen(id)?;
+    let before = w.clone();
     let info = api.repository_by_id(c, w.repo.id)?;
     if &info != approved || info.id != w.repo.id {
         return Err(Error::Changed);
@@ -649,7 +654,7 @@ pub fn rebind(
     w.repo = info;
     w.account_id = c.account.id;
     w.auth_binding = c.binding.clone();
-    registry.save(&w)?;
+    registry.save_rebind_locked(&_lock, &before, &w)?;
     Ok(w)
 }
 /// Continue after closed/merged feedback only by explicit author choice, keeping history.
@@ -660,7 +665,7 @@ pub fn fresh_branch(
     id: &str,
 ) -> Result<Workspace> {
     let dir = registry.directory(id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
     let (mut w, repo) = registry.reopen(id)?;
     if c.account.id != w.account_id
         || c.binding != w.auth_binding
@@ -697,7 +702,7 @@ pub fn fresh_branch(
         after: w,
     };
     dir.write("branch-transaction.json", &record)?;
-    finish_branch(registry, &dir, &repo, &record)
+    finish_branch(registry, &_lock, &dir, &repo, &record)
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -715,6 +720,7 @@ pub fn branch_pending(registry: &Registry, id: &str) -> Result<bool> {
 }
 fn finish_branch(
     registry: &Registry,
+    lock: &crate::registry::WorkspaceLock,
     dir: &crate::registry::StateDir,
     repo: &Repository,
     r: &BranchRecord,
@@ -746,14 +752,19 @@ fn finish_branch(
         Err(_) => return Err(Error::Storage),
     }
     repo.set_head(&after)?;
-    crate::branches::grant_legacy_transition(registry, &r.before, &r.after)?;
-    registry.save(&r.after)?;
+    let book = if registry.get(&r.before.id)? == r.after {
+        crate::branches::read_book(registry, &r.after)?
+    } else {
+        crate::branches::grant_legacy_transition(registry, &r.before, &r.after)?
+    };
+    registry.save_branch_locked(lock, &r.before, &r.after, book, true)?;
     dir.write("branch-transaction.json", &Option::<BranchRecord>::None)?;
     Ok(r.after.clone())
 }
 pub fn recover_branch(registry: &Registry, id: &str) -> Result<Workspace> {
     let dir = registry.directory(id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
+    registry.recover_metadata_locked(&_lock)?;
     let r = dir
         .read::<Option<BranchRecord>>("branch-transaction.json")?
         .flatten()
@@ -762,16 +773,17 @@ pub fn recover_branch(registry: &Registry, id: &str) -> Result<Workspace> {
         return Err(Error::Recovery);
     }
     let repo = transport::open(&dir, &registry.checkout(id)?)?;
-    finish_branch(registry, &dir, &repo, &r)
+    finish_branch(registry, &_lock, &dir, &repo, &r)
 }
 pub fn recover_local_version(registry: &Registry, id: &str, operation: &str) -> Result<Receipt> {
     let dir = registry.directory(id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
+    registry.recover_metadata_locked(&_lock)?;
     let mut w = registry.get(id)?;
     let repo = transport::open(&dir, &registry.checkout(id)?)?;
     let r = Receipt::load(&dir, operation)?.ok_or(Error::Missing)?;
     if r.kind != "version" || r.workspace_id != id {
         return Err(Error::Changed);
     }
-    finish_commit(registry, &mut w, &repo, r)
+    finish_commit(registry, &_lock, &mut w, &repo, r)
 }

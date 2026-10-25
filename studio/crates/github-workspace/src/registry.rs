@@ -15,6 +15,14 @@ pub struct StateDir {
     fd: File,
 }
 pub struct Lock(File);
+/// Proof that this registry workspace lock is already held; never recursively flock it.
+pub struct WorkspaceLock {
+    id: String,
+    registry: PathBuf,
+    _lock: Lock,
+}
+#[path = "metadata.rs"]
+mod metadata;
 impl Drop for Lock {
     fn drop(&mut self) {
         #[cfg(unix)]
@@ -240,6 +248,19 @@ pub struct Workspace {
     pub branch: String,
     pub pr: Option<PullRequest>,
 }
+impl Workspace {
+    /// Native target selection; the renderer names a role, never a remote ref.
+    pub fn incoming_branch(&self, target: &str) -> Result<String> {
+        match target {
+            "feedback" => Ok(self.branch.clone()),
+            "default" => Ok(self
+                .base_branch
+                .clone()
+                .unwrap_or_else(|| self.repo.default_branch.clone())),
+            _ => Err(Error::InvalidRef),
+        }
+    }
+}
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PullRequest {
@@ -370,19 +391,25 @@ impl Registry {
             .find(|w| w.id == id)
             .ok_or(Error::Missing)
     }
-    pub fn save(&self, w: &Workspace) -> Result<()> {
-        uuid_id(&w.id)?;
-        crate::branches::track_save(self, w)?;
-        let _lock = self.state.lock("catalog.lock")?;
+    pub fn workspace_lock(&self, id: &str) -> Result<WorkspaceLock> {
+        Ok(WorkspaceLock {
+            id: id.into(),
+            registry: self.state.path().to_owned(),
+            _lock: self.directory(id)?.lock("workspace.lock")?,
+        })
+    }
+    pub fn save(&self, before: &Workspace, after: &Workspace) -> Result<()> {
+        let lock = self.workspace_lock(&before.id)?;
+        self.save_locked(&lock, before, after)
+    }
+    fn publish_new(&self, lock: &WorkspaceLock, w: &Workspace) -> Result<()> {
+        self.check_workspace_lock(lock, &w.id)?;
+        let _catalog = self.state.lock("catalog.lock")?;
         let mut all = self.read()?;
-        if let Some(old) = all.iter_mut().find(|old| old.id == w.id) {
-            if old.repo.id != w.repo.id {
-                return Err(Error::Changed);
-            }
-            *old = w.clone()
-        } else {
-            all.push(w.clone())
+        if all.iter().any(|old| old.id == w.id) || crate::branches::read_book(self, w)?.is_some() {
+            return Err(Error::Changed);
         }
+        all.push(w.clone());
         self.state.write(
             "registry-v1.json",
             &Catalog {
@@ -403,6 +430,9 @@ impl Registry {
     }
     pub fn reopen(&self, id: &str) -> Result<(Workspace, git2::Repository)> {
         let w = self.get(id)?;
+        if self.metadata_pending(id)? {
+            return Err(Error::Recovery);
+        }
         let dir = self.directory(id)?;
         if crate::branches::pending(self, id)?
             || crate::incoming::pending(self, id)?
@@ -449,7 +479,7 @@ impl Registry {
         }
         let id = uuid::Uuid::new_v4().to_string();
         let private = self.directory(&id)?;
-        let _lock = private.lock("workspace.lock")?;
+        let lock = self.workspace_lock(&id)?;
         let stage = self.sources.join(format!("opening-{id}"));
         private.write("opening-id-v1.json", &id)?;
         fs::create_dir(&stage)?;
@@ -482,7 +512,7 @@ impl Registry {
                 branch,
                 pr: None,
             };
-            self.save(&w)?;
+            self.publish_new(&lock, &w)?;
             Ok(w)
         })();
         if result.is_err() {

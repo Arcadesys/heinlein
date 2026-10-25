@@ -42,7 +42,9 @@ fn setup(
         head: w.branch.clone(),
         base: "main".into(),
     });
-    f.registry.save(&w).unwrap();
+    f.registry
+        .save(&f.registry.get(&w.id).unwrap(), &w)
+        .unwrap();
     *api.detail.lock().unwrap() = Some(PullDetail {
         pull: w.pr.clone().unwrap(),
         node_id: "PR_synthetic".into(),
@@ -170,4 +172,62 @@ fn saved_source_edit_or_recovery_barrier_invalidates_action_before_any_request()
         Err(Error::Changed)
     ));
     assert_eq!(api.mutations.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn unknown_ready_receipt_repairs_local_metadata_then_observes_without_another_mutation() {
+    use github_workspace::branches;
+    let (f, api, c, old) = setup(true);
+    let p = branches::preview(
+        &f.registry,
+        &api,
+        &c,
+        &old.id,
+        &old.branch,
+        "revision/ready",
+        true,
+        |_, _| panic!(),
+    )
+    .unwrap();
+    let before = branches::apply(&f.registry, &api, &c, &p, || Ok(())).unwrap();
+    let mut w = before.clone();
+    w.remote_oid = Some(w.head_oid.clone());
+    let mut pr = old.pr.unwrap();
+    pr.head = w.branch.clone();
+    w.pr = Some(pr.clone());
+    f.registry.save(&before, &w).unwrap();
+    api.detail.lock().unwrap().as_mut().unwrap().pull = pr;
+    *api.remote.lock().unwrap() = Some(w.head_oid.clone());
+    api.mutation_mode.store(4, Ordering::SeqCst);
+    let p = pull_actions::preview(&f.registry, &api, &c, &w.id, "ready", "squash").unwrap();
+    let result = pull_actions::apply(&f.registry, &api, &c, &p, || Ok(())).unwrap();
+    assert_eq!(result.status, "unknown");
+    assert_eq!(api.mutations.load(Ordering::SeqCst), 1);
+    let mut after = w.clone();
+    after.pr.as_mut().unwrap().draft = false;
+    assert!(f
+        .registry
+        .save_with_hook(&w, &after, |at| if at == 2 {
+            Err(Error::Storage)
+        } else {
+            Ok(())
+        })
+        .is_err());
+    assert!(f.registry.metadata_pending(&w.id).unwrap());
+    assert!(branches::local_authorized(&f.registry, &w).is_err());
+    let registry = Registry::open(&f.root.join("private"), &f.root.join("sources")).unwrap();
+    let network = pull_actions::reconcile(&registry, &api, &c, &w.id, &p.preview.id).unwrap();
+    assert_eq!(network.status, "unknown");
+    assert!(!registry.metadata_pending(&w.id).unwrap());
+    assert_eq!(registry.get(&w.id).unwrap(), after);
+    assert_eq!(api.mutations.load(Ordering::SeqCst), 1);
+    *api.detail_error.lock().unwrap() = None;
+    let observed = pull_actions::reconcile(&registry, &api, &c, &w.id, &p.preview.id).unwrap();
+    assert_eq!(observed.status, "succeeded");
+    assert!(observed.message.contains("No action was retried"));
+    assert_eq!(api.mutations.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        std::fs::read(registry.checkout(&w.id).unwrap().join("story.md")).unwrap(),
+        b"Original story.\n"
+    );
 }

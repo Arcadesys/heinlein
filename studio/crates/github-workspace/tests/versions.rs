@@ -204,7 +204,9 @@ fn lost_pr_response_recovers_exact_marker_without_second_request() {
     *api.remote.lock().unwrap() = Some(local.head.clone());
     let mut current = f.registry.get(&w.id).unwrap();
     current.remote_oid = Some(local.head);
-    f.registry.save(&current).unwrap();
+    f.registry
+        .save(&f.registry.get(&current.id).unwrap(), &current)
+        .unwrap();
     let pr = operations::share_preview(
         &f.registry,
         &api,
@@ -380,7 +382,9 @@ fn ready_pr_is_a_known_failure_not_an_uncertain_new_request() {
     let receipt = operations::commit_version(&f.registry, &v, |_| Ok(())).unwrap();
     let mut w = f.registry.get(&w.id).unwrap();
     w.remote_oid = Some(receipt.head.clone());
-    f.registry.save(&w).unwrap();
+    f.registry
+        .save(&f.registry.get(&w.id).unwrap(), &w)
+        .unwrap();
     *api.remote.lock().unwrap() = Some(receipt.head);
     api.prs.lock().unwrap().push((
         github_workspace::registry::PullRequest {
@@ -492,7 +496,9 @@ fn ready_pull_request_previews_full_comparison_and_lost_reply_never_duplicates()
     let receipt = operations::commit_version(&f.registry, &p, |_| Ok(())).unwrap();
     let mut w = f.registry.get(&w.id).unwrap();
     w.remote_oid = Some(receipt.head.clone());
-    f.registry.save(&w).unwrap();
+    f.registry
+        .save(&f.registry.get(&w.id).unwrap(), &w)
+        .unwrap();
     *api.remote.lock().unwrap() = Some(receipt.head);
     let p = operations::share_preview(
         &f.registry,

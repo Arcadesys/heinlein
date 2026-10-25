@@ -138,7 +138,7 @@ pub fn preview(
         return Err(Error::Unsupported);
     }
     let (w, git) = registry.reopen(id)?;
-    let _lock = registry.directory(id)?.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
     crate::branches::local_authorized(registry, &w)?;
     bound(api, c, &w)?;
     if crate::journal::receipts(&registry.directory(id)?)?
@@ -187,7 +187,7 @@ pub fn apply(
     barrier: impl FnOnce() -> Result<()>,
 ) -> Result<Receipt> {
     let dir = registry.directory(&plan.before.id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(&plan.before.id)?;
     if let Some(receipt) = Receipt::load(&dir, &plan.preview.id)? {
         return Ok(receipt);
     }
@@ -245,10 +245,11 @@ pub fn apply(
     }
     // Even a successful response needs readback. A timeout/malformed response is
     // reconciled without replay; current state is not proof of which actor wrote.
-    finish_readback(registry, api, c, &intent, receipt)
+    finish_readback(registry, &_lock, api, c, &intent, receipt)
 }
 fn finish_readback(
     registry: &Registry,
+    lock: &crate::registry::WorkspaceLock,
     api: &dyn Provider,
     c: &Credential,
     intent: &Intent,
@@ -256,6 +257,7 @@ fn finish_readback(
 ) -> Result<Receipt> {
     let dir = registry.directory(&receipt.workspace_id)?;
     let mut w = registry.get(&receipt.workspace_id)?;
+    let before = w.clone();
     crate::branches::local_authorized(registry, &w)?;
     bound(api, c, &w)?;
     if intent.version != 1
@@ -290,7 +292,7 @@ fn finish_readback(
                 receipt.status = "succeeded".into();
                 receipt.message=if merged{"GitHub reports this exact PR head merged. No action was retried; local branches and writing are retained."}else{"GitHub reports this pull request ready for review. No action was retried."}.into();
                 w.pr = Some(actual.pull);
-                registry.save(&w)?;
+                registry.save_locked(lock, &before, &w)?;
             } else {
                 receipt.message="GitHub has not confirmed this action. Check the pull request again or open it on GitHub; no automatic retry or alternate merge is offered.".into();
             }
@@ -309,7 +311,8 @@ pub fn reconcile(
     operation: &str,
 ) -> Result<Receipt> {
     let dir = registry.directory(id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
+    registry.recover_metadata_locked(&_lock)?;
     let receipt = Receipt::load(&dir, operation)?.ok_or(Error::Missing)?;
     if receipt.workspace_id != id || !["ready", "merge"].contains(&receipt.kind.as_str()) {
         return Err(Error::Changed);
@@ -320,5 +323,5 @@ pub fn reconcile(
     let intent = dir
         .read::<Intent>(&intent_name(operation)?)?
         .ok_or(Error::Recovery)?;
-    finish_readback(registry, api, c, &intent, receipt)
+    finish_readback(registry, &_lock, api, c, &intent, receipt)
 }

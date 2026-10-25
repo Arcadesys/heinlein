@@ -118,11 +118,13 @@ pub struct MockApi {
     pub user_id: AtomicUsize,
     pub remote: Mutex<Option<String>>,
     pub base: Mutex<Option<String>>,
+    pub heads: Mutex<std::collections::BTreeMap<String, Option<String>>>,
     pub prs: Mutex<Vec<(PullRequest, String)>>,
     pub create_calls: AtomicUsize,
     pub fail_create: AtomicBool,
     pub denied: AtomicBool,
     pub detail: Mutex<Option<github_workspace::api::PullDetail>>,
+    pub detail_error: Mutex<Option<Error>>,
     pub proved: AtomicBool,
     pub mutations: AtomicUsize,
     pub mutation_mode: AtomicUsize,
@@ -137,11 +139,13 @@ impl Default for MockApi {
             user_id: AtomicUsize::new(9),
             remote: Mutex::new(None),
             base: Mutex::new(None),
+            heads: Mutex::new(Default::default()),
             prs: Mutex::new(vec![]),
             create_calls: AtomicUsize::new(0),
             fail_create: AtomicBool::new(false),
             denied: AtomicBool::new(false),
             detail: Mutex::new(None),
+            detail_error: Mutex::new(None),
             proved: AtomicBool::new(false),
             mutations: AtomicUsize::new(0),
             mutation_mode: AtomicUsize::new(0),
@@ -155,6 +159,9 @@ impl Provider for MockApi {
         _: &github_workspace::RepoInfo,
         _: u64,
     ) -> Result<github_workspace::api::PullDetail> {
+        if let Some(error) = *self.detail_error.lock().unwrap() {
+            return Err(error);
+        }
         self.detail.lock().unwrap().clone().ok_or(Error::Missing)
     }
     fn merge_policy(
@@ -190,6 +197,10 @@ impl Provider for MockApi {
             _ => {}
         }
         self.detail.lock().unwrap().as_mut().unwrap().pull.draft = false;
+        if self.mutation_mode.load(Ordering::SeqCst) == 4 {
+            *self.detail_error.lock().unwrap() = Some(Error::Network);
+            return Err(Error::Network);
+        }
         if self.mutation_mode.load(Ordering::SeqCst) == 2 {
             Err(Error::Network)
         } else {
@@ -272,6 +283,9 @@ impl Provider for MockApi {
         _: &github_workspace::RepoInfo,
         branch: &str,
     ) -> Result<Option<String>> {
+        if let Some(head) = self.heads.lock().unwrap().get(branch) {
+            return Ok(head.clone());
+        }
         Ok(if branch == "main" {
             self.base.lock().unwrap().clone()
         } else {

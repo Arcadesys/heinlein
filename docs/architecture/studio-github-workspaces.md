@@ -168,6 +168,22 @@ uses a staged tree, fsynced journal and retained backup; restart finishes the sa
 transaction without fetching or discarding unsent commits. Untracked writing or
 uncertain remote operations block switching. No implicit reset, stash or deletion.
 
+Incoming review resolves its target from the selected working branch's retained
+base, with the original default only as a legacy fallback. The displayed target
+names that branch. Reviewing an advancing non-default base updates that base pin
+before a later explicit send; no default-branch write is introduced.
+
+Capability-book and catalog-entry saves use a separate bounded metadata journal.
+Under workspace then catalog locks, exact before values precede durable journal,
+book, and target-entry writes, readback, then journal cleanup. Other workspace
+entries are read fresh and preserved. Restart repairs only components equal to the
+recorded before or after values; malformed, missing or third values remain blocked.
+Ordinary saves cannot grant a ref/account capability; explicit branch/rebind parent
+operations supply their own validated transitions. Child metadata recovery composes
+with branch journals and precedes read-only unknown-receipt reconciliation. It does
+not edit source/refs, resend a request or mark an unknown remote action successful.
+Status exposes local repair through existing recovery controls.
+
 Commit selects exact saved files. Send is separate. Draft PR and ready PR creation
 are distinct explicit actions; a creation timeout is reconciled by its operation
 marker, never replayed. Mark draft ready is separate again. GraphQL ready has no

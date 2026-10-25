@@ -428,13 +428,20 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
         let w = r.get(&workspace_id).map_err(|e| e.to_string())?;
         if !confirm(app,"Recover GitHub project",format!("Recover the interrupted local operation for {}/{}? Known original files are restored, or an already completed version is retained. Changed external files are never overwritten. Nothing is sent to GitHub.",w.repo.owner,w.repo.name)){return Ok(Value::Null)}
         current(&state, epoch)?;
+        let metadata_pending = r
+            .metadata_pending(&workspace_id)
+            .map_err(|e| e.to_string())?;
+        if metadata_pending {
+            r.recover_metadata(&workspace_id)
+                .map_err(|e| e.to_string())?;
+        }
         if let Some(id) = operation_id {
             operations::recover_local_version(&r, &workspace_id, &id).map_err(|e| e.to_string())?;
         } else if gh::branches::pending(&r, &workspace_id).map_err(|e| e.to_string())? {
             gh::branches::recover(&r, &workspace_id).map_err(|e| e.to_string())?;
         } else if incoming::pending(&r, &workspace_id).map_err(|e| e.to_string())? {
             incoming::rollback(&r, &workspace_id).map_err(|e| e.to_string())?;
-        } else {
+        } else if operations::branch_pending(&r, &workspace_id).map_err(|e| e.to_string())? {
             operations::recover_branch(&r, &workspace_id).map_err(|e| e.to_string())?;
         }
         state.mutation_gate.invalidate();
@@ -442,7 +449,7 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
     }
     if let Request::Status = request {
         let r = registry(app)?;
-        let workspaces=r.list().map_err(|e|e.to_string())?.into_iter().map(|w|{let error=r.reopen(&w.id).err().map(|e|e.to_string());let receipts=r.directory(&w.id).and_then(|d|journal::receipts(&d)).map_err(|e|e.to_string())?;Ok(json!({"workspace":w,"error":error,"incomingRecovery":incoming::pending(&r,&w.id).map_err(|e|e.to_string())?,"branchRecovery":(operations::branch_pending(&r,&w.id).map_err(|e|e.to_string())? || gh::branches::pending(&r,&w.id).map_err(|e|e.to_string())?),"receipts":receipts}))}).collect::<Result<Vec<_>>>()?;
+        let workspaces=r.list().map_err(|e|e.to_string())?.into_iter().map(|w|{let error=r.reopen(&w.id).err().map(|e|e.to_string());let receipts=r.directory(&w.id).and_then(|d|journal::receipts(&d)).map_err(|e|e.to_string())?;Ok(json!({"workspace":w,"error":error,"incomingRecovery":incoming::pending(&r,&w.id).map_err(|e|e.to_string())?,"branchRecovery":(operations::branch_pending(&r,&w.id).map_err(|e|e.to_string())? || gh::branches::pending(&r,&w.id).map_err(|e|e.to_string())? || r.metadata_pending(&w.id).map_err(|e|e.to_string())?),"receipts":receipts}))}).collect::<Result<Vec<_>>>()?;
         let (auth, error) =
             match services(app).and_then(|s| s.auth.view().map_err(|e| e.to_string())) {
                 Ok(a) => (Some(a), None),
@@ -772,11 +779,7 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
             {
                 return Err("Confirm the GitHub account and repository again".into());
             }
-            let branch = match target.as_str() {
-                "feedback" => w.branch.clone(),
-                "default" => w.repo.default_branch.clone(),
-                _ => return Err("Choose feedback or original branch".into()),
-            };
+            let branch = w.incoming_branch(&target).map_err(|e| e.to_string())?;
             let (_, git) = s.registry.reopen(&w.id).map_err(|e| e.to_string())?;
             let head = gh::transport::fetch(&git, &w.repo.clone_url(), &branch, &c)
                 .map_err(|e| e.to_string())?;

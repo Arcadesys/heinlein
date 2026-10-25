@@ -460,3 +460,11 @@ fn interrupted_unpublished_open_is_recovered_but_live_registered_and_unmarked_st
     assert!(unknown.path().join("keep").exists());
     assert_eq!(again.reopen(&existing.id).unwrap().0, existing);
 }
+
+#[test]
+fn unknown_workspace_reopen_never_allocates_a_private_directory() {
+    let f = Fixture::new();
+    let id = uuid::Uuid::new_v4().to_string();
+    assert!(matches!(f.registry.reopen(&id), Err(Error::Missing)));
+    assert!(!f.root.join("private").join(id).exists());
+}

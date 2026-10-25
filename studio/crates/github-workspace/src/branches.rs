@@ -17,15 +17,15 @@ use std::{
 };
 const BOOK: &str = "branch-capabilities-v1.json";
 const JOURNAL: &str = "branch-switch-v1.json";
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-struct Book {
-    version: u8,
-    workspace_id: String,
-    repo_id: u64,
-    branches: BTreeMap<String, Workspace>,
+pub(crate) struct Book {
+    pub(crate) version: u8,
+    pub(crate) workspace_id: String,
+    pub(crate) repo_id: u64,
+    pub(crate) branches: BTreeMap<String, Workspace>,
 }
-fn read_book(registry: &Registry, w: &Workspace) -> Result<Option<Book>> {
+pub(crate) fn read_book(registry: &Registry, w: &Workspace) -> Result<Option<Book>> {
     let book = registry.directory(&w.id)?.read::<Book>(BOOK)?;
     if let Some(book) = &book {
         if book.version != 1
@@ -71,30 +71,13 @@ fn book_for(registry: &Registry, w: &Workspace) -> Result<Book> {
         branches: BTreeMap::from([(w.branch.clone(), w.clone())]),
     }))
 }
-pub(crate) fn track_save(registry: &Registry, w: &Workspace) -> Result<()> {
-    if let Some(mut book) = read_book(registry, w)? {
-        if !book.branches.contains_key(&w.branch) {
-            return Err(Error::Recovery);
-        }
-        // Only trusted native explicit rebind changes identity. Keep each branch's
-        // history/remote state while updating this project's confirmed binding.
-        for state in book.branches.values_mut() {
-            state.repo = w.repo.clone();
-            state.account_id = w.account_id;
-            state.auth_binding = w.auth_binding.clone();
-        }
-        book.branches.insert(w.branch.clone(), w.clone());
-        registry.directory(&w.id)?.write(BOOK, &book)?;
-    }
-    Ok(())
-}
 pub(crate) fn grant_legacy_transition(
     registry: &Registry,
     before: &Workspace,
     after: &Workspace,
-) -> Result<()> {
+) -> Result<Option<Book>> {
     if read_book(registry, before)?.is_none() {
-        return Ok(());
+        return Ok(None);
     }
     if before.id != after.id
         || before.repo != after.repo
@@ -105,7 +88,7 @@ pub(crate) fn grant_legacy_transition(
     }
     let mut book = book_for(registry, before)?;
     book.branches.insert(after.branch.clone(), after.clone());
-    registry.directory(&before.id)?.write(BOOK, &book)
+    Ok(Some(book))
 }
 /// Private fields prevent arbitrary renderer refs from becoming transport authority.
 pub struct Authority {
@@ -117,6 +100,9 @@ pub struct Authority {
     pub(crate) binding: String,
 }
 pub fn local_authorized(registry: &Registry, w: &Workspace) -> Result<()> {
+    if registry.metadata_pending(&w.id)? {
+        return Err(Error::Recovery);
+    }
     if w.branch == w.repo.default_branch {
         return Err(Error::InvalidRef);
     }
@@ -284,7 +270,7 @@ pub fn preview(
     mut fetch: impl FnMut(&Repository, &str) -> Result<Oid>,
 ) -> Result<Plan> {
     let dir = registry.directory(id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
     let (w, repo) = registry.reopen(id)?;
     check(api, c, &w)?;
     transport::valid_ref(start)?;
@@ -450,7 +436,7 @@ pub fn apply_with_hook(
     mut hook: impl FnMut(usize) -> Result<()>,
 ) -> Result<Workspace> {
     let dir = registry.directory(&plan.before.id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(&plan.before.id)?;
     let (w, repo) = registry.reopen(&plan.before.id)?;
     check(api, c, &w)?;
     if w != plan.before || clean(registry, &w, &repo)? != plan.expected {
@@ -501,10 +487,11 @@ pub fn apply_with_hook(
         return Err(e);
     }
     hook(0)?;
-    finish(registry, &repo, &r, &mut hook)
+    finish(registry, &_lock, &repo, &r, &mut hook)
 }
 fn finish(
     registry: &Registry,
+    lock: &crate::registry::WorkspaceLock,
     repo: &Repository,
     r: &Record,
     hook: &mut impl FnMut(usize) -> Result<()>,
@@ -591,8 +578,7 @@ fn finish(
     }
     repo.set_head(&reference)?;
     hook(3)?;
-    dir.write(BOOK, &r.book)?;
-    registry.save(&r.after)?;
+    registry.save_branch_locked(lock, &r.before, &r.after, Some(r.book.clone()), false)?;
     hook(4)?;
     // Original saved bytes remain available in Git. Refuse unexpected backup
     // edits; never silently remove an interrupted writer's data.
@@ -606,7 +592,8 @@ fn finish(
 }
 pub fn recover(registry: &Registry, id: &str) -> Result<Workspace> {
     let dir = registry.directory(id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
+    registry.recover_metadata_locked(&_lock)?;
     let record = dir
         .read::<Option<Record>>(JOURNAL)?
         .flatten()
@@ -624,5 +611,5 @@ pub fn recover(registry: &Registry, id: &str) -> Result<Workspace> {
             .join(format!("branch-backup-{}", record.id))
     };
     let repo = transport::open(&dir, &location)?;
-    finish(registry, &repo, &record, &mut |_| Ok(()))
+    finish(registry, &_lock, &repo, &record, &mut |_| Ok(()))
 }
