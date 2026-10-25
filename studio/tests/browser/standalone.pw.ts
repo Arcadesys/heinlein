@@ -128,7 +128,11 @@ test('saved draft selection preserves dirty project writing across keep-editing 
 
 test('Cmd+N keeps writing and opens a focused blank Markdown draft with discoverable keyboard help',async({page})=>{
   await page.goto('/tests/browser/standalone.html');await expect(writing(page)).toBeFocused();
-  await activate(page.getByRole('button',{name:/^Appearance/}));await activate(page.getByRole('button',{name:'High contrast',exact:true}));await page.keyboard.press('Escape');
+  const appearance=page.getByRole('button',{name:/^Appearance/});
+  await activate(appearance);await activate(page.getByRole('button',{name:'High contrast',exact:true}));await page.keyboard.press('Escape');
+  // The native dialog close event restores focus asynchronously. Finish that
+  // transition before beginning a separate keyboard action in the editor.
+  await expect(appearance).toBeFocused();
   for(let i=0;i<5;i++)await page.keyboard.press('Meta+=');
   await expect(page.locator('html')).toHaveAttribute('data-zoom','200');
   await writing(page).focus();await page.keyboard.insertText('Keyboard draft — café 🦊');
