@@ -62,6 +62,19 @@ pub fn author_path(path: &str) -> bool {
         && !path.split('/').any(|s| s.starts_with('.'))
 }
 pub fn disk_files(root: &repository_core::Repository, tracked: &Files) -> Result<Files> {
+    // Git-relevant executable changes are uncommitted local work too. Never
+    // restore a tracked mode over them during switching or backup cleanup.
+    #[cfg(unix)]
+    for (path, entry) in tracked.entries.iter() {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::symlink_metadata(root.root().join(path)) {
+            if meta.is_file()
+                && (meta.permissions().mode() & 0o111 != 0) != (entry.mode == 0o100755)
+            {
+                return Err(Error::Uncommitted);
+            }
+        }
+    }
     // Passive files are never silently added, removed or rewritten by a text
     // commit. Validate raw bytes without loading the whole repository in RAM.
     for (path, entry) in tracked.entries.iter().filter(|(_, e)| !e.editable) {
@@ -688,7 +701,11 @@ pub fn fresh_branch(
         return Err(Error::Changed);
     }
     let base = api
-        .head(c, &w.repo, &w.repo.default_branch)?
+        .head(
+            c,
+            &w.repo,
+            w.base_branch.as_deref().unwrap_or(&w.repo.default_branch),
+        )?
         .ok_or(Error::Changed)?;
     if base != w.base_oid
         || !(w.head_oid == base

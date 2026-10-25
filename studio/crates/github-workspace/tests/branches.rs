@@ -436,6 +436,37 @@ fn nondefault_starting_branch_advances_through_native_target_review_and_send() {
     assert_eq!(receipt.status, "succeeded");
     assert_eq!(*api.base.lock().unwrap(), Some(w.base_oid));
     assert_eq!(api.mutations.load(Ordering::SeqCst), 0);
+    let before_fresh = f.registry.get(&w.id).unwrap();
+    let closed = github_workspace::registry::PullRequest {
+        number: 71,
+        url: "https://github.com/example/story/pull/71".into(),
+        state: "closed".into(),
+        merged: true,
+        draft: false,
+        head: before_fresh.branch.clone(),
+        base: "release".into(),
+    };
+    let mut with_pr = before_fresh.clone();
+    with_pr.pr = Some(closed.clone());
+    f.registry.save(&before_fresh, &with_pr).unwrap();
+    api.prs
+        .lock()
+        .unwrap()
+        .push((closed, before_fresh.head_oid.clone()));
+    let fresh = operations::fresh_branch(&f.registry, &api, &c, &w.id).unwrap();
+    assert_eq!(fresh.base_branch.as_deref(), Some("release"));
+    let plan = operations::share_preview(
+        &f.registry,
+        &api,
+        &c,
+        &w.id,
+        "push",
+        String::new(),
+        String::new(),
+    )
+    .unwrap();
+    assert_eq!(plan.preview.base, "release");
+    assert_ne!(fresh.branch, with_pr.branch);
     let after = transport::tree_files(&git, updated.head_oid.parse().unwrap()).unwrap();
     assert_eq!(&*after["story.md"], b"Advanced release.\n");
 }
@@ -725,4 +756,175 @@ fn ordinary_metadata_save_cannot_grant_branches_or_account_authority() {
         .path()
         .join("branch-capabilities-v1.json")
         .exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn local_executable_changes_refuse_preview_apply_and_backup_cleanup() {
+    use std::os::unix::fs::PermissionsExt;
+    for boundary in 0..3 {
+        let (f, c, w, api) = setup();
+        let root = f.registry.checkout(&w.id).unwrap();
+        let changed = |path: &std::path::Path| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap()
+        };
+        if boundary == 0 {
+            changed(&root.join("story.md"));
+        }
+        let plan = branches::preview(
+            &f.registry,
+            &api,
+            &c,
+            &w.id,
+            &w.branch,
+            "revision/modes",
+            true,
+            |_, _| panic!(),
+        );
+        if boundary == 0 {
+            assert!(plan.is_err(), "chmod must refuse preview");
+            continue;
+        }
+        let plan = plan.unwrap();
+        if boundary == 1 {
+            changed(&root.join("story.md"));
+            assert!(branches::apply(&f.registry, &api, &c, &plan, || Ok(())).is_err());
+        } else {
+            assert!(branches::apply_with_hook(
+                &f.registry,
+                &api,
+                &c,
+                &plan,
+                || Ok(()),
+                |step| if step == 1 {
+                    Err(Error::Storage)
+                } else {
+                    Ok(())
+                }
+            )
+            .is_err());
+            let dir = f.registry.directory(&w.id).unwrap();
+            let record: serde_json::Value = dir.read("branch-switch-v1.json").unwrap().unwrap();
+            let backup = f
+                .root
+                .join("sources")
+                .join(format!("branch-backup-{}", record["id"].as_str().unwrap()));
+            changed(&backup.join("story.md"));
+            assert!(branches::recover(&f.registry, &w.id).is_err());
+            assert!(backup.exists(), "never delete a locally changed backup");
+        }
+    }
+}
+
+#[test]
+fn retained_branch_reopens_local_head_after_remote_advances_without_sending() {
+    let (f, c, w, api) = setup();
+    let mut shared = w.clone();
+    shared.remote_oid = Some(w.head_oid.clone());
+    f.registry.save(&w, &shared).unwrap();
+    *api.remote.lock().unwrap() = Some(w.head_oid.clone());
+    api.heads
+        .lock()
+        .unwrap()
+        .insert("revision/other".into(), None);
+    let p = branches::preview(
+        &f.registry,
+        &api,
+        &c,
+        &w.id,
+        &w.branch,
+        "revision/other",
+        true,
+        |_, _| panic!(),
+    )
+    .unwrap();
+    let other = branches::apply(&f.registry, &api, &c, &p, || Ok(())).unwrap();
+    let (_, git) = f.registry.reopen(&w.id).unwrap();
+    let advanced = commit(
+        &git,
+        &github_workspace::transport::Files::from([(
+            "story.md".into(),
+            b"Collaborator advance.\n".to_vec(),
+        )]),
+        &[w.head_oid.parse().unwrap()],
+    );
+    api.heads
+        .lock()
+        .unwrap()
+        .insert(w.branch.clone(), Some(advanced.to_string()));
+    let p = branches::preview(
+        &f.registry,
+        &api,
+        &c,
+        &w.id,
+        &w.branch,
+        &w.branch,
+        false,
+        |_, _| panic!(),
+    )
+    .unwrap();
+    let reopened = branches::apply(&f.registry, &api, &c, &p, || Ok(())).unwrap();
+    assert_eq!(reopened.head_oid, w.head_oid);
+    assert_eq!(reopened.remote_oid, shared.remote_oid);
+    assert!(operations::share_preview(
+        &f.registry,
+        &api,
+        &c,
+        &w.id,
+        "push",
+        String::new(),
+        String::new()
+    )
+    .is_err());
+    assert_eq!(
+        std::fs::read(f.registry.checkout(&w.id).unwrap().join("story.md")).unwrap(),
+        b"Original story.\n"
+    );
+    let incoming = github_workspace::incoming::IncomingPlan::create(
+        &f.registry,
+        &w.id,
+        advanced,
+        reopened.branch.clone(),
+    )
+    .unwrap();
+    assert!(incoming.preview.ready);
+    let recovery = repository_core::RecoveryStore::open(f.root.join("recovery")).unwrap();
+    github_workspace::incoming::apply(
+        &f.registry,
+        &api,
+        &c,
+        &incoming,
+        Identity {
+            name: "Synthetic".into(),
+            email: "test@example.invalid".into(),
+        },
+        &recovery,
+        |_| Ok(()),
+    )
+    .unwrap();
+    assert_eq!(
+        f.registry.get(&w.id).unwrap().remote_oid,
+        Some(advanced.to_string())
+    );
+    assert_eq!(
+        std::fs::read(f.registry.checkout(&w.id).unwrap().join("story.md")).unwrap(),
+        b"Collaborator advance.\n"
+    );
+    let p = branches::preview(
+        &f.registry,
+        &api,
+        &c,
+        &w.id,
+        &other.branch,
+        &other.branch,
+        false,
+        |_, _| panic!(),
+    )
+    .unwrap();
+    assert_eq!(
+        branches::apply(&f.registry, &api, &c, &p, || Ok(()))
+            .unwrap()
+            .head_oid,
+        other.head_oid
+    );
 }

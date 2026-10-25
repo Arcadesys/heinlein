@@ -362,11 +362,12 @@ pub fn preview(
         after.pr = None;
         after
     };
-    if let Some(remote) = &after.remote_oid {
-        if api.head(c, &w.repo, &after.branch)?.as_deref() != Some(remote) {
-            return Err(Error::Changed);
-        }
-        pins.push((after.branch.clone(), remote.clone()));
+    if after.remote_oid.is_some() {
+        // Selecting retained local work does not adopt a collaborator's head.
+        // Pin the current observation for this switch, retaining the previous
+        // shared OID so sending still requires explicit incoming review.
+        let observed = api.head(c, &w.repo, &after.branch)?.ok_or(Error::Changed)?;
+        pins.push((after.branch.clone(), observed));
     }
     after.repo = w.repo.clone();
     after.account_id = w.account_id;
