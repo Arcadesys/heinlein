@@ -78,6 +78,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let searchScopeRevision = 0;
   let opened: Document | null = null;
   let standalone: ReturnType<typeof createStandaloneDrafts>|null=null;
+  let newDraftButton: HTMLButtonElement|null=null;
   let editor: ReturnType<typeof createEditor> | null = null;
   let chapterEditor: ReturnType<typeof createEditor> | null = null;
   let questions: ReturnType<typeof createSelectionQuestionPanel> | null = null;
@@ -517,7 +518,16 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     chapterEditor?.destroy();chapterEditor=null;editor?.destroy();editor=null;opened=null;currentChapter=null;
     cancelAutosave();cancelSaveNotice();documentEpoch++;recovery=null;recoveryPending=false;writePaused=null;saveButton=null;dirtyBadge=null;writing.clearScene();
   },openCopy:async(session,path)=>{placedText={repositoryId:session.id,path};await selectRepository(()=>Promise.resolve(session));if(repository?.id===session.id)await showDocument(path);}});
-  if(standalone.supported){status.textContent='Start writing. Drafts are kept on this Mac; choosing a folder is optional.';corner.prepend(button('Drafts',()=>void standalone!.list()),button('New draft',()=>void standalone!.newDraft()));}
+  if(standalone.supported){
+    status.textContent='Start writing. Drafts are kept on this Mac; choosing a folder is optional.';
+    newDraftButton=button('New draft',()=>{
+      if (!newDraftButton || newDraftButton.disabled) return;
+      newDraftButton.disabled=true;
+      void standalone!.newDraft().catch(reportError).finally(()=>{ if (newDraftButton) newDraftButton.disabled=false; });
+    });
+    newDraftButton.setAttribute('aria-keyshortcuts','Meta+N Control+N');
+    corner.prepend(button('Drafts',()=>void standalone!.list()),newDraftButton);
+  }
 
   const navigation = createNavigationDrawer(files, manuscriptPane, scenePane, open => layout.classList.toggle('navigation-open', open));
   layout.append(navigation.element, preview);
@@ -945,7 +955,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const backdrop = el('div', '', 'overlay-backdrop'); backdrop.addEventListener('mousedown', () => toggleHelp(false));
     const sheet = el('div', '', 'help-sheet'); sheet.setAttribute('role', 'dialog'); sheet.setAttribute('aria-modal', 'true'); sheet.setAttribute('aria-labelledby', 'shortcuts-title');
     const head = el('div', '', 'card-head'); const heading = el('h2', 'Keyboard shortcuts'); heading.id = 'shortcuts-title';
-    const close = button('esc', () => toggleHelp(false), 'card-close'); close.setAttribute('aria-label', 'Close keyboard shortcuts');
+    const close = button('Close', () => toggleHelp(false), 'card-close'); close.setAttribute('aria-label', 'Close keyboard shortcuts');
     head.append(heading, close);
     sheet.append(head, shortcutSheet(), el('p', 'Local drafting · Autosaves locally · Nothing goes to an AI provider until you choose Send in Questions.', 'help-foot'));
     sheet.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); toggleHelp(false); } });
@@ -1038,6 +1048,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       })));
     }
     const commands: (PaletteItem | false)[] = [
+      Boolean(newDraftButton) && {key: 'new-draft', label: 'New Markdown draft', right: formatKeys('⌘N'), run: () => newDraftButton?.click()},
       Boolean(searchScope()) && {key: 'find-manuscript', label: 'Find in manuscript', sub: 'Search scene text locally, including the open buffer', right: formatKeys('⌘⇧F'), run: openManuscriptSearch},
       Boolean(editor) && {key: 'ask', label: 'Ask Heinlein about selection', sub: 'Opens Questions with the highlighted passage', right: formatKeys('⌘J'), run: () => askShortcut()},
       Boolean(editor) && {key: 'split', label: 'Split scene at cursor', sub: 'Previews before anything moves', right: formatKeys('⌘⇧↵'), run: splitAtCursor},
@@ -1104,7 +1115,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const run = (task: () => void) => { event.preventDefault(); event.stopPropagation(); task(); };
     if (key === ',') { run(() => { if (dialog.open) dialog.close(); else void openAppearance(); }); return; }
     if (dialog.open) return;
-    if (key === 'f' && event.shiftKey) run(openManuscriptSearch);
+    if (key === 'n' && !event.shiftKey && newDraftButton) run(() => { if (!event.repeat && !helpLayer && !palette.isOpen()) newDraftButton?.click(); });
+    else if (key === 'f' && event.shiftKey) run(openManuscriptSearch);
     else if (key === 'k') run(() => openPalette('scenes'));
     else if (key === 'p') run(() => openPalette(event.shiftKey ? 'commands' : 'files'));
     else if (key === '\\') run(() => { if (palette.isOpen()) palette.close(); navigation.toggle(); });

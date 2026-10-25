@@ -5,7 +5,7 @@ export const SHORTCUT_GROUPS: {name: string; items: {label: string; keys: string
     {label: 'Show or hide navigation', keys: '⌘\\'}, {label: 'Reorder scene in palette', keys: '⌥↑ ⌥↓'}, {label: 'Step back / close', keys: 'esc'},
   ]},
   {name: 'Write', items: [
-    {label: 'Save now', keys: '⌘S'}, {label: 'Split scene at cursor', keys: '⌘⇧↵'}, {label: 'Undo / redo', keys: '⌘Z  ⌘⇧Z'}, {label: 'Find in scene', keys: '⌘F'}, {label: 'Find in manuscript', keys: '⌘⇧F'},
+    {label: 'New Markdown draft', keys: '⌘N'}, {label: 'Save now', keys: '⌘S'}, {label: 'Split scene at cursor', keys: '⌘⇧↵'}, {label: 'Undo / redo', keys: '⌘Z  ⌘⇧Z'}, {label: 'Find in scene', keys: '⌘F'}, {label: 'Find in manuscript', keys: '⌘⇧F'},
   ]},
   {name: 'Ask', items: [
     {label: 'Ask Heinlein about selection', keys: '⌘J'}, {label: 'Capture selection into Questions', keys: '⌘⌥↵'}, {label: 'Close Questions', keys: 'esc'},
