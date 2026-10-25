@@ -833,7 +833,22 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
 
   const themeBuilder = createThemePanel(core, () => look);
   sections.get('vibecode')!.append(themeBuilder.element);
-  dialog.addEventListener('close', () => { themeBuilder.close(); appearance.focus(); });
+  let appearanceSession = 0;
+  let appearanceClose: (() => void)|null = null;
+  function ownAppearanceClose() {
+    const session = ++appearanceSession, epoch = documentEpoch;
+    if (appearanceClose) dialog.removeEventListener('close', appearanceClose);
+    appearanceClose = () => {
+      // A queued close belongs to a closed session, never a reopened dialog.
+      if (disposed || dialog.open || session !== appearanceSession) return;
+      themeBuilder.close();
+      const focused = document.activeElement;
+      // Native modal restoration may already have handed focus to the next
+      // document/control. Only provide a fallback while this session owns it.
+      if (epoch === documentEpoch && (focused === document.body || focused === appearance || (focused instanceof Node && dialog.contains(focused)))) appearance.focus();
+    };
+    dialog.addEventListener('close', appearanceClose);
+  }
 
   // Theme: four base themes and four accents.
   const themeGrid = el('div', '', 'theme-grid');
@@ -932,7 +947,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     else if (category === 'vibecode') void themeBuilder.check();
     const passage = editor?.text().slice(splitBodyStart(editor.text()) ?? 0).split(/\r?\n\s*\r?\n/).map(part => part.replace(/^#+\s.*$/m, '').trim()).find(part => part.length > 40);
     sample.textContent = passage ? (passage.length > 320 ? `${passage.slice(0, 320)}…` : passage) : SAMPLE_TEXT;
-    if (!dialog.open) { if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', ''); }
+    if (!dialog.open) { ownAppearanceClose(); if (typeof dialog.showModal === 'function') dialog.showModal(); else dialog.setAttribute('open', ''); }
     categoryButtons.get(category)?.focus();
     if (installedFonts) return;
     try {

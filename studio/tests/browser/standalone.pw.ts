@@ -148,3 +148,15 @@ test('Cmd+N keeps writing and opens a focused blank Markdown draft with discover
   await page.keyboard.press('Escape');await writing(page).focus();await expect(writing(page)).toBeFocused();
   expect((await new AxeBuilder({page}).include('.standalone-page').analyze()).violations).toEqual([]);
 });
+
+test('immediate Escape then Cmd+N retains kept writing and new editor focus',async({page})=>{
+  await page.goto('/tests/browser/standalone.html');await expect(writing(page)).toBeFocused();
+  await page.keyboard.insertText('Already kept — café 🦊');await activate(page.getByRole('button',{name:'Keep on this Mac',exact:true}));
+  await expect(page.locator('.standalone-page [role=status]')).toHaveText('Kept on this Mac');
+  await activate(page.getByRole('button',{name:/^Appearance/}));
+  // No wait for the asynchronous close event between these user actions.
+  await page.keyboard.press('Escape');await page.keyboard.press('Meta+n');
+  await expect(writing(page)).toHaveText('');await expect(writing(page)).toBeFocused();
+  expect(await page.evaluate(()=>[...(window as any).draftFixture.records.values()].map((d:any)=>d.text))).toEqual(['Already kept — café 🦊']);
+  expect(await page.evaluate(()=>(window as any).draftFixture.externalCalls)).toEqual([]);
+});

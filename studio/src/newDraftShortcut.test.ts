@@ -67,3 +67,42 @@ describe('new draft preserves project departure authority',()=>{
     expect(view().state.doc.toString()).toBe(x.text);expect(document.querySelector('.standalone-page')).toBeNull();expect(x.save).toHaveBeenCalledOnce();expect(x.bridge.records.size).toBe(0);
   });
 });
+
+// Deliberately separate close() from delivery of the native queued close event.
+// This controls the race instead of relying on browser scheduling luck.
+describe('deferred Appearance close focus ownership',()=>{
+  let originalShow:PropertyDescriptor|undefined, originalClose:PropertyDescriptor|undefined;
+  beforeEach(()=>{
+    originalShow=Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype,'showModal');originalClose=Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype,'close');
+    Object.defineProperty(HTMLDialogElement.prototype,'showModal',{configurable:true,value:function(this:HTMLDialogElement){this.setAttribute('open','');}});
+    Object.defineProperty(HTMLDialogElement.prototype,'close',{configurable:true,value:function(this:HTMLDialogElement){this.removeAttribute('open');}});
+  });
+  afterEach(()=>{
+    for(const [name,descriptor] of [['showModal',originalShow],['close',originalClose]] as const){if(descriptor)Object.defineProperty(HTMLDialogElement.prototype,name,descriptor);else Reflect.deleteProperty(HTMLDialogElement.prototype,name);}
+  });
+  async function open(){document.querySelector<HTMLButtonElement>('button.appearance')!.click();await settle();return document.querySelector<HTMLDialogElement>('dialog.appearance-dialog')!;}
+  const deliver=(dialog:HTMLDialogElement)=>dialog.dispatchEvent(new Event('close'));
+  it.each(['','Already kept — café 🦊'])('does not steal a newly mounted blank editor after %j',async text=>{
+    const bridge=await setup();
+    if(text){type(text);pressButton('Keep on this Mac');await settle();}
+    const dialog=await open();dialog.close();shortcut();await settle();
+    expect(view().state.doc.toString()).toBe('');expect(document.activeElement).toBe(content());
+    deliver(dialog);expect(document.activeElement).toBe(content());
+    expect([...bridge.records.values()].map(d=>d.text)).toEqual(text?[text]:[]);
+  });
+  it('preserves editor focus and text while departure waits for a real save result',async()=>{
+    const bridge=await setup();type('Save pending — 🦊');let resume!:()=>void;bridge.holdNextSave(r=>resume=r);
+    const dialog=await open();dialog.close();content().focus();shortcut();await settle();
+    deliver(dialog);expect(view().state.doc.toString()).toBe('Save pending — 🦊');expect(document.activeElement).toBe(content());
+    resume();await settle();expect(view().state.doc.toString()).toBe('');expect(document.activeElement).toBe(content());expect([...bridge.records.values()][0].text).toBe('Save pending — 🦊');
+  });
+  it('ignores an old close after Appearance is reopened',async()=>{
+    await setup();const dialog=await open();dialog.close();await open();const focused=document.activeElement;
+    deliver(dialog);expect(dialog.open).toBe(true);expect(document.activeElement).toBe(focused);
+    dialog.close();deliver(dialog);expect(document.activeElement).toBe(document.querySelector('button.appearance'));
+  });
+  it('restores ordinary close focus but never overrides a purposeful outside control',async()=>{
+    await setup();const dialog=await open();dialog.close();deliver(dialog);expect(document.activeElement).toBe(document.querySelector('button.appearance'));
+    await open();dialog.close();const outside=document.createElement('input');document.body.append(outside);outside.focus();deliver(dialog);expect(document.activeElement).toBe(outside);
+  });
+});
