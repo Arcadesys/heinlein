@@ -1,5 +1,5 @@
 mod support;
-use github_workspace::{auth::Auth, registry::StateDir, Error};
+use github_workspace::{auth::Auth, registry::StateDir, Error, StoreFailure};
 use std::sync::{atomic::Ordering, Arc};
 use support::*;
 #[test]
@@ -140,14 +140,17 @@ fn failed_rotation_can_retry_store_write_without_another_refresh_or_oauth() {
     *store.write_error.lock().unwrap() = Some(Error::StoreDenied);
     assert!(matches!(
         auth.credential(&api, 4590),
-        Err(Error::RotationNotSaved)
+        Err(Error::RotationNotSaved(_))
     ));
-    assert!(matches!(auth.ready_to_quit(), Err(Error::RotationNotSaved)));
+    assert!(matches!(
+        auth.ready_to_quit(),
+        Err(Error::RotationNotSaved(_))
+    ));
     assert_eq!(*store.bytes.lock().unwrap(), old);
-    assert!(matches!(auth.view(), Err(Error::RotationNotSaved)));
+    assert!(matches!(auth.view(), Err(Error::RotationNotSaved(_))));
     assert!(matches!(
         auth.begin(&api, 4600),
-        Err(Error::RotationNotSaved)
+        Err(Error::RotationNotSaved(_))
     ));
     *store.write_error.lock().unwrap() = None;
     assert!(auth.retry_saved().unwrap().confirmed);
@@ -180,5 +183,134 @@ fn network_and_expired_or_revoked_refresh_are_distinct_without_store_reset() {
         Err(Error::Reconnect)
     ));
     assert_eq!(api.refreshes.load(Ordering::SeqCst), 0);
+    assert_eq!(store.deletes.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn rotation_retains_each_sanitized_write_cause_across_queries_and_retry() {
+    let cases = [
+        (Error::StoreLocked, StoreFailure::Locked, "store is locked"),
+        (Error::StoreDenied, StoreFailure::Denied, "was denied"),
+        (
+            Error::StoreCancelled,
+            StoreFailure::Cancelled,
+            "was cancelled",
+        ),
+        (
+            Error::StoreUnavailable,
+            StoreFailure::Unavailable,
+            "store is unavailable",
+        ),
+        (
+            Error::StoreInvalid,
+            StoreFailure::Invalid,
+            "could not be handled safely",
+        ),
+        (
+            Error::Network,
+            StoreFailure::Unknown,
+            "unknown secure-store failure",
+        ),
+    ];
+    for (initial, expected, initial_text) in cases {
+        let f = Fixture::new();
+        let api = MockApi::default();
+        let (auth, store) = connected(&f.root, &api);
+        let old = store.bytes.lock().unwrap().clone();
+        *store.write_error.lock().unwrap() = Some(initial);
+        let failure = auth.credential(&api, 4590).err().unwrap();
+        let renewed_bytes = store.attempted_write.lock().unwrap().clone();
+        assert_eq!(failure, Error::RotationNotSaved(expected));
+        assert!(failure.to_string().contains(initial_text), "{failure}");
+        for (cause, expected, text) in cases {
+            *store.write_error.lock().unwrap() = Some(cause);
+            let failure = auth.retry_saved().err().unwrap();
+            assert_eq!(failure, Error::RotationNotSaved(expected));
+            assert!(failure.to_string().contains(text), "{failure}");
+            assert!(failure.to_string().contains("Keep Heinlein open"));
+            assert!(failure
+                .to_string()
+                .contains("Retry saved GitHub connection"));
+            let reads = store.reads.load(Ordering::SeqCst);
+            *store.read_error.lock().unwrap() = Some(Error::StoreInvalid);
+            assert_eq!(auth.ready_to_quit().err(), Some(failure));
+            assert_eq!(auth.view().err(), Some(failure));
+            assert_eq!(auth.credential(&api, 4600).err(), Some(failure));
+            assert_eq!(auth.begin(&api, 4600).err(), Some(failure));
+            assert_eq!(store.reads.load(Ordering::SeqCst), reads);
+            *store.read_error.lock().unwrap() = None;
+            assert_eq!(*store.bytes.lock().unwrap(), old);
+        }
+        *store.write_error.lock().unwrap() = None;
+        assert!(auth.retry_saved().unwrap().confirmed);
+        assert!(auth.ready_to_quit().is_ok());
+        assert!(auth.credential(&api, 4600).is_ok());
+        assert!(
+            *store.bytes.lock().unwrap() == renewed_bytes,
+            "retry must persist the exact initially attempted renewed record"
+        );
+        let saved = store.bytes.lock().unwrap().clone().unwrap();
+        let record: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(record["access_token"], "rotated-secret");
+        assert_eq!(api.refreshes.load(Ordering::SeqCst), 1);
+        assert_eq!(api.polls.load(Ordering::SeqCst), 1);
+        assert_eq!(store.deletes.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[test]
+fn retry_load_and_account_failures_preserve_pending_record_and_last_write_cause() {
+    let f = Fixture::new();
+    let api = MockApi::default();
+    let (auth, store) = connected(&f.root, &api);
+    let old = store.bytes.lock().unwrap().clone();
+    *store.write_error.lock().unwrap() = Some(Error::StoreCancelled);
+    let pending = auth.credential(&api, 4590).err().unwrap();
+    let writes = store.writes.load(Ordering::SeqCst);
+    for cause in [
+        Error::StoreLocked,
+        Error::StoreDenied,
+        Error::StoreCancelled,
+        Error::StoreUnavailable,
+        Error::StoreInvalid,
+        Error::Network,
+    ] {
+        *store.read_error.lock().unwrap() = Some(cause);
+        let failure = auth.retry_saved().err().unwrap();
+        assert!(failure.to_string().contains("Keep Heinlein open"));
+        assert!(failure.to_string().contains("not yet saved"));
+        assert_eq!(auth.ready_to_quit().err(), Some(pending));
+        assert_eq!(auth.view().err(), Some(pending));
+        assert_eq!(store.writes.load(Ordering::SeqCst), writes);
+        assert_eq!(*store.bytes.lock().unwrap(), old);
+    }
+    *store.read_error.lock().unwrap() = None;
+    for field in ["user", "binding", "missing", "invalid"] {
+        let mut record: serde_json::Value = serde_json::from_slice(old.as_ref().unwrap()).unwrap();
+        match field {
+            "user" => record["user"]["id"] = 10.into(),
+            "binding" => record["binding"] = uuid::Uuid::new_v4().to_string().into(),
+            _ => {}
+        }
+        *store.bytes.lock().unwrap() = match field {
+            "missing" => None,
+            "invalid" => Some(b"not a credential record".to_vec()),
+            _ => Some(serde_json::to_vec(&record).unwrap()),
+        };
+        let failure = auth.retry_saved().err().unwrap();
+        assert!(failure.to_string().contains("not yet saved"));
+        assert!(failure.to_string().contains("Keep Heinlein open"));
+        assert_eq!(auth.ready_to_quit().err(), Some(pending));
+        assert_eq!(store.writes.load(Ordering::SeqCst), writes);
+    }
+    *store.bytes.lock().unwrap() = old;
+    *store.write_error.lock().unwrap() = None;
+    assert!(auth.retry_saved().unwrap().confirmed);
+    assert!(auth.ready_to_quit().is_ok());
+    let saved: serde_json::Value =
+        serde_json::from_slice(store.bytes.lock().unwrap().as_ref().unwrap()).unwrap();
+    assert_eq!(saved["access_token"], "rotated-secret");
+    assert_eq!(api.refreshes.load(Ordering::SeqCst), 1);
+    assert_eq!(api.polls.load(Ordering::SeqCst), 1);
     assert_eq!(store.deletes.load(Ordering::SeqCst), 0);
 }

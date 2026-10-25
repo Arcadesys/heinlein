@@ -119,3 +119,26 @@ it('unavailable secure store offers read-only retry without OAuth, signout or cr
  f.request.mockImplementation(async r=>{if(r.action==='status'&&locked)return{...structuredClone(status),auth:null,error:'Secure credential access was cancelled. Saved connection retained.'};if(r.action==='retrySaved'){locked=false;return status.auth;}return original(r);});
  await f.p.open();expect(f.p.element.textContent).toContain('Saved connection retained');expect(f.p.element.textContent).not.toContain('Connect GitHub…');await f.click('Retry saved GitHub connection');expect(f.p.element.textContent).toContain('Load repositories');expect(f.request.mock.calls.some(([r])=>r.action==='connect'||r.action==='signOut')).toBe(false);
 });
+
+it.each([
+ 'The secure credential store is locked.',
+ 'Secure credential access was denied.',
+ 'Secure credential access was cancelled.',
+ 'The secure credential store is unavailable.',
+ 'The secure-store record could not be handled safely.',
+ 'An unknown secure-store failure prevented persistence.',
+])('pending renewal shows its sanitized cause and keeps explicit retry: %s',async cause=>{
+ const f=fixture(false);const original=f.request.getMockImplementation()!;let pending=true;let attempts=0;
+ const context=(detail:string)=>`GitHub renewed the connection, but the renewed sign-in data is not yet saved. ${detail} Keep Heinlein open and choose Retry saved GitHub connection. No stored credential was deleted; do not sign out or reconnect to fix this store error.`;
+ f.request.mockImplementation(async r=>{
+  if(r.action==='status'&&pending)return{...structuredClone(status),auth:null,error:context(cause)};
+  if(r.action==='retrySaved'){if(++attempts===1)throw new Error(context('Secure credential access was cancelled.'));pending=false;return status.auth;}
+  return original(r);
+ });
+ await f.p.open();expect(f.p.element.textContent).toContain(cause);expect(f.p.element.textContent).toContain('Keep Heinlein open');
+ expect([...f.p.element.querySelectorAll('button')].some(b=>/Connect GitHub|Reconnect GitHub|Sign out/.test(b.textContent??''))).toBe(false);
+ await f.click('Retry saved GitHub connection');expect(f.p.element.querySelector('[role="status"]')?.textContent).toContain('Secure credential access was cancelled.');
+ await f.click('Retry saved GitHub connection');expect(f.p.element.textContent).toContain('Load repositories');
+ expect(f.request.mock.calls.filter(([r])=>r.action==='retrySaved')).toHaveLength(2);
+ expect(f.request.mock.calls.some(([r])=>['connect','poll','signOut','confirmAccount'].includes(r.action))).toBe(false);
+});
