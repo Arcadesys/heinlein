@@ -1,9 +1,11 @@
 //! Native-only managed GitHub workspaces. No Git CLI, helpers, hooks or source logs.
 pub mod api;
 pub mod auth;
+pub mod branches;
 pub mod incoming;
 pub mod journal;
 pub mod operations;
+pub mod pull_actions;
 pub mod registry;
 pub mod transport;
 use serde::{Deserialize, Serialize};
@@ -61,7 +63,14 @@ pub enum Error {
     InvalidUrl,
     InvalidRef,
     UnsafeTree,
+    UnsupportedTreeChange,
     Limit,
+    Budget {
+        phase: &'static str,
+        kind: &'static str,
+        observed: u64,
+        cap: u64,
+    },
     Storage,
     Busy,
     Missing,
@@ -70,6 +79,8 @@ pub enum Error {
     Conflict,
     Unsupported,
     Uncertain,
+    Uncommitted,
+    MergeUnavailable,
     Canceled,
 }
 impl fmt::Display for Error {
@@ -77,7 +88,17 @@ impl fmt::Display for Error {
         if let Self::RotationNotSaved(cause) = self {
             return write!(f, "GitHub renewed the connection, but the renewed sign-in data is not yet saved. {} Keep Heinlein open and choose Retry saved GitHub connection. No stored credential was deleted; do not sign out or reconnect to fix this store error.", cause.message());
         }
+        if let Self::Budget {
+            phase,
+            kind,
+            observed,
+            cap,
+        } = self
+        {
+            return write!(f,"Cannot complete {phase}: {kind} is {observed}, above the safe limit of {cap}. Your existing writing is unchanged. Use a local folder for repositories beyond this limit.");
+        }
         let message = match self {
+            Self::Budget { .. } => unreachable!(),
             Self::Unavailable => "GitHub connection is unavailable until this app has a public GitHub App client ID.",
             Self::Auth => "GitHub no longer authorizes this connection. Reconnect GitHub when you are ready. Local copies and writing are unchanged.",
             Self::StoreLocked => "The secure credential store is locked or cannot show its access prompt. Unlock it, allow access in macOS, then retry the saved GitHub connection. Nothing was deleted.",
@@ -95,6 +116,7 @@ impl fmt::Display for Error {
             Self::RateLimit => "GitHub has limited requests. Wait, then explicitly check again.",
             Self::InvalidUrl => "Use an existing github.com repository URL without credentials, extra paths or query parameters.",
             Self::InvalidRef => "This repository branch name is unsupported.",
+            Self::UnsupportedTreeChange => "GitHub changed a passive asset or executable mode that this text review cannot apply. No local writing changed. Use a separate Git workflow for those files, then reopen the managed project.",
             Self::UnsafeTree => "This repository contains unsafe paths, links, submodules or LFS content. Open a separate local folder instead.",
             Self::Limit => "This repository exceeds the managed-project size limit. Use a smaller writing repository or a local folder.",
             Self::Storage => "Managed project storage is unavailable. No new project or version was confirmed.",
@@ -104,6 +126,8 @@ impl fmt::Display for Error {
             Self::Recovery => "An interrupted operation or recovery draft needs review before this project can change.",
             Self::Conflict => "Choose a result for every conflicting passage or manuscript change before applying.",
             Self::Unsupported => "This change needs a separate Git workflow. Heinlein will preserve your writing and will not guess.",
+            Self::MergeUnavailable => "This pull request cannot safely use the in-app action. Refresh its status and read the eligibility reason, or open it on GitHub. No rules, queues or stacks are bypassed.",
+            Self::Uncommitted => "Commit saved writing changes before switching branches. Untracked files or folders must also be preserved in a separate Git workflow. Nothing was stashed, discarded or reset.",
             Self::Uncertain => "GitHub may have received this operation. Check its result before sending again; no automatic retry will occur.",
             Self::Canceled => "Canceled. No sharing was requested.",
         };

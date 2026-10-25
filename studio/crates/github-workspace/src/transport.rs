@@ -10,9 +10,109 @@ use std::{
     path::Path,
 };
 use unicode_normalization::UnicodeNormalization;
-pub type Files = BTreeMap<String, Vec<u8>>;
-pub const MAX_BYTES: usize = 32 * 1024 * 1024;
-pub const MAX_FILES: usize = 4096;
+/// Immutable Git tree metadata is shared across previews. Only bounded author
+/// text is hydrated; passive assets stay in the object database until materialized.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TreeEntry {
+    pub oid: Oid,
+    pub mode: u32,
+    pub size: usize,
+    pub editable: bool,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Files {
+    pub entries: std::sync::Arc<BTreeMap<String, TreeEntry>>,
+    payloads: BTreeMap<String, std::sync::Arc<Vec<u8>>>,
+}
+impl Files {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn insert(
+        &mut self,
+        path: String,
+        bytes: impl Into<std::sync::Arc<Vec<u8>>>,
+    ) -> Option<std::sync::Arc<Vec<u8>>> {
+        self.payloads.insert(path, bytes.into())
+    }
+    pub fn payload_bytes(&self) -> usize {
+        self.payloads.values().map(|b| b.len()).sum()
+    }
+}
+impl std::ops::Deref for Files {
+    type Target = BTreeMap<String, std::sync::Arc<Vec<u8>>>;
+    fn deref(&self) -> &Self::Target {
+        &self.payloads
+    }
+}
+impl std::ops::DerefMut for Files {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.payloads
+    }
+}
+impl<const N: usize> From<[(String, Vec<u8>); N]> for Files {
+    fn from(value: [(String, Vec<u8>); N]) -> Self {
+        value.into_iter().collect()
+    }
+}
+impl<V: Into<std::sync::Arc<Vec<u8>>>> FromIterator<(String, V)> for Files {
+    fn from_iter<T: IntoIterator<Item = (String, V)>>(iter: T) -> Self {
+        Self {
+            entries: Default::default(),
+            payloads: iter.into_iter().map(|(p, b)| (p, b.into())).collect(),
+        }
+    }
+}
+impl std::ops::Index<&str> for Files {
+    type Output = Vec<u8>;
+    fn index(&self, key: &str) -> &Self::Output {
+        &self.payloads[key]
+    }
+}
+pub struct PayloadIter<'a>(std::collections::btree_map::Iter<'a, String, std::sync::Arc<Vec<u8>>>);
+impl<'a> Iterator for PayloadIter<'a> {
+    type Item = (&'a String, &'a Vec<u8>);
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|(p, b)| (p, b.as_ref()))
+    }
+}
+impl<'a> IntoIterator for &'a Files {
+    type Item = (&'a String, &'a Vec<u8>);
+    type IntoIter = PayloadIter<'a>;
+    fn into_iter(self) -> Self::IntoIter {
+        PayloadIter(self.payloads.iter())
+    }
+}
+impl IntoIterator for Files {
+    type Item = (String, Vec<u8>);
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.payloads
+            .into_iter()
+            .map(|(p, b)| (p, std::sync::Arc::unwrap_or_clone(b)))
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+}
+// Editor/merge text is separately bounded from passive repository storage.
+pub const MAX_TEXT_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_EDIT_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_BYTES: usize = 256 * 1024 * 1024;
+pub const MAX_BLOB_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_FILES: usize = MAX_WORKSPACE_ENTRIES;
+// Repository::list counts raw entries, including '.' and '..', before filtering.
+// Keep supported layouts within its 4,096 raw-entry limit, and the complete
+// disk_files traversal limit. Do not publish a tree the editor cannot inspect.
+pub const MAX_DIRECTORY_CHILDREN: usize = 4_094;
+pub const MAX_WORKSPACE_ENTRIES: usize = 8_192;
+pub fn budget(phase: &'static str, kind: &'static str, observed: usize, cap: usize) -> Error {
+    Error::Budget {
+        phase,
+        kind,
+        observed: observed as u64,
+        cap: cap as u64,
+    }
+}
 pub fn valid_ref(branch: &str) -> Result<()> {
     if branch.starts_with('-')
         || branch.len() > 200
@@ -42,39 +142,87 @@ pub fn safe_path(path: &str) -> Result<()> {
     }
 }
 pub fn validate_files(files: &Files) -> Result<()> {
-    if files.len() > MAX_FILES || files.values().map(Vec::len).sum::<usize>() > MAX_BYTES {
-        return Err(Error::Limit);
+    let paths: std::collections::BTreeSet<_> = files.entries.keys().chain(files.keys()).collect();
+    if paths.len() > MAX_FILES {
+        return Err(budget("tree", "file count", paths.len(), MAX_FILES));
     }
-    let mut paths = HashMap::new();
-    for (path, bytes) in files {
+    if files.payload_bytes() > MAX_TEXT_BYTES {
+        return Err(budget(
+            "editor",
+            "hydrated text bytes",
+            files.payload_bytes(),
+            MAX_TEXT_BYTES,
+        ));
+    }
+    let mut total = 0usize;
+    let mut folded = HashMap::new();
+    let mut directory_children = HashMap::<String, usize>::new();
+    for path in paths {
         safe_path(path)?;
-        if bytes.len() > 2 * 1024 * 1024 {
-            return Err(Error::Limit);
+        let size = files
+            .get(path)
+            .map(|b| b.len())
+            .unwrap_or_else(|| files.entries[path].size);
+        total = total.checked_add(size).ok_or(Error::Limit)?;
+        if size > MAX_BLOB_BYTES {
+            return Err(budget("tree", "blob bytes", size, MAX_BLOB_BYTES));
+        }
+        if files.get(path).is_some() && size > MAX_EDIT_BYTES {
+            return Err(budget("editor", "file bytes", size, MAX_EDIT_BYTES));
         }
         let mut prefix = String::new();
         for component in path.split('/') {
+            let parent = prefix.clone();
             if !prefix.is_empty() {
-                prefix.push('/')
+                prefix.push('/');
             }
             prefix.push_str(component);
             let key = prefix
                 .nfc()
                 .flat_map(char::to_lowercase)
                 .collect::<String>();
-            if let Some(previous) = paths.insert(key, prefix.clone()) {
+            if let Some(previous) = folded.insert(key, prefix.clone()) {
                 if previous != prefix {
                     return Err(Error::UnsafeTree);
                 }
+            } else {
+                let count = directory_children.entry(parent).or_default();
+                *count += 1;
+                if *count > MAX_DIRECTORY_CHILDREN {
+                    return Err(budget(
+                        "workspace scan",
+                        "directory entries",
+                        *count,
+                        MAX_DIRECTORY_CHILDREN,
+                    ));
+                }
+                if folded.len() > MAX_WORKSPACE_ENTRIES {
+                    return Err(budget(
+                        "workspace scan",
+                        "traversal entries",
+                        folded.len(),
+                        MAX_WORKSPACE_ENTRIES,
+                    ));
+                }
             }
         }
-        if bytes.starts_with(b"version https://git-lfs.github.com/spec/")
-            || path.ends_with(".gitattributes")
-                && String::from_utf8_lossy(bytes)
-                    .to_ascii_lowercase()
-                    .contains("lfs")
-        {
-            return Err(Error::UnsafeTree);
+        if let Some(bytes) = files.get(path) {
+            validate_lfs(path, bytes)?;
         }
+    }
+    if total > MAX_BYTES {
+        return Err(budget("tree", "total bytes", total, MAX_BYTES));
+    }
+    Ok(())
+}
+fn validate_lfs(path: &str, bytes: &[u8]) -> Result<()> {
+    if bytes.starts_with(b"version https://git-lfs.github.com/spec/")
+        || path.ends_with(".gitattributes")
+            && String::from_utf8_lossy(bytes)
+                .to_ascii_lowercase()
+                .contains("lfs")
+    {
+        return Err(Error::UnsafeTree);
     }
     Ok(())
 }
@@ -116,17 +264,39 @@ pub fn open(private: &StateDir, source: &Path) -> Result<Repository> {
 pub fn tree_files(repo: &Repository, commit: Oid) -> Result<Files> {
     let tree = repo.find_commit(commit)?.tree()?;
     let mut files = Files::new();
+    let mut entries = BTreeMap::new();
+    #[allow(clippy::too_many_arguments)]
     fn visit(
         repo: &Repository,
         tree: &git2::Tree<'_>,
         prefix: &str,
+        entries: &mut BTreeMap<String, TreeEntry>,
         files: &mut Files,
+        total: &mut usize,
+        visited: &mut usize,
         depth: usize,
     ) -> Result<()> {
         if depth > 32 {
-            return Err(Error::Limit);
+            return Err(budget("tree", "directory depth", depth, 32));
+        }
+        if tree.len() > MAX_DIRECTORY_CHILDREN {
+            return Err(budget(
+                "workspace scan",
+                "directory entries",
+                tree.len(),
+                MAX_DIRECTORY_CHILDREN,
+            ));
         }
         for entry in tree.iter() {
+            *visited += 1;
+            if *visited > MAX_WORKSPACE_ENTRIES {
+                return Err(budget(
+                    "workspace scan",
+                    "traversal entries",
+                    *visited,
+                    MAX_WORKSPACE_ENTRIES,
+                ));
+            }
             let name = entry.name().map_err(|_| Error::UnsafeTree)?;
             let path = format!("{prefix}{name}");
             safe_path(&path)?;
@@ -135,47 +305,141 @@ pub fn tree_files(repo: &Repository, commit: Oid) -> Result<Files> {
                     repo,
                     &repo.find_tree(entry.id())?,
                     &format!("{path}/"),
+                    entries,
                     files,
+                    total,
+                    visited,
                     depth + 1,
                 )?,
                 0o100644 | 0o100755 => {
+                    let (size, kind) = repo.odb()?.read_header(entry.id())?;
+                    if kind != git2::ObjectType::Blob {
+                        return Err(Error::UnsafeTree);
+                    }
+                    if size > MAX_BLOB_BYTES {
+                        return Err(budget("tree", "blob bytes", size, MAX_BLOB_BYTES));
+                    }
+                    *total = total.checked_add(size).ok_or(Error::Limit)?;
+                    if *total > MAX_BYTES {
+                        return Err(budget("tree", "total bytes", *total, MAX_BYTES));
+                    }
+                    if entries.len() >= MAX_FILES {
+                        return Err(budget("tree", "file count", entries.len() + 1, MAX_FILES));
+                    }
+                    // At most one bounded decompressed passive blob is live here.
                     let blob = repo.find_blob(entry.id())?;
-                    if blob.size() > 2 * 1024 * 1024 {
-                        return Err(Error::Limit);
+                    validate_lfs(&path, blob.content())?;
+                    let editable = crate::operations::author_path(&path) && size <= MAX_EDIT_BYTES;
+                    if editable {
+                        if files.payload_bytes() + size > MAX_TEXT_BYTES {
+                            return Err(budget(
+                                "editor",
+                                "hydrated text bytes",
+                                files.payload_bytes() + size,
+                                MAX_TEXT_BYTES,
+                            ));
+                        }
+                        files.insert(path.clone(), blob.content().to_vec());
                     }
-                    if files.values().map(Vec::len).sum::<usize>() + blob.size() > MAX_BYTES {
-                        return Err(Error::Limit);
-                    }
-                    files.insert(path, blob.content().to_vec());
-                    if files.len() > MAX_FILES {
-                        return Err(Error::Limit);
-                    }
+                    entries.insert(
+                        path,
+                        TreeEntry {
+                            oid: entry.id(),
+                            mode: entry.filemode() as u32,
+                            size,
+                            editable,
+                        },
+                    );
                 }
                 _ => return Err(Error::UnsafeTree),
             }
         }
         Ok(())
     }
-    visit(repo, &tree, "", &mut files, 0)?;
+    visit(repo, &tree, "", &mut entries, &mut files, &mut 0, &mut 0, 0)?;
+    files.entries = std::sync::Arc::new(entries);
     validate_files(&files)?;
     validate_manuscript(&files)?;
     Ok(files)
 }
-pub fn materialize(root: &Path, files: &Files) -> Result<()> {
+pub fn materialize(repo: &Repository, root: &Path, files: &Files) -> Result<()> {
     use std::io::Write;
     validate_files(files)?;
-    for (path, bytes) in files {
+    for (path, entry) in files.entries.iter() {
         let target = root.join(path);
         fs::create_dir_all(target.parent().ok_or(Error::UnsafeTree)?)?;
+        let blob = repo.find_blob(entry.oid)?;
+        if blob.size() != entry.size {
+            return Err(Error::Changed);
+        }
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(target)?;
-        file.write_all(bytes)?;
-        file.sync_all()?
+        file.write_all(blob.content())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(if entry.mode == 0o100755 {
+                0o755
+            } else {
+                0o644
+            }))?;
+        }
+        file.sync_all()?;
     }
-    fs::File::open(root)?.sync_all()?;
+    let mut directories = std::collections::BTreeSet::from([root.to_owned()]);
+    for path in files.entries.keys() {
+        let mut parent = root.join(path).parent().map(Path::to_owned);
+        while let Some(dir) = parent {
+            if !dir.starts_with(root) {
+                break;
+            }
+            directories.insert(dir.clone());
+            if dir == root {
+                break;
+            }
+            parent = dir.parent().map(Path::to_owned);
+        }
+    }
+    let mut directories: Vec<_> = directories.into_iter().collect();
+    directories.sort_by_key(|p| std::cmp::Reverse(p.components().count()));
+    for dir in directories {
+        fs::File::open(dir)?.sync_all()?;
+    }
     Ok(())
+}
+/// Reuse every passive OID and mode. Only hydrated text is replaced/deleted.
+pub fn snapshot_tree(repo: &Repository, files: &Files) -> Result<Oid> {
+    validate_files(files)?;
+    let mut index = git2::Index::new()?;
+    let keys: std::collections::BTreeSet<_> = files.entries.keys().chain(files.keys()).collect();
+    for path in keys {
+        let entry = files.entries.get(path);
+        let (oid, size) = match files.get(path) {
+            Some(bytes) => (repo.blob(bytes)?, bytes.len()),
+            None if entry.is_some_and(|e| !e.editable) => {
+                let e = entry.unwrap();
+                (e.oid, e.size)
+            }
+            None => continue,
+        };
+        index.add(&git2::IndexEntry {
+            ctime: git2::IndexTime::new(0, 0),
+            mtime: git2::IndexTime::new(0, 0),
+            dev: 0,
+            ino: 0,
+            mode: entry.map(|e| e.mode).unwrap_or(0o100644),
+            uid: 0,
+            gid: 0,
+            file_size: size as u32,
+            id: oid,
+            flags: 0,
+            flags_extended: 0,
+            path: path.as_bytes().to_vec(),
+        })?;
+    }
+    Ok(index.write_tree_to(repo)?)
 }
 pub fn tree_from_files(repo: &Repository, files: &Files) -> Result<Oid> {
     validate_files(files)?;
@@ -199,7 +463,11 @@ pub fn tree_from_files(repo: &Repository, files: &Files) -> Result<Oid> {
     }
     Ok(index.write_tree_to(repo)?)
 }
-fn callbacks<'a>(url: &'a str, credential: &'a Credential) -> RemoteCallbacks<'a> {
+fn callbacks<'a>(
+    url: &'a str,
+    credential: &'a Credential,
+    failure: Option<std::sync::Arc<std::sync::Mutex<Option<Error>>>>,
+) -> RemoteCallbacks<'a> {
     let mut cb = RemoteCallbacks::new();
     cb.credentials(move |requested, _, kind| {
         if requested != url || !kind.contains(CredentialType::USER_PASS_PLAINTEXT) {
@@ -213,13 +481,80 @@ fn callbacks<'a>(url: &'a str, credential: &'a Credential) -> RemoteCallbacks<'a
         )
     });
     cb.transfer_progress(move |p| {
-        credential.valid() && p.received_bytes() <= 100 * 1024 * 1024 && p.total_objects() <= 50_000
+        let over = if p.received_bytes() > 100 * 1024 * 1024 {
+            Some(budget(
+                "fetch",
+                "transfer bytes",
+                p.received_bytes(),
+                100 * 1024 * 1024,
+            ))
+        } else if p.total_objects() > 50_000 {
+            Some(budget("fetch", "object count", p.total_objects(), 50_000))
+        } else {
+            None
+        };
+        if let (Some(error), Some(failure)) = (over, &failure) {
+            if let Ok(mut slot) = failure.lock() {
+                *slot = Some(error);
+            }
+        }
+        credential.valid() && over.is_none()
     });
     cb
 }
 pub fn fetch(repo: &Repository, url: &str, branch: &str, credential: &Credential) -> Result<Oid> {
     crate::locator(url)?;
-    fetch_to(repo, url, branch, callbacks(url, credential))
+    object_disk_budget(repo.path())?;
+    let failure = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let result = fetch_to(
+        repo,
+        url,
+        branch,
+        callbacks(url, credential, Some(failure.clone())),
+    );
+    if let Some(error) = *failure.lock().map_err(|_| Error::Storage)? {
+        return Err(error);
+    }
+    let oid = result?;
+    object_disk_budget(repo.path())?;
+    Ok(oid)
+}
+fn object_disk_budget(root: &Path) -> Result<()> {
+    let mut pending = vec![root.to_owned()];
+    let mut bytes = 0usize;
+    let mut count = 0usize;
+    while let Some(path) = pending.pop() {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let meta = fs::symlink_metadata(entry.path())?;
+            if meta.file_type().is_symlink() {
+                return Err(Error::Storage);
+            }
+            count += 1;
+            if count > 60_000 {
+                return Err(budget(
+                    "private objects",
+                    "filesystem entries",
+                    count,
+                    60_000,
+                ));
+            }
+            if meta.is_dir() {
+                pending.push(entry.path());
+            } else {
+                bytes = bytes.checked_add(meta.len() as usize).ok_or(Error::Limit)?;
+            }
+            if bytes > 512 * 1024 * 1024 {
+                return Err(budget(
+                    "private objects",
+                    "disk bytes",
+                    bytes,
+                    512 * 1024 * 1024,
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 fn fetch_to(
     repo: &Repository,
@@ -244,14 +579,25 @@ fn fetch_to(
 }
 pub fn push(
     repo: &Repository,
-    url: &str,
-    branch: &str,
-    head: Oid,
-    expected: Option<Oid>,
     credential: &Credential,
+    authority: &crate::branches::Authority,
 ) -> Result<()> {
-    crate::locator(url)?;
-    push_to(repo, url, branch, head, expected, Some(credential))
+    crate::locator(&authority.url)?;
+    if !credential.valid()
+        || credential.account.id != authority.account_id
+        || credential.binding != authority.binding
+    {
+        return Err(Error::Account);
+    }
+    push_to(
+        repo,
+        &authority.url,
+        &authority.branch,
+        authority.head,
+        authority.remote,
+        Some(credential),
+        Some(&authority.branch),
+    )
 }
 // Private transport seam: tests use only synthetic local bare repositories;
 // production entry above always validates canonical HTTPS before reaching it.
@@ -262,9 +608,13 @@ fn push_to(
     head: Oid,
     expected: Option<Oid>,
     credential: Option<&Credential>,
+    authorized_ref: Option<&str>,
 ) -> Result<()> {
     valid_ref(branch)?;
-    if !branch.starts_with("heinlein/story-") {
+    if authorized_ref
+        .map(|name| name != branch)
+        .unwrap_or_else(|| !branch.starts_with("heinlein/story-"))
+    {
         return Err(Error::InvalidRef);
     }
     let reference = format!("refs/heads/{branch}");
@@ -272,7 +622,9 @@ fn push_to(
     let wanted = reference.clone();
     let moved = std::cell::Cell::new(false);
     let rejected = std::cell::Cell::new(false);
-    let mut cb = credential.map(|c| callbacks(url, c)).unwrap_or_default();
+    let mut cb = credential
+        .map(|c| callbacks(url, c, None))
+        .unwrap_or_default();
     cb.push_negotiation(|updates| {
         if updates.len() != 1
             || updates[0].dst_refname().ok() != Some(wanted.as_str())
@@ -352,15 +704,15 @@ mod push_tests {
         let branch = "heinlein/story-00000000-0000-4000-8000-000000000001";
         let reference = format!("refs/heads/{branch}");
         let first = version(&source, None, "First exact story.\n");
-        push_to(&source, url, branch, first, None, None).unwrap();
+        push_to(&source, url, branch, first, None, None, None).unwrap();
         assert_eq!(destination.refname_to_id(&reference).unwrap(), first);
         let second = version(&source, Some(first), "Second exact story — intentional.\n");
-        push_to(&source, url, branch, second, Some(first), None).unwrap();
+        push_to(&source, url, branch, second, Some(first), None, None).unwrap();
         assert_eq!(destination.refname_to_id(&reference).unwrap(), second);
         let third = version(&source, Some(second), "Third exact story.\n");
-        assert!(push_to(&source, url, branch, third, Some(first), None).is_err());
+        assert!(push_to(&source, url, branch, third, Some(first), None, None).is_err());
         assert_eq!(destination.refname_to_id(&reference).unwrap(), second);
-        assert!(push_to(&source, url, "main", third, None, None).is_err());
+        assert!(push_to(&source, url, "main", third, None, None, None).is_err());
         assert!(destination.find_reference("refs/heads/main").is_err());
     }
     #[test]

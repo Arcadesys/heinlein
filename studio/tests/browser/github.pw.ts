@@ -81,12 +81,12 @@ test('GitHub panel keyboard entry, Escape focus and high contrast reflow at 200 
     const axe = await new AxeBuilder({ page }).include('.github-panel').analyze();
     expect(axe.violations).toEqual([]);
 });
-for(const kind of ['incoming','version'] as const)test(`selected ${kind} recovery is keyboard reachable after workspace reopen rejects`,async({page})=>{
+for(const kind of ['incoming','version','metadata'] as const)test(`selected ${kind} recovery is keyboard reachable after workspace reopen rejects`,async({page})=>{
     await page.goto(`/tests/browser/github.html?recovery=${kind}`);
     const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});await expect(dialog).toBeVisible();
     await expect(dialog).toContainText('The selected copy could not reopen');
     await expect(dialog.getByRole('button',{name:'Save a version on this computer…',exact:true})).toHaveCount(0);
-    const recovery=dialog.getByRole('button',{name:kind==='incoming'?'Recover interrupted update for synthetic-story…':'Recover local version for synthetic-story…',exact:true});
+    const recovery=dialog.getByRole('button',{name:kind!=='version'?'Recover interrupted update for synthetic-story…':'Recover local version for synthetic-story…',exact:true});
     await expect(recovery).toBeEnabled();
     const axe=await new AxeBuilder({page}).include('.github-panel').analyze();expect(axe.violations).toEqual([]);
     for(let i=0;i<40&&!await recovery.evaluate(el=>el===document.activeElement);i++)await page.keyboard.press('Tab');
@@ -115,6 +115,41 @@ for(const mode of ['empty','error'] as const)test(`repository picker ${mode} sta
     expect((await new AxeBuilder({page}).include('.github-panel').analyze()).violations).toEqual([]);
     const authCalls=await page.evaluate(()=>((window as any).githubFixture.calls as {action:string}[]).filter(r=>r.action==='connect'||r.action==='signOut'));
     expect(authCalls).toEqual([{action:'connect'}]);
+});
+test('working branch and PR ready flow remain keyboard accessible with explicit merge refusal',async({page})=>{
+ await page.goto('/tests/browser/github.html?workflow');
+ const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});await expect(dialog).toBeVisible();
+ for(let i=0;i<5;i++)await page.keyboard.press(process.platform==='darwin'?'Meta+=':'Control+=');
+ await expect(page.locator('html')).toHaveAttribute('data-zoom','200');
+ const activate=async(target:import('@playwright/test').Locator)=>{await target.focus();await page.keyboard.press('Enter');};
+ await activate(dialog.getByRole('button',{name:'Choose or create a working branch…',exact:true}));
+ await expect(dialog.getByRole('heading',{name:'Choose a working branch',exact:true})).toBeFocused();
+ await dialog.getByLabel('Starting branch',{exact:true}).focus();await page.keyboard.press('Home');
+ await dialog.getByLabel('New working branch name',{exact:true}).focus();await page.keyboard.type('revision/new-ending');
+ await activate(dialog.getByRole('button',{name:'Preview branch change',exact:true}));
+ await expect(dialog).toContainText('Retain all local commits');
+ await activate(dialog.getByRole('button',{name:'Confirm local branch change…',exact:true}));
+ await expect(dialog).not.toBeVisible();
+ await activate(page.getByRole('button',{name:'GitHub projects…',exact:true}));
+ await activate(dialog.getByRole('button',{name:'Pull request status and actions…',exact:true}));
+ await expect(dialog).toContainText('Check details are unknown, not passing.');
+ const merge=dialog.getByRole('button',{name:'Preview single pull request merge…',exact:true});await expect(merge).toBeDisabled();
+ await activate(dialog.getByRole('button',{name:'Refresh pull request status',exact:true}));await expect(merge).toBeDisabled();
+ await activate(dialog.getByRole('button',{name:'Mark draft ready for review…',exact:true}));await expect(dialog).toContainText('Ready for review only');
+ await activate(dialog.getByRole('button',{name:'Confirm ready for review…',exact:true}));
+ const bounds=await dialog.evaluate(el=>({scroll:el.scrollWidth,width:el.clientWidth}));expect(bounds.scroll).toBeLessThanOrEqual(bounds.width+1);
+ const axe=await new AxeBuilder({page}).include('.github-panel').analyze();expect(axe.violations).toEqual([]);
+ expect(await page.evaluate(()=>((window as any).githubFixture.calls as {action:string;kind?:string}[]).filter(c=>c.action==='previewPullAction'&&c.kind==='merge').length)).toBe(0);
+});
+
+test('nondefault selected target is named and keyboard reachable for incoming review',async({page})=>{
+ await page.goto('/tests/browser/github.html?workflow&base=release',{waitUntil:'domcontentloaded'});
+ const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});await expect(dialog).toBeVisible();
+ for(let i=0;i<5;i++)await page.keyboard.press(process.platform==='darwin'?'Meta+=':'Control+=');
+ const incoming=dialog.getByRole('button',{name:'Review changes on target branch release…',exact:true});await incoming.focus();await page.keyboard.press('Enter');
+ await expect(dialog).toContainText('No choice is selected');
+ expect(await page.evaluate(()=>((window as any).githubFixture.calls as {action:string;target?:string}[]).filter(r=>r.action==='previewIncoming'))).toEqual([{action:'previewIncoming',repositoryId:'synthetic-session',target:'default'}]);
+ expect((await new AxeBuilder({page}).include('.github-panel').analyze()).violations).toEqual([]);
 });
 
 test('pending renewed connection cause and retry stay readable and keyboard reachable at 200 percent',async({page})=>{

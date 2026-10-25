@@ -70,9 +70,22 @@ external templates, submodule recursion, custom merge drivers, filters or builds
 App-authored config is the sole backend; materialization writes validated raw blobs
 without a Git checkout/filter pipeline. Git data lives outside the editable tree.
 Symlinks, gitlinks, case/Unicode path collisions, unsafe paths and LFS-dependent
-content are rejected. Limits include 4096 files, 2 MiB per blob, 32 MiB materialized
-content, depth 32, and 100 MiB received pack bytes/50000 objects. These are transport
-and source limits, not a filesystem quota for libgit2's object database. Unsupported
+content are rejected. The complete supported tree is represented by shared immutable OID/mode/size
+entries. Previews share unchanged payloads. Untouched binary assets and executable
+modes are preserved exactly in local commits; assets do not become editable prose.
+Materialization validates and writes one raw blob at a time. Supported layouts have
+at most 8,192 file/directory nodes and 4,094 children per directory (reserving
+two OS dot entries within the existing 4,096-entry scanner). These layout budgets
+are checked before workspace publication, including passive/filtered entries. Other limits are
+32 MiB per passive blob, 256 MiB complete tree, depth 32, 2 MiB per editable document
+and 32 MiB hydrated editor text. Fetch remains capped at 100 MiB received pack bytes
+and 50,000 objects. Private object storage is checked before/after fetch at 512 MiB
+and 60,000 filesystem entries; this is a bounded check rather than a streaming disk
+quota during libgit2 decompression. Largest-blob allocation and Git metadata remain
+part of peak memory. A synthetic 96 MiB asset tree measured approximately 96 MB peak
+RSS on this Mac; this is evidence for that fixture, not a universal memory promise.
+Budget errors identify phase, category, observed count and cap without source text.
+Failed opens clean only the new unpublished workspace UUID, never an existing copy. Unsupported
 or oversized repositories fail before a registered editable copy is installed.
 
 Private records use owner-only descriptor-anchored directories, bounded JSON,
@@ -92,7 +105,7 @@ ref update; restart reconciliation finishes that exact version rather than creat
 a duplicate. Local versions and offline reopen need no working network/account.
 
 Send and Request feedback each require a fresh preview plus native confirmation,
-showing account, repository visibility, app-owned branch, base and exact files /
+showing account, repository visibility, explicitly authorized working branch, base and exact files /
 versions. The dialog warns that GitHub repository automation may run. Push never
 writes the default branch or forces a ref. Before transmission, remote repository
 metadata, effective permission, base OID and expected app-branch OID must match.
@@ -105,7 +118,7 @@ An operation receipt is durable before a remote write. Unknown push outcomes use
 exact remote-head readback; unknown PR creation uses repo/head/base plus a unique
 operation marker. Checking an outcome never sends it again. An unresolved unknown
 operation blocks a new share; there is no automatic queue, reconnect retry, account
-fallback, force push, branch deletion, merge, release or distribution command.
+fallback, force push, branch deletion, release or distribution command.
 
 ## Incoming changes and recovery
 
@@ -144,3 +157,57 @@ They prove their stated layers, not native OS credential dialogs, live installat
 actual GitHub pushes/PRs, screen-reader behavior, Linux runtime or physical power-loss
 acceptance. Those require a separately authorized disposable repository and native
 manual acceptance; no live remote mutation is part of this implementation pass.
+
+## Explicit working branches and PR actions
+
+Choose a starting branch, then create a named working branch or select a previously
+retained branch. Default is a starting point only. Ref validation, expected local
+and remote OIDs, account binding, saved-file/recovery barriers and native one-shot
+confirmation precede changes. A versioned capability book records authorized refs
+and each branch's head, remote receipt, PR and base. Legacy catalog-v1 projects load
+without rewriting IDs/roots or inferring new branch authority. Unknown/corrupt
+capability versions refuse operations and preserve originals. Whole-tree switching
+uses a staged tree, fsynced journal and retained backup; restart finishes the same
+transaction without fetching or discarding unsent commits. Untracked writing or
+uncertain remote operations block switching. No implicit reset, stash or deletion.
+
+Incoming review resolves its target from the selected working branch's retained
+base, with the original default only as a legacy fallback. The displayed target
+names that branch. Reviewing an advancing non-default base updates that base pin
+before a later explicit send; no default-branch write is introduced.
+
+Capability-book and catalog-entry saves use a separate bounded metadata journal.
+Under workspace then catalog locks, exact before values precede durable journal,
+book, and target-entry writes, readback, then journal cleanup. Other workspace
+entries are read fresh and preserved. Restart repairs only components equal to the
+recorded before or after values; malformed, missing or third values remain blocked.
+Ordinary saves cannot grant a ref/account capability; explicit branch/rebind parent
+operations supply their own validated transitions. Child metadata recovery composes
+with branch journals and precedes read-only unknown-receipt reconciliation. It does
+not edit source/refs, resend a request or mark an unknown remote action successful.
+Status exposes local repair through existing recovery controls.
+
+Commit selects exact saved files. Send is separate. Draft PR and ready PR creation
+are distinct explicit actions; a creation timeout is reconciled by its operation
+marker, never replayed. Mark draft ready is separate again. GraphQL ready has no
+head CAS: head/PR identity are checked before and after; unknown outcomes remain
+read-only recoverable and do not trigger a retry.
+
+V1's merge seam is the synchronous single-PR expected-head endpoint, never async,
+queue/automerge submission or an alternate endpoint after refusal. Known, missing
+or malformed stack state and queue/rule/identity uncertainty block the action.
+Only an explicitly proved account/repository/head/base no-bypass capability may
+reach mutation. **The current production App connection has no established
+no-bypass proof, so in-app merge is unavailable with an Open on GitHub action.**
+Mock-provider merge tests establish refusal/reconciliation behavior, not production
+permission or live merge acceptance. No new scopes or fallback actor are requested.
+Check details are unknown rather than green. Target/head are revalidated before
+confirmation, but GitHub's endpoint offers no atomic base-tip/retarget CAS; the
+reviewed head and named target are the consent boundary. A timeout is read back
+from PR state and merge commit without attributing the mutation to Heinlein or
+resending it. Local branches and source remain intact after a reported merge.
+
+Incoming prose/manifest conflicts retain explicit author choices. Remote passive
+asset or mode mutations currently refuse with an actionable unsupported-tree
+message; they are never silently omitted or flattened. Opening the repository and
+retaining those assets is distinct from merging asset changes in this version.

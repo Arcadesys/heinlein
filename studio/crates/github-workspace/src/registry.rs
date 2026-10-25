@@ -15,6 +15,14 @@ pub struct StateDir {
     fd: File,
 }
 pub struct Lock(File);
+/// Proof that this registry workspace lock is already held; never recursively flock it.
+pub struct WorkspaceLock {
+    id: String,
+    registry: PathBuf,
+    _lock: Lock,
+}
+#[path = "metadata.rs"]
+mod metadata;
 impl Drop for Lock {
     fn drop(&mut self) {
         #[cfg(unix)]
@@ -225,7 +233,7 @@ impl StateDir {
         Err(Error::Unsupported)
     }
 }
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Workspace {
     pub id: String,
@@ -233,12 +241,27 @@ pub struct Workspace {
     pub account_id: u64,
     pub auth_binding: String,
     pub base_oid: String,
+    #[serde(default)]
+    pub base_branch: Option<String>,
     pub head_oid: String,
     pub remote_oid: Option<String>,
     pub branch: String,
     pub pr: Option<PullRequest>,
 }
-#[derive(Clone, Serialize, Deserialize, Debug)]
+impl Workspace {
+    /// Native target selection; the renderer names a role, never a remote ref.
+    pub fn incoming_branch(&self, target: &str) -> Result<String> {
+        match target {
+            "feedback" => Ok(self.branch.clone()),
+            "default" => Ok(self
+                .base_branch
+                .clone()
+                .unwrap_or_else(|| self.repo.default_branch.clone())),
+            _ => Err(Error::InvalidRef),
+        }
+    }
+}
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PullRequest {
     pub number: u64,
@@ -271,6 +294,64 @@ impl Registry {
             sources: sources.path().to_owned(),
         })
     }
+    // Only an explicitly marked fresh, unpublished opening is disposable. Take
+    // its existing workspace lock before catalog lock; a live opener is skipped.
+    fn cleanup_openings(&self) -> Result<()> {
+        self.state.check()?;
+        for (count, entry) in fs::read_dir(self.state.path())?.enumerate() {
+            if count >= 1024 {
+                return Err(crate::transport::budget(
+                    "opening recovery",
+                    "private entries",
+                    count + 1,
+                    1024,
+                ));
+            }
+            let entry = entry?;
+            let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if uuid_id(&id).is_err() {
+                continue;
+            }
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let dir = self.directory(&id)?;
+            let _workspace = match dir.lock("workspace.lock") {
+                Ok(lock) => lock,
+                Err(Error::Busy) => continue,
+                Err(e) => return Err(e),
+            };
+            let marker = dir.read::<String>("opening-id-v1.json")?;
+            if marker.as_deref() != Some(&id) {
+                continue;
+            }
+            let _catalog = self.state.lock("catalog.lock")?;
+            if self.read()?.iter().any(|w| w.id == id) {
+                continue;
+            }
+            self.state.check()?;
+            dir.check()?;
+            // No preexisting unmarked store, registered checkout or branch-stage
+            // directory is eligible. Unknown failures preserve the marker/data.
+            for path in [
+                self.sources.join(format!("opening-{id}")),
+                self.checkout(&id)?,
+            ] {
+                if path.exists() {
+                    if fs::symlink_metadata(&path)?.file_type().is_symlink() {
+                        return Err(Error::Storage);
+                    }
+                    fs::remove_dir_all(path)?;
+                }
+            }
+            fs::File::open(&self.sources)?.sync_all()?;
+            fs::remove_dir_all(dir.path())?;
+            fs::File::open(self.state.path())?.sync_all()?;
+        }
+        Ok(())
+    }
     pub fn list(&self) -> Result<Vec<Workspace>> {
         let _lock = self.state.lock("catalog.lock")?;
         self.read()
@@ -294,6 +375,9 @@ impl Registry {
             crate::transport::valid_ref(&w.branch)?;
             git2::Oid::from_str(&w.head_oid)?;
             git2::Oid::from_str(&w.base_oid)?;
+            if let Some(base) = &w.base_branch {
+                crate::transport::valid_ref(base)?;
+            }
             if w.account_id == 0 || !ids.insert(w.id.clone()) {
                 return Err(Error::Storage);
             }
@@ -307,18 +391,25 @@ impl Registry {
             .find(|w| w.id == id)
             .ok_or(Error::Missing)
     }
-    pub fn save(&self, w: &Workspace) -> Result<()> {
-        uuid_id(&w.id)?;
-        let _lock = self.state.lock("catalog.lock")?;
+    pub fn workspace_lock(&self, id: &str) -> Result<WorkspaceLock> {
+        Ok(WorkspaceLock {
+            id: id.into(),
+            registry: self.state.path().to_owned(),
+            _lock: self.directory(id)?.lock("workspace.lock")?,
+        })
+    }
+    pub fn save(&self, before: &Workspace, after: &Workspace) -> Result<()> {
+        let lock = self.workspace_lock(&before.id)?;
+        self.save_locked(&lock, before, after)
+    }
+    fn publish_new(&self, lock: &WorkspaceLock, w: &Workspace) -> Result<()> {
+        self.check_workspace_lock(lock, &w.id)?;
+        let _catalog = self.state.lock("catalog.lock")?;
         let mut all = self.read()?;
-        if let Some(old) = all.iter_mut().find(|old| old.id == w.id) {
-            if old.repo.id != w.repo.id {
-                return Err(Error::Changed);
-            }
-            *old = w.clone()
-        } else {
-            all.push(w.clone())
+        if all.iter().any(|old| old.id == w.id) || crate::branches::read_book(self, w)?.is_some() {
+            return Err(Error::Changed);
         }
+        all.push(w.clone());
         self.state.write(
             "registry-v1.json",
             &Catalog {
@@ -330,14 +421,21 @@ impl Registry {
     pub fn directory(&self, id: &str) -> Result<StateDir> {
         self.state.child(id)
     }
+    pub(crate) fn sources_root(&self) -> &Path {
+        &self.sources
+    }
     pub fn checkout(&self, id: &str) -> Result<PathBuf> {
         uuid_id(id)?;
         Ok(self.sources.join(id))
     }
     pub fn reopen(&self, id: &str) -> Result<(Workspace, git2::Repository)> {
         let w = self.get(id)?;
+        if self.metadata_pending(id)? {
+            return Err(Error::Recovery);
+        }
         let dir = self.directory(id)?;
-        if crate::incoming::pending(self, id)?
+        if crate::branches::pending(self, id)?
+            || crate::incoming::pending(self, id)?
             || crate::operations::branch_pending(self, id)?
             || crate::journal::receipts(&dir)?
                 .iter()
@@ -366,6 +464,7 @@ impl Registry {
     ) -> Result<Workspace> {
         info.validate()?;
         uuid_id(binding)?;
+        self.cleanup_openings()?;
         if account_id == 0 {
             return Err(Error::Account);
         }
@@ -380,14 +479,15 @@ impl Registry {
         }
         let id = uuid::Uuid::new_v4().to_string();
         let private = self.directory(&id)?;
-        let _lock = private.lock("workspace.lock")?;
+        let lock = self.workspace_lock(&id)?;
         let stage = self.sources.join(format!("opening-{id}"));
+        private.write("opening-id-v1.json", &id)?;
         fs::create_dir(&stage)?;
         let result = (|| {
             let repo = crate::transport::initialize(&private, &stage)?;
             let base = fetch(&repo)?;
             let tree = crate::transport::tree_files(&repo, base)?;
-            crate::transport::materialize(&stage, &tree)?;
+            crate::transport::materialize(&repo, &stage, &tree)?;
             let branch = format!("heinlein/story-{id}");
             repo.reference(
                 &format!("refs/heads/{branch}"),
@@ -406,16 +506,23 @@ impl Registry {
                 account_id,
                 auth_binding: binding.into(),
                 base_oid: base.to_string(),
+                base_branch: None,
                 head_oid: base.to_string(),
                 remote_oid: None,
                 branch,
                 pr: None,
             };
-            self.save(&w)?;
+            self.publish_new(&lock, &w)?;
             Ok(w)
         })();
         if result.is_err() {
-            let _ = fs::remove_dir_all(&stage);
+            // Only this fresh unpublished UUID is eligible. An uncertain catalog
+            // write or a registered workspace must retain all of its data.
+            if self.list().is_ok_and(|all| !all.iter().any(|w| w.id == id)) {
+                let _ = fs::remove_dir_all(&stage);
+                let _ = fs::remove_dir_all(self.checkout(&id)?);
+                let _ = fs::remove_dir_all(private.path());
+            }
         }
         result
     }

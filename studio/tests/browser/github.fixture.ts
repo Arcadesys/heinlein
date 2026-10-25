@@ -11,7 +11,7 @@ let hash = 'saved-1';
 let dirty = false;
 let recovery: RecoveryDraft | null = null;
 const repo = { id: 42, owner: 'example', name: 'synthetic-story', private: true, defaultBranch: 'main', installationId: 7 };
-const workspace = { id: 'synthetic-workspace', repo, accountId: 9, authBinding: 'synthetic-binding', baseOid: 'base', headOid: 'local', remoteOid: null as string | null, branch: 'heinlein/story-synthetic', pr: null as null | {
+const workspace = { id: 'synthetic-workspace', repo, accountId: 9, authBinding: 'synthetic-binding', baseBranch: undefined as string|undefined, baseOid: 'base', headOid: 'local', remoteOid: null as string | null, branch: 'heinlein/story-synthetic', pr: null as null | {
         number: number;
         url: string;
         state: string;
@@ -22,7 +22,7 @@ const workspace = { id: 'synthetic-workspace', repo, accountId: 9, authBinding: 
     } };
 const session: RepositorySession = { id: 'synthetic-session', name: 'example/synthetic-story', manifests: [], githubWorkspaceId: workspace.id };
 const recoveryMode=new URLSearchParams(location.search).get('recovery');
-let pendingWorkspaceRecovery=recoveryMode==='incoming'||recoveryMode==='version'?recoveryMode:null;
+let pendingWorkspaceRecovery=recoveryMode==='incoming'||recoveryMode==='version'||recoveryMode==='metadata'?recoveryMode:null;
 let opened = !!pendingWorkspaceRecovery;
 let receipts: GitHubReceipt[] = [];
 let auth: GitHubAuth = { configured: true, account: null, confirmed: false, pending: null, message: 'Synthetic host: no real GitHub connection, files or OS authority.' };
@@ -39,7 +39,7 @@ async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
     calls.push(structuredClone(r));
     if(r.action==='status'&&rotationPending)return{auth:null,error:rotationMessage('The secure credential store is locked. Unlock it and allow its access prompt.'),workspaces:[]};
     switch (r.action) {
-        case 'status': return { auth, error: null, workspaces: opened ? [{ workspace, error: pendingWorkspaceRecovery?'Synthetic interrupted operation needs recovery.':null, incomingRecovery: pendingWorkspaceRecovery==='incoming', receipts:pendingWorkspaceRecovery==='version'?[{id:'synthetic-prepared-version',workspaceId:workspace.id,kind:'version',status:'prepared',head:workspace.headOid,message:'Synthetic local version needs recovery.',url:null}]:receipts }] : [], app: { id: 5412628, clientId: 'synthetic-public', owner: 'Arcadesys', slug: 'heinlein-studio', installUrl: 'https://github.com/apps/heinlein-studio' } };
+        case 'status': return { auth, error: null, workspaces: opened ? [{ workspace, error: pendingWorkspaceRecovery?'Synthetic interrupted operation needs recovery.':null, incomingRecovery: pendingWorkspaceRecovery==='incoming', branchRecovery:pendingWorkspaceRecovery==='metadata', receipts:pendingWorkspaceRecovery==='version'?[{id:'synthetic-prepared-version',workspaceId:workspace.id,kind:'version',status:'prepared',head:workspace.headOid,message:'Synthetic local version needs recovery.',url:null}]:receipts }] : [], app: { id: 5412628, clientId: 'synthetic-public', owner: 'Arcadesys', slug: 'heinlein-studio', installUrl: 'https://github.com/apps/heinlein-studio' } };
         case 'retrySaved':
             if(++rotationRetries===1)throw new Error(rotationMessage('Secure credential access was cancelled. Retry when you are ready to allow access.'));
             rotationPending=false;auth={...auth,confirmed:true,account:{id:9,login:'synthetic-writer'}};return auth;
@@ -69,6 +69,10 @@ async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
                 throw new Error('Select files and confirm your name, email and version message.');
             return { id: 'synthetic-version', workspaceId: workspace.id, head: workspace.headOid, files: [change()], identity: r.identity, message: r.message };
         case 'previewShare': return { id: r.kind, workspaceId: workspace.id, head: workspace.headOid, files: [change()], identity: { name: '', email: '' }, message: '', kind: r.kind, repository: repo, account: auth.account!, branch: workspace.branch, base: 'main', commits: [workspace.headOid], title: r.title, body: r.body, warning: 'Sending may run repository-configured automation. This fixture never sends anything.' };
+        case 'branches':return [{name:workspace.branch,head:workspace.headOid,local:true,defaultBranch:false},{name:'main',head:'base',local:false,defaultBranch:true}];
+        case 'previewBranch':return {id:'synthetic-branch',workspaceId:workspace.id,repository:repo,account:auth.account!,fromBranch:workspace.branch,branch:r.name,startingBranch:r.startingBranch,head:workspace.headOid,base:'main',files:[change()],treatment:'Complete synthetic local tree. Retain all local commits; nothing sent.'};
+        case 'pullStatus':return {detail:{pull:workspace.pr!,nodeId:'PR_synthetic',head:workspace.headOid,base:'base',stack:'standalone'},readyAllowed:workspace.pr?.draft===true,mergeAllowed:false,reason:'This connection cannot establish no rule bypass. Use Open on GitHub.',checks:'Check details are unknown, not passing.'};
+        case 'previewPullAction':return {id:'synthetic-ready',kind:r.kind,repository:repo,account:auth.account!,detail:{pull:workspace.pr!,nodeId:'PR_synthetic',head:workspace.headOid,base:'base',stack:'standalone'},method:r.method,warning:'Ready for review only. No merge or new commits.'};
         case 'previewIncoming':
             incoming = { ...incoming, ready: false, conflicts: incoming.conflicts.map(c => ({ ...c, resolution: null })) };
             return incoming;
@@ -78,6 +82,8 @@ async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
         case 'confirm': {
             if (dirty || recovery)
                 throw new Error('Resolve synthetic local save/recovery first.');
+            if(r.previewId==='synthetic-branch'){workspace.branch='revision/new-ending';return session;}
+            if(r.previewId==='synthetic-ready'&&workspace.pr)workspace.pr.draft=false;
             if (r.previewId === 'synthetic-version') {
                 versioned = text;
                 workspace.headOid += '-version';
@@ -104,7 +110,8 @@ Object.assign(window,{updateFixture:{calls:updateCalls,synthetic:true}});
 const core: LocalCore = { available: () => true, updateRequest:async action=>{updateCalls.push(action);if(action==='check')updateState='available';if(action==='schedule')updateState='scheduled';return{state:updateState,commit:'a'.repeat(40),availableCommit:updateState==='not-checked'?null:'b'.repeat(40),generation:1}}, githubRequest, pickRepository: unavailable, recentRepositories: async () => [], openRecentRepository: unavailable, listSystemFonts: async () => [], listDirectory: async () => [{ path: 'story.md', name: 'story.md', kind: 'file', sizeBytes: text.length }], loadManuscript: unavailable, readDocument: async (_id, path) => ({ path, text, contentHash: hash, sizeBytes: text.length, frontmatter: null, generatedCompatibility: false }), saveDocument: async (_id, path, _expected, source) => { text = source; hash += '-saved'; return { path, text, contentHash: hash, sizeBytes: text.length, frontmatter: null, generatedCompatibility: false }; }, readRecovery: async () => recovery, stageRecovery: async (_id, path, baseHash, source) => recovery = { id: 'synthetic-recovery', path, baseHash, text: source, updatedAt: 1 }, discardRecovery: async () => { recovery = null; }, setUnsavedChanges: async (v) => { dirty = v; }, requestClose: async () => { }, onCloseRequested: async () => () => { }, loadDrafting: async () => ({ manifestPath: 'ms/manuscript.json', revision: null, project: null, groups: [], scenes: [], untrackedPaths: ['story.md'], missingPaths: [], recoveryRequired: false }) };
 const app=mountStudio(document.querySelector<HTMLElement>('#app')!, core);
 // AO's preview can start directly at the real production panel on this synthetic host.
-if(pendingWorkspaceRecovery){auth={...auth,confirmed:true,account:{id:9,login:'synthetic-writer'}};void app.selectRepository(async()=>session).then(()=>document.querySelector<HTMLButtonElement>('.github-entry')?.click());}
+if(new URLSearchParams(location.search).has('workflow')){workspace.baseBranch=new URLSearchParams(location.search).get('base')??undefined;opened=true;auth={...auth,confirmed:true,account:{id:9,login:'synthetic-writer'}};workspace.pr={number:1,url:'https://github.com/example/synthetic-story/pull/1',state:'open',merged:false,draft:true,head:workspace.branch,base:workspace.baseBranch??'main'};void app.selectRepository(async()=>session).then(()=>document.querySelector<HTMLButtonElement>('.github-entry')?.click());}
+else if(pendingWorkspaceRecovery){auth={...auth,confirmed:true,account:{id:9,login:'synthetic-writer'}};void app.selectRepository(async()=>session).then(()=>document.querySelector<HTMLButtonElement>('.github-entry')?.click());}
 else if (new URLSearchParams(location.search).has('github')) document.querySelector<HTMLButtonElement>('.github-entry')?.click();
 
 if(new URLSearchParams(location.search).has('updates')){const notice=document.createElement('p');notice.textContent='Synthetic updater preview: no installed app, credentials, files or network updates.';document.body.prepend(notice);document.querySelector<HTMLButtonElement>('.update-entry')?.click();}

@@ -1,5 +1,5 @@
 import type { LocalCore, RepositorySession } from './localCore';
-import type { GitHubRequest, GitHubStatus, GitHubAuth, GitHubProject, GitHubOpen, GitHubVersion, GitHubShare, GitHubIncoming, GitHubIdentity, GitHubReceipt, GitHubRepositories } from './githubTypes';
+import type { GitHubRequest, GitHubStatus, GitHubAuth, GitHubProject, GitHubOpen, GitHubVersion, GitHubShare, GitHubIncoming, GitHubIdentity, GitHubReceipt, GitHubRepositories, GitHubBranchChoice, GitHubBranchPreview, GitHubPullStatus, GitHubPullPreview } from './githubTypes';
 import { createGitHubConflictPanel } from './githubConflictPanel';
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '') => { const e = document.createElement(tag); e.textContent = text; return e; };
 type Options = {
@@ -37,7 +37,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         void request({ action: 'cancel', previewId: id }).catch(() => { });
     } }
     function valid(view: number, revision: number) { return element.open && view === generation && revision === source; }
-    function controls(disabled: boolean) { element.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>('input,textarea,select,button').forEach(e => e.disabled = disabled); element.toggleAttribute('aria-busy', disabled); }
+    function controls(disabled: boolean) { element.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>('input,textarea,select,button').forEach(e => e.disabled = disabled || e.dataset.unavailable !== undefined); element.toggleAttribute('aria-busy', disabled); }
     async function act(run: () => Promise<void>) { if (busy)
         return; busy = true; controls(true); try {
         await run();
@@ -150,8 +150,8 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
             return;
         if (project) {
             const w = project.workspace;
-            body.append(node('p', `${w.repo.owner}/${w.repo.name} · ${w.repo.private ? 'Private' : 'Public'}`), node('p', 'Saved on this computer is separate from Version saved and Sent to GitHub.'), node('p', `Local version: ${w.headOid.slice(0, 12)}. ${w.remoteOid === w.headOid ? 'This version was sent to GitHub.' : 'Local versions may not have been sent.'} ${w.pr ? `Feedback request #${w.pr.number}: ${w.pr.state}${w.pr.draft ? ' (draft)' : ''}.` : ''}`), button('Save a version on this computer…', async () => renderVersion()), button('Send local versions to GitHub…', async () => renderShare('push')), button('Request feedback with a draft pull request…', async () => renderShare('feedback')), button('Review changes on the feedback branch…', () => incoming('feedback')), button('Review changes on the original branch…', () => incoming('default')), node('p', 'After feedback is closed or merged, first review the original branch, then start a fresh feedback branch. Your local versions are retained.'), button('Start a fresh feedback branch…', async () => { await options.authorAction(async () => { await request({ action: 'freshBranch', repositoryId: session().id }); }); await load(); }));
-            if(w.pr)body.append(button(`Open feedback request #${w.pr.number}`,async()=>{await request({action:'openFeedback',repositoryId:session().id});}));
+            body.append(node('p', `${w.repo.owner}/${w.repo.name} · ${w.repo.private ? 'Private' : 'Public'}`), node('p', `Working branch: ${w.branch}. Pull request target: ${w.baseBranch ?? w.repo.defaultBranch}.`), node('p', 'Save your draft first. A local version (Git commit) records the saved files you choose. Send shares committed versions with GitHub; it does not merge them.'), node('p', `Local version: ${w.headOid.slice(0, 12)}. ${w.remoteOid === w.headOid ? 'This version was sent to GitHub.' : 'Local versions may not have been sent.'} ${w.pr ? `Feedback request #${w.pr.number}: ${w.pr.state}${w.pr.draft ? ' (draft)' : ''}.` : ''}`), button('Choose or create a working branch…', renderBranches), button('Save a version on this computer…', async () => renderVersion()), button('Send local versions to GitHub…', async () => renderShare('push')), button('Request feedback with a draft pull request…', async () => renderShare('feedback')), button('Create a pull request ready for review…', async () => renderShare('pullRequest')), button('Review changes on the feedback branch…', () => incoming('feedback')), button(`Review changes on target branch ${w.baseBranch ?? w.repo.defaultBranch}…`, () => incoming('default')), node('p', 'After feedback is closed or merged, first review the selected target branch, then start a fresh feedback branch. Your local versions are retained.'), button('Start a fresh feedback branch…', async () => { await options.authorAction(async () => { await request({ action: 'freshBranch', repositoryId: session().id }); }); await load(); }));
+            if(w.pr)body.append(button('Pull request status and actions…', renderPull), button(`Open feedback request #${w.pr.number}`,async()=>{await request({action:'openFeedback',repositoryId:session().id});}));
             for (const r of project.receipts) {
                 body.append(node('p', `${r.kind}: ${r.status}. ${r.message}`));
                 if (r.status === 'unknown')
@@ -203,9 +203,50 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         body.append(field('Version message', versionMessage, v => versionMessage = v), button('Preview local version', async () => { const p = await prepare<GitHubVersion>({ action: 'previewVersion', repositoryId: s.id, paths: [...selected], identity: { ...identity }, message: versionMessage }); const box = previewBox(); box.append(files(p.files), node('p', `${p.identity.name} <${p.identity.email}> — ${p.message}`), button('Confirm local version…', () => finish(p.id, false))); }), button('Back to GitHub project', load));
         focus();
     }
-    function renderShare(kind: 'push' | 'feedback') { cancelPlan(); heading(kind === 'push' ? 'Send versions to GitHub' : 'Request feedback'); const s = session(); body.append(node('p', kind === 'push' ? 'Only saved local versions are sent. Unversioned writing stays here.' : 'A draft pull request asks for feedback on versions already sent. It does not merge or publish the story.')); if (kind === 'feedback')
-        body.append(field('Feedback request title', feedbackTitle, v => feedbackTitle = v), field('Feedback request description', feedbackBody, v => feedbackBody = v, true)); body.append(button('Preview GitHub action', async () => { const p = await prepare<GitHubShare>({ action: 'previewShare', repositoryId: s.id, kind, title: feedbackTitle, body: feedbackBody }); const box = previewBox(); box.append(node('h4', `${p.repository.owner}/${p.repository.name} · ${p.repository.private ? 'Private' : 'Public'} · ${p.account.login}`), node('p', `Working branch: ${p.branch}. Base: ${p.base}. ${p.commits.length} versions.`), files(p.files), node('p', p.warning)); if (kind === 'feedback')
-        box.append(node('p', p.title), node('pre', p.body)); box.append(button(kind === 'push' ? 'Confirm sending versions…' : 'Confirm draft feedback request…', () => finish(p.id, false)), button('Cancel this preview', async () => { cancelPlan(); box.remove(); })); }), button('Back to GitHub project', load)); focus(); }
+    function renderShare(kind: 'push' | 'feedback' | 'pullRequest') { cancelPlan(); heading(kind === 'push' ? 'Send versions to GitHub' : kind === 'feedback' ? 'Request feedback' : 'Create a pull request'); const s = session(); body.append(node('p', kind === 'push' ? 'Only saved local versions are sent. Unversioned writing stays here.' : kind === 'feedback' ? 'A draft pull request asks for feedback on versions already sent. It does not merge or publish the story.' : 'A pull request ready for review shares the versions already sent. Creating it does not merge the story.')); if (kind !== 'push')
+        body.append(field('Feedback request title', feedbackTitle, v => feedbackTitle = v), field('Feedback request description', feedbackBody, v => feedbackBody = v, true)); body.append(button('Preview GitHub action', async () => { const p = await prepare<GitHubShare>({ action: 'previewShare', repositoryId: s.id, kind, title: feedbackTitle, body: feedbackBody }); const box = previewBox(); box.append(node('h4', `${p.repository.owner}/${p.repository.name} · ${p.repository.private ? 'Private' : 'Public'} · ${p.account.login}`), node('p', `Working branch: ${p.branch}. Base: ${p.base}. ${p.commits.length} versions.`), files(p.files), node('p', p.warning)); if (kind !== 'push')
+        box.append(node('p', p.title), node('pre', p.body)); box.append(button(kind === 'push' ? 'Confirm sending versions…' : kind === 'feedback' ? 'Confirm draft feedback request…' : 'Confirm ready pull request…', () => finish(p.id, false)), button('Cancel this preview', async () => { cancelPlan(); box.remove(); })); }), button('Back to GitHub project', load)); focus(); }
+    function selectField(labelText:string, values:{value:string;label:string}[], change:(value:string)=>void) {
+        const label=node('label',labelText), select=node('select');select.setAttribute('aria-label',labelText);
+        for(const value of values){const option=node('option',value.label);option.value=value.value;select.append(option);}
+        select.addEventListener('change',()=>{change(select.value);cancelPlan();body.querySelector('[data-github-preview]')?.remove();});
+        label.append(select);return {label,select};
+    }
+    async function renderBranches(){
+        const view=generation,revision=source,s=session();
+        const choices=await request<GitHubBranchChoice[]>({action:'branches',repositoryId:s.id});
+        if(!valid(view,revision))return;
+        cancelPlan();heading('Choose a working branch');
+        body.append(node('p','A branch keeps a line of work separate. Save your writing first. Switching retains local commits, including ones you have not sent. The original branch can be a starting point, but cannot receive commits here.'));
+        let starting=choices.find(c=>c.name===project?.workspace.branch)?.name??choices[0]?.name??'';
+        let name='',create=true;
+        const start=selectField('Starting branch',choices.map(c=>({value:c.name,label:`${c.name}${c.local?' · on this computer':' · GitHub'}${c.defaultBranch?' · original branch':''}`})),v=>starting=v);start.select.value=starting;
+        const mode=selectField('Working branch action',[{value:'create',label:'Create a new working branch'},{value:'select',label:'Use the selected existing branch'}],v=>{create=v==='create';nameField.hidden=!create;});
+        const nameField=field('New working branch name',name,v=>name=v);
+        body.append(start.label,mode.label,nameField,button('Preview branch change',async()=>{
+            const p=await prepare<GitHubBranchPreview>({action:'previewBranch',repositoryId:s.id,startingBranch:starting,name:create?name:starting,create});
+            const box=previewBox();box.append(node('h4',`${p.account.login} · ${p.repository.owner}/${p.repository.name}`),node('p',`From ${p.fromBranch} to ${p.branch}. Starting point: ${p.startingBranch}. Target for future pull requests: ${p.base}.`),node('p',`Commit: ${p.head}`),files(p.files),node('p',p.treatment),button('Confirm local branch change…',async()=>{
+                if(plan!==p.id)throw new Error('Preview this branch change again.');
+                await options.select(()=>request<RepositorySession|null>({action:'confirm',repositoryId:s.id,previewId:p.id,identity:null}));plan=null;await load();
+            }));
+        }),button('Back to GitHub project',load));focus();
+    }
+    async function renderPull(){
+        const view=generation,revision=source,s=session();
+        const status=await request<GitHubPullStatus>({action:'pullStatus',repositoryId:s.id});
+        if(!valid(view,revision))return;
+        cancelPlan();heading('Pull request status and actions');
+        const d=status.detail;
+        body.append(node('p',`Pull request #${d.pull.number}: ${d.pull.state}${d.pull.draft?' · draft':''}. Branch ${d.pull.head} → ${d.pull.base}.`),node('p',`Reviewed head: ${d.head}. Target tip: ${d.base}.`),node('p',status.checks));
+        const reason=node('p',status.reason);reason.id='github-merge-unavailable';body.append(reason);
+        let method='merge';const methodField=selectField('Merge method',[{value:'merge',label:'Merge commit'},{value:'squash',label:'Squash commits'},{value:'rebase',label:'Rebase commits'}],v=>method=v);
+        const action=(kind:'ready'|'merge')=>async()=>{const p=await prepare<GitHubPullPreview>({action:'previewPullAction',repositoryId:s.id,kind,method});const box=previewBox();box.append(node('h4',`${p.account.login} · ${p.repository.owner}/${p.repository.name} · #${p.detail.pull.number}`),node('p',`${p.detail.pull.head} (${p.detail.head}) → ${p.detail.pull.base} (${p.detail.base}). Method: ${p.method}.`),node('p',p.warning),button(kind==='ready'?'Confirm ready for review…':'Confirm merge on GitHub…',()=>finish(p.id,false)));};
+        const ready=button('Mark draft ready for review…',action('ready'));
+        if(!status.readyAllowed){ready.dataset.unavailable='';ready.disabled=true;body.append(node('p','Ready is available only for an open standalone draft whose exact committed head has been sent.'));}
+        const merge=button('Preview single pull request merge…',action('merge'));
+        if(!status.mergeAllowed){merge.dataset.unavailable='';merge.disabled=true;merge.setAttribute('aria-describedby',reason.id);}
+        body.append(ready,methodField.label,merge,button('Open on GitHub',async()=>{await request({action:'openFeedback',repositoryId:s.id});}),button('Refresh pull request status',renderPull),button('Back to GitHub project',load));focus();
+    }
     async function incoming(target: 'feedback' | 'default') { const p = await prepare<GitHubIncoming>({ action: 'previewIncoming', repositoryId: session().id, target }); renderIncoming(p); }
     function renderIncoming(p: GitHubIncoming) {
         heading('Review incoming GitHub changes');

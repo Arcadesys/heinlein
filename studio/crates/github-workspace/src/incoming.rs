@@ -152,10 +152,10 @@ impl Builder<'_> {
         })
     }
 }
-fn string(bytes: Option<&Vec<u8>>) -> Result<Option<Value>> {
+fn string(bytes: Option<&std::sync::Arc<Vec<u8>>>) -> Result<Option<Value>> {
     bytes
         .map(|b| {
-            String::from_utf8(b.clone())
+            String::from_utf8(b.to_vec())
                 .map(Value::String)
                 .map_err(|_| Error::Unsupported)
         })
@@ -198,7 +198,7 @@ fn scenes(
                 s.id.clone(),
                 Scene {
                     scene: s.clone(),
-                    text: String::from_utf8(files.get(&s.path).ok_or(Error::Unsupported)?.clone())
+                    text: String::from_utf8(files.get(&s.path).ok_or(Error::Unsupported)?.to_vec())
                         .map_err(|_| Error::Unsupported)?,
                 },
             ))
@@ -239,10 +239,10 @@ fn documents(ours: &Files, candidate: &Files) -> Vec<CandidateDocument> {
         .map(|c| CandidateDocument {
             original: ours
                 .get(&c.path)
-                .and_then(|b| String::from_utf8(b.clone()).ok()),
+                .and_then(|b| String::from_utf8(b.to_vec()).ok()),
             result: candidate
                 .get(&c.path)
-                .and_then(|b| String::from_utf8(b.clone()).ok()),
+                .and_then(|b| String::from_utf8(b.to_vec()).ok()),
             path: c.path,
         })
         .collect()
@@ -253,6 +253,30 @@ fn merge(
     theirs: &Files,
     resolutions: &BTreeMap<String, Resolution>,
 ) -> Result<(Files, Vec<Conflict>)> {
+    // A prose review cannot consent to an asset or executable-mode mutation.
+    // Keep the full tree in the snapshot and reject unsupported incoming changes
+    // explicitly, instead of losing metadata through the bounded text projection.
+    for path in base
+        .entries
+        .keys()
+        .chain(ours.entries.keys())
+        .chain(theirs.entries.keys())
+        .collect::<BTreeSet<_>>()
+    {
+        let ancestor = base.entries.get(path);
+        let own = ours.entries.get(path);
+        let remote = theirs.entries.get(path);
+        let passive = [ancestor, own, remote]
+            .iter()
+            .flatten()
+            .any(|e| !e.editable);
+        let mode_change = remote
+            .is_some_and(|r| ancestor.map(|a| a.mode).unwrap_or(0o100644) != r.mode)
+            && remote.map(|e| e.mode) != own.map(|e| e.mode);
+        if (passive && remote != ancestor && remote != own) || mode_change {
+            return Err(Error::UnsupportedTreeChange);
+        }
+    }
     let mut b = Builder {
         resolutions,
         conflicts: vec![],
@@ -586,8 +610,11 @@ impl IncomingPlan {
         branch: String,
     ) -> Result<Self> {
         let (w, repo) = registry.reopen(id)?;
+        crate::branches::local_authorized(registry, &w)?;
         transport::valid_ref(&branch)?;
-        if branch != w.repo.default_branch && branch != w.branch {
+        if branch != w.base_branch.as_deref().unwrap_or(&w.repo.default_branch)
+            && branch != w.branch
+        {
             return Err(Error::InvalidRef);
         }
         let local = git2::Oid::from_str(&w.head_oid)?;
@@ -656,7 +683,7 @@ impl IncomingPlan {
                 let text = self
                     .candidate
                     .get(&c.path)
-                    .map(|b| String::from_utf8(b.clone()).map_err(|_| Error::Unsupported))
+                    .map(|b| String::from_utf8(b.to_vec()).map_err(|_| Error::Unsupported))
                     .transpose()?;
                 Ok((c.path, text))
             })
@@ -686,8 +713,9 @@ pub fn apply(
     identity.validate()?;
     let id = &plan.before.id;
     let dir = registry.directory(id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
     let (w, repo) = registry.reopen(id)?;
+    crate::branches::local_authorized(registry, &w)?;
     if w.head_oid != plan.preview.local_head
         || w.repo != plan.before.repo
         || c.account.id != w.account_id
@@ -724,7 +752,7 @@ pub fn apply(
     )?;
     let mut after = w.clone();
     after.head_oid = oid.to_string();
-    if plan.preview.branch == w.repo.default_branch {
+    if plan.preview.branch == w.base_branch.as_deref().unwrap_or(&w.repo.default_branch) {
         after.base_oid = plan.preview.github_head.clone()
     } else {
         after.remote_oid = Some(plan.preview.github_head.clone())
@@ -747,7 +775,7 @@ pub fn apply(
         "Author reviewed incoming changes",
     )?;
     check(10_001).map_err(|_| Error::Recovery)?;
-    registry.save(&after)?;
+    registry.save_locked(&_lock, &w, &after)?;
     check(10_002).map_err(|_| Error::Recovery)?;
     store
         .finalize(&root, core.id())
@@ -781,7 +809,9 @@ pub fn pending(registry: &Registry, id: &str) -> Result<bool> {
 }
 pub fn rollback(registry: &Registry, id: &str) -> Result<()> {
     let dir = registry.directory(id)?;
-    let _lock = dir.lock("workspace.lock")?;
+    let _lock = registry.workspace_lock(id)?;
+    registry.recover_metadata_locked(&_lock)?;
+    let before = registry.get(id)?;
     let r = dir
         .read::<Option<ApplyRecord>>("incoming-transaction.json")?
         .flatten()
@@ -816,9 +846,9 @@ pub fn rollback(registry: &Registry, id: &str) -> Result<()> {
                     "Author recovered original version",
                 )?;
             }
-            registry.save(&r.before)?;
+            registry.save_locked(&_lock, &before, &r.before)?;
         } else if head == new && operations::disk_files(&root, &new_files)? == new_files {
-            registry.save(&r.after)?;
+            registry.save_locked(&_lock, &before, &r.after)?;
         } else {
             return Err(Error::Recovery);
         }
@@ -835,7 +865,7 @@ pub fn rollback(registry: &Registry, id: &str) -> Result<()> {
             "Author rolled back interrupted update",
         )?;
     }
-    registry.save(&r.before)?;
+    registry.save_locked(&_lock, &before, &r.before)?;
     dir.write("incoming-transaction.json", &Option::<ApplyRecord>::None)?;
     Ok(())
 }

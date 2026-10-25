@@ -474,3 +474,28 @@ fn invalid_remote_manifest_and_unrelated_history_stop_without_source_writes() {
     assert!(IncomingPlan::create(&f.registry, &w.id, unrelated, "main".into()).is_err());
     assert_eq!(f.registry.get(&w.id).unwrap().head_oid, w.head_oid);
 }
+#[test]
+fn remote_only_executable_mode_change_is_detected_without_rewriting_source() {
+    let f = Fixture::new();
+    let w = f.register();
+    let (_, repo) = f.registry.reopen(&w.id).unwrap();
+    let parent = repo.find_commit(w.head_oid.parse().unwrap()).unwrap();
+    let tree = parent.tree().unwrap();
+    let entry = tree.get_name("story.md").unwrap();
+    let mut builder = repo.treebuilder(Some(&tree)).unwrap();
+    builder.insert("story.md", entry.id(), 0o100755).unwrap();
+    let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+    let sig = git2::Signature::now("Synthetic", "test@example.invalid").unwrap();
+    let remote = repo
+        .commit(None, &sig, &sig, "Mode change only", &tree, &[&parent])
+        .unwrap();
+    assert!(matches!(
+        IncomingPlan::create(&f.registry, &w.id, remote, "main".into()),
+        Err(Error::UnsupportedTreeChange)
+    ));
+    assert_eq!(
+        std::fs::read(f.registry.checkout(&w.id).unwrap().join("story.md")).unwrap(),
+        b"Original story.\n"
+    );
+    assert_eq!(f.registry.get(&w.id).unwrap().head_oid, w.head_oid);
+}
