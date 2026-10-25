@@ -251,14 +251,14 @@ summary { min-height: 2.75rem; padding: .6rem 0; font-weight: 500; }
 
 /* ---------- Keyboard shortcuts sheet ---------- */
 .help-sheet { position: absolute; top: 5rem; left: 50%; transform: translateX(-50%); width: min(48rem, calc(100vw - 2rem)); max-height: calc(100vh - 6rem); overflow-y: auto; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border-strong); box-shadow: var(--shadow-strong); }
-.help-sheet .card-head { padding: 1rem 1.4rem; }
+.help-sheet .card-head { padding: 1rem 1.4rem; flex-wrap: wrap; }
 .help-sheet .card-head h2 { font-size: 1rem; }
-.shortcut-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1.6rem 2.5rem; padding: 1.4rem; }
+.shortcut-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(17rem, 100%), 1fr)); gap: 1.6rem 2.5rem; padding: 1.4rem; }
 .shortcut-group dl { margin: .4rem 0 0; display: grid; gap: .5rem; }
-.shortcut-row { display: flex; justify-content: space-between; align-items: baseline; gap: .75rem; font-size: .9rem; }
+.shortcut-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: .75rem; font-size: .9rem; }
 .shortcut-row dt { min-width: 0; }
-.shortcut-row dd { margin: 0; flex: none; }
-.shortcut-row kbd { font-size: .8125rem; }
+.shortcut-row dd { margin: 0; flex: none; max-width: 100%; }
+.shortcut-row kbd { font-size: .8125rem; white-space: normal; overflow-wrap: anywhere; }
 .help-foot { padding: .9rem 1.4rem; border-top: 1px solid var(--border); color: var(--fg-muted); font-size: .8125rem; }
 
 /* ---------- Dialogs (drafting, proposals, unsaved changes) ---------- */

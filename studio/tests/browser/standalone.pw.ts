@@ -125,3 +125,38 @@ test('saved draft selection preserves dirty project writing across keep-editing 
  await saved();await expect(guard).toBeVisible();await activate(guard.getByRole('button',{name:'Save and continue',exact:true}));await expect(guard).not.toBeVisible();await expect(project).toContainText('UNSAVED 🐺 —');expect(await page.evaluate(()=>(window as any).draftFixture.calls.filter((c:any)=>c.kind==='open').length)).toBe(0);await activate(page.getByRole('dialog',{name:'Drafts on this Mac'}).getByRole('button',{name:'Back to writing'}));
  await page.evaluate(()=>(window as any).projectFixture.failWrites=false);await saved();await expect(guard).toBeVisible();await activate(guard.getByRole('button',{name:'Save and continue',exact:true}));await expect(writing(page)).toHaveText('Saved standalone — original');expect(await page.evaluate(()=>(window as any).projectFixture.savedText)).toContain('UNSAVED 🐺 —');
 });
+
+test('Cmd+N keeps writing and opens a focused blank Markdown draft with discoverable keyboard help',async({page})=>{
+  await page.goto('/tests/browser/standalone.html');await expect(writing(page)).toBeFocused();
+  const appearance=page.getByRole('button',{name:/^Appearance/});
+  await activate(appearance);await activate(page.getByRole('button',{name:'High contrast',exact:true}));await page.keyboard.press('Escape');
+  // The native dialog close event restores focus asynchronously. Finish that
+  // transition before beginning a separate keyboard action in the editor.
+  await expect(appearance).toBeFocused();
+  for(let i=0;i<5;i++)await page.keyboard.press('Meta+=');
+  await expect(page.locator('html')).toHaveAttribute('data-zoom','200');
+  await writing(page).focus();await page.keyboard.insertText('Keyboard draft — café 🦊');
+  await page.keyboard.press('Meta+n');await expect(writing(page)).toHaveText('');await expect(writing(page)).toBeFocused();
+  expect(await page.evaluate(()=>[...(window as any).draftFixture.records.values()].map((d:any)=>d.text))).toEqual(['Keyboard draft — café 🦊']);
+  expect(await page.evaluate(()=>(window as any).draftFixture.externalCalls)).toEqual([]);
+  const newDraft=page.locator('button[aria-keyshortcuts="Meta+N Control+N"]');await expect(newDraft).toHaveAccessibleName('New draft');
+  await page.keyboard.insertText('Second draft');await page.keyboard.press('Control+n');await expect(writing(page)).toHaveText('');await expect(writing(page)).toBeFocused();
+  await page.keyboard.press('Meta+/');const help=page.getByRole('dialog',{name:'Keyboard shortcuts'});await expect(help).toContainText('New Markdown draft');
+  const layout=await help.evaluate(e=>({client:e.clientWidth,scroll:e.scrollWidth,overflow:[...e.querySelectorAll('*')].filter(n=>n.getBoundingClientRect().right>e.getBoundingClientRect().right+1).map(n=>({tag:n.tagName,text:n.textContent?.slice(0,40),width:n.getBoundingClientRect().width}))}));
+  expect(layout.scroll,JSON.stringify(layout)).toBeLessThanOrEqual(layout.client+1);
+  expect((await new AxeBuilder({page}).include('.help-sheet').analyze()).violations).toEqual([]);
+  await page.keyboard.press('Escape');await writing(page).focus();await expect(writing(page)).toBeFocused();
+  expect((await new AxeBuilder({page}).include('.standalone-page').analyze()).violations).toEqual([]);
+});
+
+test('immediate Escape then Cmd+N retains kept writing and new editor focus',async({page})=>{
+  await page.goto('/tests/browser/standalone.html');await expect(writing(page)).toBeFocused();
+  await page.keyboard.insertText('Already kept — café 🦊');await activate(page.getByRole('button',{name:'Keep on this Mac',exact:true}));
+  await expect(page.locator('.standalone-page [role=status]')).toHaveText('Kept on this Mac');
+  await activate(page.getByRole('button',{name:/^Appearance/}));
+  // No wait for the asynchronous close event between these user actions.
+  await page.keyboard.press('Escape');await page.keyboard.press('Meta+n');
+  await expect(writing(page)).toHaveText('');await expect(writing(page)).toBeFocused();
+  expect(await page.evaluate(()=>[...(window as any).draftFixture.records.values()].map((d:any)=>d.text))).toEqual(['Already kept — café 🦊']);
+  expect(await page.evaluate(()=>(window as any).draftFixture.externalCalls)).toEqual([]);
+});
