@@ -96,8 +96,13 @@ pub fn disk_files(root: &repository_core::Repository, tracked: &Files) -> Result
     while let Some(dir) = dirs.pop() {
         for e in root.list(&dir).map_err(|_| Error::Changed)? {
             visited += 1;
-            if visited > 8192 {
-                return Err(Error::Limit);
+            if visited > transport::MAX_WORKSPACE_ENTRIES {
+                return Err(transport::budget(
+                    "workspace scan",
+                    "traversal entries",
+                    visited,
+                    transport::MAX_WORKSPACE_ENTRIES,
+                ));
             }
             if e.kind == "directory" {
                 dirs.push(e.path)

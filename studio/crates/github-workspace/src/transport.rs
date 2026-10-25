@@ -99,7 +99,12 @@ pub const MAX_TEXT_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_EDIT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_BLOB_BYTES: usize = 32 * 1024 * 1024;
-pub const MAX_FILES: usize = 16_384;
+pub const MAX_FILES: usize = MAX_WORKSPACE_ENTRIES;
+// Repository::list counts raw entries, including '.' and '..', before filtering.
+// Keep supported layouts within its 4,096 raw-entry limit, and the complete
+// disk_files traversal limit. Do not publish a tree the editor cannot inspect.
+pub const MAX_DIRECTORY_CHILDREN: usize = 4_094;
+pub const MAX_WORKSPACE_ENTRIES: usize = 8_192;
 pub fn budget(phase: &'static str, kind: &'static str, observed: usize, cap: usize) -> Error {
     Error::Budget {
         phase,
@@ -151,6 +156,7 @@ pub fn validate_files(files: &Files) -> Result<()> {
     }
     let mut total = 0usize;
     let mut folded = HashMap::new();
+    let mut directory_children = HashMap::<String, usize>::new();
     for path in paths {
         safe_path(path)?;
         let size = files
@@ -166,6 +172,7 @@ pub fn validate_files(files: &Files) -> Result<()> {
         }
         let mut prefix = String::new();
         for component in path.split('/') {
+            let parent = prefix.clone();
             if !prefix.is_empty() {
                 prefix.push('/');
             }
@@ -177,6 +184,25 @@ pub fn validate_files(files: &Files) -> Result<()> {
             if let Some(previous) = folded.insert(key, prefix.clone()) {
                 if previous != prefix {
                     return Err(Error::UnsafeTree);
+                }
+            } else {
+                let count = directory_children.entry(parent).or_default();
+                *count += 1;
+                if *count > MAX_DIRECTORY_CHILDREN {
+                    return Err(budget(
+                        "workspace scan",
+                        "directory entries",
+                        *count,
+                        MAX_DIRECTORY_CHILDREN,
+                    ));
+                }
+                if folded.len() > MAX_WORKSPACE_ENTRIES {
+                    return Err(budget(
+                        "workspace scan",
+                        "traversal entries",
+                        folded.len(),
+                        MAX_WORKSPACE_ENTRIES,
+                    ));
                 }
             }
         }
@@ -239,6 +265,7 @@ pub fn tree_files(repo: &Repository, commit: Oid) -> Result<Files> {
     let tree = repo.find_commit(commit)?.tree()?;
     let mut files = Files::new();
     let mut entries = BTreeMap::new();
+    #[allow(clippy::too_many_arguments)]
     fn visit(
         repo: &Repository,
         tree: &git2::Tree<'_>,
@@ -246,12 +273,30 @@ pub fn tree_files(repo: &Repository, commit: Oid) -> Result<Files> {
         entries: &mut BTreeMap<String, TreeEntry>,
         files: &mut Files,
         total: &mut usize,
+        visited: &mut usize,
         depth: usize,
     ) -> Result<()> {
         if depth > 32 {
             return Err(budget("tree", "directory depth", depth, 32));
         }
+        if tree.len() > MAX_DIRECTORY_CHILDREN {
+            return Err(budget(
+                "workspace scan",
+                "directory entries",
+                tree.len(),
+                MAX_DIRECTORY_CHILDREN,
+            ));
+        }
         for entry in tree.iter() {
+            *visited += 1;
+            if *visited > MAX_WORKSPACE_ENTRIES {
+                return Err(budget(
+                    "workspace scan",
+                    "traversal entries",
+                    *visited,
+                    MAX_WORKSPACE_ENTRIES,
+                ));
+            }
             let name = entry.name().map_err(|_| Error::UnsafeTree)?;
             let path = format!("{prefix}{name}");
             safe_path(&path)?;
@@ -263,6 +308,7 @@ pub fn tree_files(repo: &Repository, commit: Oid) -> Result<Files> {
                     entries,
                     files,
                     total,
+                    visited,
                     depth + 1,
                 )?,
                 0o100644 | 0o100755 => {
@@ -310,7 +356,7 @@ pub fn tree_files(repo: &Repository, commit: Oid) -> Result<Files> {
         }
         Ok(())
     }
-    visit(repo, &tree, "", &mut entries, &mut files, &mut 0, 0)?;
+    visit(repo, &tree, "", &mut entries, &mut files, &mut 0, &mut 0, 0)?;
     files.entries = std::sync::Arc::new(entries);
     validate_files(&files)?;
     validate_manuscript(&files)?;

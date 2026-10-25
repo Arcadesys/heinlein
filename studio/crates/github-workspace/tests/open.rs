@@ -468,3 +468,127 @@ fn unknown_workspace_reopen_never_allocates_a_private_directory() {
     assert!(matches!(f.registry.reopen(&id), Err(Error::Missing)));
     assert!(!f.root.join("private").join(id).exists());
 }
+
+#[test]
+fn unsupported_scan_layouts_fail_with_typed_budgets_before_workspace_publication() {
+    for distributed in [false, true] {
+        let f = Fixture::new();
+        let mut files = Files::from([("story.md".into(), b"Story\n".to_vec())]);
+        let count = if distributed { 8192 } else { 5000 };
+        for n in 0..count {
+            let path = if distributed {
+                format!("bucket-{}/asset-{n}.bin", n / 3000)
+            } else {
+                format!("asset-{n}.bin")
+            };
+            files.insert(path, Vec::new());
+        }
+        let result = f
+            .registry
+            .register(info(), 9, &uuid::Uuid::new_v4().to_string(), |repo| {
+                // Construct raw synthetic Git trees without the managed validator,
+                // so rejection is exercised by the real registration boundary.
+                let empty = repo.blob(b"")?;
+                let story = repo.blob(b"Story\n")?;
+                let mut root = repo.treebuilder(None)?;
+                root.insert("story.md", story, 0o100644)?;
+                let mut groups = std::collections::BTreeMap::<String, Vec<String>>::new();
+                for path in files.keys().filter(|p| p.as_str() != "story.md") {
+                    if let Some((dir, name)) = path.split_once('/') {
+                        groups.entry(dir.into()).or_default().push(name.into());
+                    } else {
+                        root.insert(path, empty, 0o100644)?;
+                    }
+                }
+                for (dir, names) in groups {
+                    let mut child = repo.treebuilder(None)?;
+                    for name in names {
+                        child.insert(name, empty, 0o100644)?;
+                    }
+                    root.insert(dir, child.write()?, 0o040000)?;
+                }
+                let tree = repo.find_tree(root.write()?)?;
+                let sig = git2::Signature::now("Synthetic", "test@example.invalid")?;
+                Ok(repo.commit(None, &sig, &sig, "Synthetic scan budget", &tree, &[])?)
+            });
+        assert!(
+            matches!(result,Err(Error::Budget{phase:"workspace scan",kind,..})if kind==if distributed{"traversal entries"}else{"directory entries"})
+        );
+        assert!(f.registry.list().unwrap().is_empty());
+        assert_eq!(
+            std::fs::read_dir(f.root.join("sources")).unwrap().count(),
+            0
+        );
+    }
+}
+
+#[test]
+fn accepted_scan_boundary_tree_supports_inspection_local_version_and_branch_preview() {
+    use github_workspace::{
+        branches,
+        operations::{self, Identity},
+    };
+    use std::sync::atomic::Ordering;
+    let f = Fixture::new();
+    let api = MockApi::default();
+    let (auth, _) = connected(&f.root, &api);
+    let c = auth.credential(&api, 1006).unwrap();
+    let mut files = Files::from([("a/story.md".into(), b"Original author text.\n".to_vec())]);
+    for n in 0..transport::MAX_DIRECTORY_CHILDREN - 1 {
+        files.insert(format!("a/passive-{n}.bin"), Vec::new());
+    }
+    for n in 0..transport::MAX_DIRECTORY_CHILDREN {
+        files.insert(format!("b/passive-{n}.bin"), Vec::new());
+    }
+    for n in 0..2 {
+        files.insert(format!("extra-{n}.bin"), Vec::new());
+    }
+    // 4,094 actual children per directory + 2 OS dot entries; exactly 8,192
+    // file/directory nodes overall, including the two parent directories.
+    let w = f
+        .registry
+        .register(info(), 9, &c.binding, |repo| Ok(commit(repo, &files, &[])))
+        .unwrap();
+    *api.base.lock().unwrap() = Some(w.base_oid.clone());
+    let path = f.registry.checkout(&w.id).unwrap();
+    let root = repository_core::Repository::open(&path).unwrap();
+    assert_eq!(
+        root.list("a").unwrap().len(),
+        transport::MAX_DIRECTORY_CHILDREN
+    );
+    let (_, git) = f.registry.reopen(&w.id).unwrap();
+    let tracked = transport::tree_files(&git, w.head_oid.parse().unwrap()).unwrap();
+    assert_eq!(operations::disk_files(&root, &tracked).unwrap(), tracked);
+    std::fs::write(path.join("a/story.md"), "Author-selected local revision.\n").unwrap();
+    let version = operations::version_preview(
+        &f.registry,
+        &w.id,
+        vec!["a/story.md".into()],
+        Identity {
+            name: "Synthetic".into(),
+            email: "test@example.invalid".into(),
+        },
+        "Exact local version".into(),
+    )
+    .unwrap();
+    assert_eq!(version.preview.files.len(), 1);
+    let saved = operations::commit_version(&f.registry, &version, |_| Ok(())).unwrap();
+    let branch = branches::preview(
+        &f.registry,
+        &api,
+        &c,
+        &w.id,
+        &w.branch,
+        "revision/scan-boundary",
+        true,
+        |_, _| panic!("local branch requires no fetch"),
+    )
+    .unwrap();
+    assert_eq!(branch.preview.head, saved.head);
+    assert!(branch.preview.files.is_empty());
+    assert_eq!(api.mutations.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        std::fs::read(path.join("a/story.md")).unwrap(),
+        b"Author-selected local revision.\n"
+    );
+}
