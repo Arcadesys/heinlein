@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(feature = "standalone-native-acceptance", allow(dead_code))]
 
 mod drafting;
 mod first_story;
@@ -15,9 +16,13 @@ mod recents;
 mod review_integration_tests;
 mod review_state;
 mod standalone;
+#[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
+mod standalone_native_acceptance;
 mod update;
 
-use recents::{load_recents, save_recents, Recent, RecentStore};
+#[cfg(any(test, not(feature = "standalone-native-acceptance")))]
+use recents::load_recents;
+use recents::{save_recents, Recent, RecentStore};
 use repository_core::{Document, Entry, Manuscript, RecoveryDraft, RecoveryStore, Repository};
 use serde::Serialize;
 use std::{
@@ -564,6 +569,31 @@ async fn list_system_fonts(window: tauri::WebviewWindow) -> Result<Vec<String>, 
     .map_err(|e| e.to_string())
 }
 fn main() {
+    if std::env::args_os().any(|arg| arg == "--standalone-native-acceptance") {
+        #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
+        {
+            standalone_native_acceptance::run();
+            return;
+        }
+        #[cfg(not(all(feature = "standalone-native-acceptance", target_os = "macos")))]
+        {
+            eprintln!("Standalone native acceptance requires its explicit test feature on macOS");
+            std::process::exit(64);
+        }
+    }
+    #[cfg(feature = "standalone-native-acceptance")]
+    {
+        eprintln!(
+            "Fixture build requires --standalone-native-acceptance; production startup disabled"
+        );
+        std::process::exit(64);
+    }
+    #[cfg(not(feature = "standalone-native-acceptance"))]
+    production_main();
+}
+
+#[cfg(not(feature = "standalone-native-acceptance"))]
+fn production_main() {
     let runtime = match update::Runtime::acquire() {
         Ok(Some(runtime)) => runtime,
         Ok(None) => return,
@@ -585,9 +615,14 @@ fn main() {
             {
                 let handle = app.handle().clone();
                 quit_macos::install(move || {
-                    let window = handle.get_webview_window("main").ok_or("Quit window unavailable")?;
-                    window.emit("close-requested", ()).map_err(|_| String::from("Quit request unavailable"))
-                }).map_err(std::io::Error::other)?;
+                    let window = handle
+                        .get_webview_window("main")
+                        .ok_or("Quit window unavailable")?;
+                    window
+                        .emit("close-requested", ())
+                        .map_err(|_| String::from("Quit request unavailable"))
+                })
+                .map_err(std::io::Error::other)?;
             }
 
             let path = recent_file(app.handle()).map_err(std::io::Error::other)?;
@@ -622,8 +657,12 @@ fn main() {
             questions::prepare_review_edit,
             questions::reject_review_edit,
             questions::get_review,
-            questions::review_definitions, questions::preview_review, questions::continue_review,
-            questions::list_reviews, questions::choose_review_edit, questions::approve_review_edit,
+            questions::review_definitions,
+            questions::preview_review,
+            questions::continue_review,
+            questions::list_reviews,
+            questions::choose_review_edit,
+            questions::approve_review_edit,
             questions::ask_question,
             questions::suggest_question_revision,
             questions::cancel_question,
@@ -667,48 +706,50 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("Heinlein Studio failed to start")
-        .run(|app, event| {
-            let state = app.state::<BrowserState>();
-            let activity = state.mutation_gate.activity();
-            quit::handle(
-                &event,
-                &state.close_authorized,
-                activity,
-                || {
-                    let _selection = state
-                        .selection_gate
-                        .try_lock()
-                        .map_err(|_| "Finish opening the project before quitting")?;
-                    let _github = state.github.close_guard()?;
-                    let _mutation = state.mutation_gate.close_guard()?;
-                    let runtime = app.state::<update::Runtime>();
-                    let _update = runtime.idle()?;
-                    if state.unsaved_changes.load(Ordering::SeqCst) {
-                        return Err("Save or discard changes before closing".into());
-                    }
-                    if state.mutation_gate.activity() != activity {
-                        return Err("Work changed before quitting".into());
-                    }
-                    // All mutation/auth/update entry locks are held. Seal before
-                    // releasing them so queued or new work cannot race actual exit.
-                    state.quitting.store(true, Ordering::SeqCst);
-                    state.mutation_gate.seal_for_exit();
-                    runtime.seal_for_exit();
-                    Ok(())
-                },
-                |granted| {
-                    #[cfg(target_os = "macos")]
-                    quit_macos::finished();
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        if granted {
-                            let _ = window.emit("quit-refused", "Heinlein stayed open because work changed or a save/connection still needs attention. Finish or retry it, then choose Quit again.");
-                        } else {
-                            let _ = window.emit("close-requested", ());
-                        }
-                    }
-                },
-            );
-        });
+        .run(handle_run_event);
+}
+
+fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
+    let state = app.state::<BrowserState>();
+    let activity = state.mutation_gate.activity();
+    quit::handle(
+        &event,
+        &state.close_authorized,
+        activity,
+        || {
+            let _selection = state
+                .selection_gate
+                .try_lock()
+                .map_err(|_| "Finish opening the project before quitting")?;
+            let _github = state.github.close_guard()?;
+            let _mutation = state.mutation_gate.close_guard()?;
+            let runtime = app.state::<update::Runtime>();
+            let _update = runtime.idle()?;
+            if state.unsaved_changes.load(Ordering::SeqCst) {
+                return Err("Save or discard changes before closing".into());
+            }
+            if state.mutation_gate.activity() != activity {
+                return Err("Work changed before quitting".into());
+            }
+            // All mutation/auth/update entry locks are held. Seal before
+            // releasing them so queued or new work cannot race actual exit.
+            state.quitting.store(true, Ordering::SeqCst);
+            state.mutation_gate.seal_for_exit();
+            runtime.seal_for_exit();
+            Ok(())
+        },
+        |granted| {
+            #[cfg(target_os = "macos")]
+            quit_macos::finished();
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+                if granted {
+                    let _ = window.emit("quit-refused", "Heinlein stayed open because work changed or a save/connection still needs attention. Finish or retry it, then choose Quit again.");
+                } else {
+                    let _ = window.emit("close-requested", ());
+                }
+            }
+        },
+    );
 }

@@ -1,0 +1,37 @@
+{
+  "productName": "Heinlein disposable standalone acceptance",
+  "version": "0.0.0",
+  "identifier": "me.thearcades.heinlein.synthetic-standalone",
+  "build": {
+    "frontendDist": "./dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'",
+      "capabilities": [
+        {
+          "identifier": "standalone-native-fixture",
+          "windows": [
+            "main"
+          ],
+          "permissions": [
+            "allow-standalone-request",
+            "allow-set-unsaved-changes",
+            "allow-request-close",
+            "allow-quit-request-finished",
+            "core:event:allow-listen",
+            "core:event:allow-unlisten",
+            "core:event:allow-emit"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../../../src-tauri/icons/icon.png"
+    ]
+  }
+}
