@@ -1,5 +1,5 @@
 //! Separate GitHub device credentials in the OS store only. No Debug/Serialize lease.
-use crate::{registry::StateDir, Error, Result};
+use crate::{registry::StateDir, Error, Result, StoreFailure};
 use serde::{Deserialize, Serialize};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -126,6 +126,11 @@ struct Pending {
     view: DeviceView,
     interval: u64,
 }
+// Deliberately no Debug/Serialize: the renewed record remains native memory only.
+struct PendingRotation {
+    record: Record,
+    cause: StoreFailure,
+}
 pub struct Credential {
     token: String,
     epoch: Arc<AtomicU64>,
@@ -150,7 +155,7 @@ pub struct Auth {
     store: Arc<dyn SecretStore>,
     private: StateDir,
     pending: Mutex<Option<Pending>>,
-    pending_rotation: Mutex<Option<Record>>,
+    pending_rotation: Mutex<Option<PendingRotation>>,
     epoch: Arc<AtomicU64>,
 }
 pub fn now() -> u64 {
@@ -211,32 +216,38 @@ impl Auth {
     }
     /// Memory-only exit barrier: never query or modify the OS store on quit.
     pub fn ready_to_quit(&self) -> Result<()> {
-        if self
+        if let Some(pending) = self
             .pending_rotation
             .lock()
             .map_err(|_| Error::StoreUnavailable)?
-            .is_some()
+            .as_ref()
         {
-            return Err(Error::RotationNotSaved);
+            return Err(Error::RotationNotSaved(pending.cause));
         }
         Ok(())
     }
     pub fn retry_saved(&self) -> Result<AuthView> {
         {
             let _lock = self.private.lock("auth.lock")?;
-            let old = self.load()?;
             let mut pending = self
                 .pending_rotation
                 .lock()
                 .map_err(|_| Error::StoreUnavailable)?;
-            if let Some(record) = pending.as_ref() {
+            if let Some(rotation) = pending.as_mut() {
+                let old = self
+                    .load()
+                    .map_err(|error| Error::RotationNotSaved(StoreFailure::from_error(error)))?;
+                let record = &rotation.record;
                 if !old
                     .as_ref()
                     .is_some_and(|r| r.binding == record.binding && r.user.id == record.user.id)
                 {
-                    return Err(Error::Account);
+                    return Err(Error::RotationAccountChanged);
                 }
-                self.write(record).map_err(|_| Error::RotationNotSaved)?;
+                if let Err(error) = self.write(record) {
+                    rotation.cause = StoreFailure::from_error(error);
+                    return Err(Error::RotationNotSaved(rotation.cause));
+                }
                 *pending = None;
             }
         }
@@ -253,15 +264,8 @@ impl Auth {
             });
         }
         let _lock = self.private.lock("auth.lock")?;
+        self.ready_to_quit()?;
         let r = self.load()?;
-        if self
-            .pending_rotation
-            .lock()
-            .map_err(|_| Error::StoreUnavailable)?
-            .is_some()
-        {
-            return Err(Error::RotationNotSaved);
-        }
         let pending = self
             .pending
             .lock()
@@ -287,15 +291,8 @@ impl Auth {
         }
         {
             let _lock = self.private.lock("auth.lock")?;
+            self.ready_to_quit()?;
             self.load()?;
-            if self
-                .pending_rotation
-                .lock()
-                .map_err(|_| Error::StoreUnavailable)?
-                .is_some()
-            {
-                return Err(Error::RotationNotSaved);
-            }
             // Never start OAuth to work around an unreadable store.
             let code = api.device_start(&self.client_id)?;
             if code.verification_uri != "https://github.com/login/device"
@@ -388,17 +385,10 @@ impl Auth {
             return Err(Error::Unavailable);
         }
         let _lock = self.private.lock("auth.lock")?;
+        self.ready_to_quit()?;
         let mut r = self.load()?.ok_or(Error::Reconnect)?;
         if !r.confirmed {
             return Err(Error::Account);
-        }
-        if self
-            .pending_rotation
-            .lock()
-            .map_err(|_| Error::StoreUnavailable)?
-            .is_some()
-        {
-            return Err(Error::RotationNotSaved);
         }
         if r.expires_at <= time + 60 {
             let refresh = r
@@ -416,12 +406,14 @@ impl Auth {
                 return Err(Error::Account);
             }
             r.user = user;
-            if self.write(&r).is_err() {
+            if let Err(error) = self.write(&r) {
+                let cause = StoreFailure::from_error(error);
                 *self
                     .pending_rotation
                     .lock()
-                    .map_err(|_| Error::StoreUnavailable)? = Some(r);
-                return Err(Error::RotationNotSaved);
+                    .map_err(|_| Error::StoreUnavailable)? =
+                    Some(PendingRotation { record: r, cause });
+                return Err(Error::RotationNotSaved(cause));
             }
         }
         Ok(self.lease(&r))

@@ -287,7 +287,7 @@ mod native {
         store.deny.store(true, Ordering::SeqCst);
         assert!(matches!(
             auth.credential(&Api, 4590),
-            Err(Error::RotationNotSaved)
+            Err(Error::RotationNotSaved(_))
         ));
         let original = store.value.lock().unwrap().clone();
         let gate = Arc::new(MutationGate::default());

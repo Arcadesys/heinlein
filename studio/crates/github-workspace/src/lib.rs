@@ -11,6 +11,38 @@ pub mod transport;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 pub type Result<T> = std::result::Result<T, Error>;
+/// Sanitized classification only: never retain backend strings or credential bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoreFailure {
+    Locked,
+    Denied,
+    Cancelled,
+    Unavailable,
+    Invalid,
+    Unknown,
+}
+impl StoreFailure {
+    pub(crate) fn from_error(error: Error) -> Self {
+        match error {
+            Error::StoreLocked => Self::Locked,
+            Error::StoreDenied => Self::Denied,
+            Error::StoreCancelled => Self::Cancelled,
+            Error::StoreUnavailable => Self::Unavailable,
+            Error::StoreInvalid => Self::Invalid,
+            _ => Self::Unknown,
+        }
+    }
+    fn message(self) -> &'static str {
+        match self {
+            Self::Locked => "The secure credential store is locked. Unlock it and allow its access prompt.",
+            Self::Denied => "Secure credential access was denied. Allow access in macOS before retrying.",
+            Self::Cancelled => "Secure credential access was cancelled. Retry when you are ready to allow access.",
+            Self::Unavailable => "The secure credential store is unavailable. Restore OS-store access before retrying.",
+            Self::Invalid => "The secure-store record could not be handled safely. Restore secure-store access before retrying.",
+            Self::Unknown => "An unknown secure-store failure prevented persistence. Check OS-store access before retrying.",
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     Unavailable,
@@ -20,7 +52,8 @@ pub enum Error {
     StoreCancelled,
     StoreUnavailable,
     StoreInvalid,
-    RotationNotSaved,
+    RotationNotSaved(StoreFailure),
+    RotationAccountChanged,
     Reconnect,
     Account,
     Permission,
@@ -52,6 +85,9 @@ pub enum Error {
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Self::RotationNotSaved(cause) = self {
+            return write!(f, "GitHub renewed the connection, but the renewed sign-in data is not yet saved. {} Keep Heinlein open and choose Retry saved GitHub connection. No stored credential was deleted; do not sign out or reconnect to fix this store error.", cause.message());
+        }
         if let Self::Budget {
             phase,
             kind,
@@ -70,7 +106,8 @@ impl fmt::Display for Error {
             Self::StoreCancelled => "Secure credential access was cancelled. Your saved connection is retained. Retry when you are ready to allow access.",
             Self::StoreUnavailable => "The secure credential store is unavailable. Your connection was not reset. Unlock or restore the OS store, then retry the saved connection.",
             Self::StoreInvalid => "The saved connection could not be read safely. It has not been replaced or deleted. Restore secure-store access before reconnecting.",
-            Self::RotationNotSaved => "GitHub renewed the connection, but the secure store could not save it. Keep Heinlein open, allow secure-store access, then retry the saved connection. No stored credential was deleted.",
+            Self::RotationNotSaved(_) => unreachable!(),
+            Self::RotationAccountChanged => "The renewed sign-in data is not yet saved, and the saved GitHub account or connection changed. Keep Heinlein open. Retry saved GitHub connection only after the original connection is available. No account was substituted or stored credential overwritten; do not sign out or restart sign-in to resolve this pending save.",
             Self::Reconnect => "GitHub renewal has expired or was revoked. Reconnect GitHub explicitly; local copies and writing remain available.",
             Self::Account => "Confirm the GitHub account for this project. Accounts are never substituted automatically.",
             Self::Permission => "This GitHub App and account need write access to the selected repository. Your local writing is unchanged.",

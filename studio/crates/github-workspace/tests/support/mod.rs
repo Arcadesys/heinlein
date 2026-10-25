@@ -77,14 +77,17 @@ pub fn commit(repo: &git2::Repository, files: &Files, parents: &[git2::Oid]) -> 
 #[derive(Default)]
 pub struct MemorySecrets {
     pub bytes: Mutex<Option<Vec<u8>>>,
+    pub attempted_write: Mutex<Option<Vec<u8>>>,
     pub fail: AtomicBool,
     pub read_error: Mutex<Option<Error>>,
     pub write_error: Mutex<Option<Error>>,
+    pub reads: AtomicUsize,
     pub writes: AtomicUsize,
     pub deletes: AtomicUsize,
 }
 impl SecretStore for MemorySecrets {
     fn load(&self) -> Result<Option<Vec<u8>>> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         if let Some(error) = *self.read_error.lock().unwrap() {
             return Err(error);
         }
@@ -94,6 +97,7 @@ impl SecretStore for MemorySecrets {
         Ok(self.bytes.lock().unwrap().clone())
     }
     fn save(&self, b: &[u8]) -> Result<()> {
+        *self.attempted_write.lock().unwrap() = Some(b.to_vec());
         self.writes.fetch_add(1, Ordering::SeqCst);
         if let Some(error) = *self.write_error.lock().unwrap() {
             return Err(error);

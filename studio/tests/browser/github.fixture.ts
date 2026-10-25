@@ -27,6 +27,9 @@ let opened = !!pendingWorkspaceRecovery;
 let receipts: GitHubReceipt[] = [];
 let auth: GitHubAuth = { configured: true, account: null, confirmed: false, pending: null, message: 'Synthetic host: no real GitHub connection, files or OS authority.' };
 let repositoryLoads=0;
+let rotationPending=new URLSearchParams(location.search).has('rotation-error');
+let rotationRetries=0;
+const rotationMessage=(cause:string)=>`GitHub renewed the connection, but the renewed sign-in data is not yet saved. ${cause} Keep Heinlein open and choose Retry saved GitHub connection. No stored credential was deleted; do not sign out or reconnect to fix this store error.`;
 const calls: GitHubRequest[] = [];
 Object.assign(window, { githubFixture: { calls, workspace, synthetic: true } });
 const change = () => ({ path: 'story.md', kind: 'edit', beforeHash: 'versioned', afterHash: hash });
@@ -34,8 +37,12 @@ let incoming: GitHubIncoming = { id: 'synthetic-incoming', workspaceId: workspac
 const unavailable = async (): Promise<never> => { throw new Error('Synthetic browser host has no native filesystem or OS account authority.'); };
 async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
     calls.push(structuredClone(r));
+    if(r.action==='status'&&rotationPending)return{auth:null,error:rotationMessage('The secure credential store is locked. Unlock it and allow its access prompt.'),workspaces:[]};
     switch (r.action) {
         case 'status': return { auth, error: null, workspaces: opened ? [{ workspace, error: pendingWorkspaceRecovery?'Synthetic interrupted operation needs recovery.':null, incomingRecovery: pendingWorkspaceRecovery==='incoming', branchRecovery:pendingWorkspaceRecovery==='metadata', receipts:pendingWorkspaceRecovery==='version'?[{id:'synthetic-prepared-version',workspaceId:workspace.id,kind:'version',status:'prepared',head:workspace.headOid,message:'Synthetic local version needs recovery.',url:null}]:receipts }] : [], app: { id: 5412628, clientId: 'synthetic-public', owner: 'Arcadesys', slug: 'heinlein-studio', installUrl: 'https://github.com/apps/heinlein-studio' } };
+        case 'retrySaved':
+            if(++rotationRetries===1)throw new Error(rotationMessage('Secure credential access was cancelled. Retry when you are ready to allow access.'));
+            rotationPending=false;auth={...auth,confirmed:true,account:{id:9,login:'synthetic-writer'}};return auth;
         case 'connect':
             auth = { ...auth, pending: { userCode: 'SYNTHETIC', verificationUri: 'https://github.com/login/device', expiresAt: 9999999999, nextPollAt: 0 }, message: 'Synthetic code only. No real sign-in.' };
             return auth;

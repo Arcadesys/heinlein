@@ -151,3 +151,18 @@ test('nondefault selected target is named and keyboard reachable for incoming re
  expect(await page.evaluate(()=>((window as any).githubFixture.calls as {action:string;target?:string}[]).filter(r=>r.action==='previewIncoming'))).toEqual([{action:'previewIncoming',repositoryId:'synthetic-session',target:'default'}]);
  expect((await new AxeBuilder({page}).include('.github-panel').analyze()).violations).toEqual([]);
 });
+
+test('pending renewed connection cause and retry stay readable and keyboard reachable at 200 percent',async({page})=>{
+ await page.goto('/tests/browser/github.html?rotation-error',{waitUntil:'domcontentloaded'});
+ for(let i=0;i<5;i++)await page.keyboard.press(process.platform==='darwin'?'Meta+=':'Control+=');
+ const entry=page.getByRole('button',{name:'GitHub projects…',exact:true});await entry.focus();await page.keyboard.press('Enter');
+ const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});await expect(dialog).toContainText('store is locked');await expect(dialog).toContainText('Keep Heinlein open');
+ const retry=dialog.getByRole('button',{name:'Retry saved GitHub connection',exact:true});
+ for(let i=0;i<40&&!await retry.evaluate(el=>el===document.activeElement);i++)await page.keyboard.press('Tab');
+ await expect(retry).toBeFocused();const size=await retry.boundingBox();expect(size!.height).toBeGreaterThanOrEqual(44);
+ await page.keyboard.press('Enter');await expect(dialog.getByRole('status')).toContainText('access was cancelled');await expect(retry).toBeEnabled();
+ const bounds=await dialog.evaluate(el=>({scroll:el.scrollWidth,width:el.clientWidth}));expect(bounds.scroll).toBeLessThanOrEqual(bounds.width+1);
+ expect((await new AxeBuilder({page}).include('.github-panel').analyze()).violations).toEqual([]);
+ await retry.focus();await page.keyboard.press('Enter');await expect(dialog.getByRole('button',{name:'Load repositories',exact:true})).toBeVisible();
+ const calls=await page.evaluate(()=>((window as any).githubFixture.calls as {action:string}[]));expect(calls.filter(c=>c.action==='retrySaved')).toHaveLength(2);expect(calls.some(c=>['connect','poll','signOut','confirmAccount'].includes(c.action))).toBe(false);
+});
