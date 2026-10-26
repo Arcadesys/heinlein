@@ -17,12 +17,13 @@ function fixture(selected = true) {
     const request = vi.fn(async (r: GitHubRequest): Promise<GitHubResponse> => { switch (r.action) {
         case 'status': return structuredClone(status);
         case 'workspace': return { workspace, changes: [{ path: 'story.md', kind: 'edit', beforeHash: 'old', afterHash: 'new' }], receipts: [] };
+        case 'previewSend': return {id:'send',workspaceId:'workspace',head:'local',files:[{path:'story.md',kind:'edit',beforeHash:'old',afterHash:'new'}],selectedFiles:r.paths.length?[{path:'story.md',kind:'edit',beforeHash:'old',afterHash:'new'}]:[],existingVersions:[{head:'earlier',files:[{path:'earlier.md',kind:'edit',beforeHash:'a',afterHash:'b'}]}],createsVersion:r.paths.length>0,canSend:true,identity:r.identity,message:r.message,kind:'push',repository:repo,account:{id:9,login:'writer'},branch:workspace.branch,base:'main',commits:['earlier'],title:'',body:'',warning:'Sending may run repository automation.'};
         case 'previewVersion': return { id: 'version', workspaceId: 'workspace', head: 'local', files: [{ path: 'story.md', kind: 'edit', beforeHash: 'old', afterHash: 'new' }], identity: r.identity, message: r.message };
         case 'previewOpen': case 'previewListedRepository': return { id: 'open', repository: repo, account: { id: 9, login: 'writer' }, treatment: 'Separate local copy' };
         case 'previewShare': return { id: 'share', workspaceId: 'workspace', head: 'local', files: [], identity: { name: '', email: '' }, message: '', kind: r.kind, repository: repo, account: { id: 9, login: 'writer' }, branch: workspace.branch, base: 'main', commits: ['local'], title: r.title, body: r.body, warning: 'Sending may run repository automation.' };
         case 'previewIncoming': return structuredClone(incoming);
         case 'resolve': return { ...incoming, ready: true, conflicts: [{ ...incoming.conflicts[0], resolution: r.resolution }] };
-        case 'confirm': return { id: r.previewId, workspaceId: 'workspace', kind: 'version', status: 'succeeded', head: 'local', message: 'Version saved on this computer.', url: null };
+        case 'confirm': if(r.previewId==='send')return{localVersionSaved:true,receipt:null,message:'Local version saved; upload is not confirmed. Check pending operations.'}; return { id: r.previewId, workspaceId: 'workspace', kind: 'version', status: 'succeeded', head: 'local', message: 'Version saved on this computer.', url: null };
         default: return null;
     } });
     const hooks = { session: () => selected ? session : null, problem: () => problem, settle: vi.fn(async () => { }), select: vi.fn(async (run: () => Promise<unknown>) => { await run(); }), authorAction: vi.fn(async (run: () => Promise<void>) => { await run(); }), incomingChanged: vi.fn(async () => { }) };
@@ -37,7 +38,7 @@ it('opening has no implicit authentication or sharing; local versions select exa
     const f = fixture();
     await f.p.open();
     expect(f.request.mock.calls.map(c => c[0].action)).toEqual(['status', 'workspace']);
-    await f.click('Save a version on this computer…');
+    await f.click('Save a local version without sending…');
     await f.click('Preview local version');
     expect(f.request.mock.calls.at(-1)![0]).toMatchObject({ action: 'previewVersion', paths: [] }); // native rejects empty, never add-all
     const check = f.p.element.querySelector<HTMLInputElement>('input[type=checkbox]')!;
@@ -178,4 +179,34 @@ it.each([
  await f.click('Retry saved GitHub connection');expect(f.p.element.textContent).toContain('Load repositories');
  expect(f.request.mock.calls.filter(([r])=>r.action==='retrySaved')).toHaveLength(2);
  expect(f.request.mock.calls.some(([r])=>['connect','poll','signOut','confirmAccount'].includes(r.action))).toBe(false);
+});
+it('one Send previews new selection plus all earlier unsent files and preserves uncertain outcome',async()=>{
+ const f=fixture();await f.p.open();await f.click('Send to GitHub…');
+ const check=f.p.element.querySelector<HTMLInputElement>('input[type=checkbox]')!;check.click();
+ f.fill('Version author name','Writer');f.fill('Version author email','private@example.test');
+ await f.click('Review what will be sent');
+ expect(f.p.element.textContent).toContain('earlier.md');expect(f.p.element.textContent).toContain('All earlier unsent versions');
+ expect(f.request.mock.calls.filter(c=>['previewVersion','previewShare','confirm'].includes(c[0].action))).toHaveLength(0);
+ await f.click('Send to GitHub…');expect(f.p.element.textContent).toContain('Local version saved; upload is not confirmed');
+ expect(f.request.mock.calls.filter(c=>c[0].action==='confirm')).toHaveLength(1);
+});
+it('canceling combined Send does not commit or upload and changing metadata invalidates consent',async()=>{
+ const f=fixture();await f.p.open();await f.click('Send to GitHub…');await f.click('Review what will be sent');
+ await f.click('Cancel this preview');expect(f.request.mock.calls.filter(c=>c[0].action==='confirm')).toHaveLength(0);
+ await f.click('Review what will be sent');f.fill('Version author name','Changed');await tick();
+ expect(f.p.element.querySelector('[data-github-preview]')).toBeNull();
+ expect(f.request.mock.calls.some(c=>c[0].action==='cancel'&&c[0].previewId==='send')).toBe(true);
+});
+it('a failed save prevents even a Send preview',async()=>{
+ const f=fixture();const rejectSave=vi.fn(async()=>false);
+ const p=createGitHubPanel({available:()=>true,githubRequest:f.request} as unknown as LocalCore,{...f.hooks,saveForSend:rejectSave});panels.push(p);document.body.append(p.element);await p.open();
+ const b=[...p.element.querySelectorAll('button')].find(b=>b.textContent==='Send to GitHub…')!;b.click();await tick();
+ expect(rejectSave).toHaveBeenCalledOnce();expect(p.element.textContent).toContain('Nothing was sent');expect(f.request.mock.calls.some(c=>c[0].action==='previewSend'||c[0].action==='confirm')).toBe(false);
+});
+it('repeated Send clicks stay one-flight while native confirmation is pending',async()=>{
+ const f=fixture();await f.p.open();await f.click('Send to GitHub…');await f.click('Review what will be sent');
+ let resolve!:(v:GitHubResponse)=>void;f.request.mockImplementationOnce(()=>new Promise(r=>resolve=r));
+ const b=[...f.p.element.querySelectorAll('button')].find(b=>b.textContent==='Send to GitHub…')!;b.click();b.click();await tick();
+ expect(f.request.mock.calls.filter(c=>c[0].action==='confirm')).toHaveLength(1);
+ resolve(null);await tick();expect(f.p.element.textContent).toContain('Send canceled');
 });

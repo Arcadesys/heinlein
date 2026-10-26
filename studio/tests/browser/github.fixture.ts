@@ -25,6 +25,7 @@ const recoveryMode=new URLSearchParams(location.search).get('recovery');
 let pendingWorkspaceRecovery=recoveryMode==='incoming'||recoveryMode==='version'||recoveryMode==='metadata'?recoveryMode:null;
 let opened = !!pendingWorkspaceRecovery;
 let receipts: GitHubReceipt[] = [];
+let sendSelection:string[]=[];
 let auth: GitHubAuth = { configured: true, account: null, confirmed: false, pending: null, message: 'Synthetic host: no real GitHub connection, files or OS authority.' };
 let repositoryLoads=0;
 let rotationPending=new URLSearchParams(location.search).has('rotation-error');
@@ -66,6 +67,11 @@ async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
             return session;
         case 'workspace': if(pendingWorkspaceRecovery)throw new Error('Synthetic interrupted operation needs recovery.');return { workspace, changes: text === versioned ? [] : [change()], receipts };
         case 'recover': pendingWorkspaceRecovery=null;return null;
+        case 'previewSend': {
+            if(r.paths.length&&(!r.identity?.name||!r.identity?.email))throw new Error('Confirm the name and email for selected changes.');
+            sendSelection=[...r.paths];
+            return {id:'synthetic-send',workspaceId:workspace.id,head:workspace.headOid,files:[change()],kind:'push',repository:repo,account:auth.account!,branch:workspace.branch,base:'main',commits:workspace.remoteOid===workspace.headOid?[]:[workspace.headOid],title:'',body:'',warning:'Sending may run repository-configured automation. This synthetic host never uploads.',selectedFiles:r.paths.length?[change()]:[],existingVersions:workspace.remoteOid===workspace.headOid?[]:[{head:workspace.headOid,files:[{...change(),path:'earlier-scene.md'}]}],createsVersion:r.paths.length>0,canSend:r.paths.length>0||workspace.remoteOid!==workspace.headOid,identity:r.identity,message:r.message};
+        }
         case 'previewVersion':
             if (!r.paths.length || !r.identity.name || !r.identity.email || !r.message)
                 throw new Error('Select files and confirm your name, email and version message.');
@@ -84,6 +90,13 @@ async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
         case 'confirm': {
             if (dirty || recovery)
                 throw new Error('Resolve synthetic local save/recovery first.');
+            if(r.previewId==='synthetic-send'){
+                const created=sendSelection.length>0;
+                if(created){versioned=text;workspace.headOid+='-version';}
+                workspace.remoteOid=workspace.headOid;
+                const receipt:GitHubReceipt={id:r.previewId,workspaceId:workspace.id,kind:'push',status:'succeeded',head:workspace.headOid,message:'Synthetic Send complete. Local version saved if needed; upload simulated, not live.',url:null};receipts=[receipt,...receipts];
+                return{localVersionSaved:created,receipt,message:receipt.message};
+            }
             if(r.previewId==='synthetic-branch'){workspace.branch='revision/new-ending';return session;}
             if(r.previewId==='synthetic-ready'&&workspace.pr)workspace.pr.draft=false;
             if (r.previewId === 'synthetic-version') {
@@ -122,5 +135,5 @@ if(new URLSearchParams(location.search).has('updates')){const notice=document.cr
 // Transparent synthetic demo preselection through the same production leave/selection/read flow.
 // No direct editor injection, actual files, credentials or remote services.
 if(new URLSearchParams(location.search).has('writing')){
-  void app.selectRepository(()=>githubRequest({action:'reopen',workspaceId:workspace.id}) as Promise<RepositorySession>).then(()=>app.showDocument('story.md'));
+  void app.selectRepository(()=>githubRequest({action:'reopen',workspaceId:workspace.id}) as Promise<RepositorySession>).then(()=>app.showDocument('story.md')).then(()=>{if(new URLSearchParams(location.search).has('send'))document.querySelector<HTMLButtonElement>('.repository-send')?.click();});
 }

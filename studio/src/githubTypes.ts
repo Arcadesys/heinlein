@@ -138,6 +138,15 @@ export interface GitHubShare extends GitHubVersion {
     body: string;
     warning: string;
 }
+export interface GitHubSend extends Omit<GitHubShare, 'identity' | 'message'> {
+    selectedFiles: GitHubChange[];
+    existingVersions: {head:string;files:GitHubChange[]}[];
+    createsVersion:boolean;
+    canSend:boolean;
+    identity:GitHubIdentity|null;
+    message:string;
+}
+export interface GitHubSendOutcome {localVersionSaved:boolean;receipt:GitHubReceipt|null;message:string;}
 export interface GitHubOpen {
     id: string;
     repository: GitHubRepo;
@@ -191,6 +200,9 @@ export type GitHubRequest = {action:'localProject';repositoryId:string} | {
     identity: GitHubIdentity;
     message: string;
 } | {
+    action: 'previewSend';
+    repositoryId:string; paths:string[]; identity:GitHubIdentity|null; message:string;
+} | {
     action: 'previewShare';
     repositoryId: string;
     kind: 'push' | 'feedback' | 'pullRequest';
@@ -220,7 +232,7 @@ export type GitHubRequest = {action:'localProject';repositoryId:string} | {
     workspaceId: string;
     operationId: string | null;
 };
-export type GitHubResponse = GitHubLocalEvidence | GitHubLocalProject[] | GitHubStatus | GitHubAuth | GitHubRepositories | GitHubProject | GitHubOpen | GitHubVersion | GitHubShare | GitHubIncoming | GitHubReceipt | GitHubWorkspace | GitHubBranchChoice[] | GitHubBranchPreview | GitHubPullStatus | GitHubPullPreview | RepositorySession | null;
+export type GitHubResponse = GitHubLocalEvidence | GitHubLocalProject[] | GitHubStatus | GitHubAuth | GitHubRepositories | GitHubProject | GitHubOpen | GitHubVersion | GitHubShare | GitHubSend | GitHubSendOutcome | GitHubIncoming | GitHubReceipt | GitHubWorkspace | GitHubBranchChoice[] | GitHubBranchPreview | GitHubPullStatus | GitHubPullPreview | RepositorySession | null;
 
 export interface GitHubBranchChoice { name:string; head:string; local:boolean; defaultBranch:boolean; }
 export interface GitHubBranchPreview { id:string; workspaceId:string; account:GitHubUser; repository:GitHubRepo; fromBranch:string; branch:string; startingBranch:string; head:string; base:string; files:GitHubChange[]; treatment:string; }

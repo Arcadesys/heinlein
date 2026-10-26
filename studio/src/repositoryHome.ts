@@ -32,7 +32,7 @@ export function sharingStatus(session:RepositorySession|null,standalone:boolean,
   if(standalone)return 'Standalone draft · kept on this Mac · choose a destination later.';
   if(!session?.githubWorkspaceId)return session?'Local folder · saved here; no GitHub connection.':'';
   if(!dirty&&evidence?.workspaceId===session.githubWorkspaceId){
-    if(evidence.uncommitted)return 'Saved changes not yet sent to GitHub. Save a version, then choose Send.';
+    if(evidence.uncommitted)return 'Saved changes not yet sent to GitHub. Choose Send to GitHub when you are ready. It creates a version of your selected changes before upload.';
     if(evidence.unsentVersion)return 'Saved versions not yet sent to GitHub. Choose Send when you are ready.';
     if(evidence.lastSendRecorded)return 'A successful Send is recorded for this branch. Newer GitHub changes and other local files have not been checked.';
     return 'No Send is recorded here. GitHub status has not been checked. Use GitHub actions to review saved versions.';

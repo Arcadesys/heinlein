@@ -450,11 +450,12 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const repoName = el('h2', 'Open a repository');
   const directoryPath = el('p', '', 'path');
   const originStatus=el('p','','repository-origin-status');originStatus.setAttribute('role','status');
+  const originSend=button('Send to GitHub…',()=>{void github.openSend();},'repository-send');originSend.hidden=true;originSend.setAttribute('aria-haspopup','dialog');
   const repositoryHome=createRepositoryHome(core,{openGitHub:()=>{void github.open(true);},select:run=>selectRepository(run)});
   const localFolders=el('details');localFolders.className='local-folders';localFolders.open=true;localFolders.append(el('summary','Local folders'),open,recent);
   const listing = el('div', '', 'file-list');
   const filesBody = el('div', '', 'panel-body');
-  filesBody.append(originStatus,repositoryHome.element,localFolders,directoryPath,listing);
+  filesBody.append(originStatus,originSend,repositoryHome.element,localFolders,directoryPath,listing);
   files.append(repoName, filesBody);
   const manuscriptPane = el('section', '', 'panel manuscript');
   manuscriptPane.setAttribute('aria-label', 'Manuscript order');
@@ -495,7 +496,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const githubEntry = button('GitHub actions…', () => {void github.open();}, 'github-entry');
   githubEntry.setAttribute('aria-haspopup', 'dialog');
   const github = createGitHubPanel(core, {
-    session: () => repository,
+    session: () => standalone?.active ? null : repository,
+    saveForSend: async () => {await dirtySync; if(writeInFlight)await writeInFlight; await stageQueue; return dirty ? saveCurrent() : !recoveryPending && !recoveryErrorMessage && !writePaused;},
     problem: () => dirty || saving || recoveryPending || recoveryErrorMessage || structuralBusy || selecting || repositoryDetached ? 'Save your writing and resolve recovery before preparing a GitHub action.' : null,
     settle: async () => {await dirtySync; if (writeInFlight) await writeInFlight; await stageQueue;},
     select: selectRepository,
@@ -1122,6 +1124,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const standaloneActive=Boolean(standalone?.active);
     repoName.textContent=standaloneActive?'Standalone draft':repository?.name??'Open a repository';
     originStatus.textContent=(!standaloneActive&&repository?.githubWorkspaceId&&sharingEvidence?`Working branch: ${sharingEvidence.branch}. `:'')+sharingStatus(repository,standaloneActive,dirty,sharingEvidence);
+    originSend.hidden=standaloneActive||!repository?.githubWorkspaceId;
     directoryPath.hidden=standaloneActive||!repository;
     listing.hidden=standaloneActive;
   }

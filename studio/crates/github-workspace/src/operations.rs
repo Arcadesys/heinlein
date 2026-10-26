@@ -32,7 +32,7 @@ impl Identity {
         Ok(())
     }
 }
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FileChange {
     pub path: String,
@@ -259,7 +259,7 @@ pub fn commit_version(
     if crate::incoming::pending(registry, id)?
         || crate::journal::receipts(&dir)?
             .iter()
-            .any(|r| r.kind == "version" && r.status == "prepared")
+            .any(|r| r.status == "unknown" || (r.kind == "version" && r.status == "prepared"))
     {
         return Err(Error::Recovery);
     }
@@ -390,6 +390,251 @@ pub struct SharePlan {
     pub(crate) binding: String,
     pub(crate) base_oid: String,
 }
+/// One author consent covers a prospective exact-file version and all unsent history.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendPreview {
+    #[serde(flatten)]
+    pub share: SharePreview,
+    pub selected_files: Vec<FileChange>,
+    pub existing_versions: Vec<SendHistory>,
+    pub creates_version: bool,
+    pub can_send: bool,
+    pub identity: Option<Identity>,
+    pub message: String,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendHistory {
+    pub head: String,
+    pub files: Vec<FileChange>,
+}
+pub struct SendPlan {
+    pub preview: SendPreview,
+    before: Workspace,
+    version: Option<VersionPlan>,
+    share: SharePlan,
+    expected: Files,
+    candidate: Files,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendOutcome {
+    pub local_version_saved: bool,
+    pub receipt: Option<Receipt>,
+    pub message: String,
+}
+pub fn preview_send(
+    registry: &Registry,
+    api: &dyn Provider,
+    c: &Credential,
+    id: &str,
+    paths: Vec<String>,
+    identity: Option<Identity>,
+    message: String,
+) -> Result<SendPlan> {
+    let share = share_preview(registry, api, c, id, "push", String::new(), String::new())?;
+    let (before, repo) = validate_share(registry, api, c, &share)?;
+    if crate::incoming::pending(registry, id)?
+        || crate::journal::receipts(&registry.directory(id)?)?
+            .iter()
+            .any(|r| r.status == "prepared")
+    {
+        return Err(Error::Recovery);
+    }
+    let version = if paths.is_empty() {
+        None
+    } else {
+        Some(version_preview(
+            registry,
+            id,
+            paths,
+            identity.ok_or(Error::Unsupported)?,
+            message.clone(),
+        )?)
+    };
+    if version
+        .as_ref()
+        .is_some_and(|v| v.preview.head != before.head_oid)
+    {
+        return Err(Error::Changed);
+    }
+    let tracked = transport::tree_files(&repo, Oid::from_str(&before.head_oid)?)?;
+    let root =
+        repository_core::Repository::open(registry.checkout(id)?).map_err(|_| Error::Storage)?;
+    let expected = disk_files(&root, &tracked)?;
+    if version.as_ref().is_some_and(|v| v.expected != expected) {
+        return Err(Error::Changed);
+    }
+    let candidate = version.as_ref().map(|v| v.files.clone()).unwrap_or(tracked);
+    let comparison = transport::tree_files(
+        &repo,
+        Oid::from_str(
+            share
+                .preview
+                .remote_before
+                .as_deref()
+                .unwrap_or(&share.base_oid),
+        )?,
+    )?;
+    let mut existing_versions = Vec::new();
+    let mut count = 0;
+    for head in &share.preview.commits {
+        let commit = repo.find_commit(Oid::from_str(head)?)?;
+        let old = if commit.parent_count() > 0 {
+            transport::tree_files(&repo, commit.parent_id(0)?)?
+        } else {
+            Files::default()
+        };
+        let files = changes(&old, &transport::tree_files(&repo, commit.id())?);
+        count += files.len();
+        if count > 8192 {
+            return Err(Error::Limit);
+        }
+        existing_versions.push(SendHistory {
+            head: head.clone(),
+            files,
+        });
+    }
+    let mut prospective = share.preview.clone();
+    prospective.files = changes(&comparison, &candidate);
+    let preview = SendPreview {
+        selected_files: version
+            .as_ref()
+            .map(|v| v.preview.files.clone())
+            .unwrap_or_default(),
+        identity: version.as_ref().map(|v| v.preview.identity.clone()),
+        message,
+        creates_version: version.is_some(),
+        can_send: version.is_some() || !existing_versions.is_empty(),
+        existing_versions,
+        share: prospective,
+    };
+    Ok(SendPlan {
+        preview,
+        before,
+        version,
+        share,
+        expected,
+        candidate,
+    })
+}
+/// Called only after the native author confirmation. No remote retry is implicit.
+pub fn confirm_send(
+    registry: &Registry,
+    api: &dyn Provider,
+    c: &Credential,
+    p: &SendPlan,
+    barrier: impl Fn(&[String]) -> Result<()>,
+    transport: impl FnOnce(&Repository, &Workspace, &Credential) -> Result<()>,
+) -> Result<SendOutcome> {
+    if !c.valid() || c.account.id != p.before.account_id || c.binding != p.share.binding {
+        return Err(Error::Account);
+    }
+    let dir = registry.directory(&p.before.id)?;
+    if let Some(receipt) = Receipt::load(&dir, &p.preview.share.id)? {
+        return Ok(SendOutcome {
+            local_version_saved: p.version.is_some(),
+            message: receipt.message.clone(),
+            receipt: Some(receipt),
+        });
+    }
+    if !p.preview.can_send {
+        return Err(Error::Changed);
+    }
+    let (w, repo) = validate_share(registry, api, c, &p.share)?;
+    if w != p.before {
+        return Err(Error::Changed);
+    }
+    let root =
+        repository_core::Repository::open(registry.checkout(&w.id)?).map_err(|_| Error::Storage)?;
+    let tracked = transport::tree_files(&repo, Oid::from_str(&w.head_oid)?)?;
+    let paths = p
+        .expected
+        .keys()
+        .filter(|s| author_path(s))
+        .cloned()
+        .collect::<Vec<_>>();
+    barrier(&paths)?;
+    if disk_files(&root, &tracked)? != p.expected {
+        return Err(Error::Changed);
+    }
+    let version_receipt = if let Some(v) = &p.version {
+        Some(commit_version(registry, v, &barrier)?)
+    } else {
+        None
+    };
+    let result = (|| {
+        barrier(&paths)?;
+        let mut actual = share_preview(
+            registry,
+            api,
+            c,
+            &w.id,
+            "push",
+            String::new(),
+            String::new(),
+        )?;
+        let (_, git) = registry.reopen(&w.id)?;
+        let expected_head = version_receipt
+            .as_ref()
+            .map(|r| r.head.as_str())
+            .unwrap_or(&w.head_oid);
+        let actual_tree = transport::tree_files(&git, Oid::from_str(&actual.preview.head)?)?;
+        if actual.preview.head != expected_head
+            || actual.preview.repository != p.preview.share.repository
+            || actual.preview.account != p.preview.share.account
+            || actual.preview.branch != p.preview.share.branch
+            || actual.preview.base != p.preview.share.base
+            || actual.base_oid != p.share.base_oid
+            || actual.preview.remote_before != p.share.preview.remote_before
+            || actual.preview.files != p.preview.share.files
+            || !changes(&p.candidate, &actual_tree).is_empty()
+            || !changes(&p.expected, &disk_files(&root, &actual_tree)?).is_empty()
+        {
+            return Err(Error::Changed);
+        }
+        // The new commit must extend exactly the consented history, not substitute another tip.
+        let mut expected_commits = p.share.preview.commits.clone();
+        if let Some(r) = &version_receipt {
+            let commit = git.find_commit(Oid::from_str(&r.head)?)?;
+            if commit.parent_count() != 1 || commit.parent_id(0)?.to_string() != w.head_oid {
+                return Err(Error::Changed);
+            }
+            expected_commits.push(r.head.clone());
+        }
+        expected_commits.sort();
+        let mut actual_commits = actual.preview.commits.clone();
+        actual_commits.sort();
+        if expected_commits != actual_commits {
+            return Err(Error::Changed);
+        }
+        actual.preview.id = p.preview.share.id.clone();
+        barrier(&paths)?;
+        send(registry, api, c, &actual, transport)
+    })();
+    match result {
+        Ok(receipt) => Ok(SendOutcome {
+            local_version_saved: version_receipt.is_some(),
+            message: if version_receipt.is_some() {
+                format!("A local version was saved. {}", receipt.message)
+            } else {
+                receipt.message.clone()
+            },
+            receipt: Some(receipt),
+        }),
+        Err(e) if version_receipt.is_some() => {
+            // A damaged/unreadable receipt must not erase the truthful local-save result.
+            // Normal receipt enumeration still fails closed before any later operation.
+            let (receipt, detail) = match Receipt::load(&dir, &p.preview.share.id) {
+                Ok(receipt) => (receipt, e.to_string()),
+                Err(_) => (None, "Operation receipt needs local recovery.".into()),
+            };
+            Ok(SendOutcome { local_version_saved: true, receipt, message: format!("A local version was saved. Upload is not confirmed. {detail} Check pending operations before trying again.") })
+        }
+        Err(e) => Err(e),
+    }
+}
 pub fn check_remote(api: &dyn Provider, c: &Credential, w: &Workspace) -> Result<String> {
     if !c.valid() || c.account.id != w.account_id || c.binding != w.auth_binding {
         return Err(Error::Account);
@@ -516,6 +761,12 @@ pub fn send(
     let _lock = registry.workspace_lock(&p.preview.workspace_id)?;
     if let Some(r) = Receipt::load(&dir, &p.preview.id)? {
         return Ok(r);
+    }
+    if crate::journal::receipts(&dir)?
+        .iter()
+        .any(|r| r.status == "unknown")
+    {
+        return Err(Error::Uncertain);
     }
     let (mut w, repo) = validate_share(registry, api, c, p)?;
     let before = w.clone();

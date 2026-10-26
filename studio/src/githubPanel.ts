@@ -1,9 +1,10 @@
 import type { LocalCore, RepositorySession } from './localCore';
-import type { GitHubRequest, GitHubStatus, GitHubAuth, GitHubProject, GitHubOpen, GitHubVersion, GitHubShare, GitHubIncoming, GitHubIdentity, GitHubReceipt, GitHubRepositories, GitHubBranchChoice, GitHubBranchPreview, GitHubPullStatus, GitHubPullPreview } from './githubTypes';
+import type { GitHubRequest, GitHubStatus, GitHubAuth, GitHubProject, GitHubOpen, GitHubVersion, GitHubShare, GitHubSend, GitHubSendOutcome, GitHubIncoming, GitHubIdentity, GitHubReceipt, GitHubRepositories, GitHubBranchChoice, GitHubBranchPreview, GitHubPullStatus, GitHubPullPreview } from './githubTypes';
 import { createGitHubConflictPanel } from './githubConflictPanel';
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '') => { const e = document.createElement(tag); e.textContent = text; return e; };
 type Options = {
     changed?():void;
+    saveForSend?():Promise<boolean>;
     session(): RepositorySession | null;
     problem(): string | null;
     settle(): Promise<void>;
@@ -151,7 +152,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
             return;
         if (project) {
             const w = project.workspace;
-            body.append(node('p', `${w.repo.owner}/${w.repo.name} · ${w.repo.private ? 'Private' : 'Public'}`), node('p', `Working branch: ${w.branch}. Pull request target: ${w.baseBranch ?? w.repo.defaultBranch}.`), node('p', 'Save your draft first. A local version (Git commit) records the saved files you choose. Send shares committed versions with GitHub; it does not merge them.'), node('p', `Local version: ${w.headOid.slice(0, 12)}. ${project.receipts.some(r=>r.kind==='push'&&r.status==='succeeded'&&r.head===w.headOid) ? 'A successful Send is recorded for this version. This is not a fresh GitHub or whole-folder check.' : 'Send status is not checked. Review your saved versions before choosing Send.'} ${w.pr ? `Feedback request #${w.pr.number}: ${w.pr.state}${w.pr.draft ? ' (draft)' : ''}.` : ''}`), button('Choose or create a working branch…', renderBranches), button('Save a version on this computer…', async () => renderVersion()), button('Send local versions to GitHub…', async () => renderShare('push')), button('Request feedback with a draft pull request…', async () => renderShare('feedback')), button('Create a pull request ready for review…', async () => renderShare('pullRequest')), button('Review changes on the feedback branch…', () => incoming('feedback')), button(`Review changes on target branch ${w.baseBranch ?? w.repo.defaultBranch}…`, () => incoming('default')), node('p', 'After feedback is closed or merged, first review the selected target branch, then start a fresh feedback branch. Your local versions are retained.'), button('Start a fresh feedback branch…', async () => { await options.authorAction(async () => { await request({ action: 'freshBranch', repositoryId: session().id }); }); await load(); }));
+            body.append(node('p', `${w.repo.owner}/${w.repo.name} · ${w.repo.private ? 'Private' : 'Public'}`), node('p', `Working branch: ${w.branch}. Pull request target: ${w.baseBranch ?? w.repo.defaultBranch}.`), node('p', 'Writing is kept on this Mac separately. Send to GitHub records the saved changes you select as a version if needed, then uploads after your confirmation. It does not merge them.'), node('p', `Local version: ${w.headOid.slice(0, 12)}. ${project.receipts.some(r=>r.kind==='push'&&r.status==='succeeded'&&r.head===w.headOid) ? 'A successful Send is recorded for this version. This is not a fresh GitHub or whole-folder check.' : 'Send status is not checked. Review your saved versions before choosing Send.'} ${w.pr ? `Feedback request #${w.pr.number}: ${w.pr.state}${w.pr.draft ? ' (draft)' : ''}.` : ''}`), button('Choose or create a working branch…', renderBranches), button('Save a local version without sending…', async () => renderVersion()), button('Send to GitHub…', renderSend), button('Request feedback with a draft pull request…', async () => renderShare('feedback')), button('Create a pull request ready for review…', async () => renderShare('pullRequest')), button('Review changes on the feedback branch…', () => incoming('feedback')), button(`Review changes on target branch ${w.baseBranch ?? w.repo.defaultBranch}…`, () => incoming('default')), node('p', 'After feedback is closed or merged, first review the selected target branch, then start a fresh feedback branch. Your local versions are retained.'), button('Start a fresh feedback branch…', async () => { await options.authorAction(async () => { await request({ action: 'freshBranch', repositoryId: session().id }); }); await load(); }));
             if(w.pr)body.append(button('Pull request status and actions…', renderPull), button(`Open feedback request #${w.pr.number}`,async()=>{await request({action:'openFeedback',repositoryId:session().id});}));
             for (const r of project.receipts) {
                 body.append(node('p', `${r.kind}: ${r.status}. ${r.message}`));
@@ -183,6 +184,38 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         focus();
     }
     function previewBox() { body.querySelector('[data-github-preview]')?.remove(); const box = node('section'); box.dataset.githubPreview = ''; box.setAttribute('aria-label', 'GitHub action preview'); body.append(box); return box; }
+    async function renderSend() {
+        const s=session(), view=generation;
+        cancelPlan();
+        if(options.saveForSend && !await options.saveForSend()) throw new Error('Your writing could not be kept on this Mac. Nothing was sent. Resolve the save or recovery error, then try Send again.');
+        await options.settle();
+        if(options.problem()) throw new Error(options.problem()!);
+        const revision=source;
+        const next=await request<GitHubProject>({action:'workspace',repositoryId:s.id});
+        if(!valid(view,revision)||options.session()?.id!==s.id) throw new Error('Project changed. Nothing was sent.');
+        project=next;
+        heading('Send to GitHub');
+        const selected=new Set<string>();
+        body.append(node('p','Local autosave keeps your writing on this Mac. Select saved changes to include now. Send creates their version internally, then asks for native confirmation before upload. All earlier unsent versions will also be uploaded, including files not selected here.'));
+        for(const change of next.changes){
+            const label=node('label',`${change.kind}: ${change.path}`), check=node('input');check.type='checkbox';
+            check.addEventListener('change',()=>{if(check.checked)selected.add(change.path);else selected.delete(change.path);cancelPlan();body.querySelector('[data-github-preview]')?.remove();});label.prepend(check);body.append(label);
+        }
+        if(next.changes.length)body.append(node('p','For new selected changes, confirm the name and email recorded in Git history. A GitHub privacy email is fine.'),field('Version author name',identity.name,v=>identity.name=v),field('Version author email',identity.email,v=>identity.email=v));
+        body.append(button('Review what will be sent',async()=>{
+            const p=await prepare<GitHubSend>({action:'previewSend',repositoryId:s.id,paths:[...selected],identity:selected.size?{...identity}:null,message:'Writing update'});
+            const box=previewBox();box.append(node('h4',`${p.repository.owner}/${p.repository.name} · ${p.repository.private?'Private':'Public'} · ${p.account.login}`),node('p',`Working branch: ${p.branch}. Target: ${p.base}.`),node('h4','Selected new changes'),files(p.selectedFiles),node('p',p.createsVersion?`A local version will be created as ${p.identity!.name} <${p.identity!.email}> before upload.`:'No new local version is needed.'),node('h4','Earlier unsent versions — all included'));
+            for(const h of p.existingVersions)box.append(node('p',`Version ${h.head}`),files(h.files));
+            box.append(node('h4','Net outgoing changes'),files(p.files),node('p',p.warning));
+            if(p.canSend)box.append(button('Send to GitHub…',async()=>{
+                if(plan!==p.id)throw new Error('Review this Send again.');
+                let outcome:GitHubSendOutcome|null=null;
+                await options.authorAction(async()=>{outcome=await request<GitHubSendOutcome|null>({action:'confirm',repositoryId:s.id,previewId:p.id,identity:null});plan=null;});
+                await load();message.textContent=outcome?(outcome as GitHubSendOutcome).message:'Send canceled. Nothing was uploaded and no new version was created.';
+            }));else box.append(node('p','Nothing new to send. Your writing remains on this Mac.'));
+            box.append(button('Cancel this preview',async()=>{cancelPlan();box.remove();}));
+        }),button('Back to GitHub project',load));focus();
+    }
     function renderVersion() {
         cancelPlan();
         heading('Save a version locally');
@@ -282,7 +315,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         close(); });
     element.addEventListener('close', () => { generation++; cancelPlan(); });
     function shell() { element.replaceChildren(); const title = node('h2', 'GitHub projects'); title.id = 'github-panel-title'; title.tabIndex = -1; const exit = button('Close', async () => close()); exit.setAttribute('aria-label', 'Close GitHub projects'); element.append(title, message, exit, body); }
-    return { element, async open(chooseRepository = false) { opener = document.activeElement as HTMLElement; generation++; shell(); element.showModal(); await act(load); if(chooseRepository&&snapshot?.auth?.confirmed){body.querySelectorAll<HTMLButtonElement>('button').forEach(b=>{if(b.textContent==='Load repositories')b.click();});} element.querySelector<HTMLElement>('h2')?.focus(); }, clear() { generation++; source++; cancelPlan(); project = null; snapshot = null; if (element.open)
+    return { element, async openSend(){opener=document.activeElement as HTMLElement;generation++;shell();element.showModal();await act(async()=>{await load();await renderSend();});}, async open(chooseRepository = false) { opener = document.activeElement as HTMLElement; generation++; shell(); element.showModal(); await act(load); if(chooseRepository&&snapshot?.auth?.confirmed){body.querySelectorAll<HTMLButtonElement>('button').forEach(b=>{if(b.textContent==='Load repositories')b.click();});} element.querySelector<HTMLElement>('h2')?.focus(); }, clear() { generation++; source++; cancelPlan(); project = null; snapshot = null; if (element.open)
             element.close(); }, sourceChanged() { source++; cancelPlan(); if (element.open) {
             if (body.dataset.githubIncoming !== undefined) {
                 heading('Writing changed');

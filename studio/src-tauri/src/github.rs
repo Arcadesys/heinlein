@@ -61,6 +61,7 @@ enum Plan {
     Open(gh::RepoInfo, u64, String),
     Version(operations::VersionPlan),
     Share(Box<operations::SharePlan>),
+    Send(Box<operations::SendPlan>),
     Incoming(Box<IncomingPlan>),
     Branch(Box<gh::branches::Plan>),
     Pull(Box<gh::pull_actions::Plan>),
@@ -129,6 +130,12 @@ pub(crate) enum Request {
         repository_id: String,
         paths: Vec<String>,
         identity: Identity,
+        message: String,
+    },
+    PreviewSend {
+        repository_id: String,
+        paths: Vec<String>,
+        identity: Option<Identity>,
         message: String,
     },
     PreviewShare {
@@ -804,6 +811,31 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
             )?;
             Ok(v)
         }
+        Request::PreviewSend {
+            repository_id,
+            paths,
+            identity,
+            message,
+        } => {
+            let (w, _) = selected(app, &s, &repository_id)?;
+            current(&state, state.mutation_gate.generation())?;
+            let c = s
+                .auth
+                .credential(&s.api, gh::auth::now())
+                .map_err(|e| e.to_string())?;
+            let p =
+                operations::preview_send(&s.registry, &s.api, &c, &w.id, paths, identity, message)
+                    .map_err(|e| e.to_string())?;
+            let v = serialized(&p.preview)?;
+            put(
+                app,
+                p.preview.share.id.clone(),
+                Some(repository_id),
+                started,
+                Plan::Send(Box::new(p)),
+            )?;
+            Ok(v)
+        }
         Request::PreviewShare {
             repository_id,
             kind,
@@ -904,6 +936,12 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
                         describe(&p.preview.files),p.preview.identity.name,p.preview.identity.email,p.preview.message);
                     ("Save local version", message)
                 }
+                Plan::Send(p) => {
+                    let v = &p.preview;
+                    let history = v.existing_versions.iter().map(|h| format!("Version {}:\n{}", h.head, describe(&h.files))).collect::<Vec<_>>().join("\n");
+                    let author = v.identity.as_ref().map(|i| format!("{} <{}>; {}", i.name, i.email, v.message)).unwrap_or_else(|| "No new local version".into());
+                    ("Send to GitHub", format!("Save the selected changes as a local version if needed, then upload ALL the unsent versions below?\nAccount: {}\nRepository: {}/{} ({})\nWorking branch: {}\nSelected new changes:\n{}\n{}\nExisting unsent history (including files not selected now):\n{}\nNet outgoing changes:\n{}\n{}", v.share.account.login, w.repo.owner, w.repo.name, if w.repo.private { "private" } else { "public" }, v.share.branch, describe(&v.selected_files), author, history, describe(&v.share.files), v.share.warning))
+                }
                 Plan::Share(p) => {
                     let prompt = if p.preview.kind == "push" {
                         "Send these local versions?"
@@ -1003,6 +1041,36 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
                     })
                     .map_err(|e| e.to_string())?,
                 ),
+                Plan::Send(p) => {
+                    let c = s
+                        .auth
+                        .credential(&s.api, gh::auth::now())
+                        .map_err(|e| e.to_string())?;
+                    serialized(
+                        operations::confirm_send(
+                            &s.registry,
+                            &s.api,
+                            &c,
+                            &p,
+                            |paths| {
+                                check().map_err(|_| gh::Error::Changed)?;
+                                let paths = paths
+                                    .iter()
+                                    .filter(|p| p.as_str() != "ms/manuscript.json")
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                root.check_workspace_clean(&paths, &recovery)
+                                    .map_err(|_| gh::Error::Recovery)
+                            },
+                            |git, w, c| {
+                                check().map_err(|_| gh::Error::Changed)?;
+                                let authority = gh::branches::authority(&s.registry, w, c)?;
+                                gh::transport::push(git, c, &authority)
+                            },
+                        )
+                        .map_err(|e| e.to_string())?,
+                    )
+                }
                 Plan::Share(p) => {
                     let (_, git) = s.registry.reopen(&w.id).map_err(|e| e.to_string())?;
                     let tracked = gh::transport::tree_files(
@@ -1212,6 +1280,10 @@ mod authority_tests {
         let r:Request=serde_json::from_value(json!({"action":"previewVersion","repositoryId":"opaque-session","paths":["story.md"],"identity":{"name":"Writer","email":"privacy@example.test"},"message":"Version"})).unwrap();
         assert!(
             matches!(r,Request::PreviewVersion{repository_id,..} if repository_id=="opaque-session")
+        );
+        let send: Request = serde_json::from_value(json!({"action":"previewSend","repositoryId":"opaque-session","paths":["story.md"],"identity":{"name":"Writer","email":"privacy@example.test"},"message":"Writing update"})).unwrap();
+        assert!(
+            matches!(send, Request::PreviewSend{repository_id,..} if repository_id=="opaque-session")
         );
         for extra in ["root", "token", "gitArgs"] {
             let mut request = json!({"action":"reopen","workspaceId":"opaque-workspace"});
