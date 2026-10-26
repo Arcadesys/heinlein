@@ -183,9 +183,9 @@ it.each([
 it('one Send previews new selection plus all earlier unsent files and preserves uncertain outcome',async()=>{
  const f=fixture();await f.p.open();await f.click('Send to GitHub…');
  const check=f.p.element.querySelector<HTMLInputElement>('input[type=checkbox]')!;check.click();
- f.fill('Version author name','Writer');f.fill('Version author email','private@example.test');
+ f.fill('Name recorded with these changes','Writer');f.fill('Email recorded with these changes','private@example.test');
  await f.click('Review what will be sent');
- expect(f.p.element.textContent).toContain('earlier.md');expect(f.p.element.textContent).toContain('All earlier unsent versions');
+ expect(f.p.element.textContent).toContain('earlier.md');expect(f.p.element.textContent).toContain('Earlier changes not yet sent');
  expect(f.request.mock.calls.filter(c=>['previewVersion','previewShare','confirm'].includes(c[0].action))).toHaveLength(0);
  await f.click('Send to GitHub…');expect(f.p.element.textContent).toContain('Local version saved; upload is not confirmed');
  expect(f.request.mock.calls.filter(c=>c[0].action==='confirm')).toHaveLength(1);
@@ -193,7 +193,7 @@ it('one Send previews new selection plus all earlier unsent files and preserves 
 it('canceling combined Send does not commit or upload and changing metadata invalidates consent',async()=>{
  const f=fixture();await f.p.open();await f.click('Send to GitHub…');await f.click('Review what will be sent');
  await f.click('Cancel this preview');expect(f.request.mock.calls.filter(c=>c[0].action==='confirm')).toHaveLength(0);
- await f.click('Review what will be sent');f.fill('Version author name','Changed');await tick();
+ await f.click('Review what will be sent');f.fill('Name recorded with these changes','Changed');await tick();
  expect(f.p.element.querySelector('[data-github-preview]')).toBeNull();
  expect(f.request.mock.calls.some(c=>c[0].action==='cancel'&&c[0].previewId==='send')).toBe(true);
 });

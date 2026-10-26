@@ -20,8 +20,8 @@ test('GitHub synthetic account, exact-file version, send, draft feedback and exp
     await activate(page.getByRole('button', { name: 'GitHub actions…', exact: true }));
     await activate(dialog.getByRole('button', { name: 'Send to GitHub…', exact: true }));
     await tabTo(dialog.getByRole('checkbox', { name: 'edit: story.md', exact: true })); await page.keyboard.press('Space');
-    await type(dialog.getByLabel('Version author name', { exact: true }),'Synthetic Writer');
-    await type(dialog.getByLabel('Version author email', { exact: true }),'synthetic@users.noreply.github.com');
+    await type(dialog.getByLabel('Name recorded with these changes', { exact: true }),'Synthetic Writer');
+    await type(dialog.getByLabel('Email recorded with these changes', { exact: true }),'synthetic@users.noreply.github.com');
     await activate(dialog.getByRole('button', { name: 'Review what will be sent', exact: true }));
     await expect(dialog.getByRole('region', { name: 'GitHub action preview' })).toContainText('earlier-scene.md');
     await expect(dialog).toContainText('repository-configured automation');

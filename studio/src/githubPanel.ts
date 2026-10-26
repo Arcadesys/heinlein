@@ -196,12 +196,12 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         project=next;
         heading('Send to GitHub');
         const selected=new Set<string>();
-        body.append(node('p','Local autosave keeps your writing on this Mac. Select saved changes to include now. Send creates their version internally, then asks for native confirmation before upload. All earlier unsent versions will also be uploaded, including files not selected here.'));
+        body.append(node('p','Local autosave keeps your writing on this Mac. Select saved changes to include now. After you confirm, Heinlein saves a version of the selected changes and sends them to GitHub. Earlier changes not yet sent will be included too, even for files not selected here.'));
         for(const change of next.changes){
             const label=node('label',`${change.kind}: ${change.path}`), check=node('input');check.type='checkbox';
             check.addEventListener('change',()=>{if(check.checked)selected.add(change.path);else selected.delete(change.path);cancelPlan();body.querySelector('[data-github-preview]')?.remove();});label.prepend(check);body.append(label);
         }
-        if(next.changes.length)body.append(node('p','For new selected changes, confirm the name and email recorded in Git history. A GitHub privacy email is fine.'),field('Version author name',identity.name,v=>identity.name=v),field('Version author email',identity.email,v=>identity.email=v));
+        if(next.changes.length)body.append(node('p','The name and email below are included in the uploaded change history. You can use a GitHub privacy email.'),field('Name recorded with these changes',identity.name,v=>identity.name=v),field('Email recorded with these changes',identity.email,v=>identity.email=v));
         body.append(button('Review what will be sent',async()=>{
             const p=await prepare<GitHubSend>({action:'previewSend',repositoryId:s.id,paths:[...selected],identity:selected.size?{...identity}:null,message:'Writing update'});
             const box=previewBox();box.append(node('h4',`${p.repository.owner}/${p.repository.name} · ${p.repository.private?'Private':'Public'} · ${p.account.login}`),node('p',`Working branch: ${p.branch}. Target: ${p.base}.`),node('h4','Selected new changes'),files(p.selectedFiles),node('p',p.createsVersion?`A local version will be created as ${p.identity!.name} <${p.identity!.email}> before upload.`:'No new local version is needed.'),node('h4','Earlier unsent versions — all included'));

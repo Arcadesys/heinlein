@@ -13,7 +13,7 @@ for(const contrast of [false,true])test(`one confirmed Send keeps autosave separ
  const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});
  await expect(dialog.getByRole('heading',{name:'Send to GitHub',exact:true})).toBeVisible();
  const checkbox=dialog.getByRole('checkbox',{name:'edit: story.md',exact:true});await checkbox.focus();await page.keyboard.press('Space');
- for(const [label,value] of [['Version author name','Synthetic Writer'],['Version author email','synthetic@users.noreply.github.com']]){const field=dialog.getByLabel(label,{exact:true});await field.focus();await page.keyboard.insertText(value);}
+ for(const [label,value] of [['Name recorded with these changes','Synthetic Writer'],['Email recorded with these changes','synthetic@users.noreply.github.com']]){const field=dialog.getByLabel(label,{exact:true});await field.focus();await page.keyboard.insertText(value);}
  await activate(dialog.getByRole('button',{name:'Review what will be sent',exact:true}));
  const preview=dialog.getByRole('region',{name:'GitHub action preview'});await expect(preview).toContainText('earlier-scene.md');await expect(preview).toContainText('Working branch: heinlein/story-synthetic');
  expect(await page.evaluate(()=> (window as any).githubFixture.calls.filter((c:any)=>c.action==='confirm'))).toHaveLength(0);
