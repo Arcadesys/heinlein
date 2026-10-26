@@ -211,3 +211,9 @@ Incoming prose/manifest conflicts retain explicit author choices. Remote passive
 asset or mode mutations currently refuse with an actionable unsupported-tree
 message; they are never silently omitted or flattened. Opening the repository and
 retaining those assets is distinct from merging asset changes in this version.
+
+## Repository-first presentation
+
+Managed selection carries native owner/repository identity and an opaque workspace ID into the existing editor transaction. It does not write local-folder recents. Historical managed-root records are filtered from the returned local-recents view without deleting/migrating them. Pure-local registry/evidence requests execute before Services/Auth construction; listing/reopening local identity does not instantiate an OS credential store. Unavailable copies stay unavailable, without recloning or folder fallback.
+
+Local save acknowledgment and sharing are separate. Read-only evidence is bound to the selected native session and mutation generation; renderer responses are bound to document epoch/edit generation. Known author-file changes and retained unsent versions are explicit. A successful Send receipt is historical evidence, not head-equality proof of current GitHub or complete-folder synchronization. Standalone document origin overrides a retained GitHub workspace context. No automatic commit, push, PR, account switch or model generation is introduced.

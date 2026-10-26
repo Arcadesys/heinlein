@@ -23,7 +23,7 @@ function bridge() {
 const settle = async () => {await new Promise(resolve => setTimeout(resolve, 0));};
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === label)!;
 const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
-async function start(core: LocalCore) {app = mountStudio(document.body, core); button('Open Folder…').click(); await settle(); await app.showDocument('chapter.md');}
+async function start(core: LocalCore) {app = mountStudio(document.body, core); button('Open local folder…').click(); await settle(); await app.showDocument('chapter.md');}
 beforeEach(() => {Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect(); document.body.replaceChildren();});
 afterEach(() => {app?.destroy();});
 describe('assembled chapter to proposed revision', () => {
@@ -60,7 +60,7 @@ describe('assembled chapter to proposed revision', () => {
     const {core} = bridge();
     const book = structuredClone(manuscript); book.volumes[0].chapters[0].source = 'one.md';
     core.loadManuscript = vi.fn(async () => book);
-    app = mountStudio(document.body, core); button('Open Folder…').click(); await settle();
+    app = mountStudio(document.body, core); button('Open local folder…').click(); await settle();
     await app.showDocument('one.md');
     expect(view().state.readOnly).toBe(false); expect(view().state.doc.toString()).toContain('title: First');
     button('Read assembled chapter').click(); await settle();

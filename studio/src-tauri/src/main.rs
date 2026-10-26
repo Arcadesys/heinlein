@@ -161,24 +161,30 @@ fn select(app: &tauri::AppHandle, path: PathBuf) -> Result<Session, String> {
         &app.path().home_dir().map_err(|_| "Home unavailable")?,
     )?;
     let workspace = github::selection(app, &path)?;
-    let mut session = select_repository(
+    select_repository_with_origin(
         &app.state::<BrowserState>(),
         path,
         &recent_file(app)?,
         &auth_path(app)?,
-    )?;
-    if let Some(w) = workspace {
-        session.github_workspace_id = Some(w.id);
-        session.name = format!("{}/{}", w.repo.owner, w.repo.name);
-    }
-    Ok(session)
+        workspace,
+    )
 }
 // Keep the native selection transaction testable without a window or real preferences.
+#[cfg(test)]
 fn select_repository(
     state: &BrowserState,
     path: PathBuf,
     preferences: &Path,
     private_storage: &Path,
+) -> Result<Session, String> {
+    select_repository_with_origin(state, path, preferences, private_storage, None)
+}
+fn select_repository_with_origin(
+    state: &BrowserState,
+    path: PathBuf,
+    preferences: &Path,
+    private_storage: &Path,
+    workspace: Option<github_workspace::registry::Workspace>,
 ) -> Result<Session, String> {
     if state.quitting.load(Ordering::SeqCst) {
         return Err("Heinlein is quitting".into());
@@ -207,29 +213,35 @@ fn select_repository(
     let session = Session {
         id: id(),
         project_key: repo.project_key(),
-        name: name.clone(),
+        name: workspace
+            .as_ref()
+            .map(|w| format!("{}/{}", w.repo.owner, w.repo.name))
+            .unwrap_or_else(|| name.clone()),
         manifests,
         warning,
-        github_workspace_id: None,
+        github_workspace_id: workspace.as_ref().map(|w| w.id.clone()),
     };
-    // Don't commit a new selected root if its recent-folder persistence failed.
-    let mut recent_guard = state
-        .recents
-        .lock()
-        .map_err(|_| "Preferences unavailable")?;
-    let mut recents = recent_guard.clone();
-    recents.folders.retain(|folder| folder.path != canonical);
-    recents.folders.insert(
-        0,
-        Recent {
-            id: id(),
-            name,
-            path: canonical,
-        },
-    );
-    recents.folders.truncate(10);
-    save_recents(preferences, &recents)?;
-    *recent_guard = recents;
+    // Managed workspaces live in their own registry, never local-folder recents.
+    if workspace.is_none() {
+        // Don't commit a new selected root if its recent-folder persistence failed.
+        let mut recent_guard = state
+            .recents
+            .lock()
+            .map_err(|_| "Preferences unavailable")?;
+        let mut recents = recent_guard.clone();
+        recents.folders.retain(|folder| folder.path != canonical);
+        recents.folders.insert(
+            0,
+            Recent {
+                id: id(),
+                name,
+                path: canonical,
+            },
+        );
+        recents.folders.truncate(10);
+        save_recents(preferences, &recents)?;
+        *recent_guard = recents;
+    }
     *state
         .selected
         .lock()
@@ -269,21 +281,41 @@ async fn pick_repository(
 }
 #[tauri::command]
 fn recent_repositories(
+    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     state: State<'_, BrowserState>,
 ) -> Result<Vec<RecentView>, String> {
     check_window(&window)?;
-    Ok(state
+    let sources = resolved_future_path(
+        &app.path()
+            .app_data_dir()
+            .map_err(|_| "Private storage unavailable")?
+            .join("github-sources-v1"),
+    )?;
+    let store = state
         .recents
         .lock()
-        .map_err(|_| "Preferences unavailable")?
-        .folders
-        .iter()
-        .map(|r| RecentView {
+        .map_err(|_| "Preferences unavailable")?;
+    local_recent_views(&store, &sources)
+}
+// Filter only the returned view. Preserve historical records and unavailable roots.
+fn local_recent_views(
+    store: &recents::RecentStore,
+    sources: &Path,
+) -> Result<Vec<RecentView>, String> {
+    let sources = resolved_future_path(sources)?;
+    let mut views = Vec::new();
+    for r in &store.folders {
+        let path = resolved_future_path(&r.path)?;
+        if path.starts_with(&sources) || sources.starts_with(&path) {
+            continue;
+        }
+        views.push(RecentView {
             id: r.id.clone(),
             name: r.name.clone(),
-        })
-        .collect())
+        });
+    }
+    Ok(views)
 }
 #[tauri::command]
 async fn open_recent_repository(

@@ -1,3 +1,5 @@
+export interface GitHubLocalEvidence {workspaceId:string;branch:string;uncommitted:boolean;unsentVersion:boolean;lastSendRecorded:boolean;}
+export interface GitHubLocalProject { workspaceId:string; name:string; branch:string; unavailable:string|null; }
 /** Safe GitHub DTOs only. Native owns credentials, roots and executable operations. */
 import type { RepositorySession } from './localCore';
 export interface GitHubUser {
@@ -147,8 +149,8 @@ export interface GitHubProject {
     changes: GitHubChange[];
     receipts: GitHubReceipt[];
 }
-export type GitHubRequest = {
-    action: 'status' | 'connect' | 'poll' | 'signOut' | 'repositories' | 'retrySaved';
+export type GitHubRequest = {action:'localProject';repositoryId:string} | {
+    action: 'localProjects' | 'status' | 'connect' | 'poll' | 'signOut' | 'repositories' | 'retrySaved';
 } | {
     action: 'previewListedRepository';
     listId: string;
@@ -218,7 +220,7 @@ export type GitHubRequest = {
     workspaceId: string;
     operationId: string | null;
 };
-export type GitHubResponse = GitHubStatus | GitHubAuth | GitHubRepositories | GitHubProject | GitHubOpen | GitHubVersion | GitHubShare | GitHubIncoming | GitHubReceipt | GitHubWorkspace | GitHubBranchChoice[] | GitHubBranchPreview | GitHubPullStatus | GitHubPullPreview | RepositorySession | null;
+export type GitHubResponse = GitHubLocalEvidence | GitHubLocalProject[] | GitHubStatus | GitHubAuth | GitHubRepositories | GitHubProject | GitHubOpen | GitHubVersion | GitHubShare | GitHubIncoming | GitHubReceipt | GitHubWorkspace | GitHubBranchChoice[] | GitHubBranchPreview | GitHubPullStatus | GitHubPullPreview | RepositorySession | null;
 
 export interface GitHubBranchChoice { name:string; head:string; local:boolean; defaultBranch:boolean; }
 export interface GitHubBranchPreview { id:string; workspaceId:string; account:GitHubUser; repository:GitHubRepo; fromBranch:string; branch:string; startingBranch:string; head:string; base:string; files:GitHubChange[]; treatment:string; }

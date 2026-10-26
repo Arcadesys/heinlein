@@ -219,3 +219,60 @@ fn standalone_private_store_is_never_a_selected_project_or_recent_folder() {
         b"private draft record"
     );
 }
+
+#[test]
+fn managed_selection_uses_verified_identity_without_persisting_a_local_folder_recent() {
+    let f = Fixture::new();
+    let state = f.state();
+    let path = f.repository("opaque-managed-root");
+    let w = github_workspace::registry::Workspace {
+        id: "native-workspace".into(),
+        repo: github_workspace::RepoInfo {
+            id: 42,
+            owner: "writer".into(),
+            name: "book".into(),
+            private: true,
+            default_branch: "main".into(),
+            installation_id: 7,
+        },
+        account_id: 9,
+        auth_binding: "synthetic-binding".into(),
+        base_oid: "a".repeat(40),
+        base_branch: Some("main".into()),
+        head_oid: "a".repeat(40),
+        remote_oid: None,
+        branch: "writing/revision".into(),
+        pr: None,
+    };
+    // An unwritable recent preference path must not become a managed-open prerequisite.
+    fs::create_dir_all(&f.preferences).unwrap();
+    let session =
+        select_repository_with_origin(&state, path, &f.preferences, &f.private_storage, Some(w))
+            .unwrap();
+    assert_eq!(session.name, "writer/book");
+    assert_eq!(
+        session.github_workspace_id.as_deref(),
+        Some("native-workspace")
+    );
+    assert!(state.recents.lock().unwrap().folders.is_empty());
+    assert!(f.preferences.is_dir());
+}
+#[test]
+fn historical_managed_recents_are_filtered_without_rewriting_preferences_even_if_missing() {
+    let f = Fixture::new();
+    let state = f.state();
+    let local = f.repository("Local book");
+    f.select(&state, &local).unwrap();
+    let sources = f.root.join("github-sources-v1");
+    let old = recents::Recent {
+        id: "old-private".into(),
+        name: "private-checkout-id".into(),
+        path: sources.join("missing-workspace"),
+    };
+    state.recents.lock().unwrap().folders.push(old);
+    let before = recents_json(&state);
+    let views = local_recent_views(&state.recents.lock().unwrap(), &sources).unwrap();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].name, "Local book");
+    assert_eq!(before, recents_json(&state));
+}

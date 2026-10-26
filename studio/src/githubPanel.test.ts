@@ -82,9 +82,9 @@ it('connected writers can load granted repositories and select one through a bou
     await f.p.open();await f.click('Load repositories');
     await f.click('Preview example/story…');
     expect(f.request.mock.calls).toContainEqual([{action:'previewListedRepository',listId:'list',repositoryId:42}]);
-    expect(f.p.element.textContent).toContain('Open this GitHub project?');
+    expect(f.p.element.textContent).toContain('Open this GitHub repository?');
     expect(f.hooks.select).not.toHaveBeenCalled();
-    await f.click('Open separate local copy…');expect(f.hooks.select).toHaveBeenCalledOnce();
+    await f.click('Open repository…');expect(f.hooks.select).toHaveBeenCalledOnce();
 });
 it('repository access is separate from sign-in, with empty/error and explicit refresh paths',async()=>{
     const f=fixture(false);const original=f.request.getMockImplementation()!;let attempt=0;
@@ -111,7 +111,7 @@ it('an unconfirmed account cannot list repositories and a stale selected preview
     await f.p.open();await f.click('Load repositories');let finish!:(v:GitHubResponse)=>void;
     f.request.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));await f.click('Preview example/story…');
     f.p.sourceChanged();finish({id:'late-open',repository:repo,account:status.auth!.account!,treatment:'Separate local copy'});await tick();
-    expect(f.p.element.textContent).not.toContain('Open this GitHub project?');expect(f.hooks.select).not.toHaveBeenCalled();
+    expect(f.p.element.textContent).not.toContain('Open this GitHub repository?');expect(f.hooks.select).not.toHaveBeenCalled();
     expect(f.request.mock.calls).toContainEqual([{action:'cancel',previewId:'late-open'}]);
 });
 it('unavailable secure store offers read-only retry without OAuth, signout or credential replacement',async()=>{

@@ -39,6 +39,8 @@ async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
     calls.push(structuredClone(r));
     if(r.action==='status'&&rotationPending)return{auth:null,error:rotationMessage('The secure credential store is locked. Unlock it and allow its access prompt.'),workspaces:[]};
     switch (r.action) {
+        case 'localProject': return {workspaceId:workspace.id,branch:workspace.branch,uncommitted:text!==versioned,unsentVersion:workspace.headOid!==workspace.baseOid&&workspace.remoteOid!==workspace.headOid,lastSendRecorded:receipts.some(r=>r.kind==='push'&&r.status==='succeeded')};
+        case 'localProjects': return opened ? [{workspaceId:workspace.id,name:`${repo.owner}/${repo.name}`,branch:workspace.branch,unavailable:pendingWorkspaceRecovery?'Recovery required':null}]:[];
         case 'status': return { auth, error: null, workspaces: opened ? [{ workspace, error: pendingWorkspaceRecovery?'Synthetic interrupted operation needs recovery.':null, incomingRecovery: pendingWorkspaceRecovery==='incoming', branchRecovery:pendingWorkspaceRecovery==='metadata', receipts:pendingWorkspaceRecovery==='version'?[{id:'synthetic-prepared-version',workspaceId:workspace.id,kind:'version',status:'prepared',head:workspace.headOid,message:'Synthetic local version needs recovery.',url:null}]:receipts }] : [], app: { id: 5412628, clientId: 'synthetic-public', owner: 'Arcadesys', slug: 'heinlein-studio', installUrl: 'https://github.com/apps/heinlein-studio' } };
         case 'retrySaved':
             if(++rotationRetries===1)throw new Error(rotationMessage('Secure credential access was cancelled. Retry when you are ready to allow access.'));
@@ -107,6 +109,7 @@ async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
 let updateState='not-checked';
 const updateCalls:string[]=[];
 Object.assign(window,{updateFixture:{calls:updateCalls,synthetic:true}});
+if(new URLSearchParams(location.search).has('repo-first')){opened=true;auth={...auth,configured:true,confirmed:true,account:{id:9,login:'writer'},pending:null};}
 const core: LocalCore = { available: () => true, updateRequest:async action=>{updateCalls.push(action);if(action==='check')updateState='available';if(action==='schedule')updateState='scheduled';return{state:updateState,commit:'a'.repeat(40),availableCommit:updateState==='not-checked'?null:'b'.repeat(40),generation:1}}, githubRequest, pickRepository: unavailable, recentRepositories: async () => [], openRecentRepository: unavailable, listSystemFonts: async () => [], listDirectory: async () => [{ path: 'story.md', name: 'story.md', kind: 'file', sizeBytes: text.length }], loadManuscript: unavailable, readDocument: async (_id, path) => ({ path, text, contentHash: hash, sizeBytes: text.length, frontmatter: null, generatedCompatibility: false }), saveDocument: async (_id, path, _expected, source) => { text = source; hash += '-saved'; return { path, text, contentHash: hash, sizeBytes: text.length, frontmatter: null, generatedCompatibility: false }; }, readRecovery: async () => recovery, stageRecovery: async (_id, path, baseHash, source) => recovery = { id: 'synthetic-recovery', path, baseHash, text: source, updatedAt: 1 }, discardRecovery: async () => { recovery = null; }, setUnsavedChanges: async (v) => { dirty = v; }, requestClose: async () => { }, onCloseRequested: async () => () => { }, loadDrafting: async () => ({ manifestPath: 'ms/manuscript.json', revision: null, project: null, groups: [], scenes: [], untrackedPaths: ['story.md'], missingPaths: [], recoveryRequired: false }) };
 const app=mountStudio(document.querySelector<HTMLElement>('#app')!, core);
 // AO's preview can start directly at the real production panel on this synthetic host.
@@ -115,3 +118,9 @@ else if(pendingWorkspaceRecovery){auth={...auth,confirmed:true,account:{id:9,log
 else if (new URLSearchParams(location.search).has('github')) document.querySelector<HTMLButtonElement>('.github-entry')?.click();
 
 if(new URLSearchParams(location.search).has('updates')){const notice=document.createElement('p');notice.textContent='Synthetic updater preview: no installed app, credentials, files or network updates.';document.body.prepend(notice);document.querySelector<HTMLButtonElement>('.update-entry')?.click();}
+
+// Transparent synthetic demo preselection through the same production leave/selection/read flow.
+// No direct editor injection, actual files, credentials or remote services.
+if(new URLSearchParams(location.search).has('writing')){
+  void app.selectRepository(()=>githubRequest({action:'reopen',workspaceId:workspace.id}) as Promise<RepositorySession>).then(()=>app.showDocument('story.md'));
+}

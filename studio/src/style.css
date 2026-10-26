@@ -544,3 +544,27 @@ dialog { color: var(--fg); }
 .standalone-writing > .status-pill > * { flex: 0 1 auto; min-width: 0; }
 .standalone-writing > .corner-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 .standalone-writing > .corner-actions button { min-height: 44px; }
+
+/* Repository identity and local storage are separate author-facing concepts. */
+.repository-home { display:grid; gap: .7rem; overflow-wrap:anywhere; }
+.repository-home p, .repository-origin-status { font-size: max(1rem,20px); line-height:1.55; }
+.repository-home button, .local-folders summary { min-height:44px; padding:.65rem .8rem; white-space:normal; overflow-wrap:anywhere; }
+.local-folders { margin-block:1rem; }
+.local-folders summary { cursor:pointer; }
+.repository-origin-status { border-inline-start:3px solid currentColor; padding-inline-start:.7rem; }
+/* Notices reserve space instead of covering navigation at enlarged text sizes. */
+.studio:not(.standalone-writing) .navigator { top:calc(4.5rem + var(--notice-space,0px)); }
+.studio:not(.standalone-writing) .preview { padding-top:calc(8.25rem + var(--notice-space,0px)); }
+/* At narrow widths, storage/status/actions must not float over repository navigation. */
+@media (max-width:760px) {
+  .studio:not(.standalone-writing) { display:flex; flex-direction:column; overflow-y:auto; }
+  .studio:not(.standalone-writing) > .status-pill { position:relative; inset:auto; transform:none; order:0; align-self:center; margin:.5rem; max-width:calc(100% - 1rem); flex-wrap:wrap; white-space:normal; }
+  .studio:not(.standalone-writing) > .status { position:relative; inset:auto; transform:none; order:1; align-self:center; margin:.5rem; max-width:calc(100% - 1rem); }
+  .studio:not(.standalone-writing) > .workspace { position:relative; inset:auto; order:2; display:flex; flex-direction:column; }
+  .studio:not(.standalone-writing) .navigator { position:relative; inset:auto; width:auto; margin:.5rem; }
+  .studio:not(.standalone-writing) .navigation-drawer { max-height:65vh; flex:none; }
+  .studio:not(.standalone-writing) .preview { position:relative; inset:auto; overflow:visible; padding:1rem; }
+  .studio:not(.standalone-writing) > .corner-actions { position:relative; inset:auto; order:3; align-self:flex-start; margin:.5rem; max-width:calc(100% - 1rem); flex-wrap:wrap; }
+}
+/* Existing fg/bg tokens provide safe CTA contrast in default, custom and high-contrast themes. */
+.repository-home button.primary, .welcome .github-welcome-entry { background:var(--fg); color:var(--bg); }

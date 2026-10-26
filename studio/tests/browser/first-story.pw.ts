@@ -66,7 +66,7 @@ test('proof goes stale after saved edits; preview cancel and synthetic native co
   await page.getByRole('button',{name:'Mark this saved revision proofread'}).click();await stage(page,5);await expect(page.getByText('Proof applies to the saved revision.',{exact:false})).toBeVisible();
   await page.getByRole('button',{name:'Close guide',exact:true}).click();
   await page.locator('.cm-content').fill('Changed synthetic story.\n\nTHE END.');await page.getByRole('button',{name:'Save',exact:true}).click();
-  await expect(page.getByRole('region',{name:'Document preview'}).getByText('Saved locally',{exact:true})).toBeVisible();
+  await expect(page.getByRole('region',{name:'Document preview'}).getByText('Saved on this Mac',{exact:true})).toBeVisible();
   await page.getByRole('button',{name:'First story',exact:true}).click();await stage(page,5);await expect(page.getByText('No current proof recorded.',{exact:false})).toBeVisible();
   await stage(page,6);
   await page.getByLabel('Story title',{exact:true}).fill('Synthetic story');await page.getByLabel('Author name to print',{exact:true}).fill('Example Author');await page.getByLabel('Rights statement (your choice)',{exact:true}).fill('Example Author retains rights.');

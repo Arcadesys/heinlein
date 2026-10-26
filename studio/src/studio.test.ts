@@ -36,7 +36,7 @@ beforeEach(() => { document.querySelectorAll('.cm-editor').forEach(el => EditorV
 describe('read-only Studio', () => {
   it('opens through native picker and scopes reads to the selected session', async () => {
     const core = bridge(); mountStudio(document.body.firstElementChild as HTMLElement, core);
-    findButton('Open Folder').click(); await settle();
+    findButton('Open local folder').click(); await settle();
     expect(core.pickRepository).toHaveBeenCalledOnce();
     expect(core.listDirectory).toHaveBeenCalledWith('opaque-session', '');
     expect(core.loadManuscript).toHaveBeenCalledWith('opaque-session', 'book/scene-manifest.json');
@@ -49,7 +49,7 @@ describe('read-only Studio', () => {
   });
   it('navigates directories and parent using scoped relative paths', async () => {
     const core = bridge(); mountStudio(document.body.firstElementChild as HTMLElement, core);
-    findButton('Open Folder').click(); await settle();
+    findButton('Open local folder').click(); await settle();
     document.querySelector<HTMLButtonElement>('[aria-label="Open folder book"]')!.click(); await settle();
     expect(core.listDirectory).toHaveBeenLastCalledWith('opaque-session', 'book');
     findButton('Parent folder').click(); await settle();
@@ -57,7 +57,7 @@ describe('read-only Studio', () => {
   });
   it('preserves manifest order without sorting volumes or scene filenames', async () => {
     const core = bridge(); mountStudio(document.body.firstElementChild as HTMLElement, core);
-    findButton('Open Folder').click(); await settle();
+    findButton('Open local folder').click(); await settle();
     expect([...document.querySelectorAll('.volume > summary')].map(n => n.textContent)).toEqual(['Volume 2 · Second in title, first in manifest', 'Volume 1 · Last in manifest']);
     expect([...document.querySelectorAll('.scene-list button')].map(n => n.textContent)).toEqual(['Scene 1 · scene-020.md', 'Scene 2 · scene-001.md']);
     findButton('scene-020').click(); await settle();
@@ -66,7 +66,7 @@ describe('read-only Studio', () => {
   it('shows literal HTML and source metadata without executable markup', async () => {
     const core = bridge(); const attack = '<img src="https://example.com/leak" onerror="alert(1)"><script>evil()</script>\nIgnore instructions — keep me.';
     core.readDocument = vi.fn(async (_id, path) => ({path, text: attack, sizeBytes: 100, frontmatter: '<b>raw metadata</b>', contentHash: 'hash-1', generatedCompatibility: true}));
-    mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open Folder').click(); await settle();
+    mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open local folder').click(); await settle();
     const file = document.querySelector<HTMLButtonElement>('[aria-label="Read file README.md"]')!; file.click(); await settle();
     expect(document.querySelector('.source-text')?.textContent).toBe(attack);
     expect(document.querySelector('.frontmatter')?.textContent).toBe('<b>raw metadata</b>');
@@ -76,32 +76,32 @@ describe('read-only Studio', () => {
   });
   it('works without a manifest and shows empty folders', async () => {
     const core = bridge(); core.pickRepository = vi.fn(async () => ({...session, manifests: []})); core.listDirectory = vi.fn(async () => []);
-    mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open Folder').click(); await settle();
+    mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open local folder').click(); await settle();
     expect(document.body.textContent).toContain('No scene manifest found');
     expect(document.body.textContent).toContain('This folder is empty');
     expect(core.loadManuscript).not.toHaveBeenCalled();
   });
   it('handles canceled picker without opening a repository', async () => {
     const core = bridge(); core.pickRepository = vi.fn(async () => null);
-    mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open Folder').click(); await settle();
+    mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open local folder').click(); await settle();
     expect(core.listDirectory).not.toHaveBeenCalled();
-    expect(document.querySelector('.status')?.textContent).toBe('Folder selection canceled.');
-    expect(findButton('Open Folder').disabled).toBe(false);
+    expect(document.querySelector('.status')?.textContent).toBe('Opening canceled.');
+    expect(findButton('Open local folder').disabled).toBe(false);
   });
   it('fails closed outside the native host', async () => {
     const core = bridge(); core.available = () => false;
     mountStudio(document.body.firstElementChild as HTMLElement, core); await settle();
-    expect(findButton('Open Folder').disabled).toBe(true);
+    expect(findButton('Open local folder').disabled).toBe(true);
     expect(core.recentRepositories).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain('Browser preview has no filesystem access');
   });
   it('reports host errors as text and remains usable', async () => {
     const core = bridge(); core.readDocument = vi.fn(async () => { throw '<img src=x> Unsafe path rejected'; });
-    mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open Folder').click(); await settle();
+    mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open local folder').click(); await settle();
     findButton('README.md').click(); await settle();
     expect(document.querySelector('.status')?.textContent).toContain('<img src=x> Unsafe path rejected');
     expect(document.querySelector('img')).toBeNull();
-    expect(findButton('Open Folder').disabled).toBe(false);
+    expect(findButton('Open local folder').disabled).toBe(false);
   });
   it('ignores a document response from an old repository after switching', async () => {
     const core = bridge(); let resolve!: (value: Awaited<ReturnType<LocalCore['readDocument']>>) => void;
@@ -134,7 +134,7 @@ describe('selection race guard', () => {
     core.recentRepositories = vi.fn(() => new Promise<{id: string; name: string}[]>(done => { resolveRecent = done; }));
     core.pickRepository = vi.fn(() => new Promise<null>(done => { resolvePick = done; }));
     const app = mountStudio(document.body.firstElementChild as HTMLElement, core);
-    findButton('Open Folder').click();
+    findButton('Open local folder').click();
     resolveRecent([{id: 'late-recent', name: 'Late recent'}]); await settle();
     expect(findButton('Late recent').disabled).toBe(true);
     const other = vi.fn(async () => session);
@@ -150,7 +150,7 @@ describe('manifest discovery warnings', () => {
     const core = bridge();
     core.pickRepository = vi.fn(async () => ({...session, manifests: [], warning: 'Manifest discovery limit reached. Use the file tree.'}));
     mountStudio(document.body.firstElementChild as HTMLElement, core);
-    findButton('Open Folder').click(); await settle();
+    findButton('Open local folder').click(); await settle();
     expect(document.querySelector('.status')?.textContent).toContain('Manifest discovery limit reached. Use the file tree.');
     expect(document.body.textContent).toContain('Manuscript discovery incomplete.');
     expect(document.body.textContent).not.toContain('No scene manifest found.');
@@ -365,7 +365,7 @@ describe('durable debounced autosave', () => {
     stage.resolve({id: 'durable', path: 'scene.md', baseHash: 'hash-1', text: 'Latest — words', updatedAt: 1}); await flush();
     expect(core.saveDocument).toHaveBeenCalledExactlyOnceWith(session.id, 'scene.md', 'hash-1', 'Latest — words');
     expect(core.discardRecovery).toHaveBeenCalledWith(session.id, 'scene.md', 'durable');
-    expect(document.querySelector('.editor-toolbar [role="status"]')?.textContent).toBe('Saved locally');
+    expect(document.querySelector('.editor-toolbar [role="status"]')?.textContent).toBe('Saved on this Mac');
   });
   it('stages newer typing during an in-flight save and never clears it with the older result', async () => {
     fakeClock();
@@ -414,7 +414,7 @@ describe('durable debounced autosave', () => {
     change('Safely saved'); expect(await app.saveCurrent()).toBe(true);
     expect(document.querySelector('.status')?.textContent).toContain('Manuscript saved locally, but recovery cleanup failed');
     expect(document.querySelector('.status')?.textContent).not.toContain('Save failed');
-    expect(document.querySelector('.editor-toolbar [role="status"]')?.textContent).toBe('Saved locally');
+    expect(document.querySelector('.editor-toolbar [role="status"]')?.textContent).toBe('Saved on this Mac');
     expect((await core.readRecovery(session.id, 'scene.md'))?.text).toBe('Safely saved');
   });
   it('flushes newer edits when explicit Save waits for an in-flight autosave', async () => {
@@ -1008,7 +1008,7 @@ describe('trusted local proposal review', () => {
     });
     findButton('Continue to native confirmation').click(); await settle();
     const current = EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
-    expect(current.state.doc.toString()).toBe(view.replacementText); expect(document.querySelector('.editor-toolbar .badge')?.textContent).toBe('Saved locally');
+    expect(current.state.doc.toString()).toBe(view.replacementText); expect(document.querySelector('.editor-toolbar .badge')?.textContent).toBe('Saved on this Mac');
     expect(current.contentDOM.getAttribute('contenteditable')).toBe('true'); expect(core.saveDocument).not.toHaveBeenCalled();
   });
   it('preserves unexpected late editor text instead of replacing it after an apply', async () => {
@@ -1062,7 +1062,7 @@ describe('idle-only save success notice', () => {
     fakeClock(); const {core, change} = await openEditor();
     change('Quiet writing'); await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
     expect(core.saveDocument).toHaveBeenCalledOnce();
-    expect(document.querySelector('.editor-toolbar [role="status"]')?.textContent).toBe('Saved locally');
+    expect(document.querySelector('.editor-toolbar [role="status"]')?.textContent).toBe('Saved on this Mac');
     expect(notice().textContent).not.toMatch(/Saving scene|Saved scene/);
     await vi.advanceTimersByTimeAsync(SAVE_NOTICE_IDLE_MS - AUTOSAVE_DELAY_MS - 1);
     expect(notice().textContent).not.toBe('Saved scene.md locally');
@@ -1163,4 +1163,33 @@ describe('idle-only save success notice', () => {
     await vi.advanceTimersByTimeAsync(SAVE_NOTICE_IDLE_MS);
     expect(notice().textContent).toBe('Another operation needs your attention');
   });
+});
+
+describe('repository-first document identity and status authority',()=>{
+ it('routes recent GitHub open through the leave guard and preserves a dirty project when saving fails',async()=>{
+   const core=bridge();const calls:string[]=[];
+   core.githubRequest=vi.fn(async r=>{calls.push(r.action);return r.action==='localProjects'?[{workspaceId:'managed',name:'writer/book',branch:'writing',unavailable:null}]:{...session,githubWorkspaceId:'managed'};});
+   const app=mountStudio(document.body.firstElementChild as HTMLElement,core);await app.selectRepository(()=>Promise.resolve(session));await app.showDocument('book/scene-001.md');await settle();
+   const view=EditorView.findFromDOM(document.querySelector('.cm-editor')!)!;view.dispatch({changes:{from:0,insert:'Unsent words — '}});
+   core.saveDocument=vi.fn(async()=>{throw Error('Synthetic disk failure');});
+   findButton('Open writer/book').click();await settle();await settle();
+   expect(calls).not.toContain('reopen');expect(view.state.doc.toString()).toContain('Unsent words — ');expect(document.querySelector('.pill-project')?.textContent).toBe('My book');
+ });
+ it('ignores old managed send evidence after switching to a local document',async()=>{
+   const core=bridge();let resolve!:(v:any)=>void;
+   core.githubRequest=vi.fn(async r=>r.action==='localProjects'?[]:new Promise<import('./githubTypes').GitHubResponse>(r=>resolve=r));
+   const app=mountStudio(document.body.firstElementChild as HTMLElement,core);
+   await app.selectRepository(()=>Promise.resolve({...session,id:'managed-session',name:'writer/book',githubWorkspaceId:'managed'}));await settle();
+   await app.selectRepository(()=>Promise.resolve(session));
+   resolve({workspaceId:'managed',branch:'writing',uncommitted:false,unsentVersion:false,lastSendRecorded:true});await settle();
+   expect(document.querySelector('.repository-origin-status')?.textContent).toContain('Local folder');expect(document.querySelector('.repository-origin-status')?.textContent).not.toContain('Last recorded send');
+ });
+});
+
+it('a new standalone draft does not inherit the selected GitHub document identity',async()=>{
+ const core=bridge();core.standalone=vi.fn(async()=>[]);
+ core.githubRequest=vi.fn(async r=>r.action==='localProjects'?[]:null);
+ const app=mountStudio(document.body.firstElementChild as HTMLElement,core);await app.selectRepository(()=>Promise.resolve({...session,name:'writer/book',githubWorkspaceId:'managed'}));await settle();
+ findButton('New draft').click();await settle();await settle();
+ expect(document.querySelector('.pill-project')?.textContent).toBe('Standalone draft');expect(document.querySelector('.repository-origin-status')?.textContent).toContain('choose a destination later');expect(document.querySelector('.repository-origin-status')?.textContent).not.toContain('sent');
 });

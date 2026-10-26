@@ -3,6 +3,7 @@ import type { GitHubRequest, GitHubStatus, GitHubAuth, GitHubProject, GitHubOpen
 import { createGitHubConflictPanel } from './githubConflictPanel';
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '') => { const e = document.createElement(tag); e.textContent = text; return e; };
 type Options = {
+    changed?():void;
     session(): RepositorySession | null;
     problem(): string | null;
     settle(): Promise<void>;
@@ -86,7 +87,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         // Keep awaited results local until their original view is still current.
         if(view!==generation||!element.open)return;
         snapshot=value;project=selectedProject;
-        renderHome();
+        renderHome();options.changed?.();
         if(selectedError)message.textContent=`The selected copy could not reopen. Use the recovery controls below when available. ${selectedError}`;
     }
     function account(auth: GitHubAuth | null) {
@@ -109,8 +110,8 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
     }
     async function previewRepository(action:GitHubRequest) {
         const p=await prepare<GitHubOpen>(action);
-        heading('Open this GitHub project?');
-        body.append(node('p',`${p.repository.owner}/${p.repository.name} · ${p.repository.private?'Private':'Public'} · account ${p.account.login}`),node('p',p.treatment),button('Open separate local copy…',async()=>{
+        heading('Open this GitHub repository?');
+        body.append(node('p',`${p.repository.owner}/${p.repository.name} · ${p.repository.private?'Private':'Public'} · account ${p.account.login}`),node('p',p.treatment),button('Open repository…',async()=>{
             await options.select(()=>request<RepositorySession|null>({action:'confirmOpen',previewId:p.id}));plan=null;close();
         }),button('Cancel repository preview',async()=>{renderHome();}));focus();
     }
@@ -150,7 +151,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
             return;
         if (project) {
             const w = project.workspace;
-            body.append(node('p', `${w.repo.owner}/${w.repo.name} · ${w.repo.private ? 'Private' : 'Public'}`), node('p', `Working branch: ${w.branch}. Pull request target: ${w.baseBranch ?? w.repo.defaultBranch}.`), node('p', 'Save your draft first. A local version (Git commit) records the saved files you choose. Send shares committed versions with GitHub; it does not merge them.'), node('p', `Local version: ${w.headOid.slice(0, 12)}. ${w.remoteOid === w.headOid ? 'This version was sent to GitHub.' : 'Local versions may not have been sent.'} ${w.pr ? `Feedback request #${w.pr.number}: ${w.pr.state}${w.pr.draft ? ' (draft)' : ''}.` : ''}`), button('Choose or create a working branch…', renderBranches), button('Save a version on this computer…', async () => renderVersion()), button('Send local versions to GitHub…', async () => renderShare('push')), button('Request feedback with a draft pull request…', async () => renderShare('feedback')), button('Create a pull request ready for review…', async () => renderShare('pullRequest')), button('Review changes on the feedback branch…', () => incoming('feedback')), button(`Review changes on target branch ${w.baseBranch ?? w.repo.defaultBranch}…`, () => incoming('default')), node('p', 'After feedback is closed or merged, first review the selected target branch, then start a fresh feedback branch. Your local versions are retained.'), button('Start a fresh feedback branch…', async () => { await options.authorAction(async () => { await request({ action: 'freshBranch', repositoryId: session().id }); }); await load(); }));
+            body.append(node('p', `${w.repo.owner}/${w.repo.name} · ${w.repo.private ? 'Private' : 'Public'}`), node('p', `Working branch: ${w.branch}. Pull request target: ${w.baseBranch ?? w.repo.defaultBranch}.`), node('p', 'Save your draft first. A local version (Git commit) records the saved files you choose. Send shares committed versions with GitHub; it does not merge them.'), node('p', `Local version: ${w.headOid.slice(0, 12)}. ${project.receipts.some(r=>r.kind==='push'&&r.status==='succeeded'&&r.head===w.headOid) ? 'A successful Send is recorded for this version. This is not a fresh GitHub or whole-folder check.' : 'Send status is not checked. Review your saved versions before choosing Send.'} ${w.pr ? `Feedback request #${w.pr.number}: ${w.pr.state}${w.pr.draft ? ' (draft)' : ''}.` : ''}`), button('Choose or create a working branch…', renderBranches), button('Save a version on this computer…', async () => renderVersion()), button('Send local versions to GitHub…', async () => renderShare('push')), button('Request feedback with a draft pull request…', async () => renderShare('feedback')), button('Create a pull request ready for review…', async () => renderShare('pullRequest')), button('Review changes on the feedback branch…', () => incoming('feedback')), button(`Review changes on target branch ${w.baseBranch ?? w.repo.defaultBranch}…`, () => incoming('default')), node('p', 'After feedback is closed or merged, first review the selected target branch, then start a fresh feedback branch. Your local versions are retained.'), button('Start a fresh feedback branch…', async () => { await options.authorAction(async () => { await request({ action: 'freshBranch', repositoryId: session().id }); }); await load(); }));
             if(w.pr)body.append(button('Pull request status and actions…', renderPull), button(`Open feedback request #${w.pr.number}`,async()=>{await request({action:'openFeedback',repositoryId:session().id});}));
             for (const r of project.receipts) {
                 body.append(node('p', `${r.kind}: ${r.status}. ${r.message}`));
@@ -165,12 +166,12 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
             body.append(fallback);
         }
         if (snapshot.workspaces.length) {
-            body.append(node('h4', 'Copies on this computer'), node('p', 'Open these copies offline. Missing copies are never cloned over your writing.'));
+            body.append(node('h4', 'Recent GitHub repositories'), node('p', 'You can keep writing offline. Unavailable repositories require recovery; Heinlein never replaces missing writing automatically.'));
             for (const item of snapshot.workspaces) {
                 const w = item.workspace;
                 body.append(node('p', `${w.repo.owner}/${w.repo.name}${item.error ? ': ' + item.error : ''}`));
                 if (!item.error)
-                    body.append(button(`Open ${w.repo.owner}/${w.repo.name} locally`, async () => { await options.select(() => request<RepositorySession>({ action: 'reopen', workspaceId: w.id })); close(); }));
+                    body.append(button(`Open ${w.repo.owner}/${w.repo.name}`, async () => { await options.select(() => request<RepositorySession>({ action: 'reopen', workspaceId: w.id })); close(); }));
                 if (item.incomingRecovery || item.branchRecovery)
                     body.append(button(`Recover interrupted update for ${w.repo.name}…`, async () => { await request({ action: 'recover', workspaceId: w.id, operationId: null }); await load(); }));
                 for (const r of item.receipts.filter(r => r.kind === 'version' && r.status === 'prepared'))
@@ -281,7 +282,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         close(); });
     element.addEventListener('close', () => { generation++; cancelPlan(); });
     function shell() { element.replaceChildren(); const title = node('h2', 'GitHub projects'); title.id = 'github-panel-title'; title.tabIndex = -1; const exit = button('Close', async () => close()); exit.setAttribute('aria-label', 'Close GitHub projects'); element.append(title, message, exit, body); }
-    return { element, async open() { opener = document.activeElement as HTMLElement; generation++; shell(); element.showModal(); await act(load); element.querySelector<HTMLElement>('h2')?.focus(); }, clear() { generation++; source++; cancelPlan(); project = null; snapshot = null; if (element.open)
+    return { element, async open(chooseRepository = false) { opener = document.activeElement as HTMLElement; generation++; shell(); element.showModal(); await act(load); if(chooseRepository&&snapshot?.auth?.confirmed){body.querySelectorAll<HTMLButtonElement>('button').forEach(b=>{if(b.textContent==='Load repositories')b.click();});} element.querySelector<HTMLElement>('h2')?.focus(); }, clear() { generation++; source++; cancelPlan(); project = null; snapshot = null; if (element.open)
             element.close(); }, sourceChanged() { source++; cancelPlan(); if (element.open) {
             if (body.dataset.githubIncoming !== undefined) {
                 heading('Writing changed');

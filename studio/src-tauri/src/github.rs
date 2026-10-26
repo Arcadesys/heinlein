@@ -74,6 +74,10 @@ enum Plan {
 )]
 pub(crate) enum Request {
     Status,
+    LocalProjects,
+    LocalProject {
+        repository_id: String,
+    },
     Connect,
     Poll,
     ConfirmAccount {
@@ -366,6 +370,36 @@ fn open(app: &tauri::AppHandle, s: &Services, w: &Workspace) -> Result<Session> 
     s.registry.reopen(&w.id).map_err(|e| e.to_string())?;
     super::select(app, s.registry.checkout(&w.id).map_err(|e| e.to_string())?)
 }
+fn local_projects(r: &Registry) -> Result<Vec<Value>> {
+    r.list().map_err(|e|e.to_string())?.into_iter().map(|w| {
+        let unavailable=r.reopen(&w.id).err().map(|e|e.to_string());
+        Ok(json!({"workspaceId":w.id,"name":format!("{}/{}",w.repo.owner,w.repo.name),"branch":w.branch,"unavailable":unavailable}))
+    }).collect()
+}
+// Local evidence only: remote_oid is an accepted historical observation, never a fresh server check.
+fn local_project(r: &Registry, w: &Workspace, root: &repository_core::Repository) -> Result<Value> {
+    let (current, git) = r.reopen(&w.id).map_err(|e| e.to_string())?;
+    if current != *w {
+        return Err("Repository changed".into());
+    }
+    let receipts = journal::receipts(&r.directory(&w.id).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    if receipts.iter().any(|r| {
+        matches!(
+            r.status.as_str(),
+            "unknown" | "pending" | "enqueued" | "prepared"
+        )
+    }) {
+        return Err("Resolve pending repository operations before checking send status".into());
+    }
+    let tracked =
+        gh::transport::tree_files(&git, w.head_oid.parse().map_err(|_| "Invalid version")?)
+            .map_err(|e| e.to_string())?;
+    let disk = operations::disk_files(root, &tracked).map_err(|e| e.to_string())?;
+    Ok(
+        json!({"workspaceId":w.id,"branch":w.branch,"uncommitted":disk!=tracked,"unsentVersion":w.head_oid!=w.base_oid && w.remote_oid.as_deref()!=Some(&w.head_oid),"lastSendRecorded":receipts.iter().any(|r|r.workspace_id==w.id && r.branch==w.branch && r.kind=="push" && r.status=="succeeded")}),
+    )
+}
 fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
     let state = app.state::<BrowserState>();
     let _operation = state
@@ -376,7 +410,12 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
     if state.quitting.load(Ordering::SeqCst) {
         return Err("Heinlein is quitting".into());
     }
-    state.mutation_gate.note_activity();
+    if !matches!(
+        &request,
+        Request::LocalProjects | Request::LocalProject { .. }
+    ) {
+        state.mutation_gate.note_activity();
+    }
     let started = state.mutation_gate.generation();
     if let Request::Cancel { preview_id } = request {
         state
@@ -398,6 +437,34 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
             .open_url(url, None::<&str>)
             .map_err(|_| "Open GitHub in your browser")?;
         return Ok(Value::Null);
+    }
+    // Pure local identity: no Services/Auth/OsStore construction or remote calls.
+    if let Request::LocalProjects = request {
+        return serialized(local_projects(&registry(app)?)?);
+    }
+    if let Request::LocalProject { repository_id } = request {
+        let epoch = state.mutation_gate.generation();
+        let r = registry(app)?;
+        let (workspace, root) = {
+            let selected = state.selected.lock().map_err(|_| "Project unavailable")?;
+            let selected = selected
+                .as_ref()
+                .filter(|p| p.id == repository_id)
+                .ok_or("Project changed")?;
+            let w = r
+                .list()
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .find(|w| r.checkout(&w.id).ok().as_deref() == Some(selected.repo.root()))
+                .ok_or("Not a GitHub repository")?;
+            (w, selected.repo.clone())
+        };
+        let value = local_project(&r, &workspace, &root)?;
+        if state.mutation_gate.generation() != epoch || state.unsaved_changes.load(Ordering::SeqCst)
+        {
+            return Err("Writing changed; GitHub status is not checked".into());
+        }
+        return serialized(value);
     }
     // Opening an existing managed copy works even when auth/configuration is unavailable.
     if let Request::Reopen { workspace_id } = request {
@@ -1151,5 +1218,92 @@ mod authority_tests {
             request[extra] = json!("forbidden");
             assert!(serde_json::from_value::<Request>(request).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod local_identity_tests {
+    use super::*;
+    #[test]
+    fn offline_registry_identity_and_full_disk_evidence_need_no_auth_store_and_never_reclone() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let r = Registry::open(&root.join("state"), &root.join("sources")).unwrap();
+        let w = r
+            .register(
+                gh::RepoInfo {
+                    id: 42,
+                    owner: "writer".into(),
+                    name: "book".into(),
+                    private: true,
+                    default_branch: "main".into(),
+                    installation_id: 7,
+                },
+                9,
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                |git| {
+                    let mut config = git.config()?;
+                    config.set_str("user.name", "Synthetic")?;
+                    config.set_str("user.email", "synthetic@example.invalid")?;
+                    let signature = git.signature()?;
+                    config.remove("user.name")?;
+                    config.remove("user.email")?;
+                    drop(config);
+                    let blob = git.blob(b"Original scene.\n")?;
+                    let mut tree = git.treebuilder(None)?;
+                    tree.insert("story.md", blob, 0o100644)?;
+                    let tree = git.find_tree(tree.write()?)?;
+                    Ok(git.commit(None, &signature, &signature, "Synthetic", &tree, &[])?)
+                },
+            )
+            .unwrap();
+        let listed = local_projects(&r).unwrap();
+        assert_eq!(listed[0]["name"], "writer/book");
+        assert!(listed[0]["unavailable"].is_null());
+        let checkout = r.checkout(&w.id).unwrap();
+        let source = repository_core::Repository::open(&checkout).unwrap();
+        assert_eq!(
+            local_project(&r, &w, &source).unwrap()["lastSendRecorded"],
+            false
+        );
+        let mut sent = w.clone();
+        sent.remote_oid = Some(w.head_oid.clone());
+        r.save(&w, &sent).unwrap();
+        // Head equality alone never establishes a send.
+        assert_eq!(
+            local_project(&r, &sent, &source).unwrap()["lastSendRecorded"],
+            false
+        );
+        journal::Receipt {
+            id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into(),
+            workspace_id: sent.id.clone(),
+            kind: "push".into(),
+            status: "succeeded".into(),
+            old_head: sent.head_oid.clone(),
+            head: sent.head_oid.clone(),
+            branch: sent.branch.clone(),
+            remote_before: None,
+            url: None,
+            pr_number: None,
+            message: "Synthetic send receipt".into(),
+        }
+        .save(&r.directory(&sent.id).unwrap())
+        .unwrap();
+        assert_eq!(
+            local_project(&r, &sent, &source).unwrap()["lastSendRecorded"],
+            true
+        );
+        std::fs::write(checkout.join("story.md"), b"New uncommitted scene.\n").unwrap();
+        assert_eq!(
+            local_project(&r, &sent, &source).unwrap()["uncommitted"],
+            true
+        );
+        assert!(!root.join("github-auth-v1").exists());
+        drop(source);
+        std::fs::remove_dir_all(&checkout).unwrap();
+        let listed = local_projects(&r).unwrap();
+        assert_eq!(listed[0]["workspaceId"], w.id);
+        assert!(listed[0]["unavailable"].is_string());
+        assert!(!checkout.exists());
     }
 }
