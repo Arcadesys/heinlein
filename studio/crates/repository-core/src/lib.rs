@@ -13,7 +13,7 @@ pub mod workspace_update;
 pub use drafting::{
     parse_workspace_manifest, DraftingChange, DraftingChangeView, DraftingExternalFile,
     DraftingGroup, DraftingPlan, DraftingPreview, DraftingScene, DraftingState, DraftingUndo,
-    Manifest as WorkspaceManifest,
+    Manifest as WorkspaceManifest, SceneDestination,
 };
 pub use publishing_copy::{
     PublishingMetadata, PublishingPlan, PublishingPreview, PublishingSource,
@@ -67,6 +67,7 @@ pub enum Error {
     RecoveryBusy,
     DraftingCollision,
     DraftingChanged,
+    DraftingGroupOrder,
     DraftingPending,
     DraftingUncertain,
     PendingRecovery,
@@ -111,6 +112,7 @@ impl fmt::Display for Error {
             }
             Self::DraftingCollision => "A destination already exists; choose a different name or folder",
             Self::DraftingChanged => "The manuscript or files changed; refresh and preview the change again",
+            Self::DraftingGroupOrder => "Group order and reading order differ. Use Move scene to arrange scenes explicitly; no groups were normalized",
             Self::DraftingPending => "An interrupted manuscript change needs explicit rollback before continuing",
             Self::DraftingUncertain => "The manuscript structure may have changed, but completion or rollback durability is uncertain. Refresh before retrying; preserve any remaining transaction journal for recovery",
             Self::UntrustedTransaction => "This transaction journal has no matching private Studio receipt. Automatic rollback is unsafe; preserve the files and journal for manual recovery",

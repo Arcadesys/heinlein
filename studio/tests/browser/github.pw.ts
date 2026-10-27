@@ -5,8 +5,8 @@ test('GitHub synthetic account, exact-file version, send, draft feedback and exp
     async function activate(target:Locator){await tabTo(target);await page.keyboard.press('Enter');}
     async function type(target:Locator,text:string){await tabTo(target);await page.keyboard.press('ControlOrMeta+A');await page.keyboard.insertText(text);}
     await page.goto('/tests/browser/github.html');
-    await activate(page.getByRole('button', { name: 'GitHub projects…', exact: true }));
-    const dialog = page.getByRole('dialog', { name: 'GitHub projects', exact: true });
+    await activate(page.getByRole('button', { name: 'GitHub actions…', exact: true }));
+    const dialog = page.locator('dialog.github-panel:not(.project-library)');
     await expect(dialog).toBeVisible();
     await activate(dialog.getByRole('button', { name: 'Connect GitHub…', exact: true }));
     await expect(dialog).toContainText('SYNTHETIC');
@@ -15,22 +15,19 @@ test('GitHub synthetic account, exact-file version, send, draft feedback and exp
     await activate(dialog.getByRole('button', { name: 'Load repositories', exact: true }));
     await activate(dialog.getByRole('button', { name: 'Preview example/synthetic-story…', exact: true }));
     await expect(dialog).toContainText('Private');
-    await activate(dialog.getByRole('button', { name: 'Open separate local copy…', exact: true }));
+    await activate(dialog.getByRole('button', { name: 'Open repository…', exact: true }));
     await expect(dialog).not.toBeVisible();
-    await activate(page.getByRole('button', { name: 'GitHub projects…', exact: true }));
-    await activate(dialog.getByRole('button', { name: 'Save a version on this computer…', exact: true }));
+    await activate(page.getByRole('button', { name: 'GitHub actions…', exact: true }));
+    await activate(dialog.getByRole('button', { name: 'Send to GitHub…', exact: true }));
     await tabTo(dialog.getByRole('checkbox', { name: 'edit: story.md', exact: true })); await page.keyboard.press('Space');
-    await type(dialog.getByLabel('Version author name', { exact: true }),'Synthetic Writer');
-    await type(dialog.getByLabel('Version author email', { exact: true }),'synthetic@users.noreply.github.com');
-    await type(dialog.getByLabel('Version message', { exact: true }),'Synthetic intentional version');
-    await activate(dialog.getByRole('button', { name: 'Preview local version', exact: true }));
-    await expect(dialog.getByRole('region', { name: 'GitHub action preview' })).toContainText('story.md');
-    await activate(dialog.getByRole('button', { name: 'Confirm local version…', exact: true }));
-    await expect(dialog).toContainText('Synthetic local version saved. Nothing sent.');
-    await activate(dialog.getByRole('button', { name: 'Send local versions to GitHub…', exact: true }));
-    await activate(dialog.getByRole('button', { name: 'Preview GitHub action', exact: true }));
-    await expect(dialog).toContainText('repository-configured automation');
-    await activate(dialog.getByRole('button', { name: 'Confirm sending versions…', exact: true }));
+    await activate(dialog.getByText('Name and email included with new changes',{exact:true}));
+    await type(dialog.getByLabel('Name recorded with these changes', { exact: true }),'Synthetic Writer');
+    await type(dialog.getByLabel('Email recorded with these changes', { exact: true }),'synthetic@users.noreply.github.com');
+    await expect(dialog).toContainText('earlier-scene.md');
+    await activate(dialog.getByRole('button', { name: 'Send to GitHub…', exact: true }));
+    await expect(dialog).toContainText('upload simulated, not live');
+    await activate(dialog.getByRole('button',{name:'Back to writing',exact:true}));
+    await activate(page.getByRole('button',{name:'GitHub actions…',exact:true}));
     await activate(dialog.getByRole('button', { name: 'Request feedback with a draft pull request…', exact: true }));
     await type(dialog.getByLabel('Feedback request title', { exact: true }),'Synthetic feedback');
     await type(dialog.getByLabel('Feedback request description', { exact: true }),'Please review this synthetic scene.');
@@ -47,11 +44,11 @@ test('GitHub synthetic account, exact-file version, send, draft feedback and exp
     await expect(dialog).toContainText('Synthetic local version saved');
     expect(await page.evaluate(() => ((window as any).githubFixture.calls as {
         action: string;
-    }[]).filter(c => c.action === 'confirm').length)).toBe(4);
+    }[]).filter(c => c.action === 'confirm').length)).toBe(3);
     const axe = await new AxeBuilder({ page }).include('.github-panel').analyze();
     expect(axe.violations).toEqual([]);
     await activate(dialog.getByRole('button', { name: 'Close GitHub projects', exact: true }));
-    await expect(page.getByRole('button', { name: 'GitHub projects…', exact: true })).toBeFocused();
+    await expect(page.getByRole('button', { name: 'GitHub actions…', exact: true })).toBeFocused();
 });
 test('GitHub panel keyboard entry, Escape focus and high contrast reflow at 200 percent', async ({ page }) => {
     await page.goto('/tests/browser/github.html');
@@ -61,7 +58,7 @@ test('GitHub panel keyboard entry, Escape focus and high contrast reflow at 200 
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+=' : 'Control+=');
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+=' : 'Control+=');
     await expect(page.locator('html')).toHaveAttribute('data-zoom', '200');
-    const entry = page.getByRole('button', { name: 'GitHub projects…', exact: true });
+    const entry = page.getByRole('button', { name: 'GitHub actions…', exact: true });
     await entry.click();
     const dialog = page.getByRole('dialog', { name: 'GitHub projects', exact: true });
     await expect(dialog).toBeVisible();
@@ -85,20 +82,20 @@ for(const kind of ['incoming','version','metadata'] as const)test(`selected ${ki
     await page.goto(`/tests/browser/github.html?recovery=${kind}`);
     const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});await expect(dialog).toBeVisible();
     await expect(dialog).toContainText('The selected copy could not reopen');
-    await expect(dialog.getByRole('button',{name:'Save a version on this computer…',exact:true})).toHaveCount(0);
+    await expect(dialog.getByRole('button',{name:'Save a local version without sending…',exact:true})).toHaveCount(0);
     const recovery=dialog.getByRole('button',{name:kind!=='version'?'Recover interrupted update for synthetic-story…':'Recover local version for synthetic-story…',exact:true});
     await expect(recovery).toBeEnabled();
     const axe=await new AxeBuilder({page}).include('.github-panel').analyze();expect(axe.violations).toEqual([]);
     for(let i=0;i<40&&!await recovery.evaluate(el=>el===document.activeElement);i++)await page.keyboard.press('Tab');
     await expect(recovery).toBeFocused();await page.keyboard.press('Enter');
-    await expect(dialog.getByRole('button',{name:'Save a version on this computer…',exact:true})).toBeVisible();
+    await expect(dialog.getByRole('button',{name:'Save a local version without sending…',exact:true})).toBeVisible();
     const requests=await page.evaluate(()=>((window as any).githubFixture.calls as {action:string;workspaceId?:string;operationId?:string|null}[]).filter(r=>r.action==='recover'));
     expect(requests).toEqual([{action:'recover',workspaceId:'synthetic-workspace',operationId:kind==='version'?'synthetic-prepared-version':null}]);
 });
 for(const mode of ['empty','error'] as const)test(`repository picker ${mode} state has accessible refresh and URL fallback at 200 percent`,async({page})=>{
     await page.goto(`/tests/browser/github.html?repository-list=${mode}`);
     for(let i=0;i<5;i++)await page.keyboard.press(process.platform==='darwin'?'Meta+=':'Control+=');
-    await page.getByRole('button',{name:'GitHub projects…',exact:true}).click();
+    await page.getByRole('button',{name:'GitHub actions…',exact:true}).click();
     const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});
     for(const name of ['Connect GitHub…','Check sign-in','Use this GitHub account…'])await dialog.getByRole('button',{name,exact:true}).click();
     const load=dialog.getByRole('button',{name:'Load repositories',exact:true});
@@ -130,7 +127,7 @@ test('working branch and PR ready flow remain keyboard accessible with explicit 
  await expect(dialog).toContainText('Retain all local commits');
  await activate(dialog.getByRole('button',{name:'Confirm local branch change…',exact:true}));
  await expect(dialog).not.toBeVisible();
- await activate(page.getByRole('button',{name:'GitHub projects…',exact:true}));
+ await activate(page.getByRole('button',{name:'GitHub actions…',exact:true}));
  await activate(dialog.getByRole('button',{name:'Pull request status and actions…',exact:true}));
  await expect(dialog).toContainText('Check details are unknown, not passing.');
  const merge=dialog.getByRole('button',{name:'Preview single pull request merge…',exact:true});await expect(merge).toBeDisabled();
@@ -155,7 +152,7 @@ test('nondefault selected target is named and keyboard reachable for incoming re
 test('pending renewed connection cause and retry stay readable and keyboard reachable at 200 percent',async({page})=>{
  await page.goto('/tests/browser/github.html?rotation-error',{waitUntil:'domcontentloaded'});
  for(let i=0;i<5;i++)await page.keyboard.press(process.platform==='darwin'?'Meta+=':'Control+=');
- const entry=page.getByRole('button',{name:'GitHub projects…',exact:true});await entry.focus();await page.keyboard.press('Enter');
+ const entry=page.getByRole('button',{name:'GitHub actions…',exact:true});await entry.focus();await page.keyboard.press('Enter');
  const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});await expect(dialog).toContainText('store is locked');await expect(dialog).toContainText('Keep Heinlein open');
  const retry=dialog.getByRole('button',{name:'Retry saved GitHub connection',exact:true});
  for(let i=0;i<40&&!await retry.evaluate(el=>el===document.activeElement);i++)await page.keyboard.press('Tab');

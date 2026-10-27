@@ -15,7 +15,7 @@ const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') a
 const items = () => [...document.querySelectorAll<HTMLButtonElement>('.scene-break-list button')];
 async function start(bridge = core()) {
   app = mountStudio(document.body, bridge);
-  [...document.querySelectorAll<HTMLButtonElement>('button')].find(node=>node.textContent === 'Open Folder…')!.click(); await settle();
+  [...document.querySelectorAll<HTMLButtonElement>('button')].find(node=>node.textContent === 'Open local folder…')!.click(); await settle();
   await app.showDocument('scene.md'); return bridge;
 }
 beforeEach(() => {localStorage.clear(); Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect(); document.body.replaceChildren();});

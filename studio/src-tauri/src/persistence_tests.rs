@@ -219,3 +219,99 @@ fn standalone_private_store_is_never_a_selected_project_or_recent_folder() {
         b"private draft record"
     );
 }
+
+#[test]
+fn managed_selection_uses_verified_identity_without_persisting_a_local_folder_recent() {
+    let f = Fixture::new();
+    let state = f.state();
+    let path = f.repository("opaque-managed-root");
+    let w = github_workspace::registry::Workspace {
+        id: "native-workspace".into(),
+        repo: github_workspace::RepoInfo {
+            id: 42,
+            owner: "writer".into(),
+            name: "book".into(),
+            private: true,
+            default_branch: "main".into(),
+            installation_id: 7,
+        },
+        account_id: 9,
+        auth_binding: "synthetic-binding".into(),
+        base_oid: "a".repeat(40),
+        base_branch: Some("main".into()),
+        head_oid: "a".repeat(40),
+        remote_oid: None,
+        branch: "writing/revision".into(),
+        pr: None,
+    };
+    // An unwritable recent preference path must not become a managed-open prerequisite.
+    fs::create_dir_all(&f.preferences).unwrap();
+    let session =
+        select_repository_with_origin(&state, path, &f.preferences, &f.private_storage, Some(w))
+            .unwrap();
+    assert_eq!(session.name, "book");
+    assert_eq!(
+        session.github_workspace_id.as_deref(),
+        Some("native-workspace")
+    );
+    assert!(state.recents.lock().unwrap().folders.is_empty());
+    assert!(f.preferences.is_dir());
+}
+#[test]
+fn historical_managed_recents_are_filtered_without_rewriting_preferences_even_if_missing() {
+    let f = Fixture::new();
+    let state = f.state();
+    let local = f.repository("Local book");
+    f.select(&state, &local).unwrap();
+    let sources = f.root.join("github-sources-v1");
+    let old = recents::Recent {
+        id: "old-private".into(),
+        name: "private-checkout-id".into(),
+        path: sources.join("missing-workspace"),
+    };
+    state.recents.lock().unwrap().folders.push(old);
+    let before = recents_json(&state);
+    let views = local_recent_views(&state.recents.lock().unwrap(), &sources).unwrap();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].name, "Local book");
+    assert_eq!(before, recents_json(&state));
+}
+
+#[test]
+fn project_library_preserves_selection_identity_label_and_resume_across_native_restart() {
+    let f = Fixture::new();
+    let path = f.repository("Local book");
+    let first = f.select(&f.state(), &path).unwrap();
+    let library = projects::Store::open(&f.root.join("projects-v1")).unwrap();
+    let project = library.get(&first.project_id).unwrap();
+    let document = Repository::open(&path).unwrap().read("scene.md").unwrap();
+    library
+        .update(
+            &project.id,
+            project.revision,
+            Some("My novel".into()),
+            Some(projects::Resume {
+                path: "scene.md".into(),
+                source_hash: document.content_hash,
+                scene_id: None,
+                anchor: 3,
+                head: 3,
+                scroll_top: 42,
+            }),
+        )
+        .unwrap();
+    let second = f.select(&f.state(), &path).unwrap();
+    assert_eq!(second.project_id, first.project_id);
+    assert_eq!(second.project_key, first.project_key);
+    assert_ne!(second.id, first.id);
+    assert_eq!(second.name, "My novel");
+    assert_eq!(second.resume.unwrap().anchor, 3);
+    fs::write(path.join("scene.md"), "Changed externally").unwrap();
+    let third = f.select(&f.state(), &path).unwrap();
+    assert!(third.resume.is_none());
+    assert!(third.warning.unwrap().contains("last document"));
+    assert_eq!(
+        fs::read(path.join("scene.md")).unwrap(),
+        b"Changed externally"
+    );
+}

@@ -381,3 +381,11 @@ approved byte shifts. **Reject edit** persists before dismissal, including acros
 reopen/restart/regenerated duplicates. Saved review reload never runs providers.
 See [the review contract](../docs/architecture/studio-heinlein-review.md) for
 limits, lineage, source safety and synthetic versus native/live evidence.
+
+### Open a GitHub repository
+
+Use **Open from GitHub…** in Repository navigation (or **Choose a GitHub repository…** on the welcome page). Heinlein manages the working files on this Mac. Recent GitHub repositories reopen by their native registry identity, including offline; no local folder picker or clone path is required. **Local folders** and standalone **Drafts** remain separate.
+
+**Saved on this Mac** acknowledges local preservation only. Save a version, review the exact files, and explicitly choose **Send** to share changes. Send history is labelled as history, never a fresh server or whole-folder synchronization check. Pending/recovery/unknown states do not imply sharing succeeded. Branch, PR and native confirmation guards remain in effect; in-app Merge remains unavailable without the existing policy proof.
+
+Send to GitHub is a separate, explicit action beside the active repository status. It can save an exact-file local version internally, then asks for native confirmation before uploading all unsent versions. Earlier unsent files are included in the preview even when not selected for the new version. Local autosave never sends; failed or uncertain uploads retain local work and require explicit recovery/reconciliation.

@@ -1,3 +1,7 @@
+import {requestGitHub} from './githubRequests';
+import type {GitHubLocalEvidence} from './githubTypes';
+import {createProjectLibrary,type Project,type ProjectResume} from './projects';
+import {createRepositoryHome, documentOrigin, sharingStatus} from './repositoryHome';
 import {wordCount} from './writingFeedback';
 import {createStandaloneDrafts} from './standaloneDrafts';
 import {createUpdatePanel} from './updatePanel';
@@ -95,8 +99,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let documentEpoch = 0;
   let disposed = false;
   let repositoryDetached = false;
+  let projectResumeQueue:Promise<void>=Promise.resolve();
+  let projectPositionTimer:ReturnType<typeof setTimeout>|null=null;
   let placedText: {repositoryId:string;path:string}|null=null;
   let structuralBusy = false;
+  let structuralFocusPath:string|null=null;
   let structuralEditRevision = 0;
   let proposalBusy = false;
   let proposalEditRevision = 0;
@@ -119,6 +126,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let quitInProgress=false;
   let closeUnlisten: (() => void) | null = null;
   let dirtySync = Promise.resolve();
+  let sharingEvidence:GitHubLocalEvidence|null=null;
+  let sharingGeneration=0;
   let saveNoticeTimer: ReturnType<typeof setTimeout> | null = null;
   let lastEditAt = -Infinity;
   let composing = false;
@@ -164,18 +173,20 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
 
   function updateSaveState() {
-    const label = recoveryPending ? 'Recovery available' : saving ? 'Saving locally…' : dirty ? (writePaused ? 'Unsaved · autosave paused' : 'Unsaved changes') : 'Saved locally';
+    const label = recoveryPending ? 'Recovery available' : saving ? 'Saving on this Mac…' : dirty ? (writePaused ? 'Unsaved · autosave paused' : 'Unsaved changes') : 'Saved on this Mac';
     if (dirtyBadge) dirtyBadge.textContent = label;
     if (chromeReady) {
       pillSaveLabel.textContent = standalone?.active ? (dirty?'Keeping on this Mac…':'Kept on this Mac') : dirtyBadge ? label : opened?.generatedCompatibility ? 'Assembled chapter' : opened ? 'Read-only' : 'Nothing open';
       pillSave.dataset.state = !dirtyBadge ? 'idle' : recoveryPending || writePaused ? 'error' : saving ? 'saving' : dirty ? 'dirty' : 'saved';
     }
     if (saveButton) saveButton.disabled = saving || recoveryPending || !dirty;
+    if (chromeReady) renderOrigin();
     draftingQuestions?.stateChanged();
     reviewPanel?.stateChanged();
   }
   function setDirty(value: boolean) {
     dirty = value;
+    if(value){sharingEvidence=null;sharingGeneration++;}
     if (value && !standalone?.active) { firstStory?.sourceChanged(); github?.sourceChanged(); }
     updateSaveState();
     if(chromeReady)renderPill();
@@ -305,6 +316,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if (writeInFlight === task) writeInFlight = null;
       if (active(epoch)) {
         saving = false; updateSaveState();
+        if(!dirty&&!failed)void refreshSharing();
         if (dirty && !failed && !writePaused) scheduleAutosave();
       }
     }
@@ -375,7 +387,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let manuscriptRequest = 0;
   root.classList.add('studio');
   const glow = el('div', '', 'stage-glow'); glow.setAttribute('aria-hidden', 'true');
-  const open = button('Open Folder…', () => { void selectRepository(() => core.pickRepository()); }, 'primary');
+  const open = button('Open local folder…', () => { void selectRepository(() => core.pickRepository()); }, 'primary');
   open.setAttribute('aria-keyshortcuts', 'Control+O Meta+O');
   const zoomLevel = button('100%', () => setZoom('reset'), 'zoom-level');
   zoomLevel.title = 'Reset text size (Cmd/Ctrl+0)';
@@ -399,7 +411,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   // Floating status pill: where you are, what you've written, and the way into everything else.
   const pill = el('header', '', 'status-pill chrome');
   pill.setAttribute('aria-label', 'Writing status');
-  const pillProject = el('span', 'Heinlein Studio', 'pill-muted pill-project');
+  const pillProject = core.projectRequest?button('Projects…',()=>void projectLibrary.open(),'pill-project project-switcher'):el('span','Heinlein Studio','pill-muted pill-project');
+  if(core.projectRequest)pillProject.setAttribute('aria-haspopup','dialog');
   const pillScene = el('span', 'No scene open', 'pill-scene');
   const pillWords = el('span', '', 'pill-mono pill-words');
   const pillSave = el('span', '', 'pill-save'); const pillSaveLabel = el('span', 'Nothing open');
@@ -413,11 +426,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const paletteButton = button(formatKeys('⌘K'), () => openPalette('scenes'), 'pill-key');
   paletteButton.setAttribute('aria-label', 'Open command palette'); paletteButton.title = 'Jump to a scene, file or command (Cmd/Ctrl+K)';
   pill.append(pillProject, el('span', '/', 'pill-muted'), pillScene, el('span', '', 'pill-rule'), pillWords, pillSave, goalButton, proposalsEntry, paletteButton);
-  const status = el('p', 'Choose a repository folder to begin.', 'status');
+  const status = el('p', 'Open from GitHub, open a local folder, or start a draft.', 'status');
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
   const recent = el('section', '', 'recent');
-  recent.setAttribute('aria-label', 'Recent folders');
+  recent.setAttribute('aria-label', 'Recent local folders');
 
   // Daily goal: the full writing panel, opened from the pill's progress bar.
   const goalCard = el('section', '', 'floating-card goal-card');
@@ -440,11 +453,26 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const layout = el('main', '', 'workspace');
   const files = el('section', '', 'panel files');
   files.setAttribute('aria-label', 'Repository files');
-  const repoName = el('h2', 'Repository');
-  const directoryPath = el('p', 'No folder selected', 'path');
+  const repoName = el('h2', 'Open a repository');
+  const directoryPath = el('p', '', 'path');
+  const originStatus=el('p','','repository-origin-status');originStatus.setAttribute('role','status');
+  const originSend=button('Send to GitHub…',()=>{void github.openSend();},'repository-send');originSend.hidden=true;originSend.setAttribute('aria-haspopup','dialog');
+  const projectLibrary=createProjectLibrary(core,{
+    current:()=>standalone?.active?null:repository,
+    switchProject,
+    openLocal:async()=>{const before=repository?.id;await dirtySync;if(writeInFlight)await writeInFlight;await stageQueue;if(dirty&&!await saveCurrent())return false;await selectRepository(()=>core.pickRepository());return !!repository&&repository.id!==before&&!repositoryDetached;},
+    openGitHub:()=>{void github.open(true);},
+    newDraft:async()=>{await standalone?.newDraft();},drafts:async()=>{await standalone?.list();},
+    metadata:p=>{if(repository?.projectId===p.id&&p.revision>=(repository.projectRevision??0)){repository.name=p.name;repository.projectRevision=p.revision;renderOrigin();if(chromeReady)renderPill();}},
+    focusWriting:()=>editor?.view.focus(),
+  });
+  const projectSettings=button('Project settings',()=>{if(repository?.projectId)void projectLibrary.settings(repository.projectId);});projectSettings.hidden=true;
+  const repositoryHome=createRepositoryHome(core,{openGitHub:()=>{void github.open(true);},select:run=>selectRepository(run)});
+  const localFolders=el('details');localFolders.className='local-folders';localFolders.open=true;localFolders.append(el('summary','Local folders'),open,recent);
   const listing = el('div', '', 'file-list');
   const filesBody = el('div', '', 'panel-body');
-  filesBody.append(open, recent, directoryPath, listing);
+  filesBody.append(projectSettings,originStatus,originSend,repositoryHome.element,localFolders,directoryPath,listing);
+  if(projectLibrary.supported){repositoryHome.element.hidden=true;localFolders.hidden=true;root.classList.add('project-first');}
   files.append(repoName, filesBody);
   const manuscriptPane = el('section', '', 'panel manuscript');
   manuscriptPane.setAttribute('aria-label', 'Manuscript order');
@@ -464,11 +492,12 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     let requested = false;
     try {
       if (disposed || selecting || structuralBusy || saving || staging) return;
-      const revision = edits;
+      const revision = edits,epoch=documentEpoch,session=repository?.id;
       if (!await allowLeave() || disposed || revision !== edits || saving || structuralBusy || selecting || staging) return;
+      if(!await rememberProjectPositionAfterLeave())return;
       root.inert = true;
       await dirtySync;
-      if (!disposed && revision === edits && !saving && !structuralBusy && !selecting && !staging) {
+      if (!disposed && revision === edits && epoch === documentEpoch && session === repository?.id && !projectWritingBlocksLeave() && !saving && !structuralBusy && !selecting && !staging) {
         await core.requestClose(true);
         requested = true;
       }
@@ -482,14 +511,16 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   const updates=createUpdatePanel(core,{quit:quitSafely});
   const updateEntry=button('Updates…',()=>{void updates.open();},'update-entry');updateEntry.setAttribute('aria-haspopup','dialog');
-  const githubEntry = button('GitHub projects…', () => {void github.open();}, 'github-entry');
+  const githubEntry = button('GitHub actions…', () => {void github.open();}, 'github-entry');
   githubEntry.setAttribute('aria-haspopup', 'dialog');
   const github = createGitHubPanel(core, {
-    session: () => repository,
+    session: () => standalone?.active ? null : repository,
+    saveForSend: async () => {await dirtySync; if(writeInFlight)await writeInFlight; await stageQueue; return dirty ? saveCurrent() : !recoveryPending && !recoveryErrorMessage && !writePaused;},
     problem: () => dirty || saving || recoveryPending || recoveryErrorMessage || structuralBusy || selecting || repositoryDetached ? 'Save your writing and resolve recovery before preparing a GitHub action.' : null,
     settle: async () => {await dirtySync; if (writeInFlight) await writeInFlight; await stageQueue;},
     select: selectRepository,
     authorAction: async action => {let executed = false; await runStructural(async () => {await action(); executed = true;}); if (!executed) throw new Error('GitHub action stopped. Check the local save or recovery status before trying again.');},
+    changed:()=>{void refreshSharing();void repositoryHome.refresh();},
     incomingChanged: async () => {
       verifyStructuralBuffer(); firstStory.sourceChanged(); reviewPanel?.clear(); proposals.clear(); manuscriptSearch.invalidate();
       const previous = drafting.state; const next = await drafting.load();
@@ -513,7 +544,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   scenePane.append(sceneNavigator.element);
   const preview = el('section', '', 'panel preview');
   preview.setAttribute('aria-label', 'Document preview');
-  standalone=createStandaloneDrafts(core,{root,parent:preview,dirty:setDirty,sync:()=>dirtySync,leave:allowLeave,modeChanged:active=>root.classList.toggle('standalone-writing',active),beforeMount:()=>{
+  standalone=createStandaloneDrafts(core,{root,parent:preview,dirty:setDirty,sync:()=>dirtySync,leave:allowLeave,modeChanged:active=>{sharingEvidence=null;sharingGeneration++;root.classList.toggle('standalone-writing',active);if(chromeReady){renderPill();renderOrigin();if(active&&navigation.visible('manuscript'))void openDrafting();}},beforeMount:()=>{
     questions?.clear(); draftingQuestions?.clear(); reviewPanel?.clear(); selectionAsk?.destroy(); selectionAsk=null;
     chapterEditor?.destroy();chapterEditor=null;editor?.destroy();editor=null;opened=null;currentChapter=null;
     cancelAutosave();cancelSaveNotice();documentEpoch++;recovery=null;recoveryPending=false;writePaused=null;saveButton=null;dirtyBadge=null;writing.clearScene();
@@ -529,13 +560,13 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     corner.prepend(button('Drafts',()=>void standalone!.list()),newDraftButton);
   }
 
-  const navigation = createNavigationDrawer(files, manuscriptPane, scenePane, open => layout.classList.toggle('navigation-open', open));
+  const navigation = createNavigationDrawer(files, manuscriptPane, scenePane, open => layout.classList.toggle('navigation-open', open),projectLibrary.supported?'Writing':'Repository',tab=>{if(tab==='manuscript')void openDrafting();});
   layout.append(navigation.element, preview);
   chromeReady = true;
   resetPreview();
-  root.replaceChildren(glow, layout, pill, status, goalCard, corner, firstStory.element, github.element, updates.element);
+  root.replaceChildren(glow, ...(projectLibrary.supported ? [pill, layout] : [layout, pill]), status, goalCard, corner, firstStory.element, github.element, updates.element, projectLibrary.element);
   const drafting = createDraftingPanel(core, {
-    root, repository: () => repository, run: runStructural, verify: verifyStructuralBuffer,
+    root, repository: () => standalone?.active?null:repository, run: runStructural, verify: verifyStructuralBuffer, selectedPath:()=>opened?.path??null,
     show: () => { outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
     open: path => { void showDocument(path); }, changed: draftingChanged,
     report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
@@ -717,7 +748,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (recoveryPending || guardPending) {
       status.textContent = 'Resolve the open recovery draft or save dialog before changing manuscript structure. Your recovery has been kept.'; status.classList.add('error'); return;
     }
-    structuralBusy = true; structuralEditRevision = edits;
+    structuralBusy = true; structuralFocusPath=null; structuralEditRevision = edits;
     // Invalidate reads begun before a move so their old paths cannot become active.
     documentRequest++; manuscriptRequest++; directoryRequest++;
     cancelAutosave(); editor?.setEditable(false); layout.inert = true; open.disabled = true;
@@ -742,6 +773,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         layout.inert = false; open.disabled = !core.available(); editor?.setEditable(!recoveryPending);
         recent.querySelectorAll('button').forEach(node => { node.disabled = false; });
         setDirty(dirty); if (dirty && !writePaused) scheduleAutosave();
+        if(structuralFocusPath&&opened?.path===structuralFocusPath)editor?.view.focus();
+        structuralFocusPath=null;
       }
     }
   }
@@ -759,9 +792,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     await showDirectory(directoryPath.textContent === '/' ? '' : directoryPath.textContent || '');
     await writing.setManuscript(core, repository!, state);
     if (nextPath && !await showDocument(nextPath, true)) throw new Error(`The change is saved. ${status.textContent ?? 'The scene could not be reopened.'} Resolve recovery or use the file browser to retry.`);
+    if(focusPath)structuralFocusPath=focusPath;
   }
   async function openDrafting() {
-    if (structuralBusy || selecting || !repository) return;
+    if (structuralBusy || selecting) return;
+    if(!repository||standalone?.active){drafting.clear();const message=el('p',standalone?.active?'This is a standalone draft. Choose a project manuscript, or place a copy later, to add chapters and scenes.':'Open a project and create or open its manuscript to add chapters and scenes.');message.id='manuscript-origin-reason';const actions=el('div','','drafting-actions');for(const label of ['Add scene','Add chapter']){const b=button(label,()=>{});b.disabled=true;b.setAttribute('aria-describedby',message.id);actions.append(b);}outline.replaceChildren(actions,message);return;}
     try {
       const state = await drafting.load();
       if (state) { currentBook = null; searchScopeRevision++; manuscriptSearch.invalidate(); outline.replaceChildren(drafting.element); void writing.setManuscript(core, repository, state); }
@@ -1097,8 +1132,28 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (selection.ranges.length === 1 && !selection.main.empty) { void askDraftingSelection(); return; }
     if (draftingQuestions.visible()) draftingQuestions.close(); else draftingQuestions.open();
   }
+  async function refreshSharing() {
+    const session=repository,revision=edits,view=documentEpoch,ticket=++sharingGeneration;
+    sharingEvidence=null;
+    if(!session?.githubWorkspaceId||standalone?.active||dirty||!core.githubRequest)return;
+    await dirtySync;
+    try {
+      const value=await requestGitHub(core,{action:'localProject',repositoryId:session.id}) as GitHubLocalEvidence;
+      if(!disposed&&ticket===sharingGeneration&&repository?.id===session.id&&edits===revision&&documentEpoch===view&&!dirty&&!standalone?.active&&value?.workspaceId===session.githubWorkspaceId){sharingEvidence=value;renderOrigin();}
+    }catch{if(!disposed&&ticket===sharingGeneration){sharingEvidence=null;renderOrigin();}}
+  }
+  function renderOrigin() {
+    const standaloneActive=Boolean(standalone?.active);
+    projectSettings.hidden=standaloneActive||!repository?.projectId;
+    repoName.textContent=standaloneActive?'Standalone draft':repository?.name??'Open a repository';
+    originStatus.textContent=(!standaloneActive&&repository?.githubWorkspaceId&&sharingEvidence?`Working branch: ${sharingEvidence.branch}. `:'')+sharingStatus(repository,standaloneActive,dirty,sharingEvidence);
+    originSend.hidden=standaloneActive||!repository?.githubWorkspaceId;
+    directoryPath.hidden=standaloneActive||!repository;
+    listing.hidden=standaloneActive;
+  }
   function renderPill() {
-    pillProject.textContent = repository?.name ?? 'Heinlein Studio';
+    pillProject.textContent = projectLibrary.supported?(standalone?.active?'Standalone draft · Projects…':repository?.name??'Projects…'):documentOrigin(repository,Boolean(standalone?.active));
+    if(projectLibrary.supported)pillProject.setAttribute('aria-label',`Projects. ${standalone?.active?'Standalone draft':repository?.name??'No project selected'}`);
     const scene = opened && drafting.state?.scenes.find(item => item.path === opened!.path);
     pillScene.textContent = standalone?.active ? 'Untitled draft' : opened ? (scene && scene.title) || basename(opened.path) : 'No scene open';
     const words = standalone?.active ? wordCount(standalone.text) : writingSummary?.sceneWords;
@@ -1146,15 +1201,21 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   // Routine status messages fade after a few seconds (text stays for assistive tech); errors stay put.
   let statusTimer: ReturnType<typeof setTimeout> | null = null;
   // Watches text only (never the class it toggles), so it cannot retrigger itself.
+  function reserveNoticeSpace(){root.style.setProperty('--notice-space',status.textContent&&!status.classList.contains('quiet')?`${status.offsetHeight}px`:'0px');root.style.setProperty('--manuscript-footer-space',`${corner.offsetHeight}px`);}
+  const noticeResize=typeof ResizeObserver==='undefined'?null:new ResizeObserver(reserveNoticeSpace);
+  noticeResize?.observe(status);
+  noticeResize?.observe(corner);
   const statusQuiet = new MutationObserver(() => {
+    queueMicrotask(reserveNoticeSpace);
     if (status.classList.contains('quiet')) status.classList.remove('quiet');
     if (statusTimer) clearTimeout(statusTimer);
-    statusTimer = setTimeout(() => { statusTimer = null; if (!status.classList.contains('error')) status.classList.add('quiet'); }, 4000);
+    statusTimer = setTimeout(() => { statusTimer = null; if (!status.classList.contains('error')) status.classList.add('quiet');reserveNoticeSpace(); }, 4000);
   });
   statusQuiet.observe(status, {childList: true, characterData: true, subtree: true});
   applyZoom(false);
 
   function resetPreview() {
+    if(projectPositionTimer){clearTimeout(projectPositionTimer);projectPositionTimer=null;}
     standalone?.detach();
     questions?.clear();
     selectionAsk?.destroy(); selectionAsk = null;
@@ -1167,9 +1228,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     sceneNavigator.refresh();
     if(!repository&&standalone?.supported){queueMicrotask(()=>{if(!repository&&!disposed)void standalone!.start();});return;}
     const welcome = el('div', '', 'welcome');
-    welcome.append(el('p', repository ? repository.name : 'Heinlein Studio', 'eyebrow'), el('h2', repository ? 'A quiet place to write' : 'A quiet place to read'),
-      el('p', repository ? 'Pick a scene to start writing. Markdown source is preserved exactly. Document details are tucked away above the writing area.' : 'Select a scene or file. Markdown source is preserved exactly. Document details are tucked away above the writing area.', 'empty'));
-    if (!repository && core.available()) welcome.append(button('Open a folder…', () => { void selectRepository(() => core.pickRepository()); }, 'primary'));
+    welcome.append(el('p', repository ? repository.name : 'Heinlein Studio', 'eyebrow'), el('h2', repository ? 'A quiet place to write' : 'A quiet place to write'),
+      el('p', repository ? 'Pick a scene to start writing. Markdown source is preserved exactly. Document details are tucked away above the writing area.' : 'Choose a GitHub repository to work on your writing. Local folders and standalone Drafts are also available.', 'empty'));
+    if(!repository&&projectLibrary.supported)welcome.append(button('Open Projects',()=>void projectLibrary.open()));
+    if (!repository && core.available()&&!projectLibrary.supported) welcome.append(button('Choose a GitHub repository…', () => {void github.open(true);}, 'primary github-welcome-entry'),button('Open a local folder…',()=>{void selectRepository(()=>core.pickRepository());}));
     const keys = el('dl', '', 'welcome-keys');
     for (const [shortcut, label] of [['⌘K', 'Jump to a scene'], ['⌘P', 'Browse files'], ['⌘⇧P', 'Every command'], ['⌘,', 'Theme, fonts and size'], ['⌘/', 'All shortcuts']]) {
       const term = el('dt'); term.append(el('kbd', formatKeys(shortcut))); keys.append(term, el('dd', label));
@@ -1188,9 +1250,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.classList.add('error');
   }
   async function refreshRecent() {
+    void repositoryHome.refresh();
     try {
       const items = await core.recentRepositories();
-      recent.replaceChildren(el('span', 'Recent folders', 'muted'));
+      recent.replaceChildren(el('span', 'Recent local folders', 'muted'));
       if (!items.length) recent.append(el('span', 'None yet', 'muted'));
       for (const item of items) {
         const entry = button(item.name, () => { void selectRepository(() => core.openRecentRepository(item.id)); });
@@ -1199,8 +1262,50 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       }
     } catch (error) { reportError(error); }
   }
+  async function rememberProjectPosition():Promise<void> {
+    if(!core.projectRequest||standalone?.active||!repository?.projectId||!opened||!editor||opened.generatedCompatibility)return;
+    if(dirty||saving||recoveryPending||recoveryErrorMessage||repositoryDetached)throw Error('Keep the current writing locally and resolve recovery before switching projects.');
+    const session=repository,epoch=documentEpoch,revision=edits,doc=opened,range=editor.view.state.selection.main;
+    const hint:ProjectResume={path:doc.path,sourceHash:doc.contentHash,sceneId:drafting.state?.scenes.find(s=>s.path===doc.path)?.id??null,anchor:range.anchor,head:range.head,scrollTop:Math.max(0,Math.round(editor.view.scrollDOM.scrollTop))};
+    const task=projectResumeQueue.then(async()=>{
+      if(disposed||repository?.id!==session.id||documentEpoch!==epoch||edits!==revision||dirty)throw Error('Writing changed while remembering its position. Keep it locally and try again.');
+      const p=await core.projectRequest!({action:'saveResume',repositoryId:session.id,projectId:session.projectId!,revision:session.projectRevision!,resume:hint}) as Project;
+      if(repository?.id===session.id){repository.projectRevision=p.revision;repository.name=p.name;}
+    });projectResumeQueue=task.catch(()=>{});await task;
+  }
+  function projectWritingBlocksLeave():boolean {
+    return !!editor&&!standalone?.active&&!opened?.generatedCompatibility&&!!(saving||staging||recoveryPending||recoveryErrorMessage||repositoryDetached);
+  }
+  async function rememberProjectPositionAfterLeave():Promise<boolean> {
+    const revision=edits,wasDirty=dirty,session=repository?.id,epoch=documentEpoch,draftText=standalone?.active?standalone.text:null;
+    try{if(!(dirty&&writePaused==='discard'))await rememberProjectPosition();}catch(error){
+      // A position hint is not a writing save. Clean external changes may make
+      // it unavailable; native activation validates any retained hint afresh.
+      if(dirty||projectWritingBlocksLeave()){reportError(error);return false;}
+    }
+    return !disposed&&!projectWritingBlocksLeave()&&documentEpoch===epoch&&edits===revision&&repository?.id===session&&dirty===wasDirty&&(draftText===null||standalone?.text===draftText);
+  }
+  function scheduleProjectPosition(){if(projectPositionTimer)clearTimeout(projectPositionTimer);projectPositionTimer=setTimeout(()=>{projectPositionTimer=null;if(!dirty&&!saving&&!selecting&&!standalone?.active)void rememberProjectPosition().catch(()=>{});},600);}
+  async function switchProject(id:string):Promise<boolean>{
+    if(!core.projectRequest||selecting||structuralBusy||proposalBusy)return false;
+    await dirtySync;if(writeInFlight)await writeInFlight;await stageQueue;
+    if(dirty&&!await saveCurrent())return false;
+    let activated:RepositorySession|null=null;
+    await selectRepository(async()=>{
+      const source=repository?.id,revision=edits,epoch=documentEpoch,draftText=standalone?.active?standalone.text:null;
+      const plan=await core.projectRequest!({action:'previewOpen',id}) as {id:string};
+      await dirtySync;
+      if(disposed||source!==repository?.id||revision!==edits||epoch!==documentEpoch||dirty||(draftText!==null&&standalone?.text!==draftText)){
+        await core.projectRequest!({action:'cancel',previewId:plan.id});return null;
+      }
+      activated=await core.projectRequest!({action:'activate',previewId:plan.id}) as RepositorySession;
+      return activated;
+    });return !!activated&&repository?.id===(activated as RepositorySession).id&&!repositoryDetached;
+  }
+
   async function selectRepository(select: () => Promise<RepositorySession | null>) {
     if (selecting || !await allowLeave() || selecting) return;
+    if(!await rememberProjectPositionAfterLeave())return;
     selecting = true;
     reviewPanel?.clear();
     manuscriptSearch.close();
@@ -1215,11 +1320,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     // Block navigation while the host may be switching its selected root.
     layout.inert = true; cancelAutosave(); cancelSaveNotice(); editor?.setEditable(false);
     status.classList.remove('error');
-    status.textContent = 'Opening folder…';
+    status.textContent = 'Opening your writing…';
     try {
       const selected = await select();
       if (disposed || current !== generation) return;
-      if (!selected) { if (repositoryDetached) reportDetachedRepository(); else status.textContent = repository ? `${repository.name} · Local drafting` : 'Folder selection canceled.'; return; }
+      if (!selected) { if (repositoryDetached) reportDetachedRepository(); else status.textContent = repository ? `${repository.name} · Local drafting` : 'Opening canceled.'; return; }
       if (editRevision !== edits) {
         // A programmatic/late editor event can bypass DOM inert/readOnly. The
         // native host may already have selected a different repository, so do
@@ -1239,7 +1344,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       listing.replaceChildren();
       outline.replaceChildren();
       manifests.replaceChildren();
-      repoName.textContent = selected.name; currentBook = null; directoryEntries = []; renderPill();
+      renderOrigin(); currentBook = null; directoryEntries = []; renderPill();
       directoryPath.textContent = '/';
       for (const path of selected.manifests) {
         manifests.append(button(path, () => { void showManuscript(path); }, 'manifest-button'));
@@ -1256,6 +1361,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       } else await Promise.all([showDirectory(''), selected.manifests[0] ? showManuscript(selected.manifests[0]) : Promise.resolve()]);
       if (!disposed && current === generation && !status.classList.contains('error')) status.textContent = `${selected.name} · Local drafting${selected.warning ? ` · ${selected.warning}` : ''}`;
       await refreshRecent();
+      void refreshSharing();
+      if(selected.resume){await showDocument(selected.resume.path,true,()=>!disposed&&generation===current,undefined,selected.resume);}
     } catch (error) { if (!disposed && current === generation) { if (repositoryDetached) reportDetachedRepository(); else reportError(error); } }
     finally { if (!disposed && current === generation) { selecting = false; open.disabled = false; layout.inert = false; editor?.setEditable(!recoveryPending && (editor !== previousEditor || !wasReadOnly)); recent.querySelectorAll('button').forEach(node => { node.disabled = false; }); if (dirty && !writePaused) scheduleAutosave(); } }
   }
@@ -1283,7 +1390,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if (!entries.length) listing.append(el('p', 'This folder is empty.', 'empty'));
     } catch (error) { if (!disposed && current === generation && request === directoryRequest) reportError(error); }
   }
-  async function showDocument(path: string, structuralRefresh = false, navigationCurrent: () => boolean = () => true, requestedChapter?: Chapter) {
+  async function showDocument(path: string, structuralRefresh = false, navigationCurrent: () => boolean = () => true, requestedChapter?: Chapter, resume?:ProjectResume) {
     if (selecting && !structuralRefresh) return false;
     if (!structuralRefresh && !await allowLeave()) return false;
     if (!navigationCurrent()) return false;
@@ -1331,12 +1438,16 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         catch (error) { recoveryError = {error}; }
       }
       if (disposed || current !== generation || request !== documentRequest || editRevision !== edits || !navigationCurrent()) return;
+      if(resume&&(doc.contentHash!==resume.sourceHash||doc.path!==resume.path||doc.generatedCompatibility||(resume.sceneId&&!drafting.state?.scenes.some(s=>s.id===resume.sceneId&&s.path===doc!.path))))throw Error('The last document changed. Open it from Writing; no saved position was guessed.');
       renderDocument(doc, draft, assembled);
+      if(resume&&editor&&!recoveryPending&&!recoveryError){const len=editor.view.state.doc.length;if(!Number.isInteger(resume.anchor)||!Number.isInteger(resume.head)||resume.anchor<0||resume.head<0||resume.anchor>len||resume.head>len){resetPreview();throw Error('The last position is invalid. Open a document from Writing.');}editor.view.dispatch({selection:{anchor:resume.anchor,head:resume.head}});editor.view.scrollDOM.scrollTop=resume.scrollTop;}
+      if(!recoveryError&&!recoveryPending)scheduleProjectPosition();
       if (recoveryError) showRecoveryReadFailure(doc, recoveryError.error);
       else if (!recoveryPending) {
         status.textContent = `Read ${doc.path} · ${doc.sizeBytes.toLocaleString()} bytes`;
         if (draft) await clearRecovery(draft, repositoryId, documentEpoch);
       }
+      if(!recoveryError&&!recoveryPending)void refreshSharing();
       return !recoveryError && !recoveryPending;
     } catch (error) { if (!disposed && current === generation && request === documentRequest && navigationCurrent()) reportError(error); return false; }
   }
@@ -1410,6 +1521,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         setDirty(raw !== opened?.text);
         scheduleAutosave(); sceneNavigator.schedule();
       }, () => { void saveCurrent(); });
+      if(core.projectRequest){editor.view.dispatch({effects:StateEffect.appendConfig.of(EditorView.updateListener.of(update=>{if(update.selectionSet)scheduleProjectPosition();}))});editor.view.scrollDOM.addEventListener('scroll',scheduleProjectPosition);}
       createDocumentDetails(metadata, editor);
       editor.view.dispatch({effects: StateEffect.appendConfig.of(EditorView.updateListener.of(update => {if (update.docChanged || update.selectionSet) draftingQuestions?.stateChanged();}))});
       selectionAsk = createSelectionAskAction(editor.view, {current: draftingSelectionState, fallback: askDrafting, keys: formatKeys('⌘J'),
@@ -1563,6 +1675,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

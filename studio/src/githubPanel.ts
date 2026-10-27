@@ -1,8 +1,11 @@
+import {requestGitHub} from './githubRequests';
 import type { LocalCore, RepositorySession } from './localCore';
-import type { GitHubRequest, GitHubStatus, GitHubAuth, GitHubProject, GitHubOpen, GitHubVersion, GitHubShare, GitHubIncoming, GitHubIdentity, GitHubReceipt, GitHubRepositories, GitHubBranchChoice, GitHubBranchPreview, GitHubPullStatus, GitHubPullPreview } from './githubTypes';
+import type { GitHubRequest, GitHubStatus, GitHubAuth, GitHubProject, GitHubOpen, GitHubVersion, GitHubShare, GitHubSend, GitHubSendOutcome, GitHubIncoming, GitHubIdentity, GitHubReceipt, GitHubRepositories, GitHubBranchChoice, GitHubBranchPreview, GitHubPullStatus, GitHubPullPreview } from './githubTypes';
 import { createGitHubConflictPanel } from './githubConflictPanel';
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '') => { const e = document.createElement(tag); e.textContent = text; return e; };
 type Options = {
+    changed?():void;
+    saveForSend?():Promise<boolean>;
     session(): RepositorySession | null;
     problem(): string | null;
     settle(): Promise<void>;
@@ -30,7 +33,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
     let feedbackBody = '';
     let url = '';
     async function request<T>(r: GitHubRequest) { if (!core.githubRequest)
-        throw new Error('GitHub projects are available in the native Heinlein app.'); return await core.githubRequest(r) as T; }
+        throw new Error('GitHub projects are available in the native Heinlein app.'); return await requestGitHub<T>(core,r); }
     function cancelPlan() { if (plan) {
         const id = plan;
         plan = null;
@@ -54,7 +57,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         cancelPlan();
         body.querySelector('[data-github-preview]')?.remove();
     } }); label.append(input); return label; }
-    function heading(text: string) { delete body.dataset.githubIncoming; body.replaceChildren(); const h = node('h3', text); h.tabIndex = -1; body.append(h); return h; }
+    function heading(text: string) { element.querySelector('#github-panel-title')!.textContent='GitHub projects'; delete body.dataset.githubSend; delete body.dataset.githubIncoming; body.replaceChildren(); const h = node('h3', text); h.tabIndex = -1; body.append(h); return h; }
     function focus() { body.querySelector<HTMLElement>('h3')?.focus(); body.scrollIntoView?.({ block: 'start' }); }
     function files(changes: {
         path: string;
@@ -86,7 +89,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         // Keep awaited results local until their original view is still current.
         if(view!==generation||!element.open)return;
         snapshot=value;project=selectedProject;
-        renderHome();
+        renderHome();options.changed?.();
         if(selectedError)message.textContent=`The selected copy could not reopen. Use the recovery controls below when available. ${selectedError}`;
     }
     function account(auth: GitHubAuth | null) {
@@ -109,8 +112,8 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
     }
     async function previewRepository(action:GitHubRequest) {
         const p=await prepare<GitHubOpen>(action);
-        heading('Open this GitHub project?');
-        body.append(node('p',`${p.repository.owner}/${p.repository.name} · ${p.repository.private?'Private':'Public'} · account ${p.account.login}`),node('p',p.treatment),button('Open separate local copy…',async()=>{
+        heading('Open this GitHub repository?');
+        body.append(node('p',`${p.repository.owner}/${p.repository.name} · ${p.repository.private?'Private':'Public'} · account ${p.account.login}`),node('p',p.treatment),button('Open repository…',async()=>{
             await options.select(()=>request<RepositorySession|null>({action:'confirmOpen',previewId:p.id}));plan=null;close();
         }),button('Cancel repository preview',async()=>{renderHome();}));focus();
     }
@@ -150,7 +153,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
             return;
         if (project) {
             const w = project.workspace;
-            body.append(node('p', `${w.repo.owner}/${w.repo.name} · ${w.repo.private ? 'Private' : 'Public'}`), node('p', `Working branch: ${w.branch}. Pull request target: ${w.baseBranch ?? w.repo.defaultBranch}.`), node('p', 'Save your draft first. A local version (Git commit) records the saved files you choose. Send shares committed versions with GitHub; it does not merge them.'), node('p', `Local version: ${w.headOid.slice(0, 12)}. ${w.remoteOid === w.headOid ? 'This version was sent to GitHub.' : 'Local versions may not have been sent.'} ${w.pr ? `Feedback request #${w.pr.number}: ${w.pr.state}${w.pr.draft ? ' (draft)' : ''}.` : ''}`), button('Choose or create a working branch…', renderBranches), button('Save a version on this computer…', async () => renderVersion()), button('Send local versions to GitHub…', async () => renderShare('push')), button('Request feedback with a draft pull request…', async () => renderShare('feedback')), button('Create a pull request ready for review…', async () => renderShare('pullRequest')), button('Review changes on the feedback branch…', () => incoming('feedback')), button(`Review changes on target branch ${w.baseBranch ?? w.repo.defaultBranch}…`, () => incoming('default')), node('p', 'After feedback is closed or merged, first review the selected target branch, then start a fresh feedback branch. Your local versions are retained.'), button('Start a fresh feedback branch…', async () => { await options.authorAction(async () => { await request({ action: 'freshBranch', repositoryId: session().id }); }); await load(); }));
+            body.append(node('p', `${w.repo.owner}/${w.repo.name} · ${w.repo.private ? 'Private' : 'Public'}`), node('p', `Working branch: ${w.branch}. Pull request target: ${w.baseBranch ?? w.repo.defaultBranch}.`), node('p', 'Writing is kept on this Mac separately. Send to GitHub records the saved changes you select as a version if needed, then uploads after your confirmation. It does not merge them.'), node('p', `Local version: ${w.headOid.slice(0, 12)}. ${project.receipts.some(r=>r.kind==='push'&&r.status==='succeeded'&&r.head===w.headOid) ? 'A successful Send is recorded for this version. This is not a fresh GitHub or whole-folder check.' : 'Send status is not checked. Review your saved versions before choosing Send.'} ${w.pr ? `Feedback request #${w.pr.number}: ${w.pr.state}${w.pr.draft ? ' (draft)' : ''}.` : ''}`), button('Choose or create a working branch…', renderBranches), button('Save a local version without sending…', async () => renderVersion()), button('Send to GitHub…', renderSend), button('Request feedback with a draft pull request…', async () => renderShare('feedback')), button('Create a pull request ready for review…', async () => renderShare('pullRequest')), button('Review changes on the feedback branch…', () => incoming('feedback')), button(`Review changes on target branch ${w.baseBranch ?? w.repo.defaultBranch}…`, () => incoming('default')), node('p', 'After feedback is closed or merged, first review the selected target branch, then start a fresh feedback branch. Your local versions are retained.'), button('Start a fresh feedback branch…', async () => { await options.authorAction(async () => { await request({ action: 'freshBranch', repositoryId: session().id }); }); await load(); }));
             if(w.pr)body.append(button('Pull request status and actions…', renderPull), button(`Open feedback request #${w.pr.number}`,async()=>{await request({action:'openFeedback',repositoryId:session().id});}));
             for (const r of project.receipts) {
                 body.append(node('p', `${r.kind}: ${r.status}. ${r.message}`));
@@ -165,12 +168,12 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
             body.append(fallback);
         }
         if (snapshot.workspaces.length) {
-            body.append(node('h4', 'Copies on this computer'), node('p', 'Open these copies offline. Missing copies are never cloned over your writing.'));
+            body.append(node('h4', 'Recent GitHub repositories'), node('p', 'You can keep writing offline. Unavailable repositories require recovery; Heinlein never replaces missing writing automatically.'));
             for (const item of snapshot.workspaces) {
                 const w = item.workspace;
                 body.append(node('p', `${w.repo.owner}/${w.repo.name}${item.error ? ': ' + item.error : ''}`));
                 if (!item.error)
-                    body.append(button(`Open ${w.repo.owner}/${w.repo.name} locally`, async () => { await options.select(() => request<RepositorySession>({ action: 'reopen', workspaceId: w.id })); close(); }));
+                    body.append(button(`Open ${w.repo.owner}/${w.repo.name}`, async () => { await options.select(() => request<RepositorySession>({ action: 'reopen', workspaceId: w.id })); close(); }));
                 if (item.incomingRecovery || item.branchRecovery)
                     body.append(button(`Recover interrupted update for ${w.repo.name}…`, async () => { await request({ action: 'recover', workspaceId: w.id, operationId: null }); await load(); }));
                 for (const r of item.receipts.filter(r => r.kind === 'version' && r.status === 'prepared'))
@@ -182,6 +185,70 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         focus();
     }
     function previewBox() { body.querySelector('[data-github-preview]')?.remove(); const box = node('section'); box.dataset.githubPreview = ''; box.setAttribute('aria-label', 'GitHub action preview'); body.append(box); return box; }
+    async function renderSend() {
+        const s=session(), view=generation;
+        cancelPlan();
+        if(options.saveForSend && !await options.saveForSend()) throw new Error('Your writing could not be kept on this Mac. Nothing was sent. Resolve the save or recovery error, then try Send again.');
+        await options.settle();
+        if(options.problem()) throw new Error(options.problem()!);
+        const revision=source;
+        const next=await request<GitHubProject>({action:'workspace',repositoryId:s.id});
+        if(!valid(view,revision)||options.session()?.id!==s.id) throw new Error('Project changed. Nothing was sent.');
+        const initial=await prepare<GitHubSend>({action:'previewSend',repositoryId:s.id,paths:[],identity:null,message:'Writing update'});
+        project=next;
+        heading('Send to GitHub repository');
+        element.querySelector('#github-panel-title')!.textContent='Send your changes';
+        body.dataset.githubSend='';
+        message.textContent='';
+        body.append(node('p','Your writing is saved on this Mac. Nothing is sent until you confirm.'));
+        const destination=node('section');destination.className='send-destination';
+        destination.append(node('h3',`${initial.repository.owner}/${initial.repository.name}`),node('p',`${initial.repository.private?'Private':'Public'} repository · connected as ${initial.account.login}`));
+        const details=node('details');details.append(node('summary','Working branch and sending details'),node('p',`Working branch: ${initial.branch}.`),node('p','This sends changes on this branch. It does not merge a pull request. GitHub may run this repository’s automation.'));destination.append(details);body.append(destination);
+        const selected=new Set<string>();
+        const choices=node('section');choices.append(node('h3','Which new changes do you want to send?'),node('p','New edits in unchecked files stay on this Mac. Earlier saved versions listed below are still included.'));
+        const author=node('details');author.append(node('summary','Name and email included with new changes'),node('p','These appear in the uploaded change history. A GitHub privacy email works.'));
+        author.append(field('Name recorded with these changes',identity.name,v=>identity.name=v),field('Email recorded with these changes',identity.email,v=>identity.email=v));
+        const earlierFiles=[...new Map(initial.existingVersions.flatMap(h=>h.files).map(f=>[`${f.path}:${f.kind}`,f])).values()];
+        const summary=node('p');summary.setAttribute('aria-live','polite');
+        function update(){summary.textContent=`${selected.size} selected ${selected.size===1?'file':'files'} + ${earlierFiles.length} earlier ${earlierFiles.length===1?'file':'files'}.`;author.hidden=!selected.size;note.textContent=selected.size?'After you confirm, Heinlein saves a version of the selected changes and sends it with any earlier changes.':earlierFiles.length?'Only the earlier changes listed above will be sent. No new version is needed.':'Nothing is selected to send. Your writing stays on this Mac.';}
+        for(const change of next.changes){
+            const label=node('label',`${change.kind}: ${change.path}`), check=node('input');check.type='checkbox';
+            check.addEventListener('change',()=>{if(check.checked)selected.add(change.path);else selected.delete(change.path);cancelPlan();update();});label.prepend(check);choices.append(label);
+        }
+        if(next.changes.length)body.append(choices);else body.append(node('p','No new local version is needed. Your saved changes are ready to send.'));
+        const earlier=node('section');earlier.className='send-earlier';
+        earlier.append(node('h3',initial.existingVersions.length?'Earlier changes will also be sent':'No earlier changes waiting to send'),node('p',initial.existingVersions.length?'These were saved in earlier versions. They are included even for files you do not select now.':'Only the new changes you select will be included.'));
+        earlier.append(files(earlierFiles));
+        if(initial.existingVersions.length){const history=node('details');history.append(node('summary','Saved version details'));for(const h of initial.existingVersions)history.append(node('p',`Version ${h.head}`),files(h.files));earlier.append(history);}
+        body.append(earlier,author,node('h3','What will be sent'),summary);
+        const note=node('p','After you confirm, Heinlein saves a version of the selected changes and sends it with any earlier changes.');body.append(note);
+        const send=button('Send to GitHub…',async()=>{
+            if(selected.size&&(!identity.name.trim()||!identity.email.includes('@')||identity.name.length>200||identity.email.length>200||/[\x00-\x1f\x7f]/.test(identity.name+identity.email))){
+                author.open=true;message.textContent='Add the name and email to include with these changes, then choose Send to GitHub.';
+                setTimeout(()=>{if(valid(view,revision))author.querySelector<HTMLInputElement>('input')?.focus();},0);return;
+            }
+            const p=await prepare<GitHubSend>({action:'previewSend',repositoryId:s.id,paths:[...selected],identity:selected.size?{...identity}:null,message:'Writing update'});
+            const sameHistory=p.head===initial.head&&p.branch===initial.branch&&p.repository.id===initial.repository.id&&p.account.id===initial.account.id&&JSON.stringify(p.existingVersions)===JSON.stringify(initial.existingVersions);
+            const expected=next.changes.filter(f=>selected.has(f.path));
+            if(!sameHistory||JSON.stringify(p.selectedFiles)!==JSON.stringify(expected)){cancelPlan();throw new Error('The changes or sending details changed. Reopen Send to review them. Nothing was sent.');}
+            if(!p.canSend){cancelPlan();message.textContent='Nothing new to send. Your writing remains on this Mac.';return;}
+            let outcome:GitHubSendOutcome|null=null;
+            await options.authorAction(async()=>{if(plan!==p.id)throw new Error('Review this Send again.');outcome=await request<GitHubSendOutcome|null>({action:'confirm',repositoryId:s.id,previewId:p.id,identity:null});plan=null;});
+            if(!valid(view,revision)||options.session()?.id!==s.id)return;
+            if(!outcome){message.textContent='Nothing sent. Your writing is still saved on this Mac.';setTimeout(()=>{if(valid(view,revision))send.focus();},0);return;}
+            const result=outcome as GitHubSendOutcome;
+            options.changed?.();
+            body.replaceChildren(destination);
+            const status=node('section');status.className='send-result';status.setAttribute('role','status');status.tabIndex=-1;
+            const receipt=result.receipt;
+            status.append(node('h3',receipt?.status==='succeeded'?'Sent to GitHub':receipt?.status==='failed'?'Saved on this Mac. Not sent.':'Saved on this Mac. Send not confirmed.'),node('p',result.message));body.append(status);
+            if(receipt?.status==='failed')body.append(button('Try sending again…',renderSend));
+            else if(receipt?.status!=='succeeded')body.append(button('Check sending status',load));
+            body.append(button('Back to writing',async()=>close()));status.focus();status.scrollIntoView?.({block:'start'});
+        });send.className='send-primary';
+        const actions=node('div');actions.className='send-actions';actions.append(send,button('Not now',async()=>{cancelPlan();close();}));body.append(actions,node('p','You’ll confirm the repository, branch and complete file list before anything is uploaded.'));
+        update();focus();
+    }
     function renderVersion() {
         cancelPlan();
         heading('Save a version locally');
@@ -281,7 +348,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         close(); });
     element.addEventListener('close', () => { generation++; cancelPlan(); });
     function shell() { element.replaceChildren(); const title = node('h2', 'GitHub projects'); title.id = 'github-panel-title'; title.tabIndex = -1; const exit = button('Close', async () => close()); exit.setAttribute('aria-label', 'Close GitHub projects'); element.append(title, message, exit, body); }
-    return { element, async open() { opener = document.activeElement as HTMLElement; generation++; shell(); element.showModal(); await act(load); element.querySelector<HTMLElement>('h2')?.focus(); }, clear() { generation++; source++; cancelPlan(); project = null; snapshot = null; if (element.open)
+    return { element, async openSend(){opener=document.activeElement as HTMLElement;generation++;shell();element.showModal();await act(async()=>{await load();await renderSend();});}, async open(chooseRepository = false) { opener = document.activeElement as HTMLElement; generation++; shell(); element.showModal(); await act(load); if(chooseRepository&&snapshot?.auth?.confirmed){body.querySelectorAll<HTMLButtonElement>('button').forEach(b=>{if(b.textContent==='Load repositories')b.click();});} element.querySelector<HTMLElement>('h2')?.focus(); }, clear() { generation++; source++; cancelPlan(); project = null; snapshot = null; if (element.open)
             element.close(); }, sourceChanged() { source++; cancelPlan(); if (element.open) {
             if (body.dataset.githubIncoming !== undefined) {
                 heading('Writing changed');

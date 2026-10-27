@@ -6,6 +6,7 @@ mod first_story;
 mod github;
 #[cfg(all(test, unix))]
 mod persistence_tests;
+mod projects;
 mod proposals;
 mod questions;
 mod quit;
@@ -50,6 +51,9 @@ struct Session {
     manifests: Vec<String>,
     warning: Option<String>,
     github_workspace_id: Option<String>,
+    project_id: String,
+    project_revision: u64,
+    resume: Option<projects::Resume>,
 }
 struct Selected {
     id: String,
@@ -70,6 +74,7 @@ struct BrowserState {
     first_story: Mutex<first_story::Host>,
     standalone: Mutex<standalone::Host>,
     github: github::Host,
+    projects: projects::Host,
 }
 
 fn id() -> String {
@@ -161,24 +166,30 @@ fn select(app: &tauri::AppHandle, path: PathBuf) -> Result<Session, String> {
         &app.path().home_dir().map_err(|_| "Home unavailable")?,
     )?;
     let workspace = github::selection(app, &path)?;
-    let mut session = select_repository(
+    select_repository_with_origin(
         &app.state::<BrowserState>(),
         path,
         &recent_file(app)?,
         &auth_path(app)?,
-    )?;
-    if let Some(w) = workspace {
-        session.github_workspace_id = Some(w.id);
-        session.name = format!("{}/{}", w.repo.owner, w.repo.name);
-    }
-    Ok(session)
+        workspace,
+    )
 }
 // Keep the native selection transaction testable without a window or real preferences.
+#[cfg(test)]
 fn select_repository(
     state: &BrowserState,
     path: PathBuf,
     preferences: &Path,
     private_storage: &Path,
+) -> Result<Session, String> {
+    select_repository_with_origin(state, path, preferences, private_storage, None)
+}
+fn select_repository_with_origin(
+    state: &BrowserState,
+    path: PathBuf,
+    preferences: &Path,
+    private_storage: &Path,
+    workspace: Option<github_workspace::registry::Workspace>,
 ) -> Result<Session, String> {
     if state.quitting.load(Ordering::SeqCst) {
         return Err("Heinlein is quitting".into());
@@ -188,6 +199,7 @@ fn select_repository(
     guard_auth_repository_separation(repo.root(), private_storage)?;
     if let Some(parent) = private_storage.parent() {
         guard_auth_repository_separation(repo.root(), &parent.join("standalone-drafts-v1"))?;
+        guard_auth_repository_separation(repo.root(), &parent.join("projects-v1"))?;
     }
     let (manifests, warning) = match repo.discover() {
         Ok(paths) => (paths, None),
@@ -204,32 +216,57 @@ fn select_repository(
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
+    let library = projects::Store::open(
+        &private_storage
+            .parent()
+            .ok_or("Project metadata unavailable")?
+            .join("projects-v1"),
+    )?;
+    let project = library.register(&canonical, workspace.as_ref())?;
+    let resume = project
+        .resume
+        .clone()
+        .filter(|hint| projects::validate_resume(&repo, hint).is_ok());
+    let warning = if project.resume.is_some() && resume.is_none() {
+        Some(
+            "The last document or position changed. Open it from Writing; no position was guessed."
+                .into(),
+        )
+    } else {
+        warning
+    };
     let session = Session {
         id: id(),
         project_key: repo.project_key(),
-        name: name.clone(),
+        name: project.name,
+        project_id: project.id,
+        project_revision: project.revision,
+        resume,
         manifests,
         warning,
-        github_workspace_id: None,
+        github_workspace_id: workspace.as_ref().map(|w| w.id.clone()),
     };
-    // Don't commit a new selected root if its recent-folder persistence failed.
-    let mut recent_guard = state
-        .recents
-        .lock()
-        .map_err(|_| "Preferences unavailable")?;
-    let mut recents = recent_guard.clone();
-    recents.folders.retain(|folder| folder.path != canonical);
-    recents.folders.insert(
-        0,
-        Recent {
-            id: id(),
-            name,
-            path: canonical,
-        },
-    );
-    recents.folders.truncate(10);
-    save_recents(preferences, &recents)?;
-    *recent_guard = recents;
+    // Managed workspaces live in their own registry, never local-folder recents.
+    if workspace.is_none() {
+        // Don't commit a new selected root if its recent-folder persistence failed.
+        let mut recent_guard = state
+            .recents
+            .lock()
+            .map_err(|_| "Preferences unavailable")?;
+        let mut recents = recent_guard.clone();
+        recents.folders.retain(|folder| folder.path != canonical);
+        recents.folders.insert(
+            0,
+            Recent {
+                id: id(),
+                name,
+                path: canonical,
+            },
+        );
+        recents.folders.truncate(10);
+        save_recents(preferences, &recents)?;
+        *recent_guard = recents;
+    }
     *state
         .selected
         .lock()
@@ -269,21 +306,41 @@ async fn pick_repository(
 }
 #[tauri::command]
 fn recent_repositories(
+    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
-    state: State<'_, BrowserState>,
 ) -> Result<Vec<RecentView>, String> {
     check_window(&window)?;
-    Ok(state
-        .recents
-        .lock()
-        .map_err(|_| "Preferences unavailable")?
-        .folders
-        .iter()
-        .map(|r| RecentView {
+    let (library, _) = projects::inventory(&app)?;
+    library.list().map(|items| {
+        items
+            .into_iter()
+            .filter(|p| matches!(p.location, projects::Location::Local { .. }))
+            .map(|p| RecentView {
+                id: p.id,
+                name: p.name,
+            })
+            .collect()
+    })
+}
+// Legacy compatibility fixture: originals remain intact after inventory migration.
+#[cfg(test)]
+fn local_recent_views(
+    store: &recents::RecentStore,
+    sources: &Path,
+) -> Result<Vec<RecentView>, String> {
+    let sources = resolved_future_path(sources)?;
+    let mut views = Vec::new();
+    for r in &store.folders {
+        let path = resolved_future_path(&r.path)?;
+        if path.starts_with(&sources) || sources.starts_with(&path) {
+            continue;
+        }
+        views.push(RecentView {
             id: r.id.clone(),
             name: r.name.clone(),
-        })
-        .collect())
+        });
+    }
+    Ok(views)
 }
 #[tauri::command]
 async fn open_recent_repository(
@@ -292,7 +349,11 @@ async fn open_recent_repository(
     id: String,
 ) -> Result<Session, String> {
     check_window(&window)?;
-    let path = recent_repository_path(&app.state::<BrowserState>(), &id)?;
+    let (library, _) = projects::inventory(&app)?;
+    let path = match library.get(&id) {
+        Ok(project) => projects::Store::local_root(&project)?,
+        Err(_) => recent_repository_path(&app.state::<BrowserState>(), &id)?,
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<BrowserState>();
         let _selection = state
@@ -649,6 +710,7 @@ fn production_main() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            projects::project_request,
             standalone::standalone_request,
             github::github_request,
             update::update_request,

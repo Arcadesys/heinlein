@@ -145,7 +145,7 @@ describe('seeded actual Studio asynchronous state machine', () => {
             // While dirty or saving, navigation must either stop immediately or
             // ask. Always choose Keep editing in the generated phase.
             const badge = document.querySelector('.editor-toolbar [role="status"]')?.textContent;
-            if (badge !== 'Saved locally') {
+            if (badge !== 'Saved on this Mac') {
               totals.record(`${label}GuardCheck`);
               const leaving = choice === 10 ? app!.showDocument('other.md') : undefined;
               if (choice === 11) machine.close();
@@ -165,7 +165,7 @@ describe('seeded actual Studio asynchronous state machine', () => {
           expect(machine.pending.filter(item => item.kind === 'save').length).toBeLessThanOrEqual(1);
           expect(machine.pending.filter(item => item.kind === 'stage').length).toBeLessThanOrEqual(1);
           expect(document.querySelector('.preview script')).toBeNull();
-          if (document.querySelector('.editor-toolbar [role="status"]')?.textContent === 'Saved locally') {
+          if (document.querySelector('.editor-toolbar [role="status"]')?.textContent === 'Saved on this Mac') {
             expect(view().state.doc.toString()).toBe(normalize(machine.files.get('scene.md')!.text));
           }
         }
@@ -173,12 +173,12 @@ describe('seeded actual Studio asynchronous state machine', () => {
         // including edits made while earlier writes were pending.
         const finalVisible = view().state.doc.toString();
         saves.push(app!.saveCurrent()); await drain(machine); await Promise.all(saves);
-        if (document.querySelector('.editor-toolbar [role="status"]')?.textContent !== 'Saved locally') {
+        if (document.querySelector('.editor-toolbar [role="status"]')?.textContent !== 'Saved on this Mac') {
           const retry = app!.saveCurrent(); await drain(machine); expect(await retry).toBe(true);
         }
         expect(normalize(machine.files.get('scene.md')!.text)).toBe(finalVisible);
         expect(view().state.doc.toString()).toBe(finalVisible);
-        expect(document.querySelector('.editor-toolbar [role="status"]')?.textContent).toBe('Saved locally');
+        expect(document.querySelector('.editor-toolbar [role="status"]')?.textContent).toBe('Saved on this Mac');
         // A stage completed after an older save can legitimately survive that
         // save's CAS cleanup, even when its bytes now match disk. A subsequent
         // explicit clean save must settle that safe, redundant recovery copy.

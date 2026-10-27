@@ -147,3 +147,75 @@ The narrow `LiteralScene` core operation creates a new source scene from a
 native-retained exact UTF-8 snapshot in the existing scene/manifest transaction.
 It neither imports an unselected external file nor creates an empty scene followed
 by a separate save. Ordinary Create scene keeps its existing empty-body contract.
+
+## Project library and return-to-writing hints
+
+The Projects library is private metadata in `projects-v1/library-v1.json`.
+Each native-generated project UUID names either a validated local writing-root
+identity or an existing managed GitHub workspace UUID. The label is editable;
+renaming it never moves writing or changes the repository/account binding.
+Library listing and switching use local metadata, not credential storage or a
+network request. Local-folder history is imported once, retained unchanged,
+and exposed through a compatibility view of the library. Managed projects
+remain bound to the existing workspace registry; library metadata cannot grant
+GitHub authority. Missing locations stay unavailable and are never recreated.
+
+A switch first settles acknowledged local writes and captures a source-hash-bound
+relative document/scene and UTF-16 cursor/scroll hint. Native one-shot activation
+rechecks the source session, mutation generation, project revision and target
+identity. Writing-save failure, cancellation, concurrent editor changes or an
+unavailable target leaves the current writing intact. Resume metadata is best
+effort after writing is settled: a clean externally changed/missing file or root
+cannot trap departure or an approved Quit. Switch and Quit share the same best-effort
+capture, skip an explicitly discarded dirty buffer, and retain concurrent-edit and
+pending-recovery barriers. Reopening validates any retained hint and uses the overview
+for a changed or missing source instead of guessing a passage. Stable root-based recovery keys and GitHub
+workspace/account/branch authority are unchanged; unresolved Send receipts stay
+with their original workspace and are never replayed by switching projects.
+
+Renderer GitHub requests, including pure-local identity/status reads, share one
+per-native-bridge FIFO. Background refreshes cannot overlap each other or an
+explicit Send using the host's nonblocking operation lock. Scheduling does not
+retry a rejected mutation, infer authority, initialize auth for local reads or
+replace native lock/plan checks. Other windows/processes may still legitimately
+cause a native busy refusal. Existing generation/session/source guards reject
+late responses after a queued operation completes.
+
+The library holds no manuscript text, credentials or copied Git capabilities.
+Atomic private metadata writes, a stable cross-process lock and revision CAS
+preserve other projects and reject stale edits. Bounds are explicit (4,096
+entries and the existing private-record byte budget); recency never evicts
+writing or project records. Standalone drafts remain independent and immediately
+editable without creating a project. Their existing explicit copy-and-retain
+placement flow registers a destination only after successful native selection;
+returning to a kept draft restores its durable identity and hides project Send.
+
+The Manuscript tab exposes **Add scene** and **Add chapter** together. Add chapter
+uses the existing stable scene-group primitive: it starts empty and never inserts
+prose or changes existing author groups. The list labels these as chapters and
+scene groups and shows empty counts. Add scene explicitly chooses its chapter/group
+(defaulting only from the currently open validated scene), previews the existing
+no-replace transaction, and opens an empty source file after confirmation. Standalone
+and uninitialized-project states explain setup rather than implicitly creating a
+manuscript. Cancellation leaves source and manifest unchanged; focus returns to
+the initiating control. Structural save/recovery/session guards remain unchanged.
+
+Manuscript move controls use native `PlaceScene` (explicit membership and native
+before/after/end anchor) and `ReorderGroup` plans. Drag grips and the keyboard Move
+form submit the same intent; hover and canceled previews write nothing. Existing
+trusted native approval, revision/source hashes, recovery and save barriers remain
+required. Only the manifest changes: scene IDs, authored group names/types, paths
+and raw source bytes remain intact. A group moves only its members, keeping their
+internal order; ungrouped scenes are not cargo. Preview states the exact resulting
+flat reading order and adjacent scenes, which is also the publishing-copy order.
+
+Whole-group movement requires contiguous members and nonempty group metadata order
+matching flat reading order. Ambiguous legacy layouts refuse group movement and
+inferred empty-group insertion, without normalizing them. Explicit individual
+scene placement remains available. Empty group slots are durable metadata; later
+Create scene or Move into that empty group inserts before the next nonempty group,
+or at the actual document end. Consecutive empty slots use the same rule. Same-slot
+moves are true no-ops and do not rewrite the manifest or create an undo journal.
+The original end-of-scene-list target also uses this typed planner: its label
+explicitly means document end with No chapter. Repository-file drops retain the
+separate import-settings flow; import-only handlers never advertise scene moves.

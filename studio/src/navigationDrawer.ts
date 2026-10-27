@@ -5,7 +5,7 @@ type NavigationTab = typeof TAB_ORDER[number];
 const STORAGE_KEY = 'heinlein-studio-navigation-v1';
 
 /** One non-modal drawer; switching tabs retains the live panels and their state. */
-export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLElement, scenes: HTMLElement, changed: (open: boolean) => void) {
+export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLElement, scenes: HTMLElement, changed: (open: boolean) => void, writingLabel = 'Repository', selected?: (tab:NavigationTab)=>void) {
   let active: NavigationTab = 'files';
   let open = !window.matchMedia?.('(max-width: 760px)').matches;
   try {
@@ -32,7 +32,7 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
   const tabs = new Map<NavigationTab, HTMLButtonElement>();
   for (const key of TAB_ORDER) {
     const tab = document.createElement('button'); tab.type = 'button'; tab.id = `navigation-tab-${key}`;
-    tab.textContent = key === 'files' ? 'Repository' : key === 'manuscript' ? 'Manuscript' : 'Scenes';
+    tab.textContent = key === 'files' ? writingLabel : key === 'manuscript' ? 'Manuscript' : 'Scenes';
     tab.setAttribute('role', 'tab'); tab.setAttribute('aria-controls', `navigation-panel-${key}`);
     tab.addEventListener('click', () => select(key));
     // Keep existing drag/import targets reachable without accepting or applying a drop here.
@@ -79,7 +79,7 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
     if (focus || containedFocus) (open ? tabs.get(active)! : toggle).focus();
   }
   function select(key: NavigationTab, focus = true) {
-    active = key; setOpen(true, focus);
+    active = key; setOpen(true, focus); selected?.(key);
   }
   render();
   return {element, select, toggle: () => setOpen(!open, true), visible: (key: NavigationTab) => open && key === active};
