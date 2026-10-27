@@ -1292,9 +1292,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
 
   async function selectRepository(select: () => Promise<RepositorySession | null>) {
     if (selecting || !await allowLeave() || selecting) return;
-    const beforeResumeEdits=edits,beforeResumeDirty=dirty,beforeResumeSession=repository?.id,beforeDraft=standalone?.active?standalone.text:null;
-    try{if(!(dirty&&writePaused==='discard'))await rememberProjectPosition();}catch(error){reportError(error);return;}
-    if(edits!==beforeResumeEdits||repository?.id!==beforeResumeSession||dirty!==beforeResumeDirty||(beforeDraft!==null&&standalone?.text!==beforeDraft))return;
+    const beforeResumeEdits=edits,beforeResumeDirty=dirty,beforeResumeSession=repository?.id,beforeResumeEpoch=documentEpoch,beforeDraft=standalone?.active?standalone.text:null;
+    try{if(!(dirty&&writePaused==='discard'))await rememberProjectPosition();}catch(error){
+      // Position metadata is best effort after allowLeave has settled writing.
+      // External file/root changes can invalidate this hint without dirtying the
+      // editor. Native activation will validate it again and use the overview.
+      // Never turn a pending write/recovery or detached-session error into leave consent.
+      if(dirty||saving||recoveryPending||recoveryErrorMessage||repositoryDetached){reportError(error);return;}
+    }
+    if(disposed||documentEpoch!==beforeResumeEpoch||edits!==beforeResumeEdits||repository?.id!==beforeResumeSession||dirty!==beforeResumeDirty||(beforeDraft!==null&&standalone?.text!==beforeDraft))return;
     selecting = true;
     reviewPanel?.clear();
     manuscriptSearch.close();

@@ -163,9 +163,11 @@ GitHub authority. Missing locations stay unavailable and are never recreated.
 A switch first settles acknowledged local writes and captures a source-hash-bound
 relative document/scene and UTF-16 cursor/scroll hint. Native one-shot activation
 rechecks the source session, mutation generation, project revision and target
-identity. Save failure, cancellation, changed source or unavailable target leaves
-the current writing intact. A changed or missing resume source opens the overview
-instead of guessing a passage. Stable root-based recovery keys and GitHub
+identity. Writing-save failure, cancellation, concurrent editor changes or an
+unavailable target leaves the current writing intact. Resume metadata is best
+effort after writing is settled: a clean externally changed/missing file or root
+cannot trap departure. Reopening validates any retained hint and uses the overview
+for a changed or missing source instead of guessing a passage. Stable root-based recovery keys and GitHub
 workspace/account/branch authority are unchanged; unresolved Send receipts stay
 with their original workspace and are never replayed by switching projects.
 

@@ -36,3 +36,8 @@ test('focused and idle project identity and local save state stay legible in def
   const header=await page.locator('.project-switcher').boundingBox(),writing=await editor.boundingBox();expect(header!.y).toBeLessThan(writing!.y);expect(header!.height).toBeGreaterThanOrEqual(44);
  }
 });
+for(const removed of [false,true])test(`clean external source ${removed?'deletion':'change'} does not trap keyboard project switching`,async({page})=>{
+ await page.goto('/tests/browser/projects.html');await open(page,'Novel A');await scene(page);await expect(page.locator('.pill-save')).toContainText('Saved on this Mac');
+ await page.evaluate(removed=>{const f=(window as any).projectFixture;if(removed)delete f.documents['local-a']['scene.md'];else f.documents['local-a']['scene.md']='External — 🦊\r\nExact replacement.';},removed);
+ await open(page,'Novel B');await expect(page.locator('.pill-project')).toHaveText('Novel B');expect(await page.evaluate(()=>(window as any).projectFixture.documents['local-a']['scene.md'])).toBe(removed?undefined:'External — 🦊\r\nExact replacement.');expect(await page.evaluate(()=>(window as any).projectFixture.externalCalls)).toEqual([]);
+});
