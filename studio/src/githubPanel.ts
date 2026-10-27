@@ -56,7 +56,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         cancelPlan();
         body.querySelector('[data-github-preview]')?.remove();
     } }); label.append(input); return label; }
-    function heading(text: string) { delete body.dataset.githubIncoming; body.replaceChildren(); const h = node('h3', text); h.tabIndex = -1; body.append(h); return h; }
+    function heading(text: string) { element.querySelector('#github-panel-title')!.textContent='GitHub projects'; delete body.dataset.githubSend; delete body.dataset.githubIncoming; body.replaceChildren(); const h = node('h3', text); h.tabIndex = -1; body.append(h); return h; }
     function focus() { body.querySelector<HTMLElement>('h3')?.focus(); body.scrollIntoView?.({ block: 'start' }); }
     function files(changes: {
         path: string;
@@ -193,28 +193,60 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         const revision=source;
         const next=await request<GitHubProject>({action:'workspace',repositoryId:s.id});
         if(!valid(view,revision)||options.session()?.id!==s.id) throw new Error('Project changed. Nothing was sent.');
+        const initial=await prepare<GitHubSend>({action:'previewSend',repositoryId:s.id,paths:[],identity:null,message:'Writing update'});
         project=next;
-        heading('Send to GitHub');
+        heading('Send to GitHub repository');
+        element.querySelector('#github-panel-title')!.textContent='Send your changes';
+        body.dataset.githubSend='';
+        message.textContent='';
+        body.append(node('p','Your writing is saved on this Mac. Nothing is sent until you confirm.'));
+        const destination=node('section');destination.className='send-destination';
+        destination.append(node('h3',`${initial.repository.owner}/${initial.repository.name}`),node('p',`${initial.repository.private?'Private':'Public'} repository · connected as ${initial.account.login}`));
+        const details=node('details');details.append(node('summary','Working branch and sending details'),node('p',`Working branch: ${initial.branch}.`),node('p','This sends changes on this branch. It does not merge a pull request. GitHub may run this repository’s automation.'));destination.append(details);body.append(destination);
         const selected=new Set<string>();
-        body.append(node('p','Local autosave keeps your writing on this Mac. Select saved changes to include now. After you confirm, Heinlein saves a version of the selected changes and sends them to GitHub. Earlier changes not yet sent will be included too, even for files not selected here.'));
+        const choices=node('section');choices.append(node('h3','Which new changes do you want to send?'),node('p','New edits in unchecked files stay on this Mac. Earlier saved versions listed below are still included.'));
+        const author=node('details');author.append(node('summary','Name and email included with new changes'),node('p','These appear in the uploaded change history. A GitHub privacy email works.'));
+        author.append(field('Name recorded with these changes',identity.name,v=>identity.name=v),field('Email recorded with these changes',identity.email,v=>identity.email=v));
+        const earlierFiles=[...new Map(initial.existingVersions.flatMap(h=>h.files).map(f=>[`${f.path}:${f.kind}`,f])).values()];
+        const summary=node('p');summary.setAttribute('aria-live','polite');
+        function update(){summary.textContent=`${selected.size} selected ${selected.size===1?'file':'files'} + ${earlierFiles.length} earlier ${earlierFiles.length===1?'file':'files'}.`;author.hidden=!selected.size;note.textContent=selected.size?'After you confirm, Heinlein saves a version of the selected changes and sends it with any earlier changes.':earlierFiles.length?'Only the earlier changes listed above will be sent. No new version is needed.':'Nothing is selected to send. Your writing stays on this Mac.';}
         for(const change of next.changes){
             const label=node('label',`${change.kind}: ${change.path}`), check=node('input');check.type='checkbox';
-            check.addEventListener('change',()=>{if(check.checked)selected.add(change.path);else selected.delete(change.path);cancelPlan();body.querySelector('[data-github-preview]')?.remove();});label.prepend(check);body.append(label);
+            check.addEventListener('change',()=>{if(check.checked)selected.add(change.path);else selected.delete(change.path);cancelPlan();update();});label.prepend(check);choices.append(label);
         }
-        if(next.changes.length)body.append(node('p','The name and email below are included in the uploaded change history. You can use a GitHub privacy email.'),field('Name recorded with these changes',identity.name,v=>identity.name=v),field('Email recorded with these changes',identity.email,v=>identity.email=v));
-        body.append(button('Review what will be sent',async()=>{
+        if(next.changes.length)body.append(choices);else body.append(node('p','No new local version is needed. Your saved changes are ready to send.'));
+        const earlier=node('section');earlier.className='send-earlier';
+        earlier.append(node('h3',initial.existingVersions.length?'Earlier changes will also be sent':'No earlier changes waiting to send'),node('p',initial.existingVersions.length?'These were saved in earlier versions. They are included even for files you do not select now.':'Only the new changes you select will be included.'));
+        earlier.append(files(earlierFiles));
+        if(initial.existingVersions.length){const history=node('details');history.append(node('summary','Saved version details'));for(const h of initial.existingVersions)history.append(node('p',`Version ${h.head}`),files(h.files));earlier.append(history);}
+        body.append(earlier,author,node('h3','What will be sent'),summary);
+        const note=node('p','After you confirm, Heinlein saves a version of the selected changes and sends it with any earlier changes.');body.append(note);
+        const send=button('Send to GitHub…',async()=>{
+            if(selected.size&&(!identity.name.trim()||!identity.email.includes('@')||identity.name.length>200||identity.email.length>200||/[\x00-\x1f\x7f]/.test(identity.name+identity.email))){
+                author.open=true;message.textContent='Add the name and email to include with these changes, then choose Send to GitHub.';
+                setTimeout(()=>{if(valid(view,revision))author.querySelector<HTMLInputElement>('input')?.focus();},0);return;
+            }
             const p=await prepare<GitHubSend>({action:'previewSend',repositoryId:s.id,paths:[...selected],identity:selected.size?{...identity}:null,message:'Writing update'});
-            const box=previewBox();box.append(node('h4',`${p.repository.owner}/${p.repository.name} · ${p.repository.private?'Private':'Public'} · ${p.account.login}`),node('p',`Working branch: ${p.branch}. Target: ${p.base}.`),node('h4','Selected new changes'),files(p.selectedFiles),node('p',p.createsVersion?`A local version will be created as ${p.identity!.name} <${p.identity!.email}> before upload.`:'No new local version is needed.'),node('h4','Earlier unsent versions — all included'));
-            for(const h of p.existingVersions)box.append(node('p',`Version ${h.head}`),files(h.files));
-            box.append(node('h4','Net outgoing changes'),files(p.files),node('p',p.warning));
-            if(p.canSend)box.append(button('Send to GitHub…',async()=>{
-                if(plan!==p.id)throw new Error('Review this Send again.');
-                let outcome:GitHubSendOutcome|null=null;
-                await options.authorAction(async()=>{outcome=await request<GitHubSendOutcome|null>({action:'confirm',repositoryId:s.id,previewId:p.id,identity:null});plan=null;});
-                await load();message.textContent=outcome?(outcome as GitHubSendOutcome).message:'Send canceled. Nothing was uploaded and no new version was created.';
-            }));else box.append(node('p','Nothing new to send. Your writing remains on this Mac.'));
-            box.append(button('Cancel this preview',async()=>{cancelPlan();box.remove();}));
-        }),button('Back to GitHub project',load));focus();
+            const sameHistory=p.head===initial.head&&p.branch===initial.branch&&p.repository.id===initial.repository.id&&p.account.id===initial.account.id&&JSON.stringify(p.existingVersions)===JSON.stringify(initial.existingVersions);
+            const expected=next.changes.filter(f=>selected.has(f.path));
+            if(!sameHistory||JSON.stringify(p.selectedFiles)!==JSON.stringify(expected)){cancelPlan();throw new Error('The changes or sending details changed. Reopen Send to review them. Nothing was sent.');}
+            if(!p.canSend){cancelPlan();message.textContent='Nothing new to send. Your writing remains on this Mac.';return;}
+            let outcome:GitHubSendOutcome|null=null;
+            await options.authorAction(async()=>{if(plan!==p.id)throw new Error('Review this Send again.');outcome=await request<GitHubSendOutcome|null>({action:'confirm',repositoryId:s.id,previewId:p.id,identity:null});plan=null;});
+            if(!valid(view,revision)||options.session()?.id!==s.id)return;
+            if(!outcome){message.textContent='Nothing sent. Your writing is still saved on this Mac.';setTimeout(()=>{if(valid(view,revision))send.focus();},0);return;}
+            const result=outcome as GitHubSendOutcome;
+            options.changed?.();
+            body.replaceChildren(destination);
+            const status=node('section');status.className='send-result';status.setAttribute('role','status');status.tabIndex=-1;
+            const receipt=result.receipt;
+            status.append(node('h3',receipt?.status==='succeeded'?'Sent to GitHub':receipt?.status==='failed'?'Saved on this Mac. Not sent.':'Saved on this Mac. Send not confirmed.'),node('p',result.message));body.append(status);
+            if(receipt?.status==='failed')body.append(button('Try sending again…',renderSend));
+            else if(receipt?.status!=='succeeded')body.append(button('Check sending status',load));
+            body.append(button('Back to writing',async()=>close()));status.focus();status.scrollIntoView?.({block:'start'});
+        });send.className='send-primary';
+        const actions=node('div');actions.className='send-actions';actions.append(send,button('Not now',async()=>{cancelPlan();close();}));body.append(actions,node('p','You’ll confirm the repository, branch and complete file list before anything is uploaded.'));
+        update();focus();
     }
     function renderVersion() {
         cancelPlan();

@@ -180,33 +180,50 @@ it.each([
  expect(f.request.mock.calls.filter(([r])=>r.action==='retrySaved')).toHaveLength(2);
  expect(f.request.mock.calls.some(([r])=>['connect','poll','signOut','confirmAccount'].includes(r.action))).toBe(false);
 });
-it('one Send previews new selection plus all earlier unsent files and preserves uncertain outcome',async()=>{
- const f=fixture();await f.p.open();await f.click('Send to GitHub…');
- const check=f.p.element.querySelector<HTMLInputElement>('input[type=checkbox]')!;check.click();
+it('focused Send discloses earlier history and creates no version before consent',async()=>{
+ const f=fixture();await f.p.openSend();
+ expect(f.p.element.textContent).toContain('earlier.md');expect(f.p.element.textContent).toContain('New edits in unchecked files');
+ expect(f.p.element.textContent).not.toContain('Sign out of GitHub');
+ f.p.element.querySelector<HTMLInputElement>('input[type=checkbox]')!.click();
  f.fill('Name recorded with these changes','Writer');f.fill('Email recorded with these changes','private@example.test');
- await f.click('Review what will be sent');
- expect(f.p.element.textContent).toContain('earlier.md');expect(f.p.element.textContent).toContain('Earlier changes not yet sent');
- expect(f.request.mock.calls.filter(c=>['previewVersion','previewShare','confirm'].includes(c[0].action))).toHaveLength(0);
+ expect(f.request.mock.calls.filter(c=>c[0].action==='confirm')).toHaveLength(0);
  await f.click('Send to GitHub…');expect(f.p.element.textContent).toContain('Local version saved; upload is not confirmed');
  expect(f.request.mock.calls.filter(c=>c[0].action==='confirm')).toHaveLength(1);
 });
-it('canceling combined Send does not commit or upload and changing metadata invalidates consent',async()=>{
- const f=fixture();await f.p.open();await f.click('Send to GitHub…');await f.click('Review what will be sent');
- await f.click('Cancel this preview');expect(f.request.mock.calls.filter(c=>c[0].action==='confirm')).toHaveLength(0);
- await f.click('Review what will be sent');f.fill('Name recorded with these changes','Changed');await tick();
- expect(f.p.element.querySelector('[data-github-preview]')).toBeNull();
- expect(f.request.mock.calls.some(c=>c[0].action==='cancel'&&c[0].previewId==='send')).toBe(true);
+it('Not now cancels without version/upload and returns focus',async()=>{
+ const f=fixture();const opener=document.createElement('button');document.body.append(opener);opener.focus();await f.p.openSend();
+ await f.click('Not now');expect(f.p.element.open).toBe(false);expect(document.activeElement).toBe(opener);
+ expect(f.request.mock.calls.filter(c=>c[0].action==='confirm')).toHaveLength(0);
 });
 it('a failed save prevents even a Send preview',async()=>{
  const f=fixture();const rejectSave=vi.fn(async()=>false);
- const p=createGitHubPanel({available:()=>true,githubRequest:f.request} as unknown as LocalCore,{...f.hooks,saveForSend:rejectSave});panels.push(p);document.body.append(p.element);await p.open();
- const b=[...p.element.querySelectorAll('button')].find(b=>b.textContent==='Send to GitHub…')!;b.click();await tick();
+ const p=createGitHubPanel({available:()=>true,githubRequest:f.request} as unknown as LocalCore,{...f.hooks,saveForSend:rejectSave});panels.push(p);document.body.append(p.element);await p.openSend();
  expect(rejectSave).toHaveBeenCalledOnce();expect(p.element.textContent).toContain('Nothing was sent');expect(f.request.mock.calls.some(c=>c[0].action==='previewSend'||c[0].action==='confirm')).toBe(false);
 });
 it('repeated Send clicks stay one-flight while native confirmation is pending',async()=>{
- const f=fixture();await f.p.open();await f.click('Send to GitHub…');await f.click('Review what will be sent');
- let resolve!:(v:GitHubResponse)=>void;f.request.mockImplementationOnce(()=>new Promise(r=>resolve=r));
+ const f=fixture();await f.p.openSend();const original=f.request.getMockImplementation()!;
+ let resolve!:(v:GitHubResponse)=>void;f.request.mockImplementation(r=>r.action==='confirm'?new Promise(done=>resolve=done):original(r));
  const b=[...f.p.element.querySelectorAll('button')].find(b=>b.textContent==='Send to GitHub…')!;b.click();b.click();await tick();
  expect(f.request.mock.calls.filter(c=>c[0].action==='confirm')).toHaveLength(1);
- resolve(null);await tick();expect(f.p.element.textContent).toContain('Send canceled');
+ resolve(null);await tick();await tick();expect(f.p.element.textContent).toContain('Nothing sent');expect(f.p.element.open).toBe(true);expect(document.activeElement).toBe(b);
+});
+it('changed prior history refuses before confirmation',async()=>{
+ const f=fixture();await f.p.openSend();const original=f.request.getMockImplementation()!;
+ f.request.mockImplementation(async r=>{const value=await original(r);return r.action==='previewSend'?{...value as any,head:'changed'}:value;});
+ await f.click('Send to GitHub…');expect(f.p.element.textContent).toContain('sending details changed');expect(f.request.mock.calls.some(c=>c[0].action==='confirm')).toBe(false);
+});
+it('a late Send result cannot replace a cleared or changed writing view',async()=>{
+ const f=fixture();await f.p.openSend();const original=f.request.getMockImplementation()!;
+ let resolve!:(v:GitHubResponse)=>void;f.request.mockImplementation(r=>r.action==='confirm'?new Promise(done=>resolve=done):original(r));
+ await f.click('Send to GitHub…');f.p.clear();
+ resolve({localVersionSaved:true,receipt:null,message:'Old operation result'});await tick();
+ expect(f.p.element.open).toBe(false);expect(f.p.element.querySelector('.send-result')).toBeNull();
+});
+it('new changes explain missing author details without preparing or confirming a send',async()=>{
+ const f=fixture();await f.p.openSend();f.p.element.querySelector<HTMLInputElement>('input[type=checkbox]')!.click();
+ const previews=f.request.mock.calls.filter(c=>c[0].action==='previewSend').length;
+ await f.click('Send to GitHub…');
+ expect(f.p.element.textContent).toContain('Add the name and email');expect(f.request.mock.calls.filter(c=>c[0].action==='previewSend')).toHaveLength(previews);
+ expect(f.request.mock.calls.some(c=>c[0].action==='confirm')).toBe(false);
+ expect([...f.p.element.querySelectorAll('details')].find(d=>d.textContent?.includes('Name and email included with new changes'))!.open).toBe(true);
 });

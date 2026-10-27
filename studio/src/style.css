@@ -568,3 +568,12 @@ dialog { color: var(--fg); }
 }
 /* Existing fg/bg tokens provide safe CTA contrast in default, custom and high-contrast themes. */
 .repository-home button.primary, .welcome .github-welcome-entry { background:var(--fg); color:var(--bg); }
+
+/* A focused Send task, separate from account and repository management. */
+.github-panel [data-github-send] > section { padding-block: .8rem; border-bottom: 1px solid var(--fg-muted); }
+.github-panel .send-earlier { padding: .8rem; border: 2px solid var(--fg-muted); border-radius: .5rem; }
+.github-panel .send-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; }
+.github-panel .send-actions button { margin: 0; }
+.github-panel .send-primary { flex: 1; background: var(--fg); color: var(--bg); background-image: none; border: 2px solid var(--fg); font-weight: 700; }
+.github-panel .send-result { border: 2px solid var(--fg); padding: 1rem; border-radius: .5rem; }
+.github-panel details[hidden] { display: none; }

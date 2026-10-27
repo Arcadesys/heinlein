@@ -6,7 +6,7 @@ test('GitHub synthetic account, exact-file version, send, draft feedback and exp
     async function type(target:Locator,text:string){await tabTo(target);await page.keyboard.press('ControlOrMeta+A');await page.keyboard.insertText(text);}
     await page.goto('/tests/browser/github.html');
     await activate(page.getByRole('button', { name: 'GitHub actions…', exact: true }));
-    const dialog = page.getByRole('dialog', { name: 'GitHub projects', exact: true });
+    const dialog = page.locator('dialog.github-panel');
     await expect(dialog).toBeVisible();
     await activate(dialog.getByRole('button', { name: 'Connect GitHub…', exact: true }));
     await expect(dialog).toContainText('SYNTHETIC');
@@ -20,13 +20,14 @@ test('GitHub synthetic account, exact-file version, send, draft feedback and exp
     await activate(page.getByRole('button', { name: 'GitHub actions…', exact: true }));
     await activate(dialog.getByRole('button', { name: 'Send to GitHub…', exact: true }));
     await tabTo(dialog.getByRole('checkbox', { name: 'edit: story.md', exact: true })); await page.keyboard.press('Space');
+    await activate(dialog.getByText('Name and email included with new changes',{exact:true}));
     await type(dialog.getByLabel('Name recorded with these changes', { exact: true }),'Synthetic Writer');
     await type(dialog.getByLabel('Email recorded with these changes', { exact: true }),'synthetic@users.noreply.github.com');
-    await activate(dialog.getByRole('button', { name: 'Review what will be sent', exact: true }));
-    await expect(dialog.getByRole('region', { name: 'GitHub action preview' })).toContainText('earlier-scene.md');
-    await expect(dialog).toContainText('repository-configured automation');
+    await expect(dialog).toContainText('earlier-scene.md');
     await activate(dialog.getByRole('button', { name: 'Send to GitHub…', exact: true }));
     await expect(dialog).toContainText('upload simulated, not live');
+    await activate(dialog.getByRole('button',{name:'Back to writing',exact:true}));
+    await activate(page.getByRole('button',{name:'GitHub actions…',exact:true}));
     await activate(dialog.getByRole('button', { name: 'Request feedback with a draft pull request…', exact: true }));
     await type(dialog.getByLabel('Feedback request title', { exact: true }),'Synthetic feedback');
     await type(dialog.getByLabel('Feedback request description', { exact: true }),'Please review this synthetic scene.');
