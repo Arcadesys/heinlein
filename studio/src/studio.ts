@@ -9,7 +9,7 @@ import {createGitHubPanel} from './githubPanel';
 import {createFirstStory} from './firstStory';
 import { createReviewPanel } from './reviewPanel';
 import { createDocumentDetails } from './documentDetails';
-import { createSceneNavigator } from './sceneNavigator';
+import { createSceneNavigator, sceneBreaks } from './sceneNavigator';
 import { createNavigationDrawer } from './navigationDrawer';
 import { assembleChapter, chapterSelection, type AssembledChapter } from './assembledChapter';
 import { createManuscriptSearch, editorOffset, type SearchScope, type SearchMatch } from './manuscriptSearch';
@@ -27,6 +27,8 @@ import type { LocalCore, RepositorySession, Manuscript, Document, RecoveryDraft,
 import { BUNDLED_FONTS, FONT_PRESETS, FONT_ROLES, applyChoices, cleanFamily, familyValue, loadChoices, saveChoices, type FontChoices } from './fonts';
 import { createThemePanel } from './themePanel';
 import { ACCENTS, LEADINGS, THEMES, WIDTHS, accentColor, applyAppearance, loadAppearance, saveAppearance, type Appearance } from './appearance';
+import { attachMenu, type MenuItem } from './menu';
+import { createBinderTree } from './binderTree';
 import { createPalette, type PaletteItem, type PaletteScope } from './palette';
 import { formatKeys, shortcutSheet } from './shortcuts';
 import { ZOOM_STEPS, loadZoom, saveZoom, nextZoom, shortcutAction, type ZoomAction } from './zoom';
@@ -76,7 +78,7 @@ export const SAVE_NOTICE_IDLE_MS = 5000;
 
 export function mountStudio(root: HTMLElement, core: LocalCore) {
   // The status pill mirrors the writing panel; it is built further down, so render only once it exists.
-  let chromeReady = false; let writingSummary: WritingSummary | null = null;
+  let chromeReady = false; let draftingStarted = false; let writingSummary: WritingSummary | null = null;
   const writing = createWritingPanel(summary => { writingSummary = summary; if (chromeReady) renderPill(); });
   let generation = 0;
   let searchScopeRevision = 0;
@@ -413,9 +415,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   pill.setAttribute('aria-label', 'Writing status');
   const pillProject = core.projectRequest?button('Projects…',()=>void projectLibrary.open(),'pill-project project-switcher'):el('span','Heinlein Studio','pill-muted pill-project');
   if(core.projectRequest)pillProject.setAttribute('aria-haspopup','dialog');
-  const pillChapter = el('span', '', 'pill-chapter'); pillChapter.hidden = true;
+  const pillChapter = button('', () => {}, 'pill-chapter pill-menu'); pillChapter.hidden = true;
   const pillChapterSep = el('span', '/', 'pill-muted'); pillChapterSep.hidden = true;
-  const pillScene = el('span', 'No scene open', 'pill-scene');
+  const pillScene = button('No scene open', () => {}, 'pill-scene pill-menu'); pillScene.disabled = true;
+  pillChapter.setAttribute('aria-label', 'Chapters');
   const pillWords = el('span', '', 'pill-mono pill-words');
   const pillSave = el('span', '', 'pill-save'); const pillSaveLabel = el('span', 'Nothing open');
   const pillDot = el('span', '', 'pill-dot'); pillDot.setAttribute('aria-hidden', 'true');
@@ -427,10 +430,54 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   goalButton.addEventListener('click', () => toggleGoal());
   const paletteButton = button(formatKeys('⌘K'), () => openPalette('scenes'), 'pill-key');
   paletteButton.setAttribute('aria-label', 'Open command palette'); paletteButton.title = 'Jump to a scene, file or command (Cmd/Ctrl+K)';
+  // Breadcrumb menus read live manuscript state when opened, so they never go stale.
+  const currentScenePath = () => opened?.path ?? null;
+  // The manifest's scene array is the reading order; chapters are labels on it.
+  const sceneOrder = () => drafting.state?.scenes ?? [];
+  function stepScene(direction: 1 | -1) {
+    const order = sceneOrder(); const index = order.findIndex(scene => scene.path === currentScenePath());
+    const target = order[index + direction];
+    if (index < 0 || !target) { status.textContent = direction > 0 ? 'This is the last scene.' : 'This is the first scene.'; return; }
+    void showDocument(target.path);
+  }
+  const pillMenus = [attachMenu(pillChapter, 'Chapters', (): MenuItem[] => {
+    const state = drafting.state; if (!state) return [];
+    const here = state.scenes.find(scene => scene.path === currentScenePath())?.groupId ?? null;
+    const chapters = [...state.groups.map(group => ({id: group.id as string | null, title: group.title})), ...(state.scenes.some(scene => !scene.groupId) ? [{id: null, title: 'No chapter'}] : [])];
+    return [{label: `Chapters in ${state.project || 'this project'}`, heading: true}, ...chapters.map(chapter => {
+      const scenes = state.scenes.filter(scene => (scene.groupId ?? null) === chapter.id);
+      return {label: chapter.title, detail: `${scenes.length} ${scenes.length === 1 ? 'scene' : 'scenes'}`, current: chapter.id === here, disabled: !scenes.length,
+        run: () => { void showDocument(scenes[0].path); }};
+    })];
+  }),
+  attachMenu(pillScene, 'Scenes', (): MenuItem[] => {
+    const state = drafting.state; if (!state) return [];
+    const path = currentScenePath(); const scene = state.scenes.find(item => item.path === path);
+    const group = scene?.groupId ?? null; const siblings = state.scenes.filter(item => (item.groupId ?? null) === group);
+    const chapter = state.groups.find(item => item.id === group)?.title ?? 'No chapter';
+    const order = sceneOrder(); const index = order.findIndex(item => item.path === path);
+    const items: MenuItem[] = [{label: `Scenes in ${chapter}`, heading: true},
+      ...siblings.map(item => ({label: item.title || basename(item.path), current: item.path === path, run: () => { void showDocument(item.path); }})),
+      {label: 'Move', heading: true},
+      {label: 'Previous scene', disabled: index <= 0, run: () => stepScene(-1)},
+      {label: 'Next scene', disabled: index < 0 || index >= order.length - 1, run: () => stepScene(1)}];
+    const view = editor?.view ?? chapterEditor?.view ?? null;
+    const breaks = view ? sceneBreaks(view.state.doc.toString()) : [];
+    if (breaks.length) {
+      items.push({label: 'Breaks in this scene', heading: true});
+      breaks.slice(0, 12).forEach((entry, number) => items.push({label: entry.label, detail: `Passage ${number + 1}`, run: () => {
+        view!.dispatch({selection: {anchor: entry.from, head: entry.to}, scrollIntoView: true}); view!.focus();
+      }}));
+    }
+    return items;
+  })];
   pill.append(pillProject, el('span', '/', 'pill-muted'), pillChapter, pillChapterSep, pillScene, el('span', '', 'pill-rule'), pillWords, pillSave, goalButton, proposalsEntry, paletteButton);
   const status = el('p', 'Open from GitHub, open a local folder, or start a draft.', 'status');
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
+  // Messages like "Opening your writing…" mean work is under way; show a spinner until the text changes.
+  const busyObserver = new MutationObserver(() => status.setAttribute('aria-busy', String(/^(Opening|Reading|Saving|Loading|Checking)\b.*…$/.test(status.textContent ?? ''))));
+  busyObserver.observe(status, {childList: true, characterData: true, subtree: true});
   const recent = el('section', '', 'recent');
   recent.setAttribute('aria-label', 'Recent local folders');
 
@@ -538,7 +585,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const manuscriptBody = el('div', '', 'panel-body');
   const searchManuscript = button('Find in manuscript', openManuscriptSearch);
   searchManuscript.setAttribute('aria-keyshortcuts', 'Control+Shift+F Meta+Shift+F');
-  manuscriptBody.append(draftingEntry, searchManuscript, manifests, outline);
+  const binderTree = createBinderTree({state: () => (standalone?.active ? null : drafting.state), currentPath: () => opened?.path ?? null, open: path => { void showDocument(path); }});
+  manuscriptBody.append(draftingEntry, searchManuscript, binderTree.element, manifests, outline);
   manuscriptPane.append(manuscriptBody);
   const sceneNavigator = createSceneNavigator(() => editor?.view ?? chapterEditor?.view ?? null);
   const scenePane = el('section', '', 'panel scene-navigator');
@@ -562,17 +610,18 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     corner.prepend(button('Drafts',()=>void standalone!.list()),newDraftButton);
   }
 
-  const navigation = createNavigationDrawer(files, manuscriptPane, scenePane, open => layout.classList.toggle('navigation-open', open),'Source files',tab=>{if(tab==='manuscript')void openDrafting();});
+  const navigation = createNavigationDrawer(files, manuscriptPane, scenePane, open => layout.classList.toggle('navigation-open', open),'Source files',tab=>{if(tab==='manuscript')void openDrafting();},projectLibrary.supported?'manuscript':'files');
   layout.append(navigation.element, preview);
   chromeReady = true;
   resetPreview();
   root.replaceChildren(glow, ...(projectLibrary.supported ? [pill, layout] : [layout, pill]), status, goalCard, corner, firstStory.element, github.element, updates.element, projectLibrary.element);
   const drafting = createDraftingPanel(core, {
     root, repository: () => standalone?.active?null:repository, run: runStructural, verify: verifyStructuralBuffer, selectedPath:()=>opened?.path??null,
-    show: () => { outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
+    show: () => { renderPill(); outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
     open: path => { void showDocument(path); }, changed: draftingChanged,
     report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
   });
+  draftingStarted = true;
   const proposals = createProposalPanel(core, {
     root, repository: () => repository, run: runProposal,
     changed: proposalChanged,
@@ -1122,6 +1171,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       {key: 'navigation', label: 'Toggle navigation drawer', right: formatKeys('⌘\\'), run: () => navigation.toggle()},
       {key: 'files', label: 'Show repository files', run: () => navigation.select('files')},
       {key: 'outline', label: 'Show manuscript outline', run: () => navigation.select('manuscript')},
+      Boolean(drafting.state?.scenes.length) && {key: 'prev-scene', label: 'Previous scene', run: () => stepScene(-1)},
+      Boolean(drafting.state?.scenes.length) && {key: 'next-scene', label: 'Next scene', run: () => stepScene(1)},
       {key: 'scene-navigator', label: 'Show scene navigator', run: () => navigation.select('scenes')},
       {key: 'shortcuts', label: 'Keyboard shortcuts', right: formatKeys('⌘/'), run: () => toggleHelp(true)},
     ];
@@ -1159,7 +1210,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const scene = opened && drafting.state?.scenes.find(item => item.path === opened!.path);
     const chapterTitle = !standalone?.active && scene ? drafting.state?.groups.find(group => group.id === scene.groupId)?.title : undefined;
     pillChapter.textContent = chapterTitle ?? ''; pillChapter.hidden = pillChapterSep.hidden = !chapterTitle;
+    pillScene.disabled = !(scene && !standalone?.active); pillChapter.setAttribute('aria-label', `Chapter: ${chapterTitle ?? ''}. Choose another chapter`);
+    if (draftingStarted) binderTree.refresh();
     pillScene.textContent = standalone?.active ? 'Untitled draft' : opened ? (scene && scene.title) || basename(opened.path) : 'No scene open';
+    pillScene.setAttribute('aria-label', `Scene: ${pillScene.textContent}. Choose another scene`);
     const words = standalone?.active ? wordCount(standalone.text) : writingSummary?.sceneWords;
     pillWords.textContent = words == null ? '— words' : `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'}`;
     if (writingSummary) {
@@ -1359,6 +1413,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         try { draftState = await drafting.load(); } catch (error) { reportError(error); }
       }
       if (disposed || current !== generation) return;
+      renderPill();
       if (draftState?.revision || draftState?.recoveryRequired || (draftState && !selected.manifests.length)) {
         outline.replaceChildren(drafting.element); void writing.setManuscript(core, selected, draftState);
         await showDirectory('');
@@ -1679,6 +1734,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

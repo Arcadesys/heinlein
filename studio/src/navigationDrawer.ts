@@ -5,8 +5,8 @@ type NavigationTab = typeof TAB_ORDER[number];
 const STORAGE_KEY = 'heinlein-studio-navigation-v1';
 
 /** One non-modal drawer; switching tabs retains the live panels and their state. */
-export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLElement, scenes: HTMLElement, changed: (open: boolean) => void, writingLabel = 'Source files', selected?: (tab:NavigationTab)=>void) {
-  let active: NavigationTab = 'files';
+export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLElement, scenes: HTMLElement, changed: (open: boolean) => void, writingLabel = 'Source files', selected?: (tab:NavigationTab)=>void, defaultTab: NavigationTab = 'files') {
+  let active: NavigationTab = defaultTab;
   let open = !window.matchMedia?.('(max-width: 760px)').matches;
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null');

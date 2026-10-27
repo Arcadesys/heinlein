@@ -9,7 +9,7 @@ export function createProjectLibrary(core:LocalCore,hooks:{current():RepositoryS
  let generation=0,busy=false,opener:HTMLElement|null=null;
  const title=el('h2','Projects');title.id='project-library-title';title.tabIndex=-1;
  const status=el('p');status.setAttribute('role','status');const body=el('section');
- function controls(){element.querySelectorAll<HTMLButtonElement|HTMLInputElement>('button,input').forEach(b=>b.disabled=busy);element.setAttribute('aria-busy',String(busy));}
+ function controls(){element.querySelectorAll<HTMLButtonElement|HTMLInputElement>('button,input').forEach(b=>b.disabled=busy);element.setAttribute('aria-busy',String(busy));status.setAttribute('aria-busy',String(busy&&!!status.textContent));}
  async function act(run:()=>Promise<void>){if(busy)return;busy=true;controls();try{await run();}catch(e){status.textContent=String(e);}finally{busy=false;controls();}}
  function button(text:string,run:()=>Promise<void>){const b=el('button',text);b.type='button';b.onclick=()=>void act(run);return b;}
  function close(writing=false){generation++;element.close();if(writing)hooks.focusWriting();else opener?.focus();}
