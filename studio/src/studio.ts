@@ -1331,17 +1331,18 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if(repository?.id===session.id){repository.projectRevision=p.revision;repository.name=p.name;}
     });projectResumeQueue=task.catch(()=>{});await task;
   }
-  function projectWritingBlocksLeave():boolean {
-    return !!editor&&!standalone?.active&&!opened?.generatedCompatibility&&!!(saving||staging||recoveryPending||recoveryErrorMessage||repositoryDetached);
+  // A detached buffer blocks quitting and project switches, but not reselecting a repository: that is how it is reattached.
+  function projectWritingBlocksLeave(detachedBlocks=true):boolean {
+    return !!editor&&!standalone?.active&&!opened?.generatedCompatibility&&!!(saving||staging||recoveryPending||recoveryErrorMessage||(detachedBlocks&&repositoryDetached));
   }
-  async function rememberProjectPositionAfterLeave():Promise<boolean> {
+  async function rememberProjectPositionAfterLeave(detachedBlocks=true):Promise<boolean> {
     const revision=edits,wasDirty=dirty,session=repository?.id,epoch=documentEpoch,draftText=standalone?.active?standalone.text:null;
     try{if(!(dirty&&writePaused==='discard'))await rememberProjectPosition();}catch(error){
       // A position hint is not a writing save. Clean external changes may make
       // it unavailable; native activation validates any retained hint afresh.
-      if(dirty||projectWritingBlocksLeave()){reportError(error);return false;}
+      if(dirty||projectWritingBlocksLeave(detachedBlocks)){reportError(error);return false;}
     }
-    return !disposed&&!projectWritingBlocksLeave()&&documentEpoch===epoch&&edits===revision&&repository?.id===session&&dirty===wasDirty&&(draftText===null||standalone?.text===draftText);
+    return !disposed&&!projectWritingBlocksLeave(detachedBlocks)&&documentEpoch===epoch&&edits===revision&&repository?.id===session&&dirty===wasDirty&&(draftText===null||standalone?.text===draftText);
   }
   function scheduleProjectPosition(){if(projectPositionTimer)clearTimeout(projectPositionTimer);projectPositionTimer=setTimeout(()=>{projectPositionTimer=null;if(!dirty&&!saving&&!selecting&&!standalone?.active)void rememberProjectPosition().catch(()=>{});},600);}
   async function switchProject(id:string):Promise<boolean>{
@@ -1363,7 +1364,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
 
   async function selectRepository(select: () => Promise<RepositorySession | null>) {
     if (selecting || !await allowLeave() || selecting) return;
-    if(!await rememberProjectPositionAfterLeave())return;
+    if(!await rememberProjectPositionAfterLeave(false))return;
     selecting = true;
     reviewPanel?.clear();
     manuscriptSearch.close();
