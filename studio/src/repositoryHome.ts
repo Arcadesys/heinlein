@@ -1,3 +1,4 @@
+import {requestGitHub} from './githubRequests';
 import type {LocalCore, RepositorySession} from './localCore';
 import type {GitHubLocalProject,GitHubLocalEvidence} from './githubTypes';
 const node = <K extends keyof HTMLElementTagNameMap>(tag:K,text='') => {const n=document.createElement(tag);n.textContent=text;return n;};
@@ -13,14 +14,14 @@ export function createRepositoryHome(core:LocalCore, hooks:{openGitHub():void;se
     const view=++generation;
     if(!core.githubRequest||!core.available()){list.replaceChildren(node('p','Open the Heinlein app to use GitHub repositories.'));return;}
     try {
-      const projects=await core.githubRequest({action:'localProjects'}) as GitHubLocalProject[];
+      const projects=await requestGitHub(core,{action:'localProjects'}) as GitHubLocalProject[];
       if(disposed||view!==generation)return;
       list.replaceChildren(node('h3','Recent GitHub repositories'));message.textContent='';
       if(!projects.length)list.append(node('p','No GitHub repositories opened yet.'));
       for(const p of projects){
         const row=node('div');row.append(node('p',`${p.name} · Working branch: ${p.branch}`));
         if(p.unavailable){row.append(node('p','Unavailable — open GitHub actions for recovery.'));}
-        else {const b=node('button',`Open ${p.name}`);b.type='button';b.addEventListener('click',()=>{b.disabled=true;void hooks.select(()=>core.githubRequest!({action:'reopen',workspaceId:p.workspaceId}) as Promise<RepositorySession>).catch(e=>{message.textContent=String(e);}).finally(()=>{if(!disposed&&view===generation)b.disabled=false;});});row.append(b);}
+        else {const b=node('button',`Open ${p.name}`);b.type='button';b.addEventListener('click',()=>{b.disabled=true;void hooks.select(()=>requestGitHub(core,{action:'reopen',workspaceId:p.workspaceId}) as Promise<RepositorySession>).catch(e=>{message.textContent=String(e);}).finally(()=>{if(!disposed&&view===generation)b.disabled=false;});});row.append(b);}
         list.append(row);
       }
     }catch{if(!disposed&&view===generation){list.replaceChildren();message.textContent='Recent GitHub repositories are unavailable. Open GitHub actions to check recovery; local folders and Drafts are still available.';}}

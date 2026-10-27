@@ -173,6 +173,14 @@ for a changed or missing source instead of guessing a passage. Stable root-based
 workspace/account/branch authority are unchanged; unresolved Send receipts stay
 with their original workspace and are never replayed by switching projects.
 
+Renderer GitHub requests, including pure-local identity/status reads, share one
+per-native-bridge FIFO. Background refreshes cannot overlap each other or an
+explicit Send using the host's nonblocking operation lock. Scheduling does not
+retry a rejected mutation, infer authority, initialize auth for local reads or
+replace native lock/plan checks. Other windows/processes may still legitimately
+cause a native busy refusal. Existing generation/session/source guards reject
+late responses after a queued operation completes.
+
 The library holds no manuscript text, credentials or copied Git capabilities.
 Atomic private metadata writes, a stable cross-process lock and revision CAS
 preserve other projects and reject stale edits. Bounds are explicit (4,096

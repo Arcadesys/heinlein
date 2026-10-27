@@ -1,3 +1,4 @@
+import {requestGitHub} from './githubRequests';
 import type {GitHubLocalEvidence} from './githubTypes';
 import {createProjectLibrary,type Project,type ProjectResume} from './projects';
 import {createRepositoryHome, documentOrigin, sharingStatus} from './repositoryHome';
@@ -1137,7 +1138,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if(!session?.githubWorkspaceId||standalone?.active||dirty||!core.githubRequest)return;
     await dirtySync;
     try {
-      const value=await core.githubRequest({action:'localProject',repositoryId:session.id}) as GitHubLocalEvidence;
+      const value=await requestGitHub(core,{action:'localProject',repositoryId:session.id}) as GitHubLocalEvidence;
       if(!disposed&&ticket===sharingGeneration&&repository?.id===session.id&&edits===revision&&documentEpoch===view&&!dirty&&!standalone?.active&&value?.workspaceId===session.githubWorkspaceId){sharingEvidence=value;renderOrigin();}
     }catch{if(!disposed&&ticket===sharingGeneration){sharingEvidence=null;renderOrigin();}}
   }

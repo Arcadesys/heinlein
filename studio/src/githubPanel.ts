@@ -1,3 +1,4 @@
+import {requestGitHub} from './githubRequests';
 import type { LocalCore, RepositorySession } from './localCore';
 import type { GitHubRequest, GitHubStatus, GitHubAuth, GitHubProject, GitHubOpen, GitHubVersion, GitHubShare, GitHubSend, GitHubSendOutcome, GitHubIncoming, GitHubIdentity, GitHubReceipt, GitHubRepositories, GitHubBranchChoice, GitHubBranchPreview, GitHubPullStatus, GitHubPullPreview } from './githubTypes';
 import { createGitHubConflictPanel } from './githubConflictPanel';
@@ -32,7 +33,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
     let feedbackBody = '';
     let url = '';
     async function request<T>(r: GitHubRequest) { if (!core.githubRequest)
-        throw new Error('GitHub projects are available in the native Heinlein app.'); return await core.githubRequest(r) as T; }
+        throw new Error('GitHub projects are available in the native Heinlein app.'); return await requestGitHub<T>(core,r); }
     function cancelPlan() { if (plan) {
         const id = plan;
         plan = null;

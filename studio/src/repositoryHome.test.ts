@@ -13,7 +13,7 @@ describe('repository-first home',()=>{
  });
  it('retains unavailable identity without offering a folder fallback and ignores late refresh',async()=>{
  let resolve!:(v:unknown)=>void;const core={available:()=>true,githubRequest:()=>new Promise(r=>resolve=r)} as unknown as LocalCore;
- const h=createRepositoryHome(core,{openGitHub:vi.fn(),select:vi.fn()});const refresh=h.refresh();h.destroy();resolve([{workspaceId:'x',name:'late/book',branch:'writing',unavailable:null}]);await refresh;expect(h.element.textContent).not.toContain('late/book');
+ const h=createRepositoryHome(core,{openGitHub:vi.fn(),select:vi.fn()});const refresh=h.refresh();await Promise.resolve();h.destroy();resolve([{workspaceId:'x',name:'late/book',branch:'writing',unavailable:null}]);await refresh;expect(h.element.textContent).not.toContain('late/book');
  });
  it('never labels standalone text as Github-owned or sent; unknown status stays unknown',()=>{
  expect(documentOrigin(session,true)).toBe('Standalone draft');expect(sharingStatus(session,true,false)).toContain('choose a destination later');expect(sharingStatus(session,false,true)).toContain('not yet sent');expect(sharingStatus(session,false,false)).toContain('not checked');expect(sharingStatus({...session,githubWorkspaceId:null},false,false)).toContain('Local folder');
