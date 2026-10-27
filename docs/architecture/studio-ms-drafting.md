@@ -216,3 +216,6 @@ scene placement remains available. Empty group slots are durable metadata; later
 Create scene or Move into that empty group inserts before the next nonempty group,
 or at the actual document end. Consecutive empty slots use the same rule. Same-slot
 moves are true no-ops and do not rewrite the manifest or create an undo journal.
+The original end-of-scene-list target also uses this typed planner: its label
+explicitly means document end with No chapter. Repository-file drops retain the
+separate import-settings flow; import-only handlers never advertise scene moves.

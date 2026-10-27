@@ -332,7 +332,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   }
   function dropTarget(target: HTMLElement, beforeId: string | null = null) {
     target.addEventListener('dragover', event => {
-      if (event.dataTransfer?.types.some(type => type === SCENE_DRAG_TYPE || type === REPOSITORY_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }
+      if (event.dataTransfer?.types.includes(REPOSITORY_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }
     });
     target.addEventListener('drop', event => acceptDrop(event, beforeId));
   }
@@ -375,7 +375,8 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const fileOptions=el('details');fileOptions.append(el('summary','File location options'),button('Move…',()=>moveScene(scene)));actions.append(earlier, later, button(`Move scene “${scene.title}”…`,()=>moveForm({kind:'scene',id:scene.id})),fileOptions); item.append(actions); dropTarget(item, scene.id); list.append(item);
     });
     element.append(list);
-    const dropEnd = el('div', state.scenes.length ? 'Drop here to place at the end' : 'No scenes yet. Create a scene or import Markdown files.', 'drafting-drop');
+    const dropEnd = el('div', state.scenes.length ? 'End of manuscript — No chapter' : 'No scenes yet. Create a scene or import Markdown files.', 'drafting-drop');
+    moveDrop(dropEnd,source=>source.kind==='scene'?{kind:'ungroupedEnd'}:null,'Drop a scene here to preview moving it to the document end with No chapter. Repository files open import settings.');
     dropTarget(dropEnd); element.append(dropEnd);
     const chapters=el('section','','drafting-chapters');chapters.setAttribute('aria-label','Chapters and scene groups');chapters.append(el('h4','Chapters and scene groups'));
     if(state.groupMoveIssue){const issue=el('p',state.groupMoveIssue,'drafting-warning');issue.id='manuscript-group-move-issue';chapters.append(issue);}
