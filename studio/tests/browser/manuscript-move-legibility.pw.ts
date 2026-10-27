@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 for(const narrow of [false,true])test(`Move form readable keyboard controls, narrow=${narrow}`,async({page},info)=>{
- await page.setViewportSize(narrow?{width:320,height:740}:{width:1280,height:1000});await page.goto('/tests/browser/projects.html?movement-demo');
+ await page.setViewportSize(narrow?{width:320,height:740}:{width:1280,height:1000});await page.goto('/tests/browser/projects.html?movement-demo');await expect(page.locator('html')).toHaveAttribute('data-demo-ready','true');
  const grip=page.locator('[data-move-kind="scene"][data-move-id="scene-bridge"]');await expect(grip).toBeVisible();
  if(narrow){await page.getByRole('button',{name:'Appearance',exact:false}).click();await page.getByRole('button',{name:'High contrast',exact:true}).click();await page.keyboard.press('Escape');for(let i=0;i<8&&await page.locator('html').getAttribute('data-zoom')!=='200';i++)await page.keyboard.press('Control+=');}
  const state=()=>page.evaluate(()=>{const f=(window as any).projectFixture,s=f.state();return{m:s.manuscripts['local-a'],docs:s.documents['local-a'],calls:f.draftingCalls.length,external:f.externalCalls};});const before=await state();
