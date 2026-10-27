@@ -228,6 +228,7 @@ pub(crate) fn selection(app: &tauri::AppHandle, path: &Path) -> Result<Option<Wo
     let root = path.canonicalize().map_err(|_| "Folder is unavailable")?;
     let d = data(app)?;
     for name in [
+        "projects-v1",
         "github-state-v1",
         "github-auth-v1",
         "chatgpt-auth",

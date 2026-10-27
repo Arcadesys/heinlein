@@ -6,7 +6,7 @@ test('GitHub synthetic account, exact-file version, send, draft feedback and exp
     async function type(target:Locator,text:string){await tabTo(target);await page.keyboard.press('ControlOrMeta+A');await page.keyboard.insertText(text);}
     await page.goto('/tests/browser/github.html');
     await activate(page.getByRole('button', { name: 'GitHub actions…', exact: true }));
-    const dialog = page.locator('dialog.github-panel');
+    const dialog = page.locator('dialog.github-panel:not(.project-library)');
     await expect(dialog).toBeVisible();
     await activate(dialog.getByRole('button', { name: 'Connect GitHub…', exact: true }));
     await expect(dialog).toContainText('SYNTHETIC');

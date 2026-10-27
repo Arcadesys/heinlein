@@ -5,6 +5,7 @@
     "main"
   ],
   "permissions": [
+    "allow-project-request",
     "allow-pick-repository",
     "allow-recent-repositories",
     "allow-open-recent-repository",

@@ -1,3 +1,4 @@
+import {GROUP_DRAG_TYPE,moveIntent,moveTargetLabel,type MoveSource,type MoveTarget} from './manuscriptMoves';
 import type { DraftingChange, DraftingFileChange, DraftingPreview, DraftingScene, DraftingSelection, DraftingState, LocalCore, RepositorySession } from './localCore';
 
 export const REPOSITORY_DRAG_TYPE = 'application/x-heinlein-repository-entry';
@@ -14,6 +15,7 @@ interface DraftingHooks {
   root: HTMLElement;
   repository(): RepositorySession | null;
   verify?(): void;
+  selectedPath?(): string | null;
   run(action: () => Promise<void>): Promise<void>;
   show(): void;
   open(path: string): void;
@@ -29,9 +31,11 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   let disposed = false;
   let picking = false;
   let undo: {id: string; changes: DraftingFileChange[]; summary: string} | null = null;
+  const moveLive=el('p','','manuscript-move-status');moveLive.setAttribute('role','status');
+  let movementBusy=false,drag:{token:string;source:MoveSource;repositoryId:string;revision:string}|null=null;
   const dialogs = new Map<HTMLDialogElement, () => void>();
   function closeDialogs() { for (const cancel of [...dialogs.values()]) cancel(); }
-  function clear() { version++; closeDialogs(); state = null; undo = null; element.replaceChildren(); }
+  function clear() { version++; clearDrag(); closeDialogs(); state = null; undo = null; element.replaceChildren(); }
   async function load() {
     if (!supported || !hooks.repository()) return null;
     const current = version;
@@ -60,8 +64,8 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     node.append(row); return input;
   }
   function groupField(node: HTMLElement, selected: string | null = null) {
-    const row = el('label', '', 'drafting-field'); row.append(el('span', 'Group (optional)'));
-    const select = el('select'); const loose = el('option', 'Loose scene'); loose.value = ''; select.append(loose);
+    const row = el('label', '', 'drafting-field'); row.append(el('span', 'Chapter (optional)'));
+    const select = el('select'); const loose = el('option', 'No chapter'); loose.value = ''; select.append(loose);
     for (const group of state?.groups ?? []) { const option = el('option', group.title); option.value = group.id; select.append(option); }
     select.value = selected ?? ''; row.append(select); node.append(row); return select;
   }
@@ -76,9 +80,11 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   }
   function form(title: string, build: (body: HTMLFormElement, submit: (change: DraftingChange, focusPath?: string) => void) => void) {
     if (dialogs.size || !state) return;
+    const opener=document.activeElement as HTMLElement|null;
+    const restore=()=>{if(opener?.isConnected)opener.focus();else [...element.querySelectorAll('button')].find(b=>b.textContent===opener?.textContent)?.focus();};
     const node = dialog(title); const body = el('form');
-    const cancel = () => remove(node);
-    build(body, (change, focusPath) => { cancel(); void changeManuscript(change, focusPath); });
+    const cancel = () => {remove(node);restore();};
+    build(body, (change, focusPath) => { cancel(); void changeManuscript(change, focusPath).then(applied=>{if(!applied||!focusPath)restore();}); });
     body.append(button('Cancel', cancel)); node.append(body); display(node, cancel);
   }
   function submitButton(body: HTMLFormElement, label: string, submit: () => void) {
@@ -107,7 +113,8 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   }
   async function changeManuscript(change: DraftingChange, focusPath?: string, prepare?: () => DraftingChange) {
     const before = state; const repositoryId = hooks.repository()?.id;
-    if (!before || !repositoryId) return;
+    if (!before || !repositoryId) return false;
+    let didApply=false;
     loadRequest++;
     await hooks.run(async () => {
       let applied = false;
@@ -116,13 +123,14 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         hooks.verify?.();
         const preview = await core.previewDraftingChange!(repositoryId, before.revision, change);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
+        if(!preview.changes.length){hooks.report(preview.summary);return;}
         if (!await confirmPreview(preview)) { hooks.report('Change canceled.'); return; }
         if (disposed || repositoryId !== hooks.repository()?.id) return;
         hooks.verify?.();
         if (prepare) prepare();
         const result = await core.applyDraftingChange!(repositoryId, preview.id);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
-        applied = true; state = result.state; undo = result.undoId ? {id: result.undoId, changes: preview.changes, summary: preview.summary} : null; render(); hooks.show();
+        applied = true; didApply=true; state = result.state; undo = result.undoId ? {id: result.undoId, changes: preview.changes, summary: preview.summary} : null; render(); hooks.show();
         await hooks.changed(state, before, preview.changes, focusPath);
         hooks.report(`${preview.summary} · Saved locally.${undo ? ' Undo is available until the next structural change or app restart.' : ''}`);
       } catch (error) {
@@ -130,6 +138,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         hooks.report(`${applied ? 'Change saved locally, but the view could not refresh' : 'Manuscript change could not be completed'}: ${String(error)}${alternative}`, true);
       }
     });
+    return didApply;
   }
   function initialize() {
     form('Create an ms manuscript', (body, submit) => {
@@ -139,12 +148,13 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     });
   }
   function newScene() {
-    form('New scene', (body, submit) => {
+    form('Add scene', (body, submit) => {
       const title = field(body, 'Scene title', 'Untitled scene');
       const path = field(body, 'Scene file', 'ms/untitled-scene.md', 'Use a Markdown path inside ms/. Folders are optional.');
       let pathChanged = false; path.addEventListener('input', () => { pathChanged = true; });
       title.addEventListener('input', () => { if (!pathChanged) path.value = `ms/${title.value.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'untitled-scene'}.md`; });
-      const group = groupField(body); const before = beforeField(body);
+      const selected=state?.scenes.find(s=>s.path===hooks.selectedPath?.());
+      const group = groupField(body,selected?.groupId); const before = beforeField(body);
       submitButton(body, 'Preview new scene', () => submit({kind: 'createScene', title: title.value.trim(), path: path.value.trim(), groupId: group.value || null, beforeId: before.value || null}, path.value.trim()));
     });
   }
@@ -178,10 +188,10 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     });
   }
   function newGroup() {
-    form('New scene group', (body, submit) => {
-      body.append(el('p', 'Groups are optional labels. They do not create or rename scene files.', 'muted'));
-      const title = field(body, 'Group title', 'Untitled chapter');
-      submitButton(body, 'Preview group', () => submit({kind: 'createGroup', title: title.value.trim()}));
+    form('Add chapter', (body, submit) => {
+      body.append(el('p', 'A chapter groups scenes in your manuscript. It starts empty and does not add text or rename files.', 'muted'));
+      const title = field(body, 'Chapter title', '');
+      submitButton(body, 'Preview chapter', () => submit({kind: 'createGroup', title: title.value.trim()}));
     });
   }
   function importSettings(paths: string[] | DraftingSelection, beforeId: string | null = null, mode: 'move' | 'copy' = 'move') {
@@ -263,18 +273,54 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       } catch (error) { hooks.report(`${applied ? 'Undo saved locally, but the view could not refresh' : 'Undo could not be completed'}: ${String(error)}. Current files and recovery remain available.`, true); }
     });
   }
+  function sourceName(source:MoveSource){return source.kind==='group'?state?.groups.find(g=>g.id===source.id)?.title??'group':state?.scenes.find(s=>s.id===source.id)?.title??'scene';}
+  function focusMove(source:MoveSource){element.querySelector<HTMLButtonElement>(`[data-move-kind="${source.kind}"][data-move-id="${source.id}"]`)?.focus();}
+  function clearDrag(){drag=null;delete element.dataset.dragKind;element.querySelectorAll('.move-drop-active').forEach(n=>{n.classList.remove('move-drop-active');delete (n as HTMLElement).dataset.dropSide;});element.querySelectorAll<HTMLElement>('[data-drop-label]').forEach(n=>n.textContent=n.dataset.dropLabel!);}
+  async function performMove(source:MoveSource,target:MoveTarget,revision:string,repositoryId:string){
+    if(movementBusy||!state?.revision||dialogs.size||state.recoveryRequired)return;
+    if(state.revision!==revision||hooks.repository()?.id!==repositoryId){hooks.report('The manuscript changed during the move. Nothing was submitted; start again.',true);clearDrag();return;}
+    try{const change=moveIntent(state,source,target);if(!change){moveLive.textContent='Already in that position. Nothing changed.';focusMove(source);return;}
+      const name=sourceName(source),position=moveTargetLabel(state,target);movementBusy=true;
+      moveLive.textContent=`Previewing move of “${name}” ${position}. No change until you confirm.`;
+      const applied=await changeManuscript(change);moveLive.textContent=applied?`Moved “${name}” ${position}. Saved on this Mac.`:'Move canceled or blocked. Check the result message; no automatic retry.';
+    }catch(error){hooks.report(`Move could not be prepared: ${String(error)}`,true);}finally{movementBusy=false;focusMove(source);}
+  }
+  function moveForm(source:MoveSource){
+    if(!state?.revision||dialogs.size||movementBusy||state.recoveryRequired)return;
+    const revision=state.revision,repositoryId=hooks.repository()?.id;if(!repositoryId)return;
+    const node=dialog(`Move ${sourceName(source)}`),body=el('form'),label=el('label','','drafting-field'),select=el('select');
+    node.classList.add('manuscript-move-dialog');
+    label.append(el('span','New position'),select);select.setAttribute('aria-label','New position');
+    const add=(target:MoveTarget)=>{const option=el('option',moveTargetLabel(state!,target));option.value=JSON.stringify(target);select.append(option);};
+    const choose=el('option','Choose a position');choose.value='';select.append(choose);select.required=true;
+    if(source.kind==='group'){
+      if(state.groupMoveIssue){hooks.report(state.groupMoveIssue,true);return;}
+      for(const group of state.groups){if(group.id===source.id)continue;add({kind:'group',id:group.id,side:'before'});add({kind:'group',id:group.id,side:'after'});}add({kind:'groupEndSlot'});
+    }else{
+      for(const scene of state.scenes){if(scene.id===source.id)continue;add({kind:'scene',id:scene.id,side:'before'});add({kind:'scene',id:scene.id,side:'after'});}
+      for(const group of state.groups){if(state.groupMoveIssue&&!state.scenes.some(s=>s.groupId===group.id))continue;add({kind:'groupEnd',id:group.id});}add({kind:'ungroupedEnd'});
+    }
+    const selected=el('p','No position selected.','manuscript-move-position');selected.setAttribute('role','status');
+    select.addEventListener('change',()=>{selected.textContent=select.value?`Destination: ${select.selectedOptions[0].textContent}`:'No position selected.';});
+    const cancel=()=>{remove(node);focusMove(source);};body.append(label,selected,el('p','Preview the exact reading order before applying. Text, scene IDs and filenames are unchanged.','muted'));
+    submitButton(body,'Preview move',()=>{try{const target=JSON.parse(select.value) as MoveTarget;cancel();void performMove(source,target,revision,repositoryId);}catch{hooks.report('Choose a valid position. Nothing changed.',true);}});body.append(button('Cancel',cancel));node.append(body);display(node,cancel);
+  }
+  function moveGrip(source:MoveSource){const grip=button(`Drag ${source.kind==='group'?'group':'scene'}: ${sourceName(source)}`,()=>{moveForm(source);},'manuscript-move-grip');grip.dataset.moveKind=source.kind;grip.dataset.moveId=source.id;grip.draggable=true;grip.title='Drag to a labelled position, or activate to choose a position with the keyboard.';
+    if(source.kind==='group'&&state?.groupMoveIssue){grip.disabled=true;grip.setAttribute('aria-describedby','manuscript-group-move-issue');}
+    grip.addEventListener('dragstart',event=>{if(!event.dataTransfer||!state?.revision||movementBusy||dialogs.size||state.recoveryRequired||!hooks.repository()){event.preventDefault();return;}clearDrag();drag={token:crypto.randomUUID(),source,repositoryId:hooks.repository()!.id,revision:state.revision};event.dataTransfer.clearData();event.dataTransfer.effectAllowed='move';event.dataTransfer.setData(source.kind==='group'?GROUP_DRAG_TYPE:SCENE_DRAG_TYPE,drag.token);element.dataset.dragKind=source.kind;moveLive.textContent=`Moving “${sourceName(source)}”. Drop on a labelled position to preview; Escape cancels.`;});
+    grip.addEventListener('dragend',clearDrag);return grip;
+  }
+  function moveDrop(node:HTMLElement,resolve:(source:MoveSource,event:DragEvent)=>MoveTarget|null,label:string){
+    const caption=el('span',label,'manuscript-drop-label');caption.dataset.dropLabel=label;node.append(caption);
+    const targetFor=(event:DragEvent)=>{if(!drag||!event.dataTransfer||movementBusy||dialogs.size||drag.repositoryId!==hooks.repository()?.id||drag.revision!==state?.revision)return null;const mime=drag.source.kind==='group'?GROUP_DRAG_TYPE:SCENE_DRAG_TYPE;if(!event.dataTransfer.types.includes(mime))return null;return resolve(drag.source,event);};
+    node.addEventListener('dragover',event=>{const target=targetFor(event);if(!target)return;event.preventDefault();event.stopPropagation();event.dataTransfer!.dropEffect='move';node.classList.add('move-drop-active');node.dataset.dropSide='side'in target?target.side:'inside';caption.textContent=`Move “${sourceName(drag!.source)}” ${moveTargetLabel(state!,target)}. Release to preview.`;if(moveLive.textContent!==caption.textContent)moveLive.textContent=caption.textContent;});
+    node.addEventListener('dragleave',event=>{if(event.relatedTarget instanceof Node&&node.contains(event.relatedTarget))return;node.classList.remove('move-drop-active');caption.textContent=label;});
+    node.addEventListener('drop',event=>{const target=targetFor(event),active=drag;if(!target||!active)return;event.preventDefault();event.stopImmediatePropagation();const raw=event.dataTransfer!.getData(active.source.kind==='group'?GROUP_DRAG_TYPE:SCENE_DRAG_TYPE);clearDrag();if(raw!==active.token){hooks.report('This move did not come from the current manuscript. Nothing changed.',true);return;}void performMove(active.source,target,active.revision,active.repositoryId);});
+  }
   function acceptDrop(event: DragEvent, beforeId: string | null = null) {
     if (!event.dataTransfer || !state?.revision || state.recoveryRequired) return;
     event.preventDefault(); event.stopPropagation();
     try {
-      const rawScene = event.dataTransfer.getData(SCENE_DRAG_TYPE);
-      if (rawScene) {
-        const source = JSON.parse(rawScene) as {repositoryId?: string; sceneId?: string};
-        if (source.repositoryId !== hooks.repository()?.id || !state.scenes.some(scene => scene.id === source.sceneId)) return;
-        if (source.sceneId === beforeId) return;
-        const scene = state.scenes.find(scene => scene.id === source.sceneId)!;
-        void changeManuscript({kind: 'reorderScene', sceneId: scene.id, beforeId, groupId: scene.groupId}); return;
-      }
       const rawPath = event.dataTransfer.getData(REPOSITORY_DRAG_TYPE);
       if (rawPath) {
         const source = JSON.parse(rawPath) as {repositoryId?: string; path?: string};
@@ -291,17 +337,20 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     target.addEventListener('drop', event => acceptDrop(event, beforeId));
   }
   function render() {
-    element.replaceChildren(); if (!state) return;
+    clearDrag();element.replaceChildren(); if (!state) return;
+    element.append(moveLive);
     element.append(el('h3', state.project || hooks.repository()?.name || 'Manuscript'), el('p', 'ms/ · Local scenes · Explicit reading order', 'muted'));
     if (state.recoveryRequired) {
       element.append(el('p', 'An interrupted manuscript change needs attention. Review its guarded rollback before making more structural changes.', 'drafting-warning'), button('Preview rollback of interrupted change', () => { void changeManuscript({kind: 'recoverInterrupted'}); }));
       return;
     }
     if (!state.revision) {
+      const disabled=el('div','','drafting-actions');for(const label of ['Add scene','Add chapter']){const b=button(label,()=>{});b.disabled=true;b.setAttribute('aria-describedby','manuscript-setup-reason');disabled.append(b);}element.append(disabled);
+      const reason=el('p','Create a manuscript before adding chapters or scenes.','drafting-help');reason.id='manuscript-setup-reason';element.append(reason);
       element.append(el('p', 'Start a drafting manuscript in ms/. Legacy scenes stay available in the file browser and their existing manifests.', 'empty'), button('Create ms manuscript', initialize, 'primary')); return;
     }
     const controls = el('div', '', 'drafting-actions');
-    controls.append(button('New scene', newScene, 'primary'), button('Import files…', () => { void importExternal(); }), button('Import repository files…', () => { void importRepository(); }), button('Copy legacy scenes…', () => { void importRepository('copy'); }), button('New group', newGroup));
+    controls.append(button('Add scene', newScene, 'primary'), button('Add chapter', newGroup), button('Import files…', () => { void importExternal(); }), button('Import repository files…', () => { void importRepository(); }), button('Copy legacy scenes…', () => { void importRepository('copy'); }));
     const undoButton = button('Undo last change', () => { void undoLastChange(); }); undoButton.disabled = !undo;
     controls.append(undoButton, button('Refresh ms', () => { void hooks.run(async () => { try { const loaded = await load(); if (loaded) { await hooks.changed(loaded, null, []); hooks.report('Manuscript refreshed from disk.'); } } catch (error) { hooks.report(`Refresh failed: ${String(error)}`, true); } }); }));
     element.append(controls);
@@ -316,19 +365,27 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     state.scenes.forEach((scene, index) => {
       const item = el('li', '', 'drafting-scene'); item.dataset.sceneId = scene.id;
       const open = button(`${index + 1}. ${scene.title || basename(scene.path)}`, () => hooks.open(scene.path), 'scene-open'); open.title = scene.path;
-      open.draggable = true;
-      open.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(SCENE_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()!.id, sceneId: scene.id})); });
+      item.append(moveGrip({kind:'scene',id:scene.id}));
       item.append(open, el('p', scene.path, 'scene-path'));
+      moveDrop(item,(source,event)=>source.kind==='scene'?{kind:'scene',id:scene.id,side:event.clientY<item.getBoundingClientRect().top+item.getBoundingClientRect().height/2?'before':'after'}:null,`Drop a scene before or after “${scene.title}”`);
       const group = state!.groups.find(group => group.id === scene.groupId); item.append(el('span', group?.title ?? 'Loose scene', 'scene-group'));
       const actions = el('div', '', 'scene-actions');
       const earlier = button('↑', () => reorder(scene, -1)); earlier.setAttribute('aria-label', `Move ${scene.title || basename(scene.path)} earlier`); earlier.title = 'Move earlier'; earlier.disabled = index === 0;
       const later = button('↓', () => reorder(scene, 1)); later.setAttribute('aria-label', `Move ${scene.title || basename(scene.path)} later`); later.title = 'Move later'; later.disabled = index === state!.scenes.length - 1;
-      actions.append(earlier, later, button('Move…', () => moveScene(scene))); item.append(actions); dropTarget(item, scene.id); list.append(item);
+      const fileOptions=el('details');fileOptions.append(el('summary','File location options'),button('Move…',()=>moveScene(scene)));actions.append(earlier, later, button(`Move scene “${scene.title}”…`,()=>moveForm({kind:'scene',id:scene.id})),fileOptions); item.append(actions); dropTarget(item, scene.id); list.append(item);
     });
     element.append(list);
     const dropEnd = el('div', state.scenes.length ? 'Drop here to place at the end' : 'No scenes yet. Create a scene or import Markdown files.', 'drafting-drop');
     dropTarget(dropEnd); element.append(dropEnd);
-    if (state.groups.length) { const groups = el('p', `Groups: ${state.groups.map(group => group.title).join(' · ')}`, 'drafting-help'); element.append(groups); }
+    const chapters=el('section','','drafting-chapters');chapters.setAttribute('aria-label','Chapters and scene groups');chapters.append(el('h4','Chapters and scene groups'));
+    if(state.groupMoveIssue){const issue=el('p',state.groupMoveIssue,'drafting-warning');issue.id='manuscript-group-move-issue';chapters.append(issue);}
+    for(const group of state.groups){const members=state.scenes.filter(s=>s.groupId===group.id),card=el('section','','manuscript-group-card');card.dataset.groupId=group.id;card.setAttribute('aria-label',group.title);card.append(el('h5',group.title),el('p',`${members.length} scene${members.length===1?'':'s'}${members.length?'':' — empty'}`),moveGrip({kind:'group',id:group.id}),button(`Move group “${group.title}”…`,()=>moveForm({kind:'group',id:group.id})));
+      if(members.length)card.append(el('p',`Contains, in reading order: ${members.map(s=>s.title).join(' → ')}`));
+      moveDrop(card,(source,event)=>source.kind==='group'?{kind:'group',id:group.id,side:event.clientY<card.getBoundingClientRect().top+card.getBoundingClientRect().height/2?'before':'after'}:{kind:'groupEnd',id:group.id},`Drop a group before/after “${group.title}”, or a scene into it`);chapters.append(card);
+    }
+    const endGroup=el('div','Drop a group after the other groups','manuscript-boundary-target');moveDrop(endGroup,source=>source.kind==='group'?{kind:'groupEndSlot'}:null,'After the other groups; ungrouped writing stays put');chapters.append(endGroup);
+    const ungrouped=el('div','Move to end of manuscript, without a group','manuscript-boundary-target');moveDrop(ungrouped,source=>source.kind==='scene'?{kind:'ungroupedEnd'}:null,'Drop a scene here to place it at the document end with No chapter');chapters.append(ungrouped);element.append(chapters);
+
   }
   return { element, supported, clear, load, initialize, importExternal, splitScene, get state() { return state; },
     /** The same previewed, confirmed reorder as the ↑/↓ buttons. Resolves once the change settles. */

@@ -1,3 +1,4 @@
+import type {ProjectRequest,ProjectResponse,ProjectResume} from './projects';
 import type {DraftRequest,DraftResponse} from './standaloneDrafts';
 import type {UpdateStatus} from './updatePanel';
 import type {GitHubRequest,GitHubResponse} from './githubTypes';
@@ -5,7 +6,7 @@ import type {FirstStoryState, PublishingMetadata, PublishingCopy} from './firstS
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 export interface RecentRepository { id: string; name: string }
-export interface RepositorySession extends RecentRepository { projectKey?: string; manifests: string[]; warning?: string | null; githubWorkspaceId?: string | null }
+export interface RepositorySession extends RecentRepository { projectKey?: string; manifests: string[]; warning?: string | null; githubWorkspaceId?: string | null; projectId?:string; projectRevision?:number; resume?:ProjectResume|null }
 export interface Entry { path: string; name: string; kind: 'directory' | 'file'; sizeBytes: number }
 export interface Document { path: string; text: string; sizeBytes: number; frontmatter: string | null; generatedCompatibility: boolean; contentHash: string }
 export interface RecoveryDraft { id: string; path: string; baseHash: string; text: string; updatedAt: number; actor?: 'author'; client?: 'studio' }
@@ -17,7 +18,9 @@ export interface DraftingState {
   manifestPath: string; revision: string | null; project: string;
   groups: DraftingGroup[]; scenes: DraftingScene[];
   untrackedPaths: string[]; missingPaths: string[]; recoveryRequired?: boolean;
+  groupMoveIssue?: string | null;
 }
+export type SceneDestination = {kind:'before'|'after';sceneId:string;groupId:string|null}|{kind:'groupEnd';groupId:string}|{kind:'ungroupedEnd'};
 export type DraftingChange =
   | { kind: 'initialize'; project: string }
   | { kind: 'createScene'; title: string; path: string; groupId?: string | null; beforeId?: string | null }
@@ -25,6 +28,8 @@ export type DraftingChange =
   | { kind: 'createGroup'; title: string }
   | { kind: 'moveScene'; sceneId: string; path: string; groupId?: string | null; beforeId?: string | null }
   | { kind: 'reorderScene'; sceneId: string; beforeId: string | null; groupId?: string | null }
+  | { kind: 'placeScene'; sceneId:string; destination:SceneDestination }
+  | { kind: 'reorderGroup'; groupId:string; beforeGroupId:string|null }
   | { kind: 'importRepository'; paths: string[]; destination: string; mode: 'move' | 'copy'; groupId?: string | null; beforeId?: string | null }
   | { kind: 'importExternal'; selectionId: string; destination: string; groupId?: string | null; beforeId?: string | null }
   | { kind: 'reconcile' }
@@ -64,6 +69,7 @@ export interface ReviewRequest { requestId: string; repositoryId: string; scope:
 export interface ReviewEdit { location?:{line:number;column:number}; id: string; path: string; fromUtf8: number; toUtf8: number; original: string; replacement: string; reason: string; role: 'proofreader' | 'editor'; status: 'pending' | 'prepared' | 'accepted' | 'rejected' | 'supersededByAuthorChoice' | 'blockedByAppliedDecision'; proposalId: string | null; fingerprint?:string;comments?:string[];provenance?:{instanceId:string;definitionId:string;definitionVersion:number;displayName:string;requestId:string;model:string;accountId:string;accountGeneration:number}[];patch?:string;patchHash?:string;conflictGroup?:string|null;selected?:boolean;sourceStale?:boolean }
 export interface ReviewResult { reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
 export interface LocalCore {
+  projectRequest?(request:ProjectRequest):Promise<ProjectResponse>;
   standalone?(request:DraftRequest):Promise<DraftResponse>;
   available(): boolean;
   updateRequest?(action: 'status'|'check'|'schedule'):Promise<UpdateStatus>;
@@ -179,6 +185,7 @@ export const localCore: LocalCore = {
   finishQuitRequest:()=>invoke('quit_request_finished'),
   onQuitRefused:callback=>listen<string>('quit-refused',event=>callback(event.payload)),
   onCloseRequested: callback => listen('close-requested', callback),
+  projectRequest:request=>invoke('project_request',{request}),
   pickRepository: () => invoke('pick_repository'),
   recentRepositories: () => invoke('recent_repositories'),
   openRecentRepository: id => invoke('open_recent_repository', { id }),

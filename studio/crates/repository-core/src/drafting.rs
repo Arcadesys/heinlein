@@ -58,6 +58,28 @@ pub struct DraftingState {
     pub untracked_paths: Vec<String>,
     pub missing_paths: Vec<String>,
     pub recovery_required: bool,
+    pub group_move_issue: Option<String>,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum SceneDestination {
+    Before {
+        scene_id: String,
+        group_id: Option<String>,
+    },
+    After {
+        scene_id: String,
+        group_id: Option<String>,
+    },
+    GroupEnd {
+        group_id: String,
+    },
+    UngroupedEnd {},
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(
@@ -96,6 +118,14 @@ pub enum DraftingChange {
         scene_id: String,
         before_id: Option<String>,
         group_id: Option<String>,
+    },
+    PlaceScene {
+        scene_id: String,
+        destination: SceneDestination,
+    },
+    ReorderGroup {
+        group_id: String,
+        before_group_id: Option<String>,
     },
     ImportRepository {
         paths: Vec<String>,
@@ -395,6 +425,123 @@ fn insert_scene(
     manifest.scenes.insert(index, scene);
     Ok(())
 }
+fn group_order_issue(manifest: &Manifest) -> Option<String> {
+    let mut encountered = Vec::new();
+    for group in &manifest.groups {
+        let positions: Vec<_> = manifest
+            .scenes
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.group_id.as_deref() == Some(&group.id))
+            .map(|(i, _)| i)
+            .collect();
+        if let (Some(first), Some(last)) = (positions.first(), positions.last()) {
+            if last - first + 1 != positions.len() {
+                let gap = manifest.scenes[*first..=*last]
+                    .iter()
+                    .find(|s| s.group_id.as_deref() != Some(&group.id))
+                    .unwrap();
+                return Some(format!("“{}” is interrupted by “{}” ({}). Use Move scene to arrange scenes explicitly; no group was normalized.", group.title, gap.title,
+                    gap.group_id.as_ref().and_then(|id| manifest.groups.iter().find(|g| &g.id == id)).map(|g| g.title.as_str()).unwrap_or("No chapter")));
+            }
+        }
+    }
+    for scene in &manifest.scenes {
+        if let Some(id) = &scene.group_id {
+            if encountered.last() != Some(id) {
+                encountered.push(id.clone());
+            }
+        }
+    }
+    let expected: Vec<_> = manifest
+        .groups
+        .iter()
+        .filter(|g| {
+            manifest
+                .scenes
+                .iter()
+                .any(|s| s.group_id.as_ref() == Some(&g.id))
+        })
+        .map(|g| g.id.clone())
+        .collect();
+    if encountered != expected {
+        let names = |ids: &[String]| {
+            ids.iter()
+                .filter_map(|id| manifest.groups.iter().find(|g| &g.id == id))
+                .map(|g| format!("“{}”", g.title))
+                .collect::<Vec<_>>()
+                .join(" → ")
+        };
+        return Some(format!("Group slots ({}) differ from reading order ({}). Use Move scene to arrange scenes explicitly; no group was normalized.", names(&expected), names(&encountered)));
+    }
+    None
+}
+fn next_group_anchor(manifest: &Manifest, id: &str) -> Result<Option<String>> {
+    let slot = manifest
+        .groups
+        .iter()
+        .position(|g| g.id == id)
+        .ok_or(Error::DraftingChanged)?;
+    if group_order_issue(manifest).is_some() {
+        return Err(Error::DraftingGroupOrder);
+    }
+    Ok(manifest.groups[slot + 1..].iter().find_map(|g| {
+        manifest
+            .scenes
+            .iter()
+            .find(|s| s.group_id.as_ref() == Some(&g.id))
+            .map(|s| s.id.clone())
+    }))
+}
+fn group_name(manifest: &Manifest, id: Option<&str>) -> String {
+    id.and_then(|id| manifest.groups.iter().find(|g| g.id == id))
+        .map(|g| g.title.clone())
+        .unwrap_or_else(|| "No chapter".into())
+}
+fn move_preview(plan: &mut DraftingPlan, manifest: &Manifest, moved: &[DraftingScene]) {
+    let names = |scenes: &[DraftingScene]| {
+        scenes
+            .iter()
+            .map(|s| format!("{} [{}]", s.title, s.id))
+            .collect::<Vec<_>>()
+            .join(" → ")
+    };
+    plan.preview.warnings.push(format!(
+        "Moved scenes: {}. Scene text, filenames and identities stay unchanged.",
+        if moved.is_empty() {
+            "none (empty group)".into()
+        } else {
+            names(moved)
+        }
+    ));
+    plan.preview.warnings.push(format!(
+        "Exact reading order after this move: {}",
+        names(&manifest.scenes)
+    ));
+    if let (Some(first), Some(last)) = (moved.first(), moved.last()) {
+        let a = manifest
+            .scenes
+            .iter()
+            .position(|s| s.id == first.id)
+            .unwrap();
+        let b = manifest
+            .scenes
+            .iter()
+            .position(|s| s.id == last.id)
+            .unwrap();
+        plan.preview.warnings.push(format!(
+            "The moved scenes follow {} and precede {}. Ungrouped scenes are not group cargo.",
+            a.checked_sub(1)
+                .map(|i| format!("“{}” [{}]", manifest.scenes[i].title, manifest.scenes[i].id))
+                .unwrap_or_else(|| "the document beginning".into()),
+            manifest
+                .scenes
+                .get(b + 1)
+                .map(|s| format!("“{}” [{}]", s.title, s.id))
+                .unwrap_or_else(|| "the document end".into())
+        ));
+    }
+}
 // Offsets are measured in the persisted UTF-8 bytes, including frontmatter.
 // Leading metadata stays on the original scene; malformed metadata fails closed.
 fn validate_split_offset(text: &str, offset: usize) -> Result<()> {
@@ -662,6 +809,7 @@ impl Repository {
                 .collect(),
             scenes,
             recovery_required,
+            group_move_issue: manifest.as_ref().and_then(group_order_issue),
         })
     }
     pub fn preview_drafting(
@@ -793,6 +941,17 @@ impl Repository {
             } => {
                 title(&name)?;
                 scene_path(&path)?;
+                let before_id = if before_id.is_none()
+                    && group_id.as_ref().is_some_and(|id| {
+                        !manifest
+                            .scenes
+                            .iter()
+                            .any(|s| s.group_id.as_ref() == Some(id))
+                    }) {
+                    next_group_anchor(&manifest, group_id.as_deref().unwrap())?
+                } else {
+                    before_id
+                };
                 self.add_new_file(
                     &mut plan,
                     &path,
@@ -891,6 +1050,17 @@ impl Repository {
                 before_id,
                 group_id,
             } => {
+                let before_id = if before_id.is_none()
+                    && group_id.as_ref().is_some_and(|id| {
+                        !manifest
+                            .scenes
+                            .iter()
+                            .any(|s| s.group_id.as_ref() == Some(id))
+                    }) {
+                    next_group_anchor(&manifest, group_id.as_deref().unwrap())?
+                } else {
+                    before_id
+                };
                 let index = manifest
                     .scenes
                     .iter()
@@ -910,12 +1080,204 @@ impl Repository {
                 insert_scene(&mut manifest, scene, &before_id)?;
                 plan.preview.summary = "Change scene order or group".into();
             }
+            DraftingChange::ReorderGroup {
+                group_id,
+                before_group_id,
+            } => {
+                let source = manifest
+                    .groups
+                    .iter()
+                    .position(|g| g.id == group_id)
+                    .ok_or(Error::DraftingChanged)?;
+                let mut groups = manifest.groups.clone();
+                if before_group_id.as_deref() == Some(&group_id) {
+                    plan.preview.summary = "No change to group position".into();
+                    return Ok(plan);
+                }
+                let group = groups.remove(source);
+                let slot = match &before_group_id {
+                    Some(id) => groups
+                        .iter()
+                        .position(|g| &g.id == id)
+                        .ok_or(Error::DraftingChanged)?,
+                    None => groups.len(),
+                };
+                groups.insert(slot, group.clone());
+                if groups == manifest.groups {
+                    plan.preview.summary = "No change to group position".into();
+                    return Ok(plan);
+                }
+                if group_order_issue(&manifest).is_some() {
+                    return Err(Error::DraftingGroupOrder);
+                }
+                let moved: Vec<_> = manifest
+                    .scenes
+                    .iter()
+                    .filter(|s| s.group_id.as_deref() == Some(&group_id))
+                    .cloned()
+                    .collect();
+                manifest.groups = groups;
+                manifest
+                    .scenes
+                    .retain(|s| s.group_id.as_deref() != Some(&group_id));
+                let anchor = next_group_anchor(&manifest, &group_id)?;
+                for scene in &moved {
+                    let doc = self.read(&scene.path)?;
+                    if doc.generated_compatibility {
+                        return Err(Error::ReadOnly);
+                    }
+                    plan.read_guards
+                        .push((scene.path.clone(), doc.content_hash));
+                    plan.recovery_paths.push(scene.path.clone());
+                    insert_scene(&mut manifest, scene.clone(), &anchor)?;
+                }
+                plan.preview.summary = format!(
+                    "Move “{}” and its {} scenes to the reviewed group slot",
+                    group.title,
+                    moved.len()
+                );
+                plan.preview.warnings.push(format!(
+                    "Group slots after move: {}. Empty groups add no source text.",
+                    manifest
+                        .groups
+                        .iter()
+                        .map(|g| format!("{} [{}]", g.title, g.id))
+                        .collect::<Vec<_>>()
+                        .join(" → ")
+                ));
+                if moved.is_empty() {
+                    let next = anchor
+                        .as_ref()
+                        .and_then(|id| manifest.scenes.iter().find(|s| &s.id == id));
+                    plan.preview.warnings.push(format!("This empty group changes metadata only. A later scene will be inserted before {}; ungrouped scenes stay in their own reading positions.", next.map(|s|format!("“{}” [{}]",s.title,s.id)).unwrap_or_else(||"the document end".into())));
+                }
+                move_preview(&mut plan, &manifest, &moved);
+            }
+            DraftingChange::PlaceScene {
+                scene_id,
+                destination,
+            } => {
+                let before = manifest.scenes.clone();
+                let source = before
+                    .iter()
+                    .position(|s| s.id == scene_id)
+                    .ok_or(Error::DraftingChanged)?;
+                let mut scene = before[source].clone();
+                let previous_group = group_name(&manifest, scene.group_id.as_deref());
+                let is_after = matches!(&destination, SceneDestination::After { .. });
+                let (membership, anchor) = match destination {
+                    SceneDestination::Before {
+                        scene_id: target,
+                        group_id,
+                    }
+                    | SceneDestination::After {
+                        scene_id: target,
+                        group_id,
+                    } => {
+                        let target_scene = before
+                            .iter()
+                            .find(|s| s.id == target)
+                            .ok_or(Error::DraftingChanged)?;
+                        if target_scene.group_id != group_id {
+                            return Err(Error::DraftingChanged);
+                        }
+                        if target == scene_id {
+                            plan.preview.summary = "No change to scene position".into();
+                            return Ok(plan);
+                        }
+                        // Resolve after-removal positions natively, never trust a renderer offset.
+                        let after = is_after;
+                        manifest.scenes.remove(source);
+                        let index = manifest
+                            .scenes
+                            .iter()
+                            .position(|s| s.id == target)
+                            .ok_or(Error::DraftingChanged)?;
+                        (
+                            group_id,
+                            if after {
+                                manifest.scenes.get(index + 1).map(|s| s.id.clone())
+                            } else {
+                                Some(target)
+                            },
+                        )
+                    }
+                    SceneDestination::GroupEnd { group_id } => {
+                        if !manifest.groups.iter().any(|g| g.id == group_id) {
+                            return Err(Error::DraftingChanged);
+                        }
+                        if scene.group_id.as_deref() == Some(&group_id)
+                            && before
+                                .iter()
+                                .filter(|s| s.group_id.as_deref() == Some(&group_id))
+                                .count()
+                                == 1
+                        {
+                            plan.preview.summary = "No change to scene position".into();
+                            return Ok(plan);
+                        }
+                        let was_empty = !before
+                            .iter()
+                            .any(|s| s.group_id.as_deref() == Some(&group_id));
+                        if was_empty && group_order_issue(&manifest).is_some() {
+                            return Err(Error::DraftingGroupOrder);
+                        }
+                        manifest.scenes.remove(source);
+                        let anchor = if was_empty {
+                            next_group_anchor(&manifest, &group_id)?
+                        } else {
+                            manifest
+                                .scenes
+                                .iter()
+                                .rposition(|s| s.group_id.as_deref() == Some(&group_id))
+                                .and_then(|i| manifest.scenes.get(i + 1))
+                                .map(|s| s.id.clone())
+                        };
+                        (Some(group_id), anchor)
+                    }
+                    SceneDestination::UngroupedEnd {} => {
+                        manifest.scenes.remove(source);
+                        (None, None)
+                    }
+                };
+                scene.group_id = membership;
+                insert_scene(&mut manifest, scene.clone(), &anchor)?;
+                if manifest.scenes == before {
+                    plan.preview.summary = "No change to scene position".into();
+                    return Ok(plan);
+                }
+                let doc = self.read(&scene.path)?;
+                if doc.generated_compatibility {
+                    return Err(Error::ReadOnly);
+                }
+                plan.read_guards
+                    .push((scene.path.clone(), doc.content_hash));
+                plan.recovery_paths.push(scene.path.clone());
+                plan.preview.summary = format!(
+                    "Move “{}” from “{}” to “{}”",
+                    scene.title,
+                    previous_group,
+                    group_name(&manifest, scene.group_id.as_deref())
+                );
+                move_preview(&mut plan, &manifest, &[scene]);
+            }
             DraftingChange::MoveScene {
                 scene_id,
                 path,
                 before_id,
                 group_id,
             } => {
+                let before_id = if before_id.is_none()
+                    && group_id.as_ref().is_some_and(|id| {
+                        !manifest
+                            .scenes
+                            .iter()
+                            .any(|s| s.group_id.as_ref() == Some(id))
+                    }) {
+                    next_group_anchor(&manifest, group_id.as_deref().unwrap())?
+                } else {
+                    before_id
+                };
                 scene_path(&path)?;
                 let index = manifest
                     .scenes
@@ -1388,6 +1750,19 @@ impl Repository {
         }
         let _lock = Unlock(root);
         self.verify_plan(plan)?;
+        if plan.edits.is_empty() && plan.recovery_journal_hash.is_none() {
+            match self.handle(JOURNAL, true) {
+                Ok(_) => return Err(Error::DraftingPending),
+                Err(Error::NotFound) => {
+                    return Ok(DraftingUndo {
+                        id: plan.preview.id.clone(),
+                        plan: plan.clone(),
+                        available: false,
+                    })
+                }
+                Err(error) => return Err(error),
+            }
+        }
         if let Some(hash) = &plan.recovery_journal_hash {
             recovery.verify_structure_receipt_locked(self, hash)?;
             if content_hash(&self.raw(JOURNAL, MAX_JOURNAL_BYTES, true)?) != *hash {
@@ -2158,6 +2533,35 @@ mod tests {
         assert_eq!(fs::read(f.repo.root().join("ms/a.md")).unwrap(), b"");
     }
     #[test]
+    fn empty_chapter_persists_then_new_empty_scene_uses_its_stable_identity() {
+        let f = Fixture::new();
+        f.initialize();
+        f.apply(DraftingChange::CreateGroup {
+            title: "Opening — chapter".into(),
+        });
+        let reopened = Repository::open(f.repo.root()).unwrap();
+        let empty = reopened.load_drafting().unwrap();
+        assert!(empty.scenes.is_empty());
+        assert_eq!(empty.groups.len(), 1);
+        let group = empty.groups[0].id.clone();
+        assert_eq!(empty.groups[0].title, "Opening — chapter");
+        f.apply(DraftingChange::CreateScene {
+            title: "Arrival".into(),
+            path: "ms/arrival.md".into(),
+            group_id: Some(group.clone()),
+            before_id: None,
+        });
+        let state = Repository::open(f.repo.root())
+            .unwrap()
+            .load_drafting()
+            .unwrap();
+        assert_eq!(state.groups[0].id, group);
+        assert_eq!(state.scenes.len(), 1);
+        assert_eq!(state.scenes[0].group_id.as_deref(), Some(group.as_str()));
+        assert_eq!(fs::read(f.repo.root().join("ms/arrival.md")).unwrap(), b"");
+        assert!(uuid::Uuid::parse_str(&state.scenes[0].id).is_ok());
+    }
+    #[test]
     fn repository_move_preserves_bytes_and_ids_copy_gets_new_identity() {
         let f = Fixture::new();
         f.initialize();
@@ -2901,6 +3305,7 @@ mod tests {
         assert!(!f.repo.root().join("ms/a.md").exists());
         assert!(!f.repo.load_drafting().unwrap().recovery_required);
     }
+    include!("drafting_moves_tests.rs");
 }
 
 #[cfg(all(test, unix))]

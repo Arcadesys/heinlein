@@ -818,7 +818,7 @@ describe('ms drafting structure and recovery guard', () => {
   });
   function transfer() {
     const values = new Map<string, string>();
-    return {setData: (type: string, value: string) => { values.set(type, value); }, getData: (type: string) => values.get(type) ?? '', get types() { return [...values.keys()]; }, files: [] as {name: string}[], effectAllowed: '', dropEffect: ''};
+    return {clearData:()=>values.clear(),setData: (type: string, value: string) => { values.set(type, value); }, getData: (type: string) => values.get(type) ?? '', get types() { return [...values.keys()]; }, files: [] as {name: string}[], effectAllowed: '', dropEffect: ''};
   }
   function dragEvent(target: Element, type: string, dataTransfer: ReturnType<typeof transfer>) {
     const event = new Event(type, {bubbles: true, cancelable: true}); Object.defineProperty(event, 'dataTransfer', {value: dataTransfer}); target.dispatchEvent(event);
@@ -835,9 +835,9 @@ describe('ms drafting structure and recovery guard', () => {
   });
   it('reorders an outline drag by stable ID with no filename change', async () => {
     const {core} = await setupDrafting(); const data = transfer();
-    dragEvent(document.querySelector('[data-scene-id="scene-a"] .scene-open')!, 'dragstart', data);
+    dragEvent(document.querySelector('[data-scene-id="scene-a"] .manuscript-move-grip')!, 'dragstart', data);
     dragEvent(document.querySelector('[data-scene-id="scene-b"]')!, 'drop', data); await settle();
-    expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'reorderScene', sceneId: 'scene-a', beforeId: 'scene-b', groupId: 'g1'});
+    expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'placeScene', sceneId: 'scene-a', destination:{kind:'after',sceneId:'scene-b',groupId:null}});
     exact('Cancel').click(); await settle();
   });
   it('ignores repository drags from another session', async () => {
@@ -893,7 +893,7 @@ describe('ms drafting structure and recovery guard', () => {
   it('creates a scene only after preview, then opens its exact requested path', async () => {
     const {core} = await setupDrafting();
     core.applyDraftingChange = vi.fn(async () => ({state: {...initial(), revision: 'manifest-2', scenes: [...initial().scenes, {id: 'new-scene-id', title: 'Untitled scene', path: 'ms/untitled-scene.md', groupId: null}]}, undoId: 'create-undo'}));
-    exact('New scene').click(); exact('Preview new scene').click(); await settle();
+    exact('Add scene').click(); exact('Preview new scene').click(); await settle();
     expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'createScene', title: 'Untitled scene', path: 'ms/untitled-scene.md', groupId: null, beforeId: null});
     expect(core.applyDraftingChange).not.toHaveBeenCalled(); exact('Apply change').click(); await settle();
     expect(core.readDocument).toHaveBeenLastCalledWith(session.id, 'ms/untitled-scene.md');

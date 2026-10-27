@@ -10,7 +10,7 @@ for(const contrast of [false,true])test(`focused Send: Not now, native cancel, k
  await expect(page.locator('html')).toHaveAttribute('data-zoom','200');
  if(await page.getByRole('button',{name:'Navigation',exact:true}).count())await activate(page.getByRole('button',{name:'Navigation',exact:true}));
  await activate(page.getByRole('tab',{name:'Repository',exact:true}));await activate(page.locator('.repository-send'));
- const dialog=page.locator('dialog.github-panel');await expect(dialog.getByRole('heading',{name:'Send your changes',exact:true})).toBeVisible();
+ const dialog=page.locator('dialog.github-panel:not(.project-library)');await expect(dialog.getByRole('heading',{name:'Send your changes',exact:true})).toBeVisible();
  await expect(dialog).not.toContainText('Sign out of GitHub');
  await activate(dialog.getByRole('button',{name:'Not now',exact:true}));await expect(dialog).not.toBeVisible();
  expect(await page.evaluate(()=> (window as any).githubFixture.calls.filter((c:any)=>c.action==='confirm'))).toHaveLength(0);
@@ -28,7 +28,7 @@ for(const contrast of [false,true])test(`focused Send: Not now, native cancel, k
 });
 test('focused definite failure retains local version and explicit retry needs no duplicate version',async({page})=>{
  await page.goto('/tests/browser/github.html?repo-first&writing&send&send-failure=definite');
- const dialog=page.locator('dialog.github-panel');
+ const dialog=page.locator('dialog.github-panel:not(.project-library)');
  await dialog.getByRole('checkbox',{name:'edit: story.md',exact:true}).check();await dialog.getByText('Name and email included with new changes',{exact:true}).click();
  await dialog.getByLabel('Name recorded with these changes',{exact:true}).fill('Synthetic Writer');await dialog.getByLabel('Email recorded with these changes',{exact:true}).fill('synthetic@users.noreply.github.com');
  await dialog.getByRole('button',{name:'Send to GitHub…',exact:true}).click();
