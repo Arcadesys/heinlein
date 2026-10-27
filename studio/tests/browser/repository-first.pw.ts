@@ -5,13 +5,13 @@ test('repository-first open and offline reopen keep local saves separate from se
  async function activate(target:Locator){await expect(target).toBeVisible();for(let i=0;i<100;i++){if(await target.evaluate(el=>el===document.activeElement)){await page.keyboard.press('Enter');return;}await page.keyboard.press('Tab');}throw Error('Unreachable keyboard target');}
  await page.goto('/tests/browser/github.html?repo-first');
  if(await page.getByRole('button',{name:'Navigation',exact:true}).count())await activate(page.getByRole('button',{name:'Navigation',exact:true}));
- await activate(page.getByRole('tab',{name:'Repository',exact:true}));
+ await activate(page.getByRole('tab',{name:'Source files',exact:true}));
  await expect(page.getByRole('button',{name:'Open from GitHub…',exact:true})).toBeVisible();
  await expect(page.getByRole('region',{name:'Recent GitHub repositories'})).toContainText('example/synthetic-story');
  await activate(page.getByRole('button',{name:'Open example/synthetic-story',exact:true}));
  await activate(page.getByRole('button',{name:'Read file story.md',exact:true}));
  if(await page.getByRole('button',{name:'Navigation',exact:true}).count())await activate(page.getByRole('button',{name:'Navigation',exact:true}));
- await activate(page.getByRole('tab',{name:'Repository',exact:true}));
+ await activate(page.getByRole('tab',{name:'Source files',exact:true}));
  await expect(page.locator('.pill-project')).toHaveText('example/synthetic-story');
  await expect(page.locator('.repository-origin-status')).toContainText(/not yet sent|No Send is recorded|successful Send/);
  const editor=page.locator('.cm-content');await editor.focus();await page.keyboard.press('End');await page.keyboard.insertText(' Unsaved exact words.');

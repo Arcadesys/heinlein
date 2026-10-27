@@ -3,8 +3,8 @@ import AxeBuilder from '@axe-core/playwright';
 for(const high of [false,true])test(`Manuscript pointer and keyboard moves, contrast=${high}`,async({page},info)=>{
  test.setTimeout(90000);
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
- await page.goto('/tests/browser/projects.html?movement-demo');
- const pane=page.getByRole('tabpanel',{name:'Manuscript',exact:true});await expect(pane.getByRole('button',{name:'Add scene',exact:true})).toBeVisible();
+ await page.goto('/tests/browser/projects.html?movement-demo');await expect(page.locator('html')).toHaveAttribute('data-demo-ready','true');
+ const pane=page.getByRole('tabpanel',{name:'Binder',exact:true});await expect(pane.getByRole('button',{name:'Add scene',exact:true})).toBeVisible();
  if(high){await page.getByRole('button',{name:'Appearance',exact:false}).click();await page.getByRole('button',{name:'High contrast',exact:true}).click();await page.keyboard.press('Escape');}
  for(let i=0;i<8&&await page.locator('html').getAttribute('data-zoom')!=='200';i++)await page.keyboard.press('Control+=');
  const snapshot=()=>page.evaluate(()=>{const f=(window as any).projectFixture,s=f.state();return{m:s.manuscripts['local-a'],docs:s.documents['local-a'],calls:f.draftingCalls,external:f.externalCalls};});
@@ -43,8 +43,8 @@ for(const high of [false,true])test(`Manuscript pointer and keyboard moves, cont
 });
 
 test('Visible manuscript grips support normal browser mouse moves and cancel',async({page},info)=>{
- await page.setViewportSize({width:1440,height:4000});await page.goto('/tests/browser/projects.html?movement-demo');
- const pane=page.getByRole('tabpanel',{name:'Manuscript',exact:true}),review=page.getByRole('dialog',{name:'Review manuscript change'});
+ await page.setViewportSize({width:1440,height:4000});await page.goto('/tests/browser/projects.html?movement-demo');await expect(page.locator('html')).toHaveAttribute('data-demo-ready','true');
+ const pane=page.getByRole('tabpanel',{name:'Binder',exact:true}),review=page.getByRole('dialog',{name:'Review manuscript change'});
  const grip=(kind:string,id:string)=>pane.locator(`[data-move-kind="${kind}"][data-move-id="${id}"]`);
  const state=()=>page.evaluate(()=>{const f=(window as any).projectFixture,s=f.state();return{m:s.manuscripts['local-a'],docs:s.documents['local-a'],external:f.externalCalls,calls:f.draftingCalls};});
  async function mouseDrag(source:Locator,target:Locator){await source.scrollIntoViewIfNeeded();await target.scrollIntoViewIfNeeded();await expect(source).toBeInViewport();await expect(target).toBeInViewport();await source.dragTo(target);}

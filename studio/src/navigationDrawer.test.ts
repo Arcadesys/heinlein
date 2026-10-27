@@ -12,7 +12,7 @@ describe('unified navigation drawer', () => {
     const scenes = document.createElement('section'); scenes.textContent = 'Scene passages';
     const changed = vi.fn(); const drawer = createNavigationDrawer(files, manuscript, scenes, changed);
     document.body.append(drawer.element);
-    const tabs = [...drawer.element.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    const tabs = ['files', 'manuscript', 'scenes'].map(key => drawer.element.querySelector<HTMLButtonElement>(`#navigation-tab-${key}`)!);
     const toggle = drawer.element.querySelector<HTMLButtonElement>('.navigation-toggle')!;
     return {drawer, files, manuscript, scenes, tabs, toggle, changed};
   }
@@ -33,8 +33,8 @@ describe('unified navigation drawer', () => {
     key(tabs[1], 'ArrowRight'); expect(document.activeElement).toBe(tabs[2]);
     key(tabs[2], 'ArrowRight'); expect(document.activeElement).toBe(tabs[0]);
     key(tabs[0], 'ArrowLeft'); expect(document.activeElement).toBe(tabs[2]);
-    key(tabs[2], 'Home'); expect(document.activeElement).toBe(tabs[0]);
-    key(tabs[0], 'End'); expect(document.activeElement).toBe(tabs[2]);
+    key(tabs[2], 'Home'); expect(document.activeElement).toBe(tabs[1]);
+    key(tabs[1], 'End'); expect(document.activeElement).toBe(tabs[0]);
     tabs[0].click(); expect(files.querySelector('input')).toBe(input); expect(input.value).toBe('still here');
   });
   it('Escape closes from panel content and restores focus to the single opener', () => {

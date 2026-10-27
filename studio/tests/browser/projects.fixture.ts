@@ -21,4 +21,5 @@ if(new URLSearchParams(location.search).has('manuscript-demo')||moving)void(asyn
  await click(()=>[...document.querySelectorAll<HTMLButtonElement>('.project-library button')].find(b=>b.textContent==='Open Novel A'));
  const toggle=document.querySelector<HTMLButtonElement>('.navigation-toggle');if(toggle?.getAttribute('aria-expanded')!=='true'){toggle?.click();await settle();}
  await click(()=>document.querySelector<HTMLButtonElement>('#navigation-tab-manuscript')??undefined);
+ document.documentElement.dataset.demoReady='true';
 })();

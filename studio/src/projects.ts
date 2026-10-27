@@ -9,7 +9,7 @@ export function createProjectLibrary(core:LocalCore,hooks:{current():RepositoryS
  let generation=0,busy=false,opener:HTMLElement|null=null;
  const title=el('h2','Projects');title.id='project-library-title';title.tabIndex=-1;
  const status=el('p');status.setAttribute('role','status');const body=el('section');
- function controls(){element.querySelectorAll<HTMLButtonElement|HTMLInputElement>('button,input').forEach(b=>b.disabled=busy);element.setAttribute('aria-busy',String(busy));}
+ function controls(){element.querySelectorAll<HTMLButtonElement|HTMLInputElement>('button,input').forEach(b=>b.disabled=busy);element.setAttribute('aria-busy',String(busy));status.setAttribute('aria-busy',String(busy&&!!status.textContent));}
  async function act(run:()=>Promise<void>){if(busy)return;busy=true;controls();try{await run();}catch(e){status.textContent=String(e);}finally{busy=false;controls();}}
  function button(text:string,run:()=>Promise<void>){const b=el('button',text);b.type='button';b.onclick=()=>void act(run);return b;}
  function close(writing=false){generation++;element.close();if(writing)hooks.focusWriting();else opener?.focus();}
@@ -20,8 +20,8 @@ export function createProjectLibrary(core:LocalCore,hooks:{current():RepositoryS
  async function library(){const view=generation;title.textContent='Projects';status.textContent='';const projects=await request<Project[]>({action:'list'});if(!element.open||view!==generation)return;
   const active=projects.find(p=>p.id===hooks.current()?.projectId);if(active)hooks.metadata(active);
   body.replaceChildren(para('Choose the writing you want to return to. Project changes stay on this Mac until you explicitly send them.','project-intro'));
-  const newProject=button('New project…',async()=>{if(await hooks.openLocal())close(true);});newProject.classList.add('project-primary');
-  const actions=div('project-actions',newProject,button('Open local folder…',async()=>{if(await hooks.openLocal())close(true);}),button('Open from GitHub…',async()=>{close();hooks.openGitHub();}));actions.setAttribute('role','group');actions.setAttribute('aria-label','Add a project');body.append(actions);
+  const addTitle=el('h3','Add a project');addTitle.className='project-section-title';
+  const actions=div('project-actions',button('Start or open a folder…',async()=>{if(await hooks.openLocal())close(true);}),button('Bring in from GitHub…',async()=>{close();hooks.openGitHub();}));actions.setAttribute('role','group');actions.setAttribute('aria-label','Add a project');actions.firstElementChild?.classList.add('project-primary');body.append(addTitle,actions);
   const listTitle=el('h3','Your projects');listTitle.id='project-list-title';listTitle.className='project-section-title';body.append(listTitle);
   if(!projects.length)body.append(para('No projects yet. You can keep writing in standalone drafts without setting one up.','project-empty'));
   else{const list=el('ul');list.className='project-list';list.setAttribute('aria-labelledby','project-list-title');
@@ -31,7 +31,7 @@ export function createProjectLibrary(core:LocalCore,hooks:{current():RepositoryS
     if(p.resume)meta.append(para(`Last document: ${p.resume.path}`,'project-resume'));
     if(p.unavailable)meta.append(para(`Unavailable: ${p.unavailable}. Your other projects and drafts are unchanged.`,'project-unavailable'));
     const open=button(`Open ${p.name}`,async()=>{if(await hooks.switchProject(p.id))close(true);else status.textContent='Project not changed. Your current writing is still here; resolve the save or recovery message before switching.';});open.classList.add('project-open');
-    const config=button(`Settings for ${p.name}`,()=>settings(p.id));config.classList.add('project-settings-link');
+    const config=button(`Manage ${p.name}`,()=>settings(p.id));config.classList.add('project-settings-link');
     row.append(div('project-row-info',heading,meta),div('project-row-actions',open,config));list.append(row);
    }body.append(list);}
   const draftsTitle=el('h3','Standalone drafts');draftsTitle.className='project-section-title';
@@ -39,8 +39,8 @@ export function createProjectLibrary(core:LocalCore,hooks:{current():RepositoryS
   const refresh=button('Refresh projects',library);refresh.classList.add('project-quiet');body.append(drafts,div('project-footer',refresh));title.focus();
  }
  function group(heading:string,...kids:Node[]){const s=el('section');s.className='project-settings-group';if(heading)s.append(el('h3',heading));s.append(...kids);return s;}
- async function settings(id:string){const view=generation;const p=await request<Project>({action:'settings',id});if(!element.open||view!==generation)return;hooks.metadata(p);title.textContent=`Project settings — ${p.name}`;body.replaceChildren();
-  const back=button('Back to Projects',library);back.classList.add('project-quiet');body.append(div('project-settings-nav',back));
+ async function settings(id:string){const view=generation;const p=await request<Project>({action:'settings',id});if(!element.open||view!==generation)return;hooks.metadata(p);title.textContent=`Manage — ${p.name}`;body.replaceChildren();
+  const back=button('← All projects',library);back.classList.add('project-quiet');body.append(div('project-settings-nav',back));
   if(p.unavailable)body.append(para(`Unavailable: ${p.unavailable}. Open another folder from Projects to create a separate entry. Original recovery data is retained; no location is silently replaced.`,'project-unavailable'));
   const label=el('label','Project name'),input=el('input');input.type='text';input.value=p.name;input.maxLength=240;label.append(input);
   const save=button('Save project name',async()=>{const next=await request<Project>({action:'rename',id:p.id,revision:p.revision,name:input.value});hooks.metadata(next);status.textContent='Project name saved. Writing location unchanged.';await settings(p.id);});

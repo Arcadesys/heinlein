@@ -9,7 +9,7 @@ for(const contrast of [false,true])test(`focused Send: Not now, native cancel, k
  for(let n=0;n<8&&await page.locator('html').getAttribute('data-zoom')!=='200';n++)await page.keyboard.press('Control+=');
  await expect(page.locator('html')).toHaveAttribute('data-zoom','200');
  if(await page.getByRole('button',{name:'Navigation',exact:true}).count())await activate(page.getByRole('button',{name:'Navigation',exact:true}));
- await activate(page.getByRole('tab',{name:'Repository',exact:true}));await activate(page.locator('.repository-send'));
+ await activate(page.getByRole('tab',{name:'Source files',exact:true}));await activate(page.locator('.repository-send'));
  const dialog=page.locator('dialog.github-panel:not(.project-library)');await expect(dialog.getByRole('heading',{name:'Send your changes',exact:true})).toBeVisible();await expect(dialog).not.toHaveAttribute('aria-busy','');
  await expect(dialog).not.toContainText('Sign out of GitHub');
  await activate(dialog.getByRole('button',{name:'Not now',exact:true}));await expect(dialog).not.toBeVisible();
