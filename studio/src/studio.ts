@@ -491,12 +491,12 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     let requested = false;
     try {
       if (disposed || selecting || structuralBusy || saving || staging) return;
-      const revision = edits;
+      const revision = edits,epoch=documentEpoch,session=repository?.id;
       if (!await allowLeave() || disposed || revision !== edits || saving || structuralBusy || selecting || staging) return;
-      await rememberProjectPosition();
+      if(!await rememberProjectPositionAfterLeave())return;
       root.inert = true;
       await dirtySync;
-      if (!disposed && revision === edits && !saving && !structuralBusy && !selecting && !staging) {
+      if (!disposed && revision === edits && epoch === documentEpoch && session === repository?.id && !projectWritingBlocksLeave() && !saving && !structuralBusy && !selecting && !staging) {
         await core.requestClose(true);
         requested = true;
       }
@@ -1272,6 +1272,18 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if(repository?.id===session.id){repository.projectRevision=p.revision;repository.name=p.name;}
     });projectResumeQueue=task.catch(()=>{});await task;
   }
+  function projectWritingBlocksLeave():boolean {
+    return !!editor&&!standalone?.active&&!opened?.generatedCompatibility&&!!(saving||staging||recoveryPending||recoveryErrorMessage||repositoryDetached);
+  }
+  async function rememberProjectPositionAfterLeave():Promise<boolean> {
+    const revision=edits,wasDirty=dirty,session=repository?.id,epoch=documentEpoch,draftText=standalone?.active?standalone.text:null;
+    try{if(!(dirty&&writePaused==='discard'))await rememberProjectPosition();}catch(error){
+      // A position hint is not a writing save. Clean external changes may make
+      // it unavailable; native activation validates any retained hint afresh.
+      if(dirty||projectWritingBlocksLeave()){reportError(error);return false;}
+    }
+    return !disposed&&!projectWritingBlocksLeave()&&documentEpoch===epoch&&edits===revision&&repository?.id===session&&dirty===wasDirty&&(draftText===null||standalone?.text===draftText);
+  }
   function scheduleProjectPosition(){if(projectPositionTimer)clearTimeout(projectPositionTimer);projectPositionTimer=setTimeout(()=>{projectPositionTimer=null;if(!dirty&&!saving&&!selecting&&!standalone?.active)void rememberProjectPosition().catch(()=>{});},600);}
   async function switchProject(id:string):Promise<boolean>{
     if(!core.projectRequest||selecting||structuralBusy||proposalBusy)return false;
@@ -1292,15 +1304,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
 
   async function selectRepository(select: () => Promise<RepositorySession | null>) {
     if (selecting || !await allowLeave() || selecting) return;
-    const beforeResumeEdits=edits,beforeResumeDirty=dirty,beforeResumeSession=repository?.id,beforeResumeEpoch=documentEpoch,beforeDraft=standalone?.active?standalone.text:null;
-    try{if(!(dirty&&writePaused==='discard'))await rememberProjectPosition();}catch(error){
-      // Position metadata is best effort after allowLeave has settled writing.
-      // External file/root changes can invalidate this hint without dirtying the
-      // editor. Native activation will validate it again and use the overview.
-      // Never turn a pending write/recovery or detached-session error into leave consent.
-      if(dirty||saving||recoveryPending||recoveryErrorMessage||repositoryDetached){reportError(error);return;}
-    }
-    if(disposed||documentEpoch!==beforeResumeEpoch||edits!==beforeResumeEdits||repository?.id!==beforeResumeSession||dirty!==beforeResumeDirty||(beforeDraft!==null&&standalone?.text!==beforeDraft))return;
+    if(!await rememberProjectPositionAfterLeave())return;
     selecting = true;
     reviewPanel?.clear();
     manuscriptSearch.close();
