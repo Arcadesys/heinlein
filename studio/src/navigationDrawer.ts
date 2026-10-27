@@ -1,11 +1,11 @@
 import { REPOSITORY_DRAG_TYPE, SCENE_DRAG_TYPE } from './draftingPanel';
 
-const TAB_ORDER = ['files', 'manuscript', 'scenes'] as const;
+const TAB_ORDER = ['manuscript', 'scenes', 'files'] as const;
 type NavigationTab = typeof TAB_ORDER[number];
 const STORAGE_KEY = 'heinlein-studio-navigation-v1';
 
 /** One non-modal drawer; switching tabs retains the live panels and their state. */
-export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLElement, scenes: HTMLElement, changed: (open: boolean) => void, writingLabel = 'Repository', selected?: (tab:NavigationTab)=>void) {
+export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLElement, scenes: HTMLElement, changed: (open: boolean) => void, writingLabel = 'Source files', selected?: (tab:NavigationTab)=>void) {
   let active: NavigationTab = 'files';
   let open = !window.matchMedia?.('(max-width: 760px)').matches;
   try {
@@ -21,7 +21,7 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
     }
   } catch { /* Invalid or unavailable storage must not prevent navigation. */ }
   const element = document.createElement('nav');
-  element.className = 'navigator'; element.setAttribute('aria-label', 'Files, manuscript, and scene navigator');
+  element.className = 'navigator'; element.setAttribute('aria-label', 'Binder, scene breaks, and source files');
   const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'navigation-toggle';
   toggle.setAttribute('aria-controls', 'navigation-drawer');
   toggle.setAttribute('aria-keyshortcuts', 'Control+\\ Meta+\\');
@@ -32,7 +32,7 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
   const tabs = new Map<NavigationTab, HTMLButtonElement>();
   for (const key of TAB_ORDER) {
     const tab = document.createElement('button'); tab.type = 'button'; tab.id = `navigation-tab-${key}`;
-    tab.textContent = key === 'files' ? writingLabel : key === 'manuscript' ? 'Manuscript' : 'Scenes';
+    tab.textContent = key === 'files' ? writingLabel : key === 'manuscript' ? 'Binder' : 'In this scene';
     tab.setAttribute('role', 'tab'); tab.setAttribute('aria-controls', `navigation-panel-${key}`);
     tab.addEventListener('click', () => select(key));
     // Keep existing drag/import targets reachable without accepting or applying a drop here.
@@ -46,7 +46,7 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey) return;
       event.preventDefault();
       const direction = event.key === 'ArrowLeft' ? -1 : 1;
-      select(event.key === 'Home' ? 'files' : event.key === 'End' ? 'scenes' : TAB_ORDER[(TAB_ORDER.indexOf(key) + direction + TAB_ORDER.length) % TAB_ORDER.length]);
+      select(event.key === 'Home' ? TAB_ORDER[0] : event.key === 'End' ? TAB_ORDER[TAB_ORDER.length - 1] : TAB_ORDER[(TAB_ORDER.indexOf(key) + direction + TAB_ORDER.length) % TAB_ORDER.length]);
     });
     tabs.set(key, tab); tablist.append(tab);
     panels[key].id = `navigation-panel-${key}`; panels[key].setAttribute('role', 'tabpanel');

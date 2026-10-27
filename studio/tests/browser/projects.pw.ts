@@ -19,7 +19,7 @@ test('project library/settings have keyboard focus, large targets, contrast and 
  for(let i=0;i<8&&await page.locator('html').getAttribute('data-zoom')!=='200';i++)await page.keyboard.press('Control+=');
  await expect(page.locator('html')).toHaveAttribute('data-zoom','200');expect(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
  for(const target of await dialog.locator('button').all()){const box=await target.boundingBox();expect(box?.height).toBeGreaterThanOrEqual(44);}
- await activate(page,page.getByRole('button',{name:'Settings for Novel B',exact:true}));await expect(dialog).toContainText('example/novel-b');await expect(dialog).toContainText('Working branch: story/novel-b');await expect(page.getByRole('heading',{name:'Project settings — Novel B'})).toBeFocused();
+ await activate(page,page.getByRole('button',{name:'Manage Novel B',exact:true}));await expect(dialog).toContainText('example/novel-b');await expect(dialog).toContainText('Working branch: story/novel-b');await expect(page.getByRole('heading',{name:'Project settings — Novel B'})).toBeFocused();
  expect((await new AxeBuilder({page}).include('.project-library').analyze()).violations).toEqual([]);await activate(page,page.getByRole('button',{name:'Back to writing',exact:true}));
  await page.getByRole('button',{name:'Appearance',exact:false}).click();await activate(page,page.getByRole('button',{name:'High contrast',exact:true}));await page.keyboard.press('Escape');await library(page);expect((await new AxeBuilder({page}).include('.project-library').analyze()).violations).toEqual([]);
 });

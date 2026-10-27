@@ -95,6 +95,7 @@ summary { min-height: 2.75rem; padding: .6rem 0; font-weight: 500; }
 .status-pill > * { flex: none; }
 .pill-muted { color: var(--fg-muted); }
 .pill-project { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; }
+.pill-chapter { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
 .pill-scene { font-weight: 500; max-width: 20rem; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
 .pill-rule { width: 1px; height: 1rem; background: var(--border); }
 .pill-mono { font: 400 .8125rem var(--font-mono); color: var(--fg-muted); }

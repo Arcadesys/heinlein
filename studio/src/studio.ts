@@ -413,6 +413,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   pill.setAttribute('aria-label', 'Writing status');
   const pillProject = core.projectRequest?button('Projects…',()=>void projectLibrary.open(),'pill-project project-switcher'):el('span','Heinlein Studio','pill-muted pill-project');
   if(core.projectRequest)pillProject.setAttribute('aria-haspopup','dialog');
+  const pillChapter = el('span', '', 'pill-chapter'); pillChapter.hidden = true;
+  const pillChapterSep = el('span', '/', 'pill-muted'); pillChapterSep.hidden = true;
   const pillScene = el('span', 'No scene open', 'pill-scene');
   const pillWords = el('span', '', 'pill-mono pill-words');
   const pillSave = el('span', '', 'pill-save'); const pillSaveLabel = el('span', 'Nothing open');
@@ -425,7 +427,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   goalButton.addEventListener('click', () => toggleGoal());
   const paletteButton = button(formatKeys('⌘K'), () => openPalette('scenes'), 'pill-key');
   paletteButton.setAttribute('aria-label', 'Open command palette'); paletteButton.title = 'Jump to a scene, file or command (Cmd/Ctrl+K)';
-  pill.append(pillProject, el('span', '/', 'pill-muted'), pillScene, el('span', '', 'pill-rule'), pillWords, pillSave, goalButton, proposalsEntry, paletteButton);
+  pill.append(pillProject, el('span', '/', 'pill-muted'), pillChapter, pillChapterSep, pillScene, el('span', '', 'pill-rule'), pillWords, pillSave, goalButton, proposalsEntry, paletteButton);
   const status = el('p', 'Open from GitHub, open a local folder, or start a draft.', 'status');
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
@@ -560,7 +562,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     corner.prepend(button('Drafts',()=>void standalone!.list()),newDraftButton);
   }
 
-  const navigation = createNavigationDrawer(files, manuscriptPane, scenePane, open => layout.classList.toggle('navigation-open', open),projectLibrary.supported?'Writing':'Repository',tab=>{if(tab==='manuscript')void openDrafting();});
+  const navigation = createNavigationDrawer(files, manuscriptPane, scenePane, open => layout.classList.toggle('navigation-open', open),'Source files',tab=>{if(tab==='manuscript')void openDrafting();});
   layout.append(navigation.element, preview);
   chromeReady = true;
   resetPreview();
@@ -1155,6 +1157,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     pillProject.textContent = projectLibrary.supported?(standalone?.active?'Standalone draft · Projects…':repository?.name??'Projects…'):documentOrigin(repository,Boolean(standalone?.active));
     if(projectLibrary.supported)pillProject.setAttribute('aria-label',`Projects. ${standalone?.active?'Standalone draft':repository?.name??'No project selected'}`);
     const scene = opened && drafting.state?.scenes.find(item => item.path === opened!.path);
+    const chapterTitle = !standalone?.active && scene ? drafting.state?.groups.find(group => group.id === scene.groupId)?.title : undefined;
+    pillChapter.textContent = chapterTitle ?? ''; pillChapter.hidden = pillChapterSep.hidden = !chapterTitle;
     pillScene.textContent = standalone?.active ? 'Untitled draft' : opened ? (scene && scene.title) || basename(opened.path) : 'No scene open';
     const words = standalone?.active ? wordCount(standalone.text) : writingSummary?.sceneWords;
     pillWords.textContent = words == null ? '— words' : `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'}`;
