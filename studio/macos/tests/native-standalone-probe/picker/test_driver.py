@@ -71,11 +71,15 @@ class ReceiptTests(unittest.TestCase):
         template=lines.pop()['value']
         for phase,stage in ((1,'picker-cancel-real-null'),(2,'picker-preview-real-token')):
             lines.extend([
+                {'kind':'native-picker-diagnostic','phase':phase,'savePanelTypeMatches':True,'visible':True,'fields':{'messageMatches':True,'directoryMatches':True,'nameMatches':False}},
+                {'kind':'native-picker','stage':'owned-panel-before-synthetic-name-input','phase':phase},
+                {'kind':'native-picker-diagnostic','phase':phase,'savePanelTypeMatches':True,'visible':True,'afterSyntheticNameInput':True,'fields':{'messageMatches':True,'directoryMatches':True,'nameMatches':True}},
+                {'kind':'native-picker','stage':'synthetic-filename-reread-verified','phase':phase},
                 {'kind':'native-picker','stage':'actual-NSSavePanel-owned-parent-dir-name-verified','phase':phase},
                 {'kind':'native-picker','stage':'public-panel-action-dispatched-real-completion-required','phase':phase},
                 {'kind':'native-picker-readback','value':{**template,'stage':stage,'nativeActions':phase,'copyExact':False,'publicationAbsent':True,'placements':0}},
             ])
-        result['picker']={'armed':2,'completedPublicActions':2,'failure':0,'readbackMask':6,'alertCalls':0,'pickerOnly':True,'placementConfirmation':False}
+        result['picker']={'armed':2,'completedPublicActions':2,'failure':0,'readbackMask':6,'alertCalls':0,'pickerOnly':True,'placementConfirmation':False,'syntheticNameInputMask':6,'defaultSuggestedFilenameInitialization':False}
         return result,lines
 
     def test_picker_only_requires_two_real_panel_actions_without_publication(self):
@@ -97,6 +101,18 @@ class ReceiptTests(unittest.TestCase):
             driver.validate_phase('picker-preview-only',result,lines)
         result,lines=self.picker_only()
         del lines[-1]
+        with self.assertRaises(RuntimeError):
+            driver.validate_phase('picker-preview-only',result,lines)
+
+    def test_name_input_requires_preidentity_and_actual_postinput_reread(self):
+        for after,key in ((False,'directoryMatches'),(False,'messageMatches'),(True,'directoryMatches'),(True,'nameMatches')):
+            result,lines=self.picker_only()
+            observation=next(v for v in lines if v.get('kind')=='native-picker-diagnostic' and bool(v.get('afterSyntheticNameInput'))==after)
+            observation['fields'][key]=False
+            with self.assertRaises(RuntimeError):
+                driver.validate_phase('picker-preview-only',result,lines)
+        result,lines=self.picker_only()
+        result['picker']['syntheticNameInputMask']=2
         with self.assertRaises(RuntimeError):
             driver.validate_phase('picker-preview-only',result,lines)
 

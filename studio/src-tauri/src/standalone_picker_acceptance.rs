@@ -18,6 +18,7 @@ static NEXT: AtomicUsize = AtomicUsize::new(0);
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 static COMPLETED: AtomicUsize = AtomicUsize::new(0);
 static DEADLINE: AtomicU64 = AtomicU64::new(0);
+static NAME_INPUTS: AtomicUsize = AtomicUsize::new(0);
 static ALERT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static PREVIEW_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 static CREATE_REQUESTS: AtomicUsize = AtomicUsize::new(0);
@@ -259,6 +260,25 @@ pub(super) fn preview_only_request_allowed(request: &serde_json::Value) -> bool 
         _ => true,
     }
 }
+fn filename_option(preview_only: bool) -> Option<&'static str> {
+    if preview_only {
+        None
+    } else {
+        Some("draft.md")
+    }
+}
+pub(super) fn suggested_filename() -> Option<&'static str> {
+    filename_option(super::standalone_native_acceptance::picker_preview_only())
+}
+fn filename_input_allowed(
+    phase: usize,
+    owned: bool,
+    is_save: bool,
+    message: bool,
+    directory: bool,
+) -> bool {
+    [1, 2].contains(&phase) && owned && is_save && message && directory
+}
 pub(super) fn arm_picker() -> Result<PathBuf, String> {
     arm(true)
 }
@@ -290,7 +310,7 @@ pub(super) fn failure() -> Option<&'static str> {
     }
 }
 pub(super) fn summary() -> serde_json::Value {
-    serde_json::json!({"armed":NEXT.load(Ordering::SeqCst),"completedPublicActions":COMPLETED.load(Ordering::SeqCst),"failure":FAILURE.load(Ordering::SeqCst),"readbackMask":READBACKS.load(Ordering::SeqCst),"pickerOnly":super::standalone_native_acceptance::picker_preview_only(),"placementConfirmation":!super::standalone_native_acceptance::picker_preview_only(),"alertCalls":ALERT_CALLS.load(Ordering::SeqCst),"physicalKeyboard":false,"VoiceOver":false,"allUIInProcess":false})
+    serde_json::json!({"armed":NEXT.load(Ordering::SeqCst),"completedPublicActions":COMPLETED.load(Ordering::SeqCst),"failure":FAILURE.load(Ordering::SeqCst),"readbackMask":READBACKS.load(Ordering::SeqCst),"pickerOnly":super::standalone_native_acceptance::picker_preview_only(),"placementConfirmation":!super::standalone_native_acceptance::picker_preview_only(),"alertCalls":ALERT_CALLS.load(Ordering::SeqCst),"syntheticNameInputMask":NAME_INPUTS.load(Ordering::SeqCst),"defaultSuggestedFilenameInitialization":!super::standalone_native_acceptance::picker_preview_only(),"physicalKeyboard":false,"VoiceOver":false,"allUIInProcess":false})
 }
 pub(super) fn install(window: &tauri::WebviewWindow, root: PathBuf) -> Result<(), String> {
     if unsafe { pthread_main_np() } != 1 {
@@ -506,6 +526,60 @@ unsafe fn drive_picker(
         serde_json::json!({"kind":"native-picker-diagnostic","phase":phase,"savePanelTypeMatches":true,"visible":boolean(sheet,"isVisible"),"fields":picker_field_diagnostics(message.as_deref(),name.as_deref(),path.as_deref(),d.dir.to_str())})
     );
     let _ = std::io::stdout().flush();
+    let mut name = name;
+    let mut path = path;
+    if super::standalone_native_acceptance::picker_preview_only() {
+        if !filename_input_allowed(
+            phase,
+            same_sheet(m, sheet) && paths_valid(d) && ACTIVE.load(Ordering::SeqCst) == phase,
+            is_save && !is_open,
+            message.as_deref() == Some("Choose a NEW file for this copy"),
+            path.is_some() && path.as_deref() == d.dir.to_str(),
+        ) {
+            return Err(4);
+        }
+        let bit = 1usize << phase;
+        if NAME_INPUTS.fetch_or(bit, Ordering::SeqCst) & bit != 0 {
+            return Err(6);
+        }
+        stage("owned-panel-before-synthetic-name-input", phase);
+        let make: unsafe extern "C" fn(*mut c_void, *mut c_void, *const c_char) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as *const ());
+        let name_object = make(
+            objc_getClass(c"NSString".as_ptr()),
+            selector("stringWithUTF8String:"),
+            c"draft.md".as_ptr(),
+        );
+        if name_object.is_null() {
+            return Err(6);
+        }
+        let set: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) =
+            std::mem::transmute(objc_msgSend as *const ());
+        set(sheet, selector("setNameFieldStringValue:"), name_object);
+        // Real public user-input property only. Reread actual properties; never rewrite the directory.
+        name = string(object(sheet, "nameFieldStringValue"));
+        let url = object(sheet, "directoryURL");
+        path = if url.is_null() {
+            None
+        } else {
+            string(object(url, "path"))
+        };
+        println!(
+            "{}",
+            serde_json::json!({"kind":"native-picker-diagnostic","phase":phase,"afterSyntheticNameInput":true,"savePanelTypeMatches":true,"visible":boolean(sheet,"isVisible"),"fields":picker_field_diagnostics(string(object(sheet,PICKER_MESSAGE_SELECTOR)).as_deref(),name.as_deref(),path.as_deref(),d.dir.to_str())})
+        );
+        let _ = std::io::stdout().flush();
+        if !same_sheet(m, sheet)
+            || !paths_valid(d)
+            || string(object(sheet, PICKER_MESSAGE_SELECTOR)).as_deref()
+                != Some("Choose a NEW file for this copy")
+            || name.as_deref() != Some("draft.md")
+            || path.as_deref() != d.dir.to_str()
+        {
+            return Err(4);
+        }
+        stage("synthetic-filename-reread-verified", phase);
+    }
     if message.as_deref() != Some("Choose a NEW file for this copy")
         || name.as_deref() != Some("draft.md")
         || path.as_deref() != d.dir.to_str()
@@ -649,6 +723,7 @@ pub(super) fn passed(phase: &str) -> bool {
                 && COMPLETED.load(Ordering::SeqCst) == 2
                 && READBACKS.load(Ordering::SeqCst) == 6
                 && ALERT_CALLS.load(Ordering::SeqCst) == 0
+                && NAME_INPUTS.load(Ordering::SeqCst) == 6
         } else if phase == "picker" {
             NEXT.load(Ordering::SeqCst) == 5
                 && COMPLETED.load(Ordering::SeqCst) == 5
@@ -770,6 +845,43 @@ pub(super) fn verify_readback(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fixture_filename_option_avoids_pinned_directory_append_without_changing_default() {
+        let directory = std::path::Path::new("/synthetic/copy-targets");
+        let pinned_requested_directory = |filename: Option<&str>| {
+            filename.map_or_else(|| directory.to_owned(), |name| directory.join(name))
+        };
+        assert_eq!(filename_option(false), Some("draft.md"));
+        assert_eq!(pinned_requested_directory(filename_option(true)), directory);
+        assert_eq!(
+            pinned_requested_directory(filename_option(false)),
+            directory.join("draft.md")
+        );
+    }
+    #[test]
+    fn synthetic_filename_input_requires_all_identity_and_directory_gates() {
+        assert!(filename_input_allowed(1, true, true, true, true));
+        assert!(filename_input_allowed(2, true, true, true, true));
+        for phase in [0, 3, 4, 5] {
+            assert!(!filename_input_allowed(phase, true, true, true, true));
+        }
+        for (owned, save, message, directory) in [
+            (false, true, true, true),
+            (true, false, true, true),
+            (true, true, false, true),
+            (true, true, true, false),
+        ] {
+            assert!(!filename_input_allowed(1, owned, save, message, directory));
+        }
+        let after = picker_field_diagnostics(
+            Some("Choose a NEW file for this copy"),
+            Some("draft.md"),
+            Some("/unexpected"),
+            Some("/synthetic"),
+        );
+        assert_eq!(after["nameMatches"], true);
+        assert_eq!(after["directoryMatches"], false);
+    }
     #[test]
     fn pinned_rfd_builder_caption_maps_to_message_not_window_title() {
         // Independent property model of pinned set_title -> setMessage assignment.

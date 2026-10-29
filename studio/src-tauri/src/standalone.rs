@@ -479,10 +479,17 @@ fn execute(
             #[cfg(target_os = "macos")]
             parent.check_on_main(app)?;
             let picked = if destination == "file" {
-                picker
-                    .set_title("Choose a NEW file for this copy")
-                    .set_file_name("draft.md")
-                    .blocking_save_file()
+                let picker = picker.set_title("Choose a NEW file for this copy");
+                #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
+                let suggested = super::standalone_picker_acceptance::suggested_filename();
+                #[cfg(not(all(feature = "standalone-native-acceptance", target_os = "macos")))]
+                let suggested = Some("draft.md");
+                let picker = if let Some(name) = suggested {
+                    picker.set_file_name(name)
+                } else {
+                    picker
+                };
+                picker.blocking_save_file()
             } else {
                 picker
                     .set_title(if destination == "existingProject" {

@@ -91,13 +91,28 @@ def validate_phase(phase,result,lines):
         observed='actual-NSSavePanel-owned-parent-dir-name-verified' if action['phase'] in (1,2,4) else 'actual-parented-alert-exact-synthetic-content-controls-verified'
         witness=next((v for v in lines if v.get('kind')=='native-picker' and v.get('stage')==observed and v.get('phase')==action['phase']),None)
         if not witness or lines.index(witness)>=lines.index(action):raise RuntimeError('Public action lacks preceding owned-sheet witness')
+    if phase=='picker-preview-only':
+        for action in actions:
+            phase_number=action['phase']
+            before=next((v for v in lines if v.get('kind')=='native-picker' and v.get('phase')==phase_number and v.get('stage')=='owned-panel-before-synthetic-name-input'),None)
+            after=next((v for v in lines if v.get('kind')=='native-picker' and v.get('phase')==phase_number and v.get('stage')=='synthetic-filename-reread-verified'),None)
+            observations=[v for v in lines if v.get('kind')=='native-picker-diagnostic' and v.get('phase')==phase_number]
+            if not before or not after or not lines.index(before)<lines.index(after)<lines.index(action) or len(observations)!=2:
+                raise RuntimeError('Synthetic filename input lacks bounded identity/reread evidence')
+            for index,observation in enumerate(observations):
+                fields=observation.get('fields',{})
+                required_fields=('messageMatches','directoryMatches') if index==0 else ('messageMatches','nameMatches','directoryMatches')
+                if observation.get('savePanelTypeMatches') is not True or observation.get('visible') is not True or any(fields.get(key) is not True for key in required_fields):
+                    raise RuntimeError('Synthetic filename input identity/directory mismatch')
+            if observations[1].get('afterSyntheticNameInput') is not True:
+                raise RuntimeError('Actual filename reread missing')
     readbacks=[v['value'] for v in lines if v.get('kind')=='native-picker-readback']
     expected=[('picker-cancel-real-null',1,False),('picker-preview-real-token',2,False)] if phase=='picker-preview-only' else [('picker-cancel-real-null',1,False),('picker-preview-real-token',2,False),('picker-place-cancel-real-null',3,False),('picker-preview-real-token',4,False),('picker-copy-real-receipt',5,True),('picker-replay-denied',5,True)] if phase=='picker' else [('picker-reopened-both',0,True)]
     if len(readbacks)!=len(expected):raise RuntimeError('Native file/source readback missing')
     for value,(stage,count,placed) in zip(readbacks,expected):
         if value.get('stage')!=stage or value.get('nativeActions')!=count or value.get('originalExact') is not True or value.get('copyExact') is not placed or value.get('publicationAbsent') is not (not placed) or value.get('bytes')!=94 or value.get('hash')!='115d534fa5575cf7820a1c44c84824eb41871d514293561082f487cfcbe5a276' or value.get('placements')!=(1 if placed else 0) or value.get('pendingIntents')!=0:
             raise RuntimeError('Native original/copy/cancellation byte binding mismatch')
-    expected_summary={'armed':2,'completedPublicActions':2,'failure':0,'readbackMask':6,'alertCalls':0,'pickerOnly':True,'placementConfirmation':False} if phase=='picker-preview-only' else {'armed':5,'completedPublicActions':5,'failure':0,'readbackMask':126} if phase=='picker' else {'armed':0,'completedPublicActions':0,'failure':0,'readbackMask':128}
+    expected_summary={'armed':2,'completedPublicActions':2,'failure':0,'readbackMask':6,'alertCalls':0,'pickerOnly':True,'placementConfirmation':False,'syntheticNameInputMask':6,'defaultSuggestedFilenameInitialization':False} if phase=='picker-preview-only' else {'armed':5,'completedPublicActions':5,'failure':0,'readbackMask':126} if phase=='picker' else {'armed':0,'completedPublicActions':0,'failure':0,'readbackMask':128}
     if any(result.get('picker',{}).get(k)!=v for k,v in expected_summary.items()):raise RuntimeError('Native one-shot dialog evidence incomplete')
     if result.get('nativeTerminateCounters')!=[1,1,1,0] or result.get('approvedProgrammaticExits')!=1 or result.get('forbiddenServiceAttempts')!=0 or result.get('managedRuntimeAcquire') is not False or result.get('osStoreProviderConstructorsReachable') is not False:
         raise RuntimeError('Native close/isolation result mismatch')
