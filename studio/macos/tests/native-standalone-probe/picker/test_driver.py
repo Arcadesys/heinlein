@@ -3,6 +3,8 @@ import copy
 import importlib.util
 from pathlib import Path
 import tempfile
+from unittest import mock
+import os
 import unittest
 
 spec = importlib.util.spec_from_file_location('picker_driver', Path(__file__).with_name('driver.py'))
@@ -115,6 +117,81 @@ class ReceiptTests(unittest.TestCase):
         result['picker']['syntheticNameInputMask']=2
         with self.assertRaises(RuntimeError):
             driver.validate_phase('picker-preview-only',result,lines)
+
+    def test_backtrace_environment_is_child_only_and_picker_only(self):
+        parent=dict(os.environ)
+        parent.update(RUST_BACKTRACE='inherited-not-trusted',HEINLEIN_PRIVATE_TEST='not-exported')
+        unchanged=parent.copy()
+        normal=driver.child_environment(Path('/synthetic/tmp'),'picker-preview-only',False,parent)
+        diagnostic=driver.child_environment(Path('/synthetic/tmp'),'picker-preview-only',True,parent)
+        self.assertNotIn('RUST_BACKTRACE',normal)
+        self.assertEqual(diagnostic['RUST_BACKTRACE'],'1')
+        self.assertEqual(diagnostic.get('HOME'),parent.get('HOME'))
+        self.assertEqual(diagnostic['TMPDIR'],'/synthetic/tmp')
+        self.assertNotIn('HEINLEIN_PRIVATE_TEST',diagnostic)
+        self.assertEqual(parent,unchanged)
+        for phase in ('picker','picker-reopen','first','unknown'):
+            with mock.patch.object(driver.subprocess,'Popen') as spawn:
+                with self.assertRaises(ValueError):
+                    driver.run_phase(Path('/unused'),Path('/unused'),phase,{},True)
+                spawn.assert_not_called()
+
+    def test_capture_preserves_first_panic_frames_and_redacts_home_from_both_streams(self):
+        capture=driver.BoundedDiagnostics('/synthetic-home')
+        emitted=capture.feed('stderr',b'first panic /synthetic-home/source.rs:12\nframe 0: public ')
+        emitted+=capture.feed('stdout',b'{"kind":"progress","stage":"before-action"}\n')
+        emitted+=capture.feed('stderr',b'callback\nframe 1: /synthetic-home/adapter.rs:4')
+        emitted+=capture.finish('stderr');emitted+=capture.finish('stdout')
+        self.assertIn('first panic <user-home>/source.rs:12',emitted[0]['message'])
+        self.assertTrue(any('frame 0: public callback'==v.get('message') for v in emitted))
+        self.assertTrue(emitted[-1]['unterminated'])
+        self.assertNotIn('/synthetic-home',str(emitted))
+        self.assertFalse(capture.failed)
+        self.assertEqual(set(capture.stats['streamsDrainedToEOF']),{'stdout','stderr'})
+
+    def test_capture_overflow_keeps_first_evidence_and_continues_drain_to_eof(self):
+        capture=driver.BoundedDiagnostics(None,byte_limit=80,line_limit=2)
+        first=b'first panic\nframe one\n'
+        capture.feed('stderr',first)
+        extra=b'ignored frame\n'*100
+        capture.feed('stderr',extra)
+        capture.feed('stdout',b'later stdout\n')
+        capture.finish('stderr');capture.finish('stdout')
+        self.assertEqual([v['message'] for v in capture.lines if v['stream']=='stderr'],['first panic','frame one'])
+        self.assertTrue(capture.stats['overflow'])
+        self.assertGreater(capture.stats['suppressedLines'],0)
+        self.assertEqual(capture.stats['bytesRead'],len(first)+len(extra)+len(b'later stdout\n'))
+        self.assertEqual(set(capture.stats['streamsDrainedToEOF']),{'stdout','stderr'})
+
+    def test_stdout_overflow_cannot_consume_reserved_first_panic_capacity(self):
+        capture=driver.BoundedDiagnostics(None,byte_limit=80,line_limit=2)
+        capture.feed('stdout',b'noise\n'*100)
+        capture.feed('stderr',b'first panic\npublic frame\n')
+        capture.finish('stdout');capture.finish('stderr')
+        self.assertTrue(capture.stats['overflow'])
+        self.assertEqual([v['message'] for v in capture.lines if v['stream']=='stderr'],['first panic','public frame'])
+        self.assertLessEqual(capture.stats['retainedBytes'],160)
+        self.assertLessEqual(len(capture.lines),4)
+
+    def test_oversize_unterminated_stream_is_bounded_and_truncation_explicit(self):
+        capture=driver.BoundedDiagnostics(None,partial_limit=16)
+        capture.feed('stderr',b'first panic '+b'x'*100)
+        self.assertTrue(capture.failed)
+        self.assertTrue(capture.lines[0]['truncated'])
+        self.assertLessEqual(len(capture.lines[0]['message']),16)
+        capture.feed('stderr',b'x'*100)
+        capture.feed('stderr',b'\nnext frame\n')
+        capture.finish('stderr')
+        self.assertEqual(capture.lines[-1]['message'],'next frame')
+        self.assertEqual(capture.stats['bytesRead'],len(b'first panic '+b'x'*100)+100+len(b'\nnext frame\n'))
+        self.assertEqual(capture.pending,{})
+
+    def test_capture_records_genuine_result_without_inventing_success(self):
+        capture=driver.BoundedDiagnostics(None)
+        lines=capture.feed('stdout',b'{"kind":"result","passed":false}\n')
+        capture.finish('stdout')
+        self.assertEqual(lines,[{'kind':'result','passed':False}])
+        self.assertFalse(capture.failed)
 
     def test_arbitrary_binary_never_inherits_source_provenance(self):
         with tempfile.TemporaryDirectory() as directory:

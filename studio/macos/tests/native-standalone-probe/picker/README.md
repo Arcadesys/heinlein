@@ -87,6 +87,20 @@ inspect its sidebar/private preferences or other processes. Unexpected identity,
 path, sheet or timeout stops the attempt. Installed app, real manuscripts,
 accounts, OS picker physical usability and VoiceOver remain separate acceptance.
 
+The optional `--diagnostic-backtrace` flag is accepted only with `--preview-only`.
+It adds only `RUST_BACKTRACE=1` to this child's sanitized environment; HOME and the
+parent environment remain unchanged. It does not authorize execution by itself.
+Backtrace timing and symbol/source accuracy can differ; a later pass would not
+establish the cause of any earlier abort. No debugger or custom panic hook is used.
+
+Output is continuously drained from both child pipes from startup through EOF.
+Each stream retains its FIRST 128 KiB / 600 records; maximum partial line is32 KiB.
+Separate budgets prevent stdout noise from consuming the first-panic stderr budget.
+Unterminated EOF tails are preserved, user-home prefixes are redacted, and any
+capture overflow/truncation is explicit, fails the attempt and requests cooperative
+abort while draining continues. No signals, memory/locals/environment dumps or
+OS-wide log reads are used. Unknown child state remains a stop/report condition.
+
 Memory-only checks:
 
 ```sh
