@@ -87,6 +87,12 @@ pub(super) fn file_create(path: &Path, value: &serde_json::Value) -> Result<(), 
 }
 fn fail(app: &tauri::AppHandle, reason: &str) {
     stage(reason);
+    if FIXTURE
+        .get()
+        .is_some_and(|fixture| fixture.phase.starts_with("picker"))
+    {
+        super::standalone_picker_acceptance::abort_action_waiters();
+    }
     FIXTURE.get().unwrap().abort.store(true, Ordering::SeqCst);
     app.exit(73);
 }

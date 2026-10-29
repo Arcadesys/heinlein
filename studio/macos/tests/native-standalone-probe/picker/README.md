@@ -64,6 +64,14 @@ injected result or renderer-supplied path is used. The production builder sets t
 fresh immutable initial directory before presentation and retains the checked
 parent under the existing selection/close-exclusion guard through completion.
 
+Public action issuance and return are distinct native states. The command worker
+captures its immutable phase before presentation and, only after a genuine plugin
+response, waits at most five seconds off-main for public-action-return bookkeeping.
+No lock is held across the public action; the condition wait releases its lock.
+Failure, abort or timeout wakes/fails waiters, and a late return cannot manufacture
+completion. Both picker and alert paths use this protocol. This deterministic
+bookkeeping fix does not establish the cause of a prior non-unwinding abort.
+
 The first process requires actual picker Cancel (no file), actual picker OK
 (preview token without publication), actual Place Cancel (no file), another
 picker OK and actual Place OK (exact copy and retained original). A consumed token

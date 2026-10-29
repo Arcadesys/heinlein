@@ -159,10 +159,15 @@ fn confirm_placement(
     #[cfg(target_os = "macos")]
     let builder = builder.parent(&parent);
     #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
-    super::standalone_picker_acceptance::arm_confirmation(message)?;
+    let action_phase = {
+        super::standalone_picker_acceptance::arm_confirmation(message)?;
+        super::standalone_picker_acceptance::expected_action_phase()?
+    };
     #[cfg(target_os = "macos")]
     parent.check_on_main(app)?;
     let confirmed = builder.blocking_show();
+    #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
+    super::standalone_picker_acceptance::wait_action_returned(action_phase)?;
     #[cfg(target_os = "macos")]
     let _keep_owner_through_completion = &parent;
     Ok(confirmed)
@@ -478,6 +483,8 @@ fn execute(
             let picker = picker.set_directory(super::standalone_picker_acceptance::arm_picker()?);
             #[cfg(target_os = "macos")]
             parent.check_on_main(app)?;
+            #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
+            let action_phase = super::standalone_picker_acceptance::expected_action_phase()?;
             let picked = if destination == "file" {
                 let picker = picker.set_title("Choose a NEW file for this copy");
                 #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
@@ -501,6 +508,8 @@ fn execute(
             };
             #[cfg(target_os = "macos")]
             let _keep_owner_through_completion = &parent;
+            #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
+            super::standalone_picker_acceptance::wait_action_returned(action_phase)?;
             let Some(picked) = picked else {
                 return Ok(Value::Null);
             };

@@ -13,10 +13,11 @@ use std::{
     time::Instant,
 };
 use tauri::Manager;
+mod completion;
+static ACTIONS: completion::ActionCompletion = completion::ActionCompletion::new();
 static DECLARED: OnceLock<Declaration> = OnceLock::new();
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
-static COMPLETED: AtomicUsize = AtomicUsize::new(0);
 static DEADLINE: AtomicU64 = AtomicU64::new(0);
 static NAME_INPUTS: AtomicUsize = AtomicUsize::new(0);
 static ALERT_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -217,7 +218,7 @@ pub(super) fn validate_returned_picker_path(chosen: &std::path::Path) -> Result<
     // Only declared root metadata may be touched after the candidate passes lexical validation.
     if FAILURE.load(Ordering::SeqCst) != 0
         || ACTIVE.load(Ordering::SeqCst) != 0
-        || COMPLETED.load(Ordering::SeqCst) != phase
+        || ACTIONS.count() != phase
         || !paths_valid(d)
     {
         return Err("Native picker return phase/declaration no longer valid".into());
@@ -279,13 +280,43 @@ fn filename_input_allowed(
 ) -> bool {
     [1, 2].contains(&phase) && owned && is_save && message && directory
 }
+fn record_failure(code: usize) {
+    FAILURE.store(code, Ordering::SeqCst);
+    ACTIONS.terminate();
+}
+pub(super) fn abort_action_waiters() {
+    record_failure(6);
+}
+pub(super) fn expected_action_phase() -> Result<usize, String> {
+    let phase = NEXT.load(Ordering::SeqCst);
+    if failure().is_some() || phase == 0 || ACTIVE.load(Ordering::SeqCst) != phase {
+        return Err("Native dialog phase unavailable before presentation".into());
+    }
+    Ok(phase)
+}
+// Call ONLY after the genuine blocking plugin response, from its command worker.
+// No main callback can wait here, and no lock is retained across the public action.
+pub(super) fn wait_action_returned(phase: usize) -> Result<(), String> {
+    if unsafe { pthread_main_np() } != 0 {
+        record_failure(6);
+        return Err("Action completion cannot wait on main".into());
+    }
+    if let Err(error) = ACTIONS.wait_returned(phase, std::time::Duration::from_secs(5)) {
+        record_failure(6);
+        return Err(error.into());
+    }
+    if failure().is_some() {
+        return Err("Native action failed before response validation".into());
+    }
+    Ok(())
+}
 pub(super) fn arm_picker() -> Result<PathBuf, String> {
     arm(true)
 }
 pub(super) fn arm_confirmation(message: &str) -> Result<(), String> {
     ALERT_CALLS.fetch_add(1, Ordering::SeqCst);
     if super::standalone_native_acceptance::picker_preview_only() {
-        FAILURE.store(6, Ordering::SeqCst);
+        record_failure(6);
         return Err("Preview-only fixture forbids placement confirmation".into());
     }
     let d = DECLARED
@@ -310,7 +341,7 @@ pub(super) fn failure() -> Option<&'static str> {
     }
 }
 pub(super) fn summary() -> serde_json::Value {
-    serde_json::json!({"armed":NEXT.load(Ordering::SeqCst),"completedPublicActions":COMPLETED.load(Ordering::SeqCst),"failure":FAILURE.load(Ordering::SeqCst),"readbackMask":READBACKS.load(Ordering::SeqCst),"pickerOnly":super::standalone_native_acceptance::picker_preview_only(),"placementConfirmation":!super::standalone_native_acceptance::picker_preview_only(),"alertCalls":ALERT_CALLS.load(Ordering::SeqCst),"syntheticNameInputMask":NAME_INPUTS.load(Ordering::SeqCst),"defaultSuggestedFilenameInitialization":!super::standalone_native_acceptance::picker_preview_only(),"physicalKeyboard":false,"VoiceOver":false,"allUIInProcess":false})
+    serde_json::json!({"armed":NEXT.load(Ordering::SeqCst),"completedPublicActions":ACTIONS.count(),"failure":FAILURE.load(Ordering::SeqCst),"readbackMask":READBACKS.load(Ordering::SeqCst),"pickerOnly":super::standalone_native_acceptance::picker_preview_only(),"placementConfirmation":!super::standalone_native_acceptance::picker_preview_only(),"alertCalls":ALERT_CALLS.load(Ordering::SeqCst),"syntheticNameInputMask":NAME_INPUTS.load(Ordering::SeqCst),"defaultSuggestedFilenameInitialization":!super::standalone_native_acceptance::picker_preview_only(),"physicalKeyboard":false,"VoiceOver":false,"allUIInProcess":false})
 }
 pub(super) fn install(window: &tauri::WebviewWindow, root: PathBuf) -> Result<(), String> {
     if unsafe { pthread_main_np() } != 1 {
@@ -398,7 +429,7 @@ impl Drop for Busy {
 }
 extern "C" fn timer_callback(timer: *mut c_void, _: *mut c_void) {
     if unsafe { pthread_main_np() } != 1 {
-        FAILURE.store(5, Ordering::SeqCst);
+        record_failure(5);
         return;
     }
     if BUSY.with(|b| b.replace(true)) {
@@ -412,7 +443,7 @@ extern "C" fn timer_callback(timer: *mut c_void, _: *mut c_void) {
     }
     let phase = ACTIVE.load(Ordering::SeqCst);
     if phase == 0 {
-        if COMPLETED.load(Ordering::SeqCst)
+        if ACTIONS.count()
             == if super::standalone_native_acceptance::picker_preview_only() {
                 2
             } else {
@@ -424,13 +455,13 @@ extern "C" fn timer_callback(timer: *mut c_void, _: *mut c_void) {
         return;
     }
     let Some(d) = DECLARED.get() else {
-        FAILURE.store(5, Ordering::SeqCst);
+        record_failure(5);
         return;
     };
     MAIN.with(|state| {
         let s = state.borrow();
         let Some(m) = s.as_ref() else {
-            FAILURE.store(5, Ordering::SeqCst);
+            record_failure(5);
             return;
         };
         unsafe {
@@ -438,19 +469,19 @@ extern "C" fn timer_callback(timer: *mut c_void, _: *mut c_void) {
                 || !boolean(m.parent.0, "isVisible")
                 || integer(m.parent.0, "windowNumber") != m.number
             {
-                FAILURE.store(2, Ordering::SeqCst);
+                record_failure(2);
                 return;
             }
             let sheet = object(m.parent.0, "attachedSheet");
             if sheet.is_null() {
                 if d.started.elapsed().as_millis() as u64 > DEADLINE.load(Ordering::SeqCst) {
-                    FAILURE.store(1, Ordering::SeqCst);
+                    record_failure(1);
                 }
                 return;
             }
             let sheet = Object(objc_retain(sheet));
             if object(sheet.0, "sheetParent") != m.parent.0 || !boolean(sheet.0, "isVisible") {
-                FAILURE.store(3, Ordering::SeqCst);
+                record_failure(3);
                 return;
             }
             let result = if expected_picker(phase) {
@@ -464,11 +495,11 @@ extern "C" fn timer_callback(timer: *mut c_void, _: *mut c_void) {
                 Ok(true) => (),
                 Ok(false) => {
                     if d.started.elapsed().as_millis() as u64 > DEADLINE.load(Ordering::SeqCst) {
-                        FAILURE.store(1, Ordering::SeqCst);
+                        record_failure(1);
                     }
                 }
                 Err(code) => {
-                    FAILURE.store(code, Ordering::SeqCst);
+                    record_failure(code);
                 }
             }
         }
@@ -599,9 +630,10 @@ unsafe fn drive_picker(
     {
         return Err(2);
     }
+    ACTIONS.issued(phase).map_err(|_| 6usize)?;
     // Public panel actions preserve native validation and the real plugin completion callback.
     action(sheet, if phase == 1 { "cancel:" } else { "ok:" });
-    COMPLETED.fetch_add(1, Ordering::SeqCst);
+    ACTIONS.returned(phase).map_err(|_| 6usize)?;
     stage(
         "public-panel-action-dispatched-real-completion-required",
         phase,
@@ -702,8 +734,9 @@ unsafe fn drive_alert(
     {
         return Err(2);
     }
+    ACTIONS.issued(phase).map_err(|_| 6usize)?;
     action(target, "performClick:");
-    COMPLETED.fetch_add(1, Ordering::SeqCst);
+    ACTIONS.returned(phase).map_err(|_| 6usize)?;
     stage(
         "public-alert-button-action-dispatched-real-completion-required",
         phase,
@@ -720,17 +753,17 @@ pub(super) fn passed(phase: &str) -> bool {
         && ACTIVE.load(Ordering::SeqCst) == 0
         && if phase == "picker-preview-only" {
             NEXT.load(Ordering::SeqCst) == 2
-                && COMPLETED.load(Ordering::SeqCst) == 2
+                && ACTIONS.count() == 2
                 && READBACKS.load(Ordering::SeqCst) == 6
                 && ALERT_CALLS.load(Ordering::SeqCst) == 0
                 && NAME_INPUTS.load(Ordering::SeqCst) == 6
         } else if phase == "picker" {
             NEXT.load(Ordering::SeqCst) == 5
-                && COMPLETED.load(Ordering::SeqCst) == 5
+                && ACTIONS.count() == 5
                 && READBACKS.load(Ordering::SeqCst) == 126
         } else {
             NEXT.load(Ordering::SeqCst) == 0
-                && COMPLETED.load(Ordering::SeqCst) == 0
+                && ACTIONS.count() == 0
                 && READBACKS.load(Ordering::SeqCst) == 128
         }
 }
@@ -746,7 +779,7 @@ pub(super) fn verify_readback(
     {
         return Err("Picker readback isolation failed".into());
     }
-    let actions = COMPLETED.load(Ordering::SeqCst);
+    let actions = ACTIONS.count();
     let (bit, placed) = match (phase, actions) {
         ("picker-cancel-real-null", 1) => (1, false),
         ("picker-preview-real-token", 2) => (2, false),
