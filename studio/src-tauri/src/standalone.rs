@@ -126,10 +126,13 @@ fn safe_destination(app: &tauri::AppHandle, path: &Path) -> Result<(), String> {
         return Err("Choose a destination outside Heinlein's private storage.".into());
     }
     #[cfg(target_os = "macos")]
-    super::update::guard_repository(
-        &path,
-        &app.path().home_dir().map_err(|_| "Home unavailable")?,
-    )?;
+    {
+        #[cfg(feature = "standalone-native-acceptance")]
+        let home = super::standalone_native_acceptance::picker_guard_home(app)?;
+        #[cfg(not(feature = "standalone-native-acceptance"))]
+        let home = app.path().home_dir().map_err(|_| "Home unavailable")?;
+        super::update::guard_repository(&path, &home)?;
+    }
     Ok(())
 }
 fn confirm(app: &tauri::AppHandle, message: &str) -> bool {
@@ -138,6 +141,31 @@ fn confirm(app: &tauri::AppHandle, message: &str) -> bool {
         .title("Standalone draft")
         .buttons(MessageDialogButtons::OkCancel)
         .blocking_show()
+}
+// The command's exact window and selection/close-exclusion guard live through this call.
+// The off-main parent helper caches both fallible handles; plugin setters cannot silently drop it.
+fn confirm_placement(
+    app: &tauri::AppHandle,
+    _window: &tauri::WebviewWindow,
+    message: &str,
+) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    let parent = super::proposals::parent::ValidatedConfirmationParent::capture(app, _window)?;
+    let builder = app
+        .dialog()
+        .message(message)
+        .title("Standalone draft")
+        .buttons(MessageDialogButtons::OkCancel);
+    #[cfg(target_os = "macos")]
+    let builder = builder.parent(&parent);
+    #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
+    super::standalone_picker_acceptance::arm_confirmation(message)?;
+    #[cfg(target_os = "macos")]
+    parent.check_on_main(app)?;
+    let confirmed = builder.blocking_show();
+    #[cfg(target_os = "macos")]
+    let _keep_owner_through_completion = &parent;
+    Ok(confirmed)
 }
 fn lease<'a>(host: &'a Host, handle: &str) -> Result<&'a DraftLease, String> {
     host.leases.get(handle).ok_or(
@@ -288,13 +316,17 @@ pub(crate) async fn standalone_request(
     request: Request,
 ) -> Result<Value, String> {
     check_window(&window)?;
-    tauri::async_runtime::spawn_blocking(move || execute(&app, request))
+    tauri::async_runtime::spawn_blocking(move || execute(&app, &window, request))
         .await
         .map_err(|_| {
             "Local draft operation interrupted; keep your visible text and retry.".to_string()
         })?
 }
-fn execute(app: &tauri::AppHandle, request: Request) -> Result<Value, String> {
+fn execute(
+    app: &tauri::AppHandle,
+    _window: &tauri::WebviewWindow,
+    request: Request,
+) -> Result<Value, String> {
     let state = app.state::<BrowserState>();
     let _selection = if matches!(
         &request,
@@ -436,15 +468,23 @@ fn execute(app: &tauri::AppHandle, request: Request) -> Result<Value, String> {
                 return Err("Check the previous placement before creating another copy.".into());
             }
             let epoch = state.mutation_gate.generation();
+            #[cfg(target_os = "macos")]
+            let parent =
+                super::proposals::parent::ValidatedConfirmationParent::capture(app, _window)?;
+            let picker = app.dialog().file();
+            #[cfg(target_os = "macos")]
+            let picker = picker.set_parent(&parent);
+            #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
+            let picker = picker.set_directory(super::standalone_picker_acceptance::arm_picker()?);
+            #[cfg(target_os = "macos")]
+            parent.check_on_main(app)?;
             let picked = if destination == "file" {
-                app.dialog()
-                    .file()
+                picker
                     .set_title("Choose a NEW file for this copy")
                     .set_file_name("draft.md")
                     .blocking_save_file()
             } else {
-                app.dialog()
-                    .file()
+                picker
                     .set_title(if destination == "existingProject" {
                         "Choose an existing Heinlein project"
                     } else {
@@ -452,12 +492,16 @@ fn execute(app: &tauri::AppHandle, request: Request) -> Result<Value, String> {
                     })
                     .blocking_pick_folder()
             };
+            #[cfg(target_os = "macos")]
+            let _keep_owner_through_completion = &parent;
             let Some(picked) = picked else {
                 return Ok(Value::Null);
             };
             let chosen = picked
                 .into_path()
                 .map_err(|_| "Choose a local destination")?;
+            #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
+            super::standalone_picker_acceptance::validate_returned_picker_path(&chosen)?;
             let chosen = super::resolved_future_path(&chosen)?;
             safe_destination(app, &chosen)?;
             if state
@@ -567,7 +611,7 @@ fn execute(app: &tauri::AppHandle, request: Request) -> Result<Value, String> {
             {
                 return Err("The captured draft changed. Preview again.".into());
             }
-            if !confirm(app,&format!("Place an independent copy at {}? This destination may be shared by its sync tools. Your standalone draft stays here; later edits are not synchronized.",p.intent.destination)){return Ok(Value::Null);}
+            if !confirm_placement(app,_window,&format!("Place an independent copy at {}? This destination may be shared by its sync tools. Your standalone draft stays here; later edits are not synchronized.",p.intent.destination))?{return Ok(Value::Null);}
             guard()?;
             safe_destination(app, Path::new(&p.intent.destination))?;
             store.intent(lease, &p.intent)?;

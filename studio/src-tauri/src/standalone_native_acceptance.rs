@@ -43,7 +43,7 @@ fn private(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
-fn file_read(path: &Path) -> Result<serde_json::Value, String> {
+pub(super) fn file_read(path: &Path) -> Result<serde_json::Value, String> {
     let mut file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
@@ -70,7 +70,7 @@ fn file_read(path: &Path) -> Result<serde_json::Value, String> {
         .map_err(|_| "Fixture sentinel unreadable")?;
     serde_json::from_slice(&bytes).map_err(|_| "Invalid fixture sentinel".into())
 }
-fn file_create(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+pub(super) fn file_create(path: &Path, value: &serde_json::Value) -> Result<(), String> {
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -178,6 +178,31 @@ fn enqueue_if_active(
         .map(|()| true)
         .map_err(|()| "worker-navigation-enqueue-failed")
 }
+pub(super) fn picker_guard_home(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let fixture = FIXTURE.get().ok_or("Verified picker startup required")?;
+    if !fixture.phase.starts_with("picker") {
+        return Err("Picker startup required for destination guards".into());
+    }
+    private(&fixture.root)?;
+    if std::env::temp_dir().canonicalize().ok() != Some(fixture.root.clone())
+        || app
+            .path()
+            .app_data_dir()
+            .map_err(|_| "Fixture app data unavailable")?
+            != fixture.root.join("app-data")
+    {
+        return Err("Picker root/path confinement lost".into());
+    }
+    Ok(fixture.root.clone())
+}
+pub(super) fn picker_root() -> Result<PathBuf, String> {
+    let fixture = FIXTURE.get().ok_or("Verified picker startup required")?;
+    if !fixture.phase.starts_with("picker") {
+        return Err("Explicit picker fixture required".into());
+    }
+    private(&fixture.root)?;
+    Ok(fixture.root.clone())
+}
 pub(super) fn run() {
     let result = run_fixture();
     if let Err(error) = result {
@@ -189,7 +214,7 @@ fn run_fixture() -> Result<(), String> {
     let args: Vec<_> = std::env::args().collect();
     if args.len() != 4
         || args[1] != "--standalone-native-acceptance"
-        || !["first", "reopen"].contains(&args[3].as_str())
+        || !["first", "reopen", "picker", "picker-reopen"].contains(&args[3].as_str())
     {
         return Err("Explicit fixture invocation/root/phase required".into());
     }
@@ -209,7 +234,7 @@ fn run_fixture() -> Result<(), String> {
         return Err("TMPDIR must equal fixture root before startup".into());
     }
     let sentinel = root.join("fixture-sentinel.json");
-    if args[3] == "first" {
+    if ["first", "picker"].contains(&args[3].as_str()) {
         if std::fs::read_dir(&root)
             .map_err(|_| "Fixture root unavailable")?
             .next()
@@ -236,7 +261,15 @@ fn run_fixture() -> Result<(), String> {
         }
         private(p)?;
     }
-    let identity = if args[3] == "reopen" {
+    if args[3] == "picker" {
+        let target = root.join("copy-targets");
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&target)
+            .map_err(|_| "Fresh picker target creation failed")?;
+        private(&target)?;
+    }
+    let identity = if ["reopen", "picker-reopen"].contains(&args[3].as_str()) {
         file_read(&root.join("draft-identity.json"))?["id"]
             .as_str()
             .map(str::to_string)
@@ -258,8 +291,11 @@ fn run_fixture() -> Result<(), String> {
         .set(fixture.clone())
         .map_err(|_| "Fixture already initialized")?;
     stage("feature-explicit-invocation-private-root-sentinel-validated");
-    let mut context =
-        tauri::generate_context!("../macos/tests/native-standalone-probe/tauri.conf.json");
+    let mut context = if fixture.phase.starts_with("picker") {
+        tauri::generate_context!("../macos/tests/native-standalone-probe/picker/tauri.conf.json")
+    } else {
+        tauri::generate_context!("../macos/tests/native-standalone-probe/tauri.conf.json")
+    };
     context.config_mut().identifier = format!(
         "me.thearcades.heinlein.synthetic-standalone-{}",
         uuid.simple()
@@ -311,7 +347,7 @@ fn run_fixture() -> Result<(), String> {
                 let allowed = match invoke.message.payload() {
                     tauri::ipc::InvokeBody::Json(v) => {
                         v["request"]["kind"].as_str().is_some_and(|kind| {
-                            ["list", "create", "open", "save", "release"].contains(&kind)
+                            ["list", "create", "open", "save", "release"].contains(&kind) || (guarded.phase.starts_with("picker") && ["preview", "cancelPreview", "place"].contains(&kind) && (kind != "preview" || v["request"]["destination"] == "file"))
                         })
                     }
                     _ => false,
@@ -349,6 +385,12 @@ fn run_fixture() -> Result<(), String> {
                 private(&path).map_err(std::io::Error::other)?;
             }
             stage("all-tauri-app-paths-confined-before-webview-or-store");
+            if FIXTURE.get().unwrap().phase.starts_with("picker") {
+                picker_guard_home(app.handle()).map_err(std::io::Error::other)?;
+                stage("immutable-fixture-private-home-resolver-validated-no-env-override");
+                app.handle().plugin(tauri_plugin_dialog::init())?;
+                stage("native-dialog-plugin-after-confinement-no-JS-dialog-ACL");
+            }
             let h = app.handle().clone();
             app.listen("native47-diagnostic", move |event| {
                 let parsed = serde_json::from_str::<serde_json::Value>(event.payload());
@@ -379,6 +421,13 @@ fn run_fixture() -> Result<(), String> {
                     "reopened-exact-bytes-same-id",
                     "inert-startup-dependency",
                     "renderer-failed",
+                    "picker-cancel-real-null",
+                    "picker-preview-real-token",
+                    "picker-place-cancel-real-null",
+                    "picker-copy-real-receipt",
+                    "picker-replay-denied",
+                    "picker-reopened-both",
+                    "picker-all-evidence-ready",
                 ];
                 if !allowed.contains(&name) {
                     fail(&h, "unexpected-renderer-stage");
@@ -412,6 +461,23 @@ fn run_fixture() -> Result<(), String> {
                         serde_json::json!({"kind":"synthetic-text-hash","stage":name,"sha256":hash})
                     );
                     let _ = std::io::stdout().flush();
+                }
+                if name.starts_with("picker-") && f.phase.starts_with("picker") {
+                    if name == "picker-all-evidence-ready" {
+                        native_quit();
+                    } else {
+                        let app = h.clone(); let phase = name.to_string();
+                        std::thread::spawn(move || {
+                            match super::standalone_picker_acceptance::verify_readback(&app, &phase) {
+                                Ok(value) => {
+                                    println!("{}", serde_json::json!({"kind":"native-picker-readback","value":value}));
+                                    let _ = std::io::stdout().flush();
+                                    let _ = app.emit("native47-picker-readback", value);
+                                },
+                                Err(reason) => fail(&app, &reason),
+                            }
+                        });
+                    }
                 }
                 if name == "renderer-failed" || name == "validation-failed" {
                     eprintln!(
@@ -508,6 +574,9 @@ fn run_fixture() -> Result<(), String> {
             .build()?;
             window.show()?;
             window.set_focus()?;
+            if FIXTURE.get().unwrap().phase.starts_with("picker") {
+                super::standalone_picker_acceptance::install(&window, picker_root().map_err(std::io::Error::other)?).map_err(std::io::Error::other)?;
+            }
             // Dispatcher calls here would reacquire with_webview's window-id mutex.
             let (gate_tx, gate_rx) = std::sync::mpsc::channel();
             let (returned_tx, returned_rx) = std::sync::mpsc::channel();
@@ -567,10 +636,19 @@ fn run_fixture() -> Result<(), String> {
     let h = app.handle().clone();
     let f = fixture.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(40));
-        if !f.ended.load(Ordering::SeqCst) {
-            fail(&h, "stage-timeout-cooperative-abort");
+        for _ in 0..600 {
+            std::thread::sleep(Duration::from_millis(100));
+            if f.ended.load(Ordering::SeqCst) {
+                return;
+            }
+            if f.phase.starts_with("picker") {
+                if let Some(reason) = super::standalone_picker_acceptance::failure() {
+                    fail(&h, reason);
+                    return;
+                }
+            }
         }
+        fail(&h, "stage-timeout-cooperative-abort");
     });
     let h = app.handle().clone();
     std::thread::spawn(move || {
@@ -593,8 +671,8 @@ fn run_fixture() -> Result<(), String> {
         if exiting{
             fixture.ended.store(true,Ordering::SeqCst);
             let steps=fixture.steps.lock().unwrap();
-            let complete=approved==1&&fixture.close_calls.load(Ordering::SeqCst)==1&&fixture.forbidden.load(Ordering::SeqCst)==0&&steps.iter().any(|s|s=="request-close-from-production")&&if fixture.phase=="first"{steps.iter().any(|s|s=="native-close-received-before-save-ack")&&steps.iter().any(|s|s=="durable-save-ack-released")}else{steps.iter().any(|s|s=="reopened-exact-bytes-same-id")};
-            println!("{}",serde_json::json!({"kind":"result","passed":complete,"phase":fixture.phase,"approvedProgrammaticExits":approved,"nativeTerminateCounters":quit_macos::counters(),"realIPCCommandCount":fixture.calls.load(Ordering::SeqCst),"forbiddenServiceAttempts":fixture.forbidden.load(Ordering::SeqCst),"osStoreProviderConstructorsReachable":false,"managedRuntimeAcquire":false,"physicalKeyboard":false,"steps":*steps}));
+            let complete=approved==1&&fixture.close_calls.load(Ordering::SeqCst)==1&&fixture.forbidden.load(Ordering::SeqCst)==0&&steps.iter().any(|s|s=="request-close-from-production")&&if fixture.phase.starts_with("picker"){super::standalone_picker_acceptance::passed(&fixture.phase)}else if fixture.phase=="first"{steps.iter().any(|s|s=="native-close-received-before-save-ack")&&steps.iter().any(|s|s=="durable-save-ack-released")}else{steps.iter().any(|s|s=="reopened-exact-bytes-same-id")};
+            println!("{}",serde_json::json!({"kind":"result","passed":complete,"phase":fixture.phase,"approvedProgrammaticExits":approved,"nativeTerminateCounters":quit_macos::counters(),"realIPCCommandCount":fixture.calls.load(Ordering::SeqCst),"forbiddenServiceAttempts":fixture.forbidden.load(Ordering::SeqCst),"osStoreProviderConstructorsReachable":false,"managedRuntimeAcquire":false,"physicalKeyboard":false,"picker":super::standalone_picker_acceptance::summary(),"steps":*steps}));
             let _=std::io::stdout().flush();
         }
     });
