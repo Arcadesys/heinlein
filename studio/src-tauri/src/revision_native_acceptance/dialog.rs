@@ -1,7 +1,9 @@
 //! Only compiled into the explicit disposable revision fixture.
 //! Objective-C objects are created, inspected, clicked and released on main only.
 use super::*;
+use std::cell::RefCell;
 use std::ffi::{c_char, c_void, CStr};
+use std::rc::Rc;
 use std::sync::atomic::AtomicUsize;
 
 type Object = *mut c_void;
@@ -101,6 +103,32 @@ unsafe fn click(value: Object) {
     f(value, selector(c"performClick:"), std::ptr::null_mut());
 }
 
+// Retain the CURRENT matched sheet and selected control through synchronous
+// dismissal/completion. Native's parent/prior-sheet owners are not substitutes.
+struct ActionOwners {
+    sheet: Object,
+    button: Object,
+}
+impl ActionOwners {
+    unsafe fn retain(sheet: Object, button: Object) -> Self {
+        Self {
+            sheet: object(sheet, c"retain"),
+            button: object(button, c"retain"),
+        }
+    }
+    unsafe fn perform(&self) {
+        click(self.button);
+    }
+}
+impl Drop for ActionOwners {
+    fn drop(&mut self) {
+        unsafe {
+            release_object(self.button);
+            release_object(self.sheet);
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
     Cancel,
@@ -138,20 +166,33 @@ struct Native {
     app: tauri::AppHandle,
     external: Option<Arc<Mutex<Option<bool>>>>,
 }
+// The timer owns one Rc. Each callback takes another before touching its context:
+// invalidation releases the timer's Rc immediately, not the callback's borrow.
+unsafe fn callback_owner<T>(info: *const c_void) -> Rc<RefCell<T>> {
+    let pointer = info.cast::<RefCell<T>>();
+    Rc::increment_strong_count(pointer);
+    Rc::from_raw(pointer)
+}
+unsafe fn release_context<T>(info: *const c_void) {
+    drop(Rc::from_raw(info.cast::<RefCell<T>>()));
+}
 extern "C" fn dispose(info: *const c_void) {
-    if info.is_null() {
-        return;
+    if !info.is_null() {
+        unsafe { release_context::<Native>(info) };
     }
-    let state = unsafe { Box::from_raw(info as *mut Native) };
-    if unsafe { pthread_main_np() } != 0 {
-        unsafe {
-            if !state.prior_sheet.is_null() {
-                release_object(state.prior_sheet);
+}
+impl Drop for Native {
+    fn drop(&mut self) {
+        if unsafe { pthread_main_np() } != 0 {
+            unsafe {
+                if !self.prior_sheet.is_null() {
+                    release_object(self.prior_sheet);
+                }
+                release_object(self.parent);
             }
-            release_object(state.parent);
+        } else {
+            self.observation.failed.store(true, Ordering::SeqCst);
         }
-    } else {
-        state.observation.failed.store(true, Ordering::SeqCst);
     }
 }
 
@@ -238,21 +279,42 @@ unsafe fn matched(state: &Native) -> Option<(Object, Object, Object)> {
     let (ok, cancel) = controls(sheet, &state.expected)?;
     Some((sheet, ok, cancel))
 }
-unsafe fn terminate_timer(state: &Native) {
-    CFRunLoopTimerInvalidate(state.timer);
-    CFRelease(state.timer);
+struct TimerRelease(CFRef);
+impl Drop for TimerRelease {
+    fn drop(&mut self) {
+        unsafe { CFRelease(self.0) };
+    }
+}
+unsafe fn invalidate_timer(handle: &mut CFRef) -> Option<TimerRelease> {
+    let timer = std::mem::replace(handle, std::ptr::null());
+    if timer.is_null() {
+        return None;
+    }
+    // The callback's independent Rc retains context and native owners. Taking
+    // the handle first also makes panic/error cleanup idempotent.
+    let release = TimerRelease(timer);
+    CFRunLoopTimerInvalidate(timer);
+    Some(release)
+}
+unsafe fn terminate_timer(state: &mut Native) {
+    drop(invalidate_timer(&mut state.timer));
 }
 extern "C" fn tick(_: CFRef, info: *mut c_void) {
-    // No panic may unwind across the CoreFoundation callback.
+    // Main-only Rc; no native objects or pointers cross threads. Keep this owner
+    // outside catch_unwind, including its error cleanup and final state access.
+    let owner = unsafe { callback_owner::<Native>(info) };
+    let Ok(mut state) = owner.try_borrow_mut() else {
+        // A modal action may reenter the runloop. The active callback owns it.
+        return;
+    };
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-        tick_inner(&mut *(info as *mut Native))
+        tick_inner(&mut state)
     }));
     if result.is_err() {
         unsafe {
-            let state = &*(info as *mut Native);
             state.observation.failed.store(true, Ordering::SeqCst);
             state.app.exit(73);
-            terminate_timer(state);
+            terminate_timer(&mut state);
         }
     }
 }
@@ -264,8 +326,9 @@ unsafe fn tick_inner(state: &mut Native) {
     if CFAbsoluteTimeGetCurrent() > state.deadline {
         state.observation.failed.store(true, Ordering::SeqCst);
         // Cleanup may only click a positively identified own Cancel. Never pass.
-        if let Some((_, _, cancel)) = matched(state) {
-            click(cancel);
+        if let Some((sheet, _, cancel)) = matched(state) {
+            let owners = ActionOwners::retain(sheet, cancel);
+            owners.perform();
         }
         progress("actual-dialog-timeout-FAIL");
         state.app.exit(73);
@@ -297,7 +360,8 @@ unsafe fn tick_inner(state: &mut Native) {
             });
             return;
         }
-        match *state.external.as_ref().unwrap().lock().unwrap() {
+        let external_result = *state.external.as_ref().unwrap().lock().unwrap();
+        match external_result {
             None => return,
             Some(false) => {
                 state.observation.failed.store(true, Ordering::SeqCst);
@@ -318,18 +382,21 @@ unsafe fn tick_inner(state: &mut Native) {
     if state.observation.clicked.swap(true, Ordering::SeqCst) {
         return;
     }
-    CFRunLoopTimerInvalidate(state.timer);
+    let owners = ActionOwners::retain(
+        same,
+        if state.expected.action == Action::Cancel {
+            cancel
+        } else {
+            ok
+        },
+    );
+    let _timer = invalidate_timer(&mut state.timer);
     progress(if state.expected.action == Action::Cancel {
         "own-sheet-Cancel-performClick"
     } else {
         "own-sheet-OK-performClick"
     });
-    click(if state.expected.action == Action::Cancel {
-        cancel
-    } else {
-        ok
-    });
-    CFRelease(state.timer); // Final statement: this may release the Native context.
+    owners.perform();
 }
 fn source_hashes(root: &Path) -> Result<[String; 2], String> {
     let hash = |name: &str| {
@@ -411,7 +478,7 @@ pub(super) fn arm(
             } else {
                 object(prior, c"retain")
             };
-            let state = Box::new(Native {
+            let state = Rc::new(RefCell::new(Native {
                 parent,
                 prior_sheet,
                 timer: std::ptr::null(),
@@ -420,11 +487,11 @@ pub(super) fn arm(
                 observation,
                 app: h,
                 external: None,
-            });
-            let raw = Box::into_raw(state);
+            }));
+            let raw = Rc::into_raw(state.clone());
             let mut context = TimerContext {
                 version: 0,
-                info: raw.cast(),
+                info: raw.cast_mut().cast(),
                 retain: None,
                 release: Some(dispose),
                 description: None,
@@ -442,7 +509,7 @@ pub(super) fn arm(
                 dispose(raw.cast());
                 return Err("Own timer unavailable".into());
             }
-            (*raw).timer = timer;
+            state.borrow_mut().timer = timer;
             let loop_ = CFRunLoopGetMain();
             CFRunLoopAddTimer(loop_, timer, kCFRunLoopDefaultMode);
             let modal = CFStringCreateWithCString(
@@ -451,7 +518,7 @@ pub(super) fn arm(
                 0x08000100,
             );
             if modal.is_null() {
-                terminate_timer(&*raw);
+                terminate_timer(&mut state.borrow_mut());
                 return Err("Modal runloop mode unavailable".into());
             }
             CFRunLoopAddTimer(loop_, timer, modal);
@@ -501,4 +568,77 @@ pub(super) fn completed(
             .push(observation.proposal_id.clone());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod timer_lifetime_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    struct Probe {
+        drops: Rc<Cell<usize>>,
+        action_reads: usize,
+        timer: CFRef,
+    }
+    impl Drop for Probe {
+        fn drop(&mut self) {
+            self.drops.set(self.drops.get() + 1);
+        }
+    }
+    extern "C" fn dispose_probe(info: *const c_void) {
+        unsafe { release_context::<Probe>(info) };
+    }
+    extern "C" fn unused_tick(_: CFRef, _: *mut c_void) {}
+
+    // Actual CF context release, without a window, runloop, dialog or app store.
+    unsafe fn exercise_cleanup(error: bool) {
+        let drops = Rc::new(Cell::new(0));
+        let initial = Rc::new(RefCell::new(Probe {
+            drops: drops.clone(),
+            action_reads: 0,
+            timer: std::ptr::null(),
+        }));
+        let raw = Rc::into_raw(initial.clone());
+        let mut context = TimerContext {
+            version: 0,
+            info: raw.cast_mut().cast(),
+            retain: None,
+            release: Some(dispose_probe),
+            description: None,
+        };
+        let timer =
+            CFRunLoopTimerCreate(std::ptr::null(), 0.0, 1.0, 0, 0, unused_tick, &mut context);
+        assert!(!timer.is_null());
+        initial.borrow_mut().timer = timer;
+        drop(initial); // Now only CF owns the raw context, as at callback entry.
+        {
+            let callback = callback_owner::<Probe>(raw.cast());
+            let mut state = callback.borrow_mut();
+            let nested = callback_owner::<Probe>(raw.cast());
+            assert!(nested.try_borrow_mut().is_err()); // No reentrant action.
+            drop(nested);
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _release = invalidate_timer(&mut state.timer);
+                assert_eq!(drops.get(), 0);
+                assert_eq!(Rc::strong_count(&callback), 1); // CF released its owner.
+                state.action_reads += 1; // Native owners still live during action.
+                if error {
+                    panic!("synthetic action failure");
+                }
+            }));
+            assert_eq!(outcome.is_err(), error);
+            assert_eq!(state.action_reads, 1);
+            assert!(invalidate_timer(&mut state.timer).is_none()); // Error/timeout cleanup repeats safely.
+            assert_eq!(drops.get(), 0);
+        }
+        assert_eq!(drops.get(), 1); // Only after the callback's final access.
+    }
+    #[test]
+    fn matched_action_keeps_context_until_callback_returns() {
+        unsafe { exercise_cleanup(false) };
+    }
+    #[test]
+    fn panic_and_repeated_cleanup_keep_context_and_release_exactly_once() {
+        unsafe { exercise_cleanup(true) };
+    }
 }
