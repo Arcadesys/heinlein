@@ -195,6 +195,11 @@ pub(super) fn picker_guard_home(app: &tauri::AppHandle) -> Result<PathBuf, Strin
     }
     Ok(fixture.root.clone())
 }
+pub(super) fn picker_preview_only() -> bool {
+    FIXTURE
+        .get()
+        .is_some_and(|fixture| fixture.phase == "picker-preview-only")
+}
 pub(super) fn picker_root() -> Result<PathBuf, String> {
     let fixture = FIXTURE.get().ok_or("Verified picker startup required")?;
     if !fixture.phase.starts_with("picker") {
@@ -214,7 +219,14 @@ fn run_fixture() -> Result<(), String> {
     let args: Vec<_> = std::env::args().collect();
     if args.len() != 4
         || args[1] != "--standalone-native-acceptance"
-        || !["first", "reopen", "picker", "picker-reopen"].contains(&args[3].as_str())
+        || ![
+            "first",
+            "reopen",
+            "picker",
+            "picker-reopen",
+            "picker-preview-only",
+        ]
+        .contains(&args[3].as_str())
     {
         return Err("Explicit fixture invocation/root/phase required".into());
     }
@@ -234,7 +246,7 @@ fn run_fixture() -> Result<(), String> {
         return Err("TMPDIR must equal fixture root before startup".into());
     }
     let sentinel = root.join("fixture-sentinel.json");
-    if ["first", "picker"].contains(&args[3].as_str()) {
+    if ["first", "picker", "picker-preview-only"].contains(&args[3].as_str()) {
         if std::fs::read_dir(&root)
             .map_err(|_| "Fixture root unavailable")?
             .next()
@@ -261,7 +273,7 @@ fn run_fixture() -> Result<(), String> {
         }
         private(p)?;
     }
-    if args[3] == "picker" {
+    if ["picker", "picker-preview-only"].contains(&args[3].as_str()) {
         let target = root.join("copy-targets");
         std::fs::DirBuilder::new()
             .mode(0o700)
@@ -346,9 +358,11 @@ fn run_fixture() -> Result<(), String> {
             if cmd == "standalone_request" {
                 let allowed = match invoke.message.payload() {
                     tauri::ipc::InvokeBody::Json(v) => {
-                        v["request"]["kind"].as_str().is_some_and(|kind| {
+                        if guarded.phase == "picker-preview-only" {
+                            super::standalone_picker_acceptance::preview_only_request_allowed(&v["request"])
+                        } else { v["request"]["kind"].as_str().is_some_and(|kind| {
                             ["list", "create", "open", "save", "release"].contains(&kind) || (guarded.phase.starts_with("picker") && ["preview", "cancelPreview", "place"].contains(&kind) && (kind != "preview" || v["request"]["destination"] == "file"))
-                        })
+                        }) }
                     }
                     _ => false,
                 };

@@ -75,7 +75,7 @@ def validate_phase(phase,result,lines):
               'with-webview-call-returned','worker-not-main-navigation-gates-complete',
               'worker-navigation-enqueued','first-renderer-IPC','production-editor-ready',
               'production-editor-focused','owned-native-window-visible-focused']
-    required+=['picker-cancel-real-null','picker-preview-real-token','picker-place-cancel-real-null',
+    required+=['picker-cancel-real-null','picker-preview-real-token'] if phase=='picker-preview-only' else ['picker-cancel-real-null','picker-preview-real-token','picker-place-cancel-real-null',
                'picker-copy-real-receipt','picker-replay-denied'] if phase=='picker' else ['picker-reopened-both']
     required+=['picker-all-evidence-ready','request-close-from-production',
                'production-request-close-command-received','production-exit-guards-approved-Some0']
@@ -85,19 +85,19 @@ def validate_phase(phase,result,lines):
     if len(observations)!=1 or any(observations[0].get(k) is not True for k in ('visible','focused','rendererActiveElement','editorHasFocus','documentHasFocus')):
         raise RuntimeError('Own native window/editor focus not proven')
     actions=[v for v in lines if v.get('kind')=='native-picker' and v.get('stage') in ('public-panel-action-dispatched-real-completion-required','public-alert-button-action-dispatched-real-completion-required')]
-    expected_actions=[1,2,3,4,5] if phase=='picker' else []
+    expected_actions=[1,2] if phase=='picker-preview-only' else [1,2,3,4,5] if phase=='picker' else []
     if [v.get('phase') for v in actions]!=expected_actions:raise RuntimeError('Actual public dialog actions missing/duplicated')
     for action in actions:
         observed='actual-NSSavePanel-owned-parent-dir-name-verified' if action['phase'] in (1,2,4) else 'actual-parented-alert-exact-synthetic-content-controls-verified'
         witness=next((v for v in lines if v.get('kind')=='native-picker' and v.get('stage')==observed and v.get('phase')==action['phase']),None)
         if not witness or lines.index(witness)>=lines.index(action):raise RuntimeError('Public action lacks preceding owned-sheet witness')
     readbacks=[v['value'] for v in lines if v.get('kind')=='native-picker-readback']
-    expected=[('picker-cancel-real-null',1,False),('picker-preview-real-token',2,False),('picker-place-cancel-real-null',3,False),('picker-preview-real-token',4,False),('picker-copy-real-receipt',5,True),('picker-replay-denied',5,True)] if phase=='picker' else [('picker-reopened-both',0,True)]
+    expected=[('picker-cancel-real-null',1,False),('picker-preview-real-token',2,False)] if phase=='picker-preview-only' else [('picker-cancel-real-null',1,False),('picker-preview-real-token',2,False),('picker-place-cancel-real-null',3,False),('picker-preview-real-token',4,False),('picker-copy-real-receipt',5,True),('picker-replay-denied',5,True)] if phase=='picker' else [('picker-reopened-both',0,True)]
     if len(readbacks)!=len(expected):raise RuntimeError('Native file/source readback missing')
     for value,(stage,count,placed) in zip(readbacks,expected):
         if value.get('stage')!=stage or value.get('nativeActions')!=count or value.get('originalExact') is not True or value.get('copyExact') is not placed or value.get('publicationAbsent') is not (not placed) or value.get('bytes')!=94 or value.get('hash')!='115d534fa5575cf7820a1c44c84824eb41871d514293561082f487cfcbe5a276' or value.get('placements')!=(1 if placed else 0) or value.get('pendingIntents')!=0:
             raise RuntimeError('Native original/copy/cancellation byte binding mismatch')
-    expected_summary={'armed':5,'completedPublicActions':5,'failure':0,'readbackMask':126} if phase=='picker' else {'armed':0,'completedPublicActions':0,'failure':0,'readbackMask':128}
+    expected_summary={'armed':2,'completedPublicActions':2,'failure':0,'readbackMask':6,'alertCalls':0,'pickerOnly':True,'placementConfirmation':False} if phase=='picker-preview-only' else {'armed':5,'completedPublicActions':5,'failure':0,'readbackMask':126} if phase=='picker' else {'armed':0,'completedPublicActions':0,'failure':0,'readbackMask':128}
     if any(result.get('picker',{}).get(k)!=v for k,v in expected_summary.items()):raise RuntimeError('Native one-shot dialog evidence incomplete')
     if result.get('nativeTerminateCounters')!=[1,1,1,0] or result.get('approvedProgrammaticExits')!=1 or result.get('forbiddenServiceAttempts')!=0 or result.get('managedRuntimeAcquire') is not False or result.get('osStoreProviderConstructorsReachable') is not False:
         raise RuntimeError('Native close/isolation result mismatch')
@@ -115,6 +115,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--authorized-synthetic-native-test', action='store_true', required=True)
+    parser.add_argument('--preview-only', action='store_true')
     parser.add_argument('--receipt', type=Path, required=True)
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
@@ -141,17 +142,18 @@ def main():
     subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(app)], check=True, capture_output=True)
     receipt = {**binary_receipt(binary, executable),
                'bundle': str(app), 'identifier': identifier, 'signature': 'ad-hoc; strict verified',
-               'root': str(root), 'physicalKeyboard': False, 'VoiceOver': False, 'installedApp': False, 'phases': []}
+               'root': str(root), 'physicalKeyboard': False, 'VoiceOver': False, 'installedApp': False, 'phases': [],'pickerOnly':args.preview_only,'placementConfirmation':not args.preview_only}
     # Write progress after each clean child exit; failure keeps exact diagnostic root.
     try:
-        for phase in ('picker', 'picker-reopen'):
+        for phase in (('picker-preview-only',) if args.preview_only else ('picker', 'picker-reopen')):
             record={}
             receipt['phases'].append(record)
             record.update(run_phase(executable, root, phase, record))
-        first=[v['value'] for v in receipt['phases'][0]['orderedDiagnostics'] if v.get('kind')=='native-picker-readback'][-1]
-        reopened=[v['value'] for v in receipt['phases'][1]['orderedDiagnostics'] if v.get('kind')=='native-picker-readback'][-1]
-        if any(first.get(k)!=reopened.get(k) for k in ('draftId','revision','hash','bytes','placements')):
-            raise RuntimeError('Fresh process changed original/copy/receipt binding')
+        if not args.preview_only:
+            first=[v['value'] for v in receipt['phases'][0]['orderedDiagnostics'] if v.get('kind')=='native-picker-readback'][-1]
+            reopened=[v['value'] for v in receipt['phases'][1]['orderedDiagnostics'] if v.get('kind')=='native-picker-readback'][-1]
+            if any(first.get(k)!=reopened.get(k) for k in ('draftId','revision','hash','bytes','placements')):
+                raise RuntimeError('Fresh process changed original/copy/receipt binding')
         receipt['passed'] = True
     except Exception as error:
         receipt['passed'] = False

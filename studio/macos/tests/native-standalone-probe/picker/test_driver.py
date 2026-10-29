@@ -62,6 +62,44 @@ class ReceiptTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 driver.validate_phase('picker-reopen', result, lines)
 
+    def picker_only(self):
+        result, lines = self.reopen()
+        for index, value in enumerate(lines):
+            if value.get('stage') == 'picker-reopened-both':
+                lines[index:index+1] = [{'kind':'progress','stage':stage} for stage in ('picker-cancel-real-null','picker-preview-real-token')]
+                break
+        template=lines.pop()['value']
+        for phase,stage in ((1,'picker-cancel-real-null'),(2,'picker-preview-real-token')):
+            lines.extend([
+                {'kind':'native-picker','stage':'actual-NSSavePanel-owned-parent-dir-name-verified','phase':phase},
+                {'kind':'native-picker','stage':'public-panel-action-dispatched-real-completion-required','phase':phase},
+                {'kind':'native-picker-readback','value':{**template,'stage':stage,'nativeActions':phase,'copyExact':False,'publicationAbsent':True,'placements':0}},
+            ])
+        result['picker']={'armed':2,'completedPublicActions':2,'failure':0,'readbackMask':6,'alertCalls':0,'pickerOnly':True,'placementConfirmation':False}
+        return result,lines
+
+    def test_picker_only_requires_two_real_panel_actions_without_publication(self):
+        driver.validate_phase('picker-preview-only', *self.picker_only())
+        for key,value in (('alertCalls',1),('armed',3),('placementConfirmation',True)):
+            result,lines=self.picker_only()
+            result['picker'][key]=value
+            with self.assertRaises(RuntimeError):
+                driver.validate_phase('picker-preview-only',result,lines)
+        result,lines=self.picker_only()
+        lines[-1]['value']['placements']=1
+        with self.assertRaises(RuntimeError):
+            driver.validate_phase('picker-preview-only',result,lines)
+
+    def test_picker_only_refuses_third_action_or_missing_completion(self):
+        result,lines=self.picker_only()
+        lines.append({'kind':'native-picker','stage':'public-alert-button-action-dispatched-real-completion-required','phase':3})
+        with self.assertRaises(RuntimeError):
+            driver.validate_phase('picker-preview-only',result,lines)
+        result,lines=self.picker_only()
+        del lines[-1]
+        with self.assertRaises(RuntimeError):
+            driver.validate_phase('picker-preview-only',result,lines)
+
     def test_arbitrary_binary_never_inherits_source_provenance(self):
         with tempfile.TemporaryDirectory() as directory:
             a, b = (Path(directory) / name for name in ('a', 'b'))

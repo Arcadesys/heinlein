@@ -17,6 +17,9 @@ static NEXT: AtomicUsize = AtomicUsize::new(0);
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 static COMPLETED: AtomicUsize = AtomicUsize::new(0);
 static DEADLINE: AtomicU64 = AtomicU64::new(0);
+static ALERT_CALLS: AtomicUsize = AtomicUsize::new(0);
+static PREVIEW_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+static CREATE_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 static FAILURE: AtomicUsize = AtomicUsize::new(0);
 struct Declaration {
     root: PathBuf,
@@ -169,7 +172,14 @@ fn arm(picker: bool) -> Result<PathBuf, String> {
     }
     let before = NEXT.load(Ordering::SeqCst);
     let next = before + 1;
-    if next > 5 || expected_picker(next) != picker {
+    if next
+        > if super::standalone_native_acceptance::picker_preview_only() {
+            2
+        } else {
+            5
+        }
+        || expected_picker(next) != picker
+    {
         return Err("Unexpected native dialog phase".into());
     }
     NEXT.compare_exchange(before, next, Ordering::SeqCst, Ordering::SeqCst)
@@ -212,10 +222,51 @@ pub(super) fn validate_returned_picker_path(chosen: &std::path::Path) -> Result<
     }
     Ok(())
 }
+fn preview_request_shape(request: &serde_json::Value, id: Option<&str>) -> bool {
+    match request["kind"].as_str() {
+        Some("list" | "release") => true,
+        Some("create") => request["text"] == CONTENT,
+        Some("open") => id.is_some_and(|id| request["id"] == id),
+        Some("save") => {
+            request["text"] == CONTENT && request["hash"] == HASH && request["revision"] == 1
+        }
+        Some("preview") => {
+            request["destination"] == "file" && request["hash"] == HASH && request["revision"] == 1
+        }
+        _ => false,
+    }
+}
+pub(super) fn preview_only_request_allowed(request: &serde_json::Value) -> bool {
+    let Some(d) = DECLARED.get() else {
+        return false;
+    };
+    if !super::standalone_native_acceptance::picker_preview_only()
+        || failure().is_some()
+        || !paths_valid(d)
+    {
+        return false;
+    }
+    let identity =
+        super::standalone_native_acceptance::file_read(&d.root.join("draft-identity.json")).ok();
+    let id = identity.as_ref().and_then(|v| v["id"].as_str());
+    if !preview_request_shape(request, id) {
+        return false;
+    }
+    match request["kind"].as_str() {
+        Some("create") => CREATE_REQUESTS.fetch_add(1, Ordering::SeqCst) == 0 && id.is_none(),
+        Some("preview") => PREVIEW_REQUESTS.fetch_add(1, Ordering::SeqCst) < 2 && id.is_some(),
+        _ => true,
+    }
+}
 pub(super) fn arm_picker() -> Result<PathBuf, String> {
     arm(true)
 }
 pub(super) fn arm_confirmation(message: &str) -> Result<(), String> {
+    ALERT_CALLS.fetch_add(1, Ordering::SeqCst);
+    if super::standalone_native_acceptance::picker_preview_only() {
+        FAILURE.store(6, Ordering::SeqCst);
+        return Err("Preview-only fixture forbids placement confirmation".into());
+    }
     let d = DECLARED
         .get()
         .ok_or("Verified picker declaration required")?;
@@ -238,7 +289,7 @@ pub(super) fn failure() -> Option<&'static str> {
     }
 }
 pub(super) fn summary() -> serde_json::Value {
-    serde_json::json!({"armed":NEXT.load(Ordering::SeqCst),"completedPublicActions":COMPLETED.load(Ordering::SeqCst),"failure":FAILURE.load(Ordering::SeqCst),"readbackMask":READBACKS.load(Ordering::SeqCst),"physicalKeyboard":false,"VoiceOver":false,"allUIInProcess":false})
+    serde_json::json!({"armed":NEXT.load(Ordering::SeqCst),"completedPublicActions":COMPLETED.load(Ordering::SeqCst),"failure":FAILURE.load(Ordering::SeqCst),"readbackMask":READBACKS.load(Ordering::SeqCst),"pickerOnly":super::standalone_native_acceptance::picker_preview_only(),"placementConfirmation":!super::standalone_native_acceptance::picker_preview_only(),"alertCalls":ALERT_CALLS.load(Ordering::SeqCst),"physicalKeyboard":false,"VoiceOver":false,"allUIInProcess":false})
 }
 pub(super) fn install(window: &tauri::WebviewWindow, root: PathBuf) -> Result<(), String> {
     if unsafe { pthread_main_np() } != 1 {
@@ -340,7 +391,13 @@ extern "C" fn timer_callback(timer: *mut c_void, _: *mut c_void) {
     }
     let phase = ACTIVE.load(Ordering::SeqCst);
     if phase == 0 {
-        if COMPLETED.load(Ordering::SeqCst) == 5 {
+        if COMPLETED.load(Ordering::SeqCst)
+            == if super::standalone_native_acceptance::picker_preview_only() {
+                2
+            } else {
+                5
+            }
+        {
             unsafe { CFRunLoopTimerInvalidate(timer) };
         }
         return;
@@ -377,6 +434,8 @@ extern "C" fn timer_callback(timer: *mut c_void, _: *mut c_void) {
             }
             let result = if expected_picker(phase) {
                 drive_picker(d, m, sheet.0, phase)
+            } else if super::standalone_native_acceptance::picker_preview_only() {
+                Err(6)
             } else {
                 drive_alert(d, m, sheet.0, phase)
             };
@@ -555,7 +614,12 @@ static READBACKS: AtomicUsize = AtomicUsize::new(0);
 pub(super) fn passed(phase: &str) -> bool {
     FAILURE.load(Ordering::SeqCst) == 0
         && ACTIVE.load(Ordering::SeqCst) == 0
-        && if phase == "picker" {
+        && if phase == "picker-preview-only" {
+            NEXT.load(Ordering::SeqCst) == 2
+                && COMPLETED.load(Ordering::SeqCst) == 2
+                && READBACKS.load(Ordering::SeqCst) == 6
+                && ALERT_CALLS.load(Ordering::SeqCst) == 0
+        } else if phase == "picker" {
             NEXT.load(Ordering::SeqCst) == 5
                 && COMPLETED.load(Ordering::SeqCst) == 5
                 && READBACKS.load(Ordering::SeqCst) == 126
@@ -676,6 +740,51 @@ pub(super) fn verify_readback(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn preview_only_denies_placement_and_unrelated_requests_before_dispatch() {
+        use serde_json::json;
+        for kind in [
+            "place",
+            "openPlaced",
+            "discard",
+            "restore",
+            "repair",
+            "cancelPreview",
+            "unknown",
+        ] {
+            let dispatched = Cell::new(false);
+            if preview_request_shape(&json!({"kind":kind}), Some("own-id")) {
+                dispatched.set(true);
+            }
+            assert!(!dispatched.get(), "{kind}");
+        }
+        assert!(preview_request_shape(
+            &json!({"kind":"create","text":CONTENT}),
+            None
+        ));
+        assert!(!preview_request_shape(
+            &json!({"kind":"create","text":"other"}),
+            None
+        ));
+        assert!(preview_request_shape(
+            &json!({"kind":"open","id":"own-id"}),
+            Some("own-id")
+        ));
+        assert!(!preview_request_shape(
+            &json!({"kind":"open","id":"other"}),
+            Some("own-id")
+        ));
+        let mut preview = json!({"kind":"preview","destination":"file","revision":1,"hash":HASH});
+        assert!(preview_request_shape(&preview, Some("own-id")));
+        preview["destination"] = json!("existingProject");
+        assert!(!preview_request_shape(&preview, Some("own-id")));
+        for revision in [0, 2] {
+            assert!(!preview_request_shape(
+                &json!({"kind":"save","text":CONTENT,"hash":HASH,"revision":revision}),
+                Some("own-id")
+            ));
+        }
+    }
     #[test]
     fn undeclared_return_is_rejected_before_resolver_can_run() {
         let expected = std::path::Path::new("/synthetic/copy-targets/draft.md");

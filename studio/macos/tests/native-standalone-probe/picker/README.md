@@ -18,13 +18,24 @@ raw binary SHA256 in an external manifest before any authorized attempt. The
 Python driver accurately records source provenance as unknown; binary hashes alone
 cannot establish a source revision.
 
+For the independently bounded picker Preview/Cancel scenario add `--preview-only`.
+This selects one child and native phase `picker-preview-only`: native dispatch
+rejects Place/OpenPlaced/discard and unrelated operations before production code,
+allows only the exact synthetic source/read/save and two file previews, caps arms
+at two, and makes alert arming an error. The renderer stops before its first
+Place action. Completion requires the two actual panel responses, retained preview
+token, exact original/no destination file/no placement receipt, zero alert calls
+and the unchanged guarded normal Quit path. A legitimate in-memory preview intent
+is not a published placement. There is no copy-reopen leg or Place acceptance in
+this mode. The full Place scenario remains separately gated.
+
 After explicit native preflight approval, invoke the driver with an owned raw
 executable beneath `/private/tmp/heinlein-native47-`, authorization flag and an
 external receipt path:
 
 ```sh
 python3 macos/tests/native-standalone-probe/picker/driver.py \
-  --authorized-synthetic-native-test --binary /private/tmp/heinlein-native47-EXACT/bin/heinlein-studio \
+  --authorized-synthetic-native-test --preview-only --binary /private/tmp/heinlein-native47-EXACT/bin/heinlein-studio \
   --receipt /private/tmp/heinlein-native47-EXACT-result.json
 ```
 
