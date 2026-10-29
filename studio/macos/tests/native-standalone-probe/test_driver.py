@@ -36,5 +36,19 @@ class BinaryProvenanceTests(unittest.TestCase):
             self.assertNotEqual(*hashes)
 
 
+class WindowEvidenceTests(unittest.TestCase):
+    def test_requires_one_owned_window_and_all_actual_focus_observations(self):
+        valid = dict(label='main', visible=True, focused=True, rendererActiveElement=True,
+                     editorHasFocus=True, documentHasFocus=True)
+        driver.validate_window_observations([valid])
+        for observations in ([], [valid, valid], [dict(valid, label='other')]):
+            with self.assertRaises(RuntimeError):
+                driver.validate_window_observations(observations)
+        for key in ('visible', 'focused', 'rendererActiveElement', 'editorHasFocus', 'documentHasFocus'):
+            for value in (False, None, 1, 'true'):
+                with self.subTest(key=key, value=value), self.assertRaises(RuntimeError):
+                    driver.validate_window_observations([dict(valid, **{key: value})])
+
+
 if __name__ == '__main__':
     unittest.main()

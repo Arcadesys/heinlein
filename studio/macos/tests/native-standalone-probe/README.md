@@ -95,3 +95,15 @@ updated metadata helper. Its non-executing synthetic-byte regression runs in CI:
 ```sh
 python3 -m unittest discover -s macos/tests/native-standalone-probe -p test_driver.py
 ```
+
+## Current-main window/focus follow-up
+
+Both phases now require an actual visible, focused owned Tauri window and the
+production editor's `hasFocus`, active content DOM, and focused WebKit document.
+The fixture brings only its own disposable window forward; it never refocuses
+the editor to conceal a mount failure. Native window observations and renderer
+observations are recorded separately and must all be true. These observations
+are not physical keyboard, AX, VoiceOver, OS picker, or installed-app acceptance.
+Each child starts a new session and the driver records its PID/process group,
+waits for normal exit, then starts the next process. Cooperative abort remains a
+failure; no signals or automatic retry are used.
