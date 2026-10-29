@@ -2,14 +2,25 @@
 #![cfg_attr(
     any(
         feature = "standalone-native-acceptance",
-        feature = "revision-native-acceptance"
+        feature = "revision-native-acceptance",
+        feature = "update-native-acceptance"
     ),
     allow(dead_code)
 )]
 
-#[cfg(all(
-    feature = "standalone-native-acceptance",
-    feature = "revision-native-acceptance"
+#[cfg(any(
+    all(
+        feature = "standalone-native-acceptance",
+        feature = "revision-native-acceptance"
+    ),
+    all(
+        feature = "standalone-native-acceptance",
+        feature = "update-native-acceptance"
+    ),
+    all(
+        feature = "revision-native-acceptance",
+        feature = "update-native-acceptance"
+    )
 ))]
 compile_error!("Select exactly one native acceptance fixture");
 
@@ -34,12 +45,17 @@ mod standalone;
 #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
 mod standalone_native_acceptance;
 mod update;
+#[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
+mod update_native_acceptance;
+#[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
+mod update_native_script;
 
 #[cfg(any(
     test,
     not(any(
         feature = "standalone-native-acceptance",
-        feature = "revision-native-acceptance"
+        feature = "revision-native-acceptance",
+        feature = "update-native-acceptance"
     ))
 ))]
 use recents::load_recents;
@@ -650,6 +666,18 @@ async fn list_system_fonts(window: tauri::WebviewWindow) -> Result<Vec<String>, 
     .map_err(|e| e.to_string())
 }
 fn main() {
+    if std::env::args_os().any(|arg| arg == "--update-native-acceptance") {
+        #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
+        {
+            update_native_acceptance::run();
+            return;
+        }
+        #[cfg(not(all(feature = "update-native-acceptance", target_os = "macos")))]
+        {
+            eprintln!("Updates native acceptance requires its explicit test feature on macOS");
+            std::process::exit(64);
+        }
+    }
     if std::env::args_os().any(|arg| arg == "--revision-native-acceptance") {
         #[cfg(all(feature = "revision-native-acceptance", target_os = "macos"))]
         {
@@ -676,7 +704,8 @@ fn main() {
     }
     #[cfg(any(
         feature = "standalone-native-acceptance",
-        feature = "revision-native-acceptance"
+        feature = "revision-native-acceptance",
+        feature = "update-native-acceptance"
     ))]
     {
         eprintln!(
@@ -686,14 +715,16 @@ fn main() {
     }
     #[cfg(not(any(
         feature = "standalone-native-acceptance",
-        feature = "revision-native-acceptance"
+        feature = "revision-native-acceptance",
+        feature = "update-native-acceptance"
     )))]
     production_main();
 }
 
 #[cfg(not(any(
     feature = "standalone-native-acceptance",
-    feature = "revision-native-acceptance"
+    feature = "revision-native-acceptance",
+    feature = "update-native-acceptance"
 )))]
 fn production_main() {
     let runtime = match update::Runtime::acquire() {

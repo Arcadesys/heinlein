@@ -1,0 +1,14 @@
+import {expect,it} from 'vitest';
+import {freshStatusCycle,statusReturns,type BackendEvent} from './statusCycle';
+it('does not accept stale available text before a newly opened native status cycle',()=>{
+  const events:BackendEvent[]=[{stage:'returned',action:'status',index:0,state:'available'}];
+  const before=statusReturns(events);
+  expect(freshStatusCycle(before,events,true,false,true)).toBe(false);
+  events.push({stage:'entered',action:'status',index:0});
+  expect(freshStatusCycle(before,events,true,true,false)).toBe(false);
+  events.push({stage:'returned',action:'status',index:0,state:'available'});
+  expect(freshStatusCycle(before,events,true,true,true)).toBe(false);
+  expect(freshStatusCycle(before,events,false,false,true)).toBe(false);
+  expect(freshStatusCycle(before,events,true,false,false)).toBe(false);
+  expect(freshStatusCycle(before,events,true,false,true)).toBe(true);
+});
