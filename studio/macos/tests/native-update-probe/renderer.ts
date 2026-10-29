@@ -5,7 +5,7 @@ import {localCore,type LocalCore} from '../../../src/localCore';
 import type {StandaloneDraft} from '../../../src/standaloneDrafts';
 import {seed,addition,expected,expectedHash,validateRequest,validateDurable,createDiagnostics} from '../native-standalone-probe/ack';
 import {visibleSeed,visibleExpected} from './oracle';
-import {freshStatusCycle,statusReturns,type BackendEvent} from './statusCycle';
+import {freshStatusCycle,statusReturns,controlReady,type BackendEvent} from './statusCycle';
 import '../../../src/style.css';
 
 const assert=(condition:unknown,message:string)=>{if(!condition)throw Error(message);};
@@ -60,7 +60,8 @@ const core:LocalCore={available:()=>true,pickRepository:forbidden,recentReposito
 function button(label:string,root:ParentNode=document){const b=[...root.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent===label);assert(b,`Missing button ${label}`);return b!;}
 const panel=()=>document.querySelector<HTMLDialogElement>('.update-panel')!;
 const status=()=>panel().querySelector('[role=status]')?.textContent??'';
-async function openUpdates(){const before=statusReturns(backendEvents);button('Updates…').click();await waitFor(()=>freshStatusCycle(before,backendEvents,panel().open,panel().getAttribute('aria-busy')==='true',!button('Check for updates').disabled),'fresh native status/render cycle');}
+const ready=(label:string)=>controlReady(panel().open,panel().getAttribute('aria-busy')==='true',!button(label).disabled);
+async function openUpdates(){const before=statusReturns(backendEvents);button('Updates…').click();await waitFor(()=>freshStatusCycle(before,backendEvents,panel().open,panel().getAttribute('aria-busy')==='true',ready('Check for updates')),'fresh native status/render cycle');}
 function entered(index:number){return backendEvents.some(e=>e.stage==='entered'&&e.action==='check'&&e.index===index);}
 async function main(){
   await listen<typeof backendEvents[number]>('native42-backend',event=>backendEvents.push(event.payload));
@@ -74,17 +75,17 @@ async function main(){
   assert(button('Check for updates').disabled&&panel().getAttribute('aria-busy')==='true','Busy UI');button('Check for updates').click();stage('check-busy-duplicate-suppressed');
   await emit('native42-control',{action:'native-quit'});await waitFor(()=>closeCalls===1&&quitFinished>0);await barrier();
   assert(panel().open&&!document.querySelector<HTMLElement>('#app')!.inert,'Refused native Quit keeps app usable');
-  await emit('native42-control',{action:'release-check',index:1});await waitFor(()=>status().includes('could not be checked')&&!button('Check for updates').disabled);stage('check-failed-visible');
-  button('Check for updates').click();await waitFor(()=>status().includes('newer main-source')&&!button('Check for updates').disabled);assert(entered(2),'Explicit native retry');stage('explicit-retry-available');
+  await emit('native42-control',{action:'release-check',index:1});await waitFor(()=>status().includes('could not be checked')&&ready('Check for updates'),'failed check rendered and action idle');stage('check-failed-visible');
+  button('Check for updates').click();await waitFor(()=>status().includes('newer main-source')&&ready('Check for updates'),'explicit retry rendered and action idle');assert(entered(2),'Explicit native retry');stage('explicit-retry-available');
   button('Close updates').click();assert(!panel().open,'Close updates closes dialog');assert(view.state.doc.toString()===visibleSeed,'Defer retains editor text');assert(!backendEvents.some(e=>e.action==='schedule'),'No schedule on defer');stage('deferred-writing-retained');
   await openUpdates();button('Check for updates').click();await waitFor(()=>entered(3),'third native check entered');button('Close updates').click();
-  const observed:string[]=[];const observer=new MutationObserver(()=>observed.push(status()));observer.observe(panel().querySelector('[role=status]')!,{childList:true,subtree:true,characterData:true});
-  button('Updates…').click();await emit('native42-control',{action:'release-check',index:3});await waitFor(()=>status().includes('newer main-source')&&!button('Check for updates').disabled);observer.disconnect();
+  const lateStatusBefore=statusReturns(backendEvents);const observed:string[]=[];const observer=new MutationObserver(()=>observed.push(status()));observer.observe(panel().querySelector('[role=status]')!,{childList:true,subtree:true,characterData:true});
+  button('Updates…').click();await emit('native42-control',{action:'release-check',index:3});await waitFor(()=>freshStatusCycle(lateStatusBefore,backendEvents,panel().open,panel().getAttribute('aria-busy')==='true',!button('Check for updates').disabled)&&status().includes('newer main-source'),'new dialog native status after stale check');observer.disconnect();
   assert(!observed.some(v=>v.includes('could not be checked')),'Old dialog result must not overwrite new session');stage('late-response-ignored');
-  button('Update on next launch').click();await waitFor(()=>status().includes('Update requested')&&!button('Save and quit when ready').disabled);stage('in-memory-scheduled');
+  button('Update on next launch').click();await waitFor(()=>status().includes('Update requested')&&ready('Save and quit when ready'),'memory schedule rendered and action idle');stage('in-memory-scheduled');
   // Production editor transaction. This is synthetic input, never physical keyboard proof.
   view.dispatch({changes:{from:view.state.doc.length,insert:addition}});assert(view.state.doc.toString()===visibleExpected,'Independent exact mixed-newline oracle');
-  button('Save and quit when ready').click();await waitFor(()=>staleRejected&&quitFinished>=2&&!button('Save and quit when ready').disabled);
+  button('Save and quit when ready').click();await waitFor(()=>staleRejected&&quitFinished>=2&&ready('Save and quit when ready'),'failed save preserved and quit action settled');
   assert(closeCalls===1&&view.state.doc.toString()===visibleExpected&&document.querySelector('.standalone-page')?.textContent?.includes('Not kept yet:'),'Failed real native save retains writing and prevents Quit');stage('stale-save-failure-preserved');
   button('Save and quit when ready').click();await waitFor(()=>heldSave);await tick();
   assert(closeCalls===1&&!ackReleased&&view.state.doc.toString()===visibleExpected,'Production Quit waits for genuine save ACK');stage('save-quit-held-for-genuine-ack');await barrier();releaseSave();
