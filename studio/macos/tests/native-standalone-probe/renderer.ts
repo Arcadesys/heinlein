@@ -98,6 +98,10 @@ async function main(){
   await waitFor(()=>opened&&closeReady&&Boolean(document.querySelector('.cm-content')));
   const view=EditorView.findFromDOM(document.querySelector('.cm-content')!);
   assert(view,'Real production editor mounted');stage('production-editor-ready');
+  // Observe production mount's focus; do not refocus the editor to hide a failure.
+  await waitFor(()=>Boolean(view!.hasFocus&&document.activeElement===view!.contentDOM&&document.hasFocus()));
+  stage('production-editor-focused',{activeElement:document.activeElement===view!.contentDOM,editorHasFocus:view!.hasFocus,documentHasFocus:document.hasFocus()});
+  await barrier('owned-window-editor-focus');
   if(config.phase==='first'){
     view!.dispatch({changes:{from:view!.state.doc.length,insert:addition}});stage('editor-revision-queued');
   }else stage('reopened-exact-bytes-same-id',{textHash:restored!.textHash,revision:restored!.revision,draftId:restored!.id});

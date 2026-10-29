@@ -369,6 +369,7 @@ fn run_fixture() -> Result<(), String> {
                     "validation-failed",
                     "seed-identity",
                     "production-editor-ready",
+                    "production-editor-focused",
                     "editor-revision-queued",
                     "save-IPC-queued",
                     "durable-save-IPC-returned",
@@ -386,6 +387,21 @@ fn run_fixture() -> Result<(), String> {
                 let f = FIXTURE.get().unwrap();
                 f.steps.lock().unwrap().push(name.to_string());
                 stage(name);
+                if name == "production-editor-focused" {
+                    let Some(window) = h.get_webview_window("main") else {
+                        fail(&h, "owned-window-missing");
+                        return;
+                    };
+                    let visible = window.is_visible().unwrap_or(false);
+                    let focused = window.is_focused().unwrap_or(false);
+                    println!("{}", serde_json::json!({"kind":"owned-window-observation","label":"main","visible":visible,"focused":focused,"rendererActiveElement":v["activeElement"],"editorHasFocus":v["editorHasFocus"],"documentHasFocus":v["documentHasFocus"]}));
+                    let _ = std::io::stdout().flush();
+                    if !visible || !focused || v["activeElement"] != true || v["editorHasFocus"] != true || v["documentHasFocus"] != true {
+                        fail(&h, "owned-window-or-editor-not-focused");
+                        return;
+                    }
+                    stage("owned-native-window-visible-focused");
+                }
                 if let Some(hash) = v["textHash"].as_str() {
                     if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
                         fail(&h, "invalid-text-hash");
@@ -465,6 +481,8 @@ fn run_fixture() -> Result<(), String> {
                 WebviewUrl::External("about:blank".parse()?),
             )
             .title("DISPOSABLE Heinlein standalone IPC test — synthetic writing only")
+            .visible(true)
+            .focused(true)
             .incognito(true)
             .initialization_script(&script)
             .on_navigation(|url| {
@@ -488,6 +506,8 @@ fn run_fixture() -> Result<(), String> {
                 tauri::webview::NewWindowResponse::Deny
             })
             .build()?;
+            window.show()?;
+            window.set_focus()?;
             // Dispatcher calls here would reacquire with_webview's window-id mutex.
             let (gate_tx, gate_rx) = std::sync::mpsc::channel();
             let (returned_tx, returned_rx) = std::sync::mpsc::channel();

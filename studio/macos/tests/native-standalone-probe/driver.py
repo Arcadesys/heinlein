@@ -18,13 +18,15 @@ def run_phase(binary, root, phase, record):
     environment = dict(os.environ, TMPDIR=str(root))
     child = subprocess.Popen([str(binary), '--standalone-native-acceptance', str(root), phase],
                              env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, bufsize=0)
+                             stderr=subprocess.PIPE, bufsize=0, start_new_session=True)
     print(json.dumps({'kind': 'child', 'pid': child.pid, 'binary': str(binary), 'root': str(root), 'phase': phase}), flush=True)
     selector = selectors.DefaultSelector()
     for stream in (child.stdout, child.stderr):
         selector.register(stream, selectors.EVENT_READ)
     lines, buffers, result = [], {}, None
-    record.update(pid=child.pid,phase=phase,orderedDiagnostics=lines)
+    record.update(pid=child.pid, processGroup=os.getpgid(child.pid), parentProcessGroup=os.getpgrp(), phase=phase,orderedDiagnostics=lines)
+    if record["processGroup"] == record["parentProcessGroup"]:
+        raise RuntimeError("Fixture child did not acquire its isolated session")
     deadline, abort_deadline = time.monotonic() + 65, None
     while selector.get_map() or child.poll() is None:
         if time.monotonic() > deadline and abort_deadline is None:
@@ -59,7 +61,7 @@ def run_phase(binary, root, phase, record):
     required = ['feature-explicit-invocation-private-root-sentinel-validated',
                 'all-tauri-app-paths-confined-before-webview-or-store',
                 'own-webkit-isPersistent-false-before-fixture-navigation', 'callback-gate-passed',
-                'with-webview-call-returned','worker-not-main-navigation-gates-complete','worker-navigation-enqueued','first-renderer-IPC','production-editor-ready']
+                'with-webview-call-returned','worker-not-main-navigation-gates-complete','worker-navigation-enqueued','first-renderer-IPC','production-editor-ready','production-editor-focused','owned-native-window-visible-focused']
     if phase == 'first':
         required += ['editor-revision-queued', 'save-IPC-queued', 'own-native-terminate-dispatched',
                      'own-native-terminate-returned-cancel', 'native-terminate-cancel-deferred-to-production-renderer',
@@ -71,6 +73,8 @@ def run_phase(binary, root, phase, record):
                  'production-exit-guards-approved-Some0']
     positions = [stages.index(stage) for stage in required]
     if positions != sorted(positions): raise RuntimeError('Native acceptance stages out of order')
+    observations = [line for line in lines if line.get('kind') == 'owned-window-observation']
+    validate_window_observations(observations)
     expected_hash = hashlib.sha256(('Synthetic café — 🦊\r\nSecond line\n第三行\rFinal original' + '\r\nLatest revision: naïve 🌈\r\n').encode()).hexdigest()
     hashes = [line['sha256'] for line in lines if line.get('kind') == 'synthetic-text-hash']
     if hashes != [expected_hash]: raise RuntimeError('Native save/reopen UTF8 hash mismatch')
@@ -78,6 +82,13 @@ def run_phase(binary, root, phase, record):
         raise RuntimeError('Acknowledgment preceded actual native Save return')
     if result['nativeTerminateCounters'] != [1, 1, 1, 0]: raise RuntimeError('Unexpected native Cancel/deferred/error counters')
     return {'pid': child.pid, 'exit': code, 'result': result, 'orderedDiagnostics': lines}
+
+
+def validate_window_observations(observations):
+    if len(observations) != 1 or observations[0].get('label') != 'main' or any(
+            observations[0].get(key) is not True for key in
+            ('visible', 'focused', 'rendererActiveElement', 'editorHasFocus', 'documentHasFocus')):
+        raise RuntimeError('Owned native window/editor focus not proven')
 
 
 def binary_receipt(binary, executable):
