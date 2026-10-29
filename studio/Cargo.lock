@@ -1904,6 +1904,7 @@ dependencies = [
  "github-workspace",
  "heinlein-chatgpt-auth",
  "proposal-store",
+ "raw-window-handle",
  "repository-core",
  "rustix",
  "serde",

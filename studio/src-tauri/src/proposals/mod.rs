@@ -1,12 +1,51 @@
 //! Bundled-main-window routes only. MCP has no access to this module or dialogs.
 pub(crate) mod authority;
+#[cfg(target_os = "macos")]
+pub(crate) mod parent;
 use super::{check_window, recovery_store, with_repository, BrowserState};
 use authority::{Authority, Binding, Listing, Outcome, ReceiptStore, Review};
+#[cfg(target_os = "macos")]
+use parent::ValidatedConfirmationParent;
 use proposal_store::ProposalStore;
 use std::sync::atomic::Ordering;
 use tauri::Manager;
-#[cfg(not(all(feature = "revision-native-acceptance", target_os = "macos")))]
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+/// The same retained-plan dialog is used in production and actual-dialog fixtures.
+/// Only macOS attaches a parent; other platforms retain their existing semantics.
+fn confirm_retained_review(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+    review: &Review,
+) -> Result<bool, String> {
+    check_window(window)?;
+    #[cfg(all(feature = "revision-native-acceptance", target_os = "macos"))]
+    if !crate::revision_native_acceptance::actual_dialog_mode()? {
+        return crate::revision_native_acceptance::confirm_review(app, review);
+    }
+    let builder = app
+        .dialog()
+        .message(review.confirmation_message())
+        .title(if review.kind == "revert" {
+            "Heinlein: confirm guarded revert"
+        } else {
+            "Heinlein: confirm reviewed proposal"
+        })
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel);
+    #[cfg(target_os = "macos")]
+    let parent = ValidatedConfirmationParent::capture(app, window)?;
+    #[cfg(target_os = "macos")]
+    let builder = builder.parent(&parent);
+    #[cfg(all(feature = "revision-native-acceptance", target_os = "macos"))]
+    let observation = crate::revision_native_acceptance::begin_actual_dialog(app, window, review)?;
+    #[cfg(target_os = "macos")]
+    parent.check_on_main(app)?;
+    let answer = builder.blocking_show();
+    #[cfg(all(feature = "revision-native-acceptance", target_os = "macos"))]
+    crate::revision_native_acceptance::finish_actual_dialog(app, observation, answer)?;
+    Ok(answer)
+}
 
 #[derive(Default)]
 pub(crate) struct ProposalHost {
@@ -162,20 +201,7 @@ pub(crate) async fn apply_proposal_review(
         // A renderer request alone is not author approval. Dialog content comes
         // only from the retained plan. No authority lock is held while it is open:
         // real dirty notifications can invalidate the plan during confirmation.
-        #[cfg(all(feature = "revision-native-acceptance", target_os = "macos"))]
-        let confirmed = crate::revision_native_acceptance::confirm_review(&app, &review)?;
-        #[cfg(not(all(feature = "revision-native-acceptance", target_os = "macos")))]
-        let confirmed = app
-            .dialog()
-            .message(review.confirmation_message())
-            .title(if review.kind == "revert" {
-                "Heinlein: confirm guarded revert"
-            } else {
-                "Heinlein: confirm reviewed proposal"
-            })
-            .kind(MessageDialogKind::Warning)
-            .buttons(MessageDialogButtons::OkCancel)
-            .blocking_show();
+        let confirmed = confirm_retained_review(&app, &window, &review)?;
         if !confirmed {
             state
                 .proposals
