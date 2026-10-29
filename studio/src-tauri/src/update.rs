@@ -14,6 +14,8 @@ pub(crate) struct Runtime {
     bundle: Option<PathBuf>,
     cache: Option<PathBuf>,
     operation: Mutex<()>,
+    #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
+    synthetic: Option<std::sync::Arc<super::update_native_script::Script>>,
     exiting: std::sync::atomic::AtomicBool,
 }
 #[derive(Deserialize)]
@@ -177,6 +179,8 @@ impl Runtime {
                 _lease: Some(lease),
                 bundle: Some(bundle.to_owned()),
                 cache: Some(cache),
+                #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
+                synthetic: None,
                 operation: Mutex::new(()),
                 exiting: std::sync::atomic::AtomicBool::new(false),
             }))
@@ -229,10 +233,23 @@ impl Runtime {
         self.exiting
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
+    #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
+    pub(crate) fn synthetic(script: std::sync::Arc<super::update_native_script::Script>) -> Self {
+        Self {
+            synthetic: Some(script),
+            ..Self::default()
+        }
+    }
     fn execute(&self, action: Action) -> Result<Status, String> {
-        let Some(bundle) = &self.bundle else {
-            return Ok(unavailable());
-        };
+        if self.bundle.is_none() {
+            #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
+            let synthetic = self.synthetic.is_some();
+            #[cfg(not(all(feature = "update-native-acceptance", target_os = "macos")))]
+            let synthetic = false;
+            if !synthetic {
+                return Ok(unavailable());
+            }
+        }
         let _gate = self
             .operation
             .try_lock()
@@ -240,6 +257,13 @@ impl Runtime {
         if self.exiting.load(std::sync::atomic::Ordering::SeqCst) {
             return Err("Heinlein is quitting".into());
         }
+        #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
+        if let Some(script) = &self.synthetic {
+            // Synthetic bytes travel through the real operation/exiting gates and parser.
+            // Never fall through to codesign, Python or a real updater path.
+            return parse_status(&script.respond(action)?);
+        }
+        let bundle = self.bundle.as_ref().ok_or("Managed bundle unavailable")?;
         // Use OS verification before executing bundled updater code. No deep re-sign.
         if !std::process::Command::new("/usr/bin/codesign")
             .args(["--verify", "--deep", "--strict"])
@@ -341,6 +365,23 @@ pub(crate) async fn update_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
+    #[test]
+    fn synthetic_backend_obeys_real_operation_and_exiting_guards_and_parser() {
+        let script = std::sync::Arc::new(super::super::update_native_script::Script::default());
+        let runtime = Runtime::synthetic(script.clone());
+        assert_eq!(
+            runtime.execute(Action::Status).unwrap().state,
+            "not-checked"
+        );
+        let lock = runtime.operation.lock().unwrap();
+        assert!(runtime.execute(Action::Status).is_err());
+        assert_eq!(script.summary()["calls"], serde_json::json!(["status"]));
+        drop(lock);
+        runtime.seal_for_exit();
+        assert!(runtime.execute(Action::Status).is_err());
+        assert_eq!(script.summary()["calls"], serde_json::json!(["status"]));
+    }
     #[test]
     fn native_quit_waits_for_update_save_and_author_gates() {
         let runtime = Runtime::default();
