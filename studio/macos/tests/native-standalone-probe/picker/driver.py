@@ -101,19 +101,19 @@ def run_phase(binary, root, phase, record, diagnostic_backtrace=False):
     child = subprocess.Popen([str(binary), '--standalone-native-acceptance', str(root), phase],
                              env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, bufsize=0, start_new_session=True)
-    print(json.dumps({'kind':'child','pid':child.pid,'binary':str(binary),'root':str(root),'phase':phase}),flush=True)
     selector=selectors.DefaultSelector()
     selector.register(child.stdout,selectors.EVENT_READ,'stdout')
     selector.register(child.stderr,selectors.EVENT_READ,'stderr')
     result=None
-    record.update(pid=child.pid,processGroup=os.getpgid(child.pid),parentProcessGroup=os.getpgrp(),phase=phase)
+    record.update(pid=child.pid,processGroup=os.getpgid(child.pid),parentProcessGroup=os.getpgrp(),phase=phase,
+                  lifecycle=[{'stage':'child-spawned','pid':child.pid}])
     if record['processGroup']==record['parentProcessGroup']:
         raise RuntimeError('Fixture child did not acquire its isolated session')
     deadline,abort_deadline=time.monotonic()+65,None
     while selector.get_map() or child.poll() is None:
         if (time.monotonic()>deadline or capture.failed) and abort_deadline is None:
             record['cooperativeAbortReason']='diagnostic-overflow-or-truncation' if capture.failed else 'stage-timeout'
-            print(json.dumps({'kind':'cooperative-abort-request','reason':record['cooperativeAbortReason'],'capture':capture.stats}),flush=True)
+            record['lifecycle'].append({'stage':'cooperative-abort-request','reason':record['cooperativeAbortReason']})
             try:
                 child.stdin.write(b'abort\n'); child.stdin.flush()
             except BrokenPipeError:
@@ -127,11 +127,12 @@ def run_phase(binary, root, phase, record, diagnostic_backtrace=False):
             else:
                 selector.unregister(key.fileobj)
                 emitted=capture.finish(key.data)
+            # Never forward synchronously to a controller sink while the child is live.
             for decoded in emitted:
-                print(json.dumps(decoded),flush=True)
                 if decoded.get('kind')=='result': result=decoded
     code=child.wait()
     record.update(exit=code,result=result)
+    record['lifecycle'].append({'stage':'child-reaped','exit':code})
     if abort_deadline or capture.failed or code!=0 or not result or result.get('passed') is not True:
         raise RuntimeError(f'Native phase failed exit={code} phase={phase} root={root}; preserve diagnostics')
     validate_phase(phase,result,capture.lines)

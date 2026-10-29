@@ -94,6 +94,10 @@ Backtrace timing and symbol/source accuracy can differ; a later pass would not
 establish the cause of any earlier abort. No debugger or custom panic hook is used.
 
 Output is continuously drained from both child pipes from startup through EOF.
+There is no synchronous controller stdout/stderr forwarding while a child is live:
+all bounded records and lifecycle milestones remain in the receipt; the small final
+summary is emitted only after children have been reaped. Abort commands are sent
+immediately after recording the reason, never behind reporter output.
 Each stream retains its FIRST 128 KiB / 600 records; maximum partial line is32 KiB.
 Separate budgets prevent stdout noise from consuming the first-panic stderr budget.
 Unterminated EOF tails are preserved, user-home prefixes are redacted, and any

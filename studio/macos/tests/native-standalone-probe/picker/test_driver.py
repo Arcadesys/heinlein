@@ -5,6 +5,8 @@ from pathlib import Path
 import tempfile
 from unittest import mock
 import os
+import io
+from types import SimpleNamespace
 import unittest
 
 spec = importlib.util.spec_from_file_location('picker_driver', Path(__file__).with_name('driver.py'))
@@ -192,6 +194,55 @@ class ReceiptTests(unittest.TestCase):
         capture.finish('stdout')
         self.assertEqual(lines,[{'kind':'result','passed':False}])
         self.assertFalse(capture.failed)
+
+    def simulated_drain(self, timeout=False):
+        # Memory-only streams/process. No executable, GUI or native probe is invoked.
+        class Stream:
+            def __init__(self,fd): self.fd=fd
+            def fileno(self): return self.fd
+        class Selector:
+            def __init__(self): self.keys={}
+            def register(self,stream,events,name): self.keys[stream.fd]=SimpleNamespace(fileobj=stream,data=name)
+            def unregister(self,stream): del self.keys[stream.fd]
+            def get_map(self): return self.keys
+            def select(self,_): return [(key,1) for key in list(self.keys.values())]
+        selector=Selector()
+        child=SimpleNamespace(pid=123,stdout=Stream(11),stderr=Stream(12),stdin=io.BytesIO(),reaped=False)
+        child.poll=lambda: None if selector.get_map() else (73 if timeout else 0)
+        def reap(): child.reaped=True; return 73 if timeout else 0
+        child.wait=reap
+        output={11:[b'{"kind":"progress","stage":"owned-start"}\n{"kind":"result","passed":true}\n',b''],12:[b'first panic /synthetic/source.rs:1\n',b'']}
+        record={}
+        clock=[0,66,66,66,66,66,66,66,66] if timeout else [0]*20
+        with mock.patch.object(driver.subprocess,'Popen',return_value=child), \
+             mock.patch.object(driver.selectors,'DefaultSelector',return_value=selector), \
+             mock.patch.object(driver.os,'getpgid',return_value=123), \
+             mock.patch.object(driver.os,'getpgrp',return_value=122), \
+             mock.patch.object(driver.os,'read',side_effect=lambda fd,_:output[fd].pop(0)), \
+             mock.patch.object(driver.time,'monotonic',side_effect=clock), \
+             mock.patch.object(driver,'validate_phase') as validate, \
+             mock.patch('builtins.print',side_effect=AssertionError('Controller sink forbidden during drain')) as reporter:
+            if timeout:
+                with self.assertRaises(RuntimeError): driver.run_phase(Path('/synthetic'),Path('/synthetic-root'),'picker-preview-only',record,True)
+                validate.assert_not_called()
+            else:
+                driver.run_phase(Path('/synthetic'),Path('/synthetic-root'),'picker-preview-only',record,True)
+                validate.assert_called_once()
+            reporter.assert_not_called()
+        self.assertTrue(child.reaped)
+        self.assertEqual(record['lifecycle'][-1]['stage'],'child-reaped')
+        self.assertEqual(set(record['capture']['streamsDrainedToEOF']),{'stdout','stderr'})
+        self.assertTrue(any('first panic' in v.get('message','') for v in record['orderedDiagnostics']))
+        return child,record
+
+    def test_live_drain_never_calls_a_stalled_or_forbidden_reporter(self):
+        self.simulated_drain()
+
+    def test_abort_is_sent_without_calling_reporter_then_pipes_are_drained(self):
+        child,record=self.simulated_drain(timeout=True)
+        self.assertEqual(child.stdin.getvalue(),b'abort\n')
+        self.assertEqual(record['cooperativeAbortReason'],'stage-timeout')
+        self.assertEqual(record['exit'],73)
 
     def test_arbitrary_binary_never_inherits_source_provenance(self):
         with tempfile.TemporaryDirectory() as directory:
