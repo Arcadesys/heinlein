@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 default = []
 standalone-native-acceptance = []
+revision-native-acceptance = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

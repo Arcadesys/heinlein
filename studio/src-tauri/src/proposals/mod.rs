@@ -5,6 +5,7 @@ use authority::{Authority, Binding, Listing, Outcome, ReceiptStore, Review};
 use proposal_store::ProposalStore;
 use std::sync::atomic::Ordering;
 use tauri::Manager;
+#[cfg(not(all(feature = "revision-native-acceptance", target_os = "macos")))]
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 #[derive(Default)]
@@ -161,6 +162,9 @@ pub(crate) async fn apply_proposal_review(
         // A renderer request alone is not author approval. Dialog content comes
         // only from the retained plan. No authority lock is held while it is open:
         // real dirty notifications can invalidate the plan during confirmation.
+        #[cfg(all(feature = "revision-native-acceptance", target_os = "macos"))]
+        let confirmed = crate::revision_native_acceptance::confirm_review(&app, &review)?;
+        #[cfg(not(all(feature = "revision-native-acceptance", target_os = "macos")))]
         let confirmed = app
             .dialog()
             .message(review.confirmation_message())

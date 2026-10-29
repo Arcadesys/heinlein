@@ -1,5 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-#![cfg_attr(feature = "standalone-native-acceptance", allow(dead_code))]
+#![cfg_attr(
+    any(
+        feature = "standalone-native-acceptance",
+        feature = "revision-native-acceptance"
+    ),
+    allow(dead_code)
+)]
+
+#[cfg(all(
+    feature = "standalone-native-acceptance",
+    feature = "revision-native-acceptance"
+))]
+compile_error!("Select exactly one native acceptance fixture");
 
 mod drafting;
 mod first_story;
@@ -16,12 +28,20 @@ mod recents;
 #[cfg(test)]
 mod review_integration_tests;
 mod review_state;
+#[cfg(all(feature = "revision-native-acceptance", target_os = "macos"))]
+mod revision_native_acceptance;
 mod standalone;
 #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
 mod standalone_native_acceptance;
 mod update;
 
-#[cfg(any(test, not(feature = "standalone-native-acceptance")))]
+#[cfg(any(
+    test,
+    not(any(
+        feature = "standalone-native-acceptance",
+        feature = "revision-native-acceptance"
+    ))
+))]
 use recents::load_recents;
 use recents::{save_recents, Recent, RecentStore};
 use repository_core::{Document, Entry, Manuscript, RecoveryDraft, RecoveryStore, Repository};
@@ -630,6 +650,18 @@ async fn list_system_fonts(window: tauri::WebviewWindow) -> Result<Vec<String>, 
     .map_err(|e| e.to_string())
 }
 fn main() {
+    if std::env::args_os().any(|arg| arg == "--revision-native-acceptance") {
+        #[cfg(all(feature = "revision-native-acceptance", target_os = "macos"))]
+        {
+            revision_native_acceptance::run();
+            return;
+        }
+        #[cfg(not(all(feature = "revision-native-acceptance", target_os = "macos")))]
+        {
+            eprintln!("Revision native acceptance requires its explicit test feature on macOS");
+            std::process::exit(64);
+        }
+    }
     if std::env::args_os().any(|arg| arg == "--standalone-native-acceptance") {
         #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
         {
@@ -642,18 +674,27 @@ fn main() {
             std::process::exit(64);
         }
     }
-    #[cfg(feature = "standalone-native-acceptance")]
+    #[cfg(any(
+        feature = "standalone-native-acceptance",
+        feature = "revision-native-acceptance"
+    ))]
     {
         eprintln!(
-            "Fixture build requires --standalone-native-acceptance; production startup disabled"
+            "Fixture build requires its explicit native acceptance invocation; production startup disabled"
         );
         std::process::exit(64);
     }
-    #[cfg(not(feature = "standalone-native-acceptance"))]
+    #[cfg(not(any(
+        feature = "standalone-native-acceptance",
+        feature = "revision-native-acceptance"
+    )))]
     production_main();
 }
 
-#[cfg(not(feature = "standalone-native-acceptance"))]
+#[cfg(not(any(
+    feature = "standalone-native-acceptance",
+    feature = "revision-native-acceptance"
+)))]
 fn production_main() {
     let runtime = match update::Runtime::acquire() {
         Ok(Some(runtime)) => runtime,
