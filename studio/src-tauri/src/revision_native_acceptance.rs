@@ -1,6 +1,7 @@
 //! Feature-only synthetic review acceptance. This module never acquires a provider.
 //! Stored records are informational; the renderer must use production native commands.
 use crate::review_state::ReviewSession;
+mod dialog;
 use drafting_questions::{
     review::{ReviewEdit, ReviewRequest, ReviewRole, ReviewScope, ReviewSnapshot},
     review_workflow::{Batch, CallResult, Options},
@@ -229,6 +230,8 @@ struct Fixture {
     review_id: String,
     phase: String,
     confirmations: Mutex<Vec<String>>,
+    actual_dialog: bool,
+    actual_answers: Mutex<Vec<bool>>,
     done: AtomicBool,
     failed: AtomicBool,
 }
@@ -239,10 +242,10 @@ fn progress(stage: &str) {
 }
 // Compile-feature-only trusted author choice, fixed by the native invocation.
 // No renderer argument or persisted decision can enable confirmation.
-pub(crate) fn confirm_review(
+fn validate_review(
     app: &tauri::AppHandle,
     review: &proposals::authority::Review,
-) -> Result<bool, String> {
+) -> Result<(), String> {
     let f = FIXTURE.get().ok_or("Native44 not initialized")?;
     if f.done.load(Ordering::SeqCst) || f.failed.load(Ordering::SeqCst) || review.kind != "apply" {
         return Err("Native44 confirmation outside active apply".into());
@@ -287,7 +290,7 @@ pub(crate) fn confirm_review(
         return Err("Fixture retained proposal/finding binding changed".into());
     }
     // Only exact declared synthetic transformations can receive this native choice.
-    let expected = if review.path == "scene.md" && f.phase == "first" {
+    let expected = if review.path == "scene.md" && ["first", "stale"].contains(&f.phase.as_str()) {
         [
             (SOURCE, SOURCE.replacen("Bad", "Good 🦊", 1)),
             (
@@ -315,6 +318,41 @@ pub(crate) fn confirm_review(
     {
         return Err("Undeclared synthetic patch refused".into());
     }
+    Ok(())
+}
+
+pub(crate) fn actual_dialog_mode() -> Result<bool, String> {
+    FIXTURE
+        .get()
+        .map(|f| f.actual_dialog)
+        .ok_or("Native44 not initialized".into())
+}
+pub(crate) fn begin_actual_dialog(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+    review: &proposals::authority::Review,
+) -> Result<Arc<dialog::Observation>, String> {
+    if !actual_dialog_mode()? {
+        return Err("Actual dialog mode not declared".into());
+    }
+    dialog::arm(app, window, review)
+}
+pub(crate) fn finish_actual_dialog(
+    app: &tauri::AppHandle,
+    observation: Arc<dialog::Observation>,
+    answer: bool,
+) -> Result<(), String> {
+    dialog::completed(app, observation, answer)
+}
+pub(crate) fn confirm_review(
+    app: &tauri::AppHandle,
+    review: &proposals::authority::Review,
+) -> Result<bool, String> {
+    if actual_dialog_mode()? {
+        return Err("Synthetic choice prohibited in actual mode".into());
+    }
+    validate_review(app, review)?;
+    let f = FIXTURE.get().ok_or("Fixture missing")?;
     let mut seen = f
         .confirmations
         .lock()
@@ -335,6 +373,8 @@ fn native44_progress(stage: String) -> Result<(), String> {
         "unchosen-conflict-refused",
         "chosen-conflict-approved",
         "restart-unrelated-file-approved",
+        "actual-Cancel-observed",
+        "actual-stale-refusal",
     ]
     .contains(&stage.as_str())
     {
@@ -350,6 +390,52 @@ fn native44_abort(app: tauri::AppHandle) {
 }
 fn native44_finish(app: tauri::AppHandle) -> Result<(), String> {
     let f = FIXTURE.get().ok_or("Fixture missing")?;
+    if f.phase == "stale" {
+        let repo = Repository::open(f.root.join("source")).map_err(|e| e.to_string())?;
+        let (_, receipts) = proposals::stores(&app)?;
+        let count = receipts
+            .with_lock(&repo, || receipts.read_all(&repo))?
+            .len();
+        if count != 0
+            || fs::read(f.root.join("source/scene.md")).map_err(|_| "Source unavailable")?
+                != format!("{SOURCE}External synthetic change\n").as_bytes()
+            || *f.actual_answers.lock().map_err(|_| "Answer unavailable")? != vec![true]
+        {
+            return Err(
+                "Stale native confirmation was not refused without source/receipt replacement"
+                    .into(),
+            );
+        }
+        let records = ReviewStore::open(
+            app.path()
+                .app_data_dir()
+                .map_err(|_| "Fixture data unavailable")?
+                .join("review-records-v2"),
+        )
+        .map_err(|_| "Fixture records unavailable")?;
+        let record: ReviewSession = records
+            .load(&repo, &f.review_id)
+            .map_err(|_| "Fixture review unavailable")?;
+        let view = serde_json::to_value(record.view()).map_err(|_| "Invalid review")?;
+        if view["edits"]
+            .as_array()
+            .ok_or("Findings unavailable")?
+            .iter()
+            .any(|e| e["status"] == "accepted")
+            || fs::read(f.root.join("source/other.md")).map_err(|_| "Other source unavailable")?
+                != OTHER.as_bytes()
+        {
+            return Err("Stale apply changed a decision or unrelated file".into());
+        }
+        file_create(
+            &f.root.join("stale-receipt.json"),
+            &serde_json::json!({"schema":1,"phase":"stale","actualOSDialogPlumbing":true,"realResponse":true,"staleRefused":true,"receiptCount":0,"externalBytesPreserved":true,"osDialogUsability":false}),
+        )?;
+        f.done.store(true, Ordering::SeqCst);
+        progress("actual-stale-source-guard-PASS");
+        app.exit(0);
+        return Ok(());
+    }
     let expected = "🐺 Good 🦊. Clear. Same. Hold — voice.\r\n";
     if fs::read(f.root.join("source/scene.md")).map_err(|_| "Source missing")?
         != expected.as_bytes()
@@ -391,6 +477,16 @@ fn native44_finish(app: tauri::AppHandle) -> Result<(), String> {
     if confirmations != if f.phase == "first" { 3 } else { 1 } {
         return Err("Unexpected confirmation count".into());
     }
+    if f.actual_dialog
+        && *f.actual_answers.lock().map_err(|_| "Answers unavailable")?
+            != if f.phase == "first" {
+                vec![false, true, true, true]
+            } else {
+                vec![true]
+            }
+    {
+        return Err("Actual Cancel/Confirm sequence differs".into());
+    }
     let (_, receipts) = proposals::stores(&app)?;
     let receipt_count = receipts
         .with_lock(&repo, || receipts.read_all(&repo))?
@@ -400,7 +496,7 @@ fn native44_finish(app: tauri::AppHandle) -> Result<(), String> {
     }
     file_create(
         &f.root.join(format!("{}-receipt.json", f.phase)),
-        &serde_json::json!({"schema":1,"phase":f.phase,"realIPC":true,"accepted":count("accepted"),"rejected":1,"superseded":1,"confirmations":confirmations,"receiptCount":receipt_count,"exactBytes":true,"confirmation":"compile-feature-native-synthetic-author-choice","osDialogUsability":false}),
+        &serde_json::json!({"schema":1,"phase":f.phase,"realIPC":true,"accepted":count("accepted"),"rejected":1,"superseded":1,"confirmations":confirmations,"receiptCount":receipt_count,"exactBytes":true,"confirmation":if f.actual_dialog {"production-parented-NSAlert-public-button"}else{"compile-feature-native-synthetic-author-choice"},"actualOSDialogPlumbing":f.actual_dialog,"actualResponses":f.actual_answers.lock().map_err(|_|"Answers unavailable")?.clone(),"osDialogUsability":false}),
     )?;
     f.done.store(true, Ordering::SeqCst);
     progress("native-record-receipt-byte-verification-PASS");
@@ -417,8 +513,9 @@ fn run_checked() -> Result<(), String> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 5
         || args[1] != "--revision-native-acceptance"
-        || !["first", "reopen"].contains(&args[3].as_str())
-        || args[4] != "--synthetic-author-choice"
+        || !["first", "reopen", "stale"].contains(&args[3].as_str())
+        || !["--synthetic-author-choice", "--actual-native-dialog"].contains(&args[4].as_str())
+        || (args[3] == "stale" && args[4] != "--actual-native-dialog")
     {
         return Err("Explicit fixture root/phase/native synthetic choice required".into());
     }
@@ -434,7 +531,7 @@ fn run_checked() -> Result<(), String> {
         return Err("TMPDIR must equal fixture root".into());
     }
     let sentinel = root.join("fixture-sentinel.json");
-    if args[3] == "first" {
+    if args[3] != "reopen" {
         if fs::read_dir(&root)
             .map_err(|_| "Root unavailable")?
             .next()
@@ -444,11 +541,14 @@ fn run_checked() -> Result<(), String> {
         }
         file_create(
             &sentinel,
-            &serde_json::json!({"schema":1,"uuid":uuid.to_string(),"purpose":"native-review"}),
+            &serde_json::json!({"schema":1,"uuid":uuid.to_string(),"purpose":"native-review","mode":args[4]}),
         )?;
     }
     let mark = file_read(&sentinel)?;
-    if mark["schema"] != 1 || mark["uuid"] != uuid.to_string() || mark["purpose"] != "native-review"
+    if mark["schema"] != 1
+        || mark["uuid"] != uuid.to_string()
+        || mark["purpose"] != "native-review"
+        || mark["mode"] != args[4]
     {
         return Err("Fixture marker mismatch".into());
     }
@@ -467,7 +567,7 @@ fn run_checked() -> Result<(), String> {
         }
         private(p)?;
     }
-    if args[3] == "first" {
+    if args[3] != "reopen" {
         for (path, text) in [("scene.md", SOURCE), ("other.md", OTHER)] {
             let mut out = fs::OpenOptions::new()
                 .create_new(true)
@@ -487,6 +587,7 @@ fn run_checked() -> Result<(), String> {
     context.config_mut().app.app_directories_override =
         Some(AppDirectoriesOverride::Root(app_root));
     let phase = args[3].clone();
+    let actual_dialog = args[4] == "--actual-native-dialog";
     let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
         questions::review_definitions,
         questions::list_reviews,
@@ -503,6 +604,7 @@ fn run_checked() -> Result<(), String> {
             app.listen("native44-progress",move|event|{let result=serde_json::from_str::<String>(event.payload()).map_err(|_|"Invalid fixture progress".into()).and_then(native44_progress);if result.is_err(){native44_abort(h.clone());}});
             let h=app.handle().clone();app.listen("native44-abort",move|_|native44_abort(h.clone()));
             let h=app.handle().clone();app.listen("native44-finish",move|_|{if let Err(reason)=native44_finish(h.clone()){eprintln!("Native44 verification refused: {reason}");native44_abort(h.clone());}});
+            if actual_dialog {app.handle().plugin(tauri_plugin_dialog::init())?;}
             let data=app.path().app_data_dir()?;
             let state=app.state::<BrowserState>();
             let repo=Arc::new(Repository::open(root.join("source"))?);
@@ -510,13 +612,19 @@ fn run_checked() -> Result<(), String> {
             *state.selected.lock().unwrap()=Some(Selected{id:repository_id.clone(),repo:repo.clone()});
             *state.recovery.lock().unwrap()=Some(Arc::new(RecoveryStore::open(data.join("draft-recovery-v1"))?));
             let records=ReviewStore::open(data.join("review-records-v2"))?;
-            let review_id=if phase=="first"{let id=seed(&repo,&records,&repository_id).map_err(std::io::Error::other)?;file_create(&root.join("review-identity.json"),&serde_json::json!({"id":id})).map_err(std::io::Error::other)?;id}else{file_read(&root.join("review-identity.json")).map_err(std::io::Error::other)?["id"].as_str().ok_or("Review ID missing")?.to_owned()};
+            let review_id=if phase!="reopen"{let id=seed(&repo,&records,&repository_id).map_err(std::io::Error::other)?;file_create(&root.join("review-identity.json"),&serde_json::json!({"id":id})).map_err(std::io::Error::other)?;id}else{file_read(&root.join("review-identity.json")).map_err(std::io::Error::other)?["id"].as_str().ok_or("Review ID missing")?.to_owned()};
             let snapshots=["scene.md","other.md"].into_iter().map(|path|{let source=fs::read_to_string(root.join("source").join(path)).unwrap();serde_json::json!({"path":path,"sourceHash":text_hash(&source),"source":source})}).collect::<Vec<_>>();
-            let script=format!("globalThis.__HEINLEIN_NATIVE44__={};",serde_json::json!({"phase":phase,"repositoryId":repository_id,"reviewId":review_id,"snapshots":snapshots}));
-            FIXTURE.set(Fixture{root:root.clone(),repository_id,review_id,phase,confirmations:Mutex::new(vec![]),done:AtomicBool::new(false),failed:AtomicBool::new(false)}).map_err(|_|"Fixture already active")?;
+            let script=format!("globalThis.__HEINLEIN_NATIVE44__={};",serde_json::json!({"phase":phase,"actualDialog":actual_dialog,"repositoryId":repository_id,"reviewId":review_id,"snapshots":snapshots}));
+            FIXTURE.set(Fixture{root:root.clone(),repository_id,review_id,phase,confirmations:Mutex::new(vec![]),actual_dialog,actual_answers:Mutex::new(vec![]),done:AtomicBool::new(false),failed:AtomicBool::new(false)}).map_err(|_|"Fixture already active")?;
             let window=WebviewWindowBuilder::new(app,"main",WebviewUrl::External("about:blank".parse()?)).title("DISPOSABLE native review IPC — synthetic writing only").incognito(true).initialization_script(&script)
               .on_navigation(|url|url.as_str()=="about:blank"||(url.scheme()=="tauri"&&url.host_str()==Some("localhost")))
               .on_new_window(|_,_|tauri::webview::NewWindowResponse::Deny).build()?;
+            if actual_dialog {
+                if proposals::parent::ValidatedConfirmationParent::capture(app.handle(), &window).is_ok() {
+                    return Err(std::io::Error::other("Parent helper accepted main-thread use").into());
+                }
+                progress("main-thread-parent-helper-refused");
+            }
             let (tx,rx)=std::sync::mpsc::channel();let (returned,returned_rx)=std::sync::mpsc::channel();let w=window.clone();
             std::thread::spawn(move||{if await_navigation_gate(rx,returned_rx,Duration::from_secs(10)).is_err(){progress("nonpersistent-gate-FAIL");w.app_handle().exit(73);return;}progress("nonpersistent-WK-and-outer-return-confirmed");let _=w.navigate("tauri://localhost/index.html".parse().unwrap());});
             let result=window.with_webview(move|view|{let _=tx.send(nonpersistent(view.inner()));});let _=returned.send(result.is_ok());

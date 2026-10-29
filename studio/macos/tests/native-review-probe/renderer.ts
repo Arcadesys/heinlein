@@ -4,9 +4,11 @@ import {createReviewPanel} from '../../../src/reviewPanel';
 import type {LocalCore, ReviewResult} from '../../../src/localCore';
 import '../../../src/style.css';
 
-declare global { interface Window { __HEINLEIN_NATIVE44__: {phase:'first'|'reopen';repositoryId:string;reviewId:string;snapshots:{path:string;source:string;sourceHash:string}[]}; } }
+declare global { interface Window { __HEINLEIN_NATIVE44__: {phase:'first'|'reopen'|'stale';actualDialog:boolean;repositoryId:string;reviewId:string;snapshots:{path:string;source:string;sourceHash:string}[]}; } }
 const config=window.__HEINLEIN_NATIVE44__;
+document.querySelector('#confirmation-mode')!.textContent=config.actualDialog ? 'Actual production OS confirmation with programmatic own-button actions; physical keyboard and VoiceOver usability remain untested.' : 'Synthetic native author-choice mode; no OS-dialog usability proof.';
 const forbidden=async()=>{throw Error('Provider and unrelated services prohibited in native44 fixture');};
+let actualCancels=0, actualRefusals=0;
 const core={
   reviewDefinitions:()=>invoke('review_definitions'),
   previewReview:forbidden,
@@ -14,7 +16,7 @@ const core={
   getReview:(repositoryId:string,reviewId:string)=>invoke('get_review',{repositoryId,reviewId}),
   chooseReviewEdit:(repositoryId:string,reviewId:string,editId:string)=>invoke('choose_review_edit',{repositoryId,reviewId,editId}),
   rejectReviewEdit:(repositoryId:string,reviewId:string,editId:string)=>invoke('reject_review_edit',{repositoryId,reviewId,editId}),
-  approveReviewEdit:(repositoryId:string,reviewId:string,editId:string)=>invoke('approve_review_edit',{repositoryId,reviewId,editId}),
+  approveReviewEdit:async(repositoryId:string,reviewId:string,editId:string)=>{try{const result=await invoke('approve_review_edit',{repositoryId,reviewId,editId});if(result===null)actualCancels++;return result;}catch(error){actualRefusals++;throw error;}},
   // Explicit inert provider configuration. No native question_status/Auth service.
   questionStatus:async()=>({configured:false,model:null,message:'Synthetic captured review; no provider connection',accounts:[],activeAccountId:null,models:[],selectedModel:null,signInPending:false,generation:1,usageLimited:false}),
 } as unknown as LocalCore;
@@ -34,8 +36,12 @@ async function action(replacement:string,label:string){const e=await item(replac
 async function terminal(id:string,status:string){await wait(()=>!document.querySelector(`[data-finding-id="${id}"] button:not(:disabled)`));for(let i=0;i<200;i++){const r=await view();if(r.edits.find(e=>e.id===id)?.status===status)return;await pause();}throw Error('Native decision not durable');}
 async function main(){
   await reopen();await stage('production-review-panel-reopened');
+  if(config.phase==='stale'){
+    await action('Good 🦊','Approve…');await wait(()=>actualRefusals===1);await stage('actual-stale-refusal');await emit('native44-finish');return;
+  }
   if(config.phase==='first'){
     const rejected=await action('Never','Reject edit');await terminal(rejected,'rejected');await stage('rejected-durably');
+    if(config.actualDialog){await action('Good 🦊','Approve…');await wait(()=>actualCancels===1);await stage('actual-Cancel-observed');}
     const a=await action('Good 🦊','Approve…');await terminal(a,'accepted');await stage('unicode-edit-approved');
     const b=await action('Clear','Approve…');await terminal(b,'accepted');await stage('unrelated-shifted-edit-approved');
     // Conflicts are selected through the production UI, never granted by renderer data.
