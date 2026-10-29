@@ -3,6 +3,7 @@
 use std::{
     cell::{Cell, RefCell},
     ffi::{c_char, c_void, CStr, CString},
+    io::Write,
     os::unix::fs::MetadataExt,
     path::PathBuf,
     sync::{
@@ -459,16 +460,40 @@ unsafe fn same_sheet(m: &Main, sheet: *mut c_void) -> bool {
         && boolean(m.parent.0, "isVisible")
         && boolean(sheet, "isVisible")
 }
+// Pinned rfd 0.16 panel_ffi.rs set_title delegates to NSSavePanel.setMessage.
+// The fixture reads that exact public property; window title is independent.
+const PICKER_MESSAGE_SELECTOR: &str = "message";
+fn picker_field_diagnostics(
+    message: Option<&str>,
+    name: Option<&str>,
+    directory: Option<&str>,
+    expected_directory: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "messageMatches":message==Some("Choose a NEW file for this copy"),
+        "nameMatches":name==Some("draft.md"),
+        "directoryMatches":directory.is_some() && directory==expected_directory,
+        "messageMissing":message.is_none(),"nameMissing":name.is_none(),
+        "directoryMissing":directory.is_none(),
+    })
+}
 unsafe fn drive_picker(
     d: &Declaration,
     m: &Main,
     sheet: *mut c_void,
     phase: usize,
 ) -> Result<bool, usize> {
-    if !kind(sheet, "NSSavePanel") || kind(sheet, "NSOpenPanel") {
+    let is_save = kind(sheet, "NSSavePanel");
+    let is_open = kind(sheet, "NSOpenPanel");
+    if !is_save || is_open {
+        println!(
+            "{}",
+            serde_json::json!({"kind":"native-picker-diagnostic","phase":phase,"savePanelTypeMatches":is_save&&!is_open,"visible":boolean(sheet,"isVisible"),"fields":picker_field_diagnostics(None,None,None,d.dir.to_str())})
+        );
+        let _ = std::io::stdout().flush();
         return Err(3);
     }
-    let title = string(object(sheet, "title"));
+    let message = string(object(sheet, PICKER_MESSAGE_SELECTOR));
     let name = string(object(sheet, "nameFieldStringValue"));
     let url = object(sheet, "directoryURL");
     let path = if url.is_null() {
@@ -476,7 +501,12 @@ unsafe fn drive_picker(
     } else {
         string(object(url, "path"))
     };
-    if title.as_deref() != Some("Choose a NEW file for this copy")
+    println!(
+        "{}",
+        serde_json::json!({"kind":"native-picker-diagnostic","phase":phase,"savePanelTypeMatches":true,"visible":boolean(sheet,"isVisible"),"fields":picker_field_diagnostics(message.as_deref(),name.as_deref(),path.as_deref(),d.dir.to_str())})
+    );
+    let _ = std::io::stdout().flush();
+    if message.as_deref() != Some("Choose a NEW file for this copy")
         || name.as_deref() != Some("draft.md")
         || path.as_deref() != d.dir.to_str()
     {
@@ -740,6 +770,53 @@ pub(super) fn verify_readback(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pinned_rfd_builder_caption_maps_to_message_not_window_title() {
+        // Independent property model of pinned set_title -> setMessage assignment.
+        let public_properties = std::collections::HashMap::from([
+            ("title", "Independent native window title"),
+            ("message", "Choose a NEW file for this copy"),
+        ]);
+        let selected = public_properties[PICKER_MESSAGE_SELECTOR];
+        let observed = picker_field_diagnostics(
+            Some(selected),
+            Some("draft.md"),
+            Some("/synthetic"),
+            Some("/synthetic"),
+        );
+        assert_eq!(observed["messageMatches"], true);
+        assert_eq!(
+            picker_field_diagnostics(
+                Some(public_properties["title"]),
+                Some("draft.md"),
+                Some("/synthetic"),
+                Some("/synthetic")
+            )["messageMatches"],
+            false
+        );
+    }
+    #[test]
+    fn picker_diagnostics_split_fields_without_observed_text_or_paths() {
+        let d = picker_field_diagnostics(
+            Some("Unexpected observed text"),
+            Some("draft.md"),
+            Some("/outside/private"),
+            Some("/synthetic"),
+        );
+        assert_eq!(d["messageMatches"], false);
+        assert_eq!(d["nameMatches"], true);
+        assert_eq!(d["directoryMatches"], false);
+        assert_eq!(d["directoryMissing"], false);
+        assert!(!d.to_string().contains("Unexpected"));
+        assert!(!d.to_string().contains("/outside"));
+        let missing = picker_field_diagnostics(None, None, None, Some("/synthetic"));
+        for key in ["messageMissing", "nameMissing", "directoryMissing"] {
+            assert_eq!(missing[key], true);
+        }
+        for key in ["messageMatches", "nameMatches", "directoryMatches"] {
+            assert_eq!(missing[key], false);
+        }
+    }
     #[test]
     fn preview_only_denies_placement_and_unrelated_requests_before_dispatch() {
         use serde_json::json;
