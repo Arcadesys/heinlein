@@ -261,24 +261,35 @@ pub(super) fn preview_only_request_allowed(request: &serde_json::Value) -> bool 
         _ => true,
     }
 }
-fn filename_option(preview_only: bool) -> Option<&'static str> {
-    if preview_only {
+fn filename_option(fixture_picker: bool) -> Option<&'static str> {
+    if fixture_picker {
         None
     } else {
         Some("draft.md")
     }
 }
+fn filename_input_mode(mode: &str) -> bool {
+    matches!(mode, "picker" | "picker-preview-only")
+}
 pub(super) fn suggested_filename() -> Option<&'static str> {
-    filename_option(super::standalone_native_acceptance::picker_preview_only())
+    filename_option(filename_input_mode(
+        super::standalone_native_acceptance::picker_phase().unwrap_or(""),
+    ))
 }
 fn filename_input_allowed(
+    mode: &str,
     phase: usize,
     owned: bool,
     is_save: bool,
     message: bool,
     directory: bool,
 ) -> bool {
-    [1, 2].contains(&phase) && owned && is_save && message && directory
+    let expected = match mode {
+        "picker-preview-only" => [1, 2].contains(&phase),
+        "picker" => [1, 2, 4].contains(&phase),
+        _ => false,
+    };
+    expected && owned && is_save && message && directory
 }
 fn record_failure(code: usize) {
     FAILURE.store(code, Ordering::SeqCst);
@@ -341,7 +352,7 @@ pub(super) fn failure() -> Option<&'static str> {
     }
 }
 pub(super) fn summary() -> serde_json::Value {
-    serde_json::json!({"armed":NEXT.load(Ordering::SeqCst),"completedPublicActions":ACTIONS.count(),"failure":FAILURE.load(Ordering::SeqCst),"readbackMask":READBACKS.load(Ordering::SeqCst),"pickerOnly":super::standalone_native_acceptance::picker_preview_only(),"placementConfirmation":!super::standalone_native_acceptance::picker_preview_only(),"alertCalls":ALERT_CALLS.load(Ordering::SeqCst),"syntheticNameInputMask":NAME_INPUTS.load(Ordering::SeqCst),"defaultSuggestedFilenameInitialization":!super::standalone_native_acceptance::picker_preview_only(),"physicalKeyboard":false,"VoiceOver":false,"allUIInProcess":false})
+    serde_json::json!({"armed":NEXT.load(Ordering::SeqCst),"completedPublicActions":ACTIONS.count(),"failure":FAILURE.load(Ordering::SeqCst),"readbackMask":READBACKS.load(Ordering::SeqCst),"pickerOnly":super::standalone_native_acceptance::picker_preview_only(),"placementConfirmation":!super::standalone_native_acceptance::picker_preview_only(),"alertCalls":ALERT_CALLS.load(Ordering::SeqCst),"syntheticNameInputMask":NAME_INPUTS.load(Ordering::SeqCst),"defaultSuggestedFilenameInitialization":false,"physicalKeyboard":false,"VoiceOver":false,"allUIInProcess":false})
 }
 pub(super) fn install(window: &tauri::WebviewWindow, root: PathBuf) -> Result<(), String> {
     if unsafe { pthread_main_np() } != 1 {
@@ -559,8 +570,10 @@ unsafe fn drive_picker(
     let _ = std::io::stdout().flush();
     let mut name = name;
     let mut path = path;
-    if super::standalone_native_acceptance::picker_preview_only() {
+    let mode = super::standalone_native_acceptance::picker_phase().unwrap_or("");
+    if filename_input_mode(mode) {
         if !filename_input_allowed(
+            mode,
             phase,
             same_sheet(m, sheet) && paths_valid(d) && ACTIVE.load(Ordering::SeqCst) == phase,
             is_save && !is_open,
@@ -662,6 +675,9 @@ fn valid_alert(texts: &[String], buttons: &[(String, bool, bool)], expected: &st
             .count()
             == 1
 }
+fn button_owner_valid(same_window: bool, enabled: bool, visible: bool) -> bool {
+    same_window && enabled && visible
+}
 unsafe fn drive_alert(
     d: &Declaration,
     m: &Main,
@@ -720,14 +736,19 @@ unsafe fn drive_alert(
     if !valid_alert(&texts, &buttons, &confirmation(d)) || target.is_null() {
         return Ok(false);
     }
+    // Retain the selected main-thread NSButton through the complete public action.
+    let target = Object(objc_retain(target));
     stage(
         "actual-parented-alert-exact-synthetic-content-controls-verified",
         phase,
     );
     if !same_sheet(m, sheet)
         || !paths_valid(d)
-        || !boolean(target, "isEnabled")
-        || boolean(target, "isHidden")
+        || !button_owner_valid(
+            object(target.0, "window") == sheet,
+            boolean(target.0, "isEnabled"),
+            !boolean(target.0, "isHidden") && !boolean(target.0, "isHiddenOrHasHiddenAncestor"),
+        )
         || ACTIVE
             .compare_exchange(phase, 0, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
@@ -735,7 +756,7 @@ unsafe fn drive_alert(
         return Err(2);
     }
     ACTIONS.issued(phase).map_err(|_| 6usize)?;
-    action(target, "performClick:");
+    action(target.0, "performClick:");
     ACTIONS.returned(phase).map_err(|_| 6usize)?;
     stage(
         "public-alert-button-action-dispatched-real-completion-required",
@@ -761,6 +782,8 @@ pub(super) fn passed(phase: &str) -> bool {
             NEXT.load(Ordering::SeqCst) == 5
                 && ACTIONS.count() == 5
                 && READBACKS.load(Ordering::SeqCst) == 126
+                && NAME_INPUTS.load(Ordering::SeqCst) == 22
+                && ALERT_CALLS.load(Ordering::SeqCst) == 2
         } else {
             NEXT.load(Ordering::SeqCst) == 0
                 && ACTIONS.count() == 0
@@ -893,10 +916,42 @@ mod tests {
     }
     #[test]
     fn synthetic_filename_input_requires_all_identity_and_directory_gates() {
-        assert!(filename_input_allowed(1, true, true, true, true));
-        assert!(filename_input_allowed(2, true, true, true, true));
+        assert!(filename_input_allowed("picker", 4, true, true, true, true));
+        for mode in ["", "first", "reopen", "picker-reopen"] {
+            assert!(!filename_input_mode(mode));
+            assert_eq!(filename_option(filename_input_mode(mode)), Some("draft.md"));
+            assert!(!filename_input_allowed(mode, 4, true, true, true, true));
+        }
+        for mode in ["picker", "picker-preview-only"] {
+            assert!(filename_input_mode(mode));
+            assert_eq!(filename_option(filename_input_mode(mode)), None);
+        }
+
+        assert!(filename_input_allowed(
+            "picker-preview-only",
+            1,
+            true,
+            true,
+            true,
+            true
+        ));
+        assert!(filename_input_allowed(
+            "picker-preview-only",
+            2,
+            true,
+            true,
+            true,
+            true
+        ));
         for phase in [0, 3, 4, 5] {
-            assert!(!filename_input_allowed(phase, true, true, true, true));
+            assert!(!filename_input_allowed(
+                "picker-preview-only",
+                phase,
+                true,
+                true,
+                true,
+                true
+            ));
         }
         for (owned, save, message, directory) in [
             (false, true, true, true),
@@ -904,7 +959,14 @@ mod tests {
             (true, true, false, true),
             (true, true, true, false),
         ] {
-            assert!(!filename_input_allowed(1, owned, save, message, directory));
+            assert!(!filename_input_allowed(
+                "picker-preview-only",
+                1,
+                owned,
+                save,
+                message,
+                directory
+            ));
         }
         let after = picker_field_diagnostics(
             Some("Choose a NEW file for this copy"),
@@ -914,6 +976,17 @@ mod tests {
         );
         assert_eq!(after["nameMatches"], true);
         assert_eq!(after["directoryMatches"], false);
+    }
+    #[test]
+    fn selected_alert_button_must_belong_to_current_sheet_and_remain_enabled_visible() {
+        assert!(button_owner_valid(true, true, true));
+        for (same, enabled, visible) in [
+            (false, true, true),
+            (true, false, true),
+            (true, true, false),
+        ] {
+            assert!(!button_owner_valid(same, enabled, visible));
+        }
     }
     #[test]
     fn pinned_rfd_builder_caption_maps_to_message_not_window_title() {

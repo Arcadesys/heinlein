@@ -244,6 +244,41 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(record['cooperativeAbortReason'],'stage-timeout')
         self.assertEqual(record['exit'],73)
 
+    def full_picker(self):
+        result,lines=self.reopen()
+        index=next(i for i,v in enumerate(lines) if v.get('stage')=='picker-reopened-both')
+        lines[index:index+1]=[{'kind':'progress','stage':stage} for stage in ('picker-cancel-real-null','picker-preview-real-token','picker-place-cancel-real-null','picker-copy-real-receipt','picker-replay-denied')]
+        template=lines.pop()['value']
+        for phase in range(1,6):
+            if phase in (1,2,4):
+                lines.extend([
+                    {'kind':'native-picker-diagnostic','phase':phase,'savePanelTypeMatches':True,'visible':True,'fields':{'messageMatches':True,'directoryMatches':True,'nameMatches':False}},
+                    {'kind':'native-picker','stage':'owned-panel-before-synthetic-name-input','phase':phase},
+                    {'kind':'native-picker-diagnostic','phase':phase,'savePanelTypeMatches':True,'visible':True,'afterSyntheticNameInput':True,'fields':{'messageMatches':True,'directoryMatches':True,'nameMatches':True}},
+                    {'kind':'native-picker','stage':'synthetic-filename-reread-verified','phase':phase},
+                    {'kind':'native-picker','stage':'actual-NSSavePanel-owned-parent-dir-name-verified','phase':phase},
+                    {'kind':'native-picker','stage':'public-panel-action-dispatched-real-completion-required','phase':phase},
+                ])
+            else:
+                lines.extend([
+                    {'kind':'native-picker','stage':'actual-parented-alert-exact-synthetic-content-controls-verified','phase':phase},
+                    {'kind':'native-picker','stage':'public-alert-button-action-dispatched-real-completion-required','phase':phase},
+                ])
+        for stage,phase,placed in [('picker-cancel-real-null',1,False),('picker-preview-real-token',2,False),('picker-place-cancel-real-null',3,False),('picker-preview-real-token',4,False),('picker-copy-real-receipt',5,True),('picker-replay-denied',5,True)]:
+            lines.append({'kind':'native-picker-readback','value':{**template,'stage':stage,'nativeActions':phase,'copyExact':placed,'publicationAbsent':not placed,'placements':1 if placed else 0}})
+        result['picker']={'armed':5,'completedPublicActions':5,'failure':0,'readbackMask':126,'syntheticNameInputMask':22,'alertCalls':2,'defaultSuggestedFilenameInitialization':False}
+        return result,lines
+
+    def test_full_mode_requires_phase_four_identity_input_and_reread(self):
+        driver.validate_phase('picker',*self.full_picker())
+        result,lines=self.full_picker()
+        reread=next(v for v in lines if v.get('kind')=='native-picker-diagnostic' and v.get('phase')==4 and v.get('afterSyntheticNameInput'))
+        reread['fields']['directoryMatches']=False
+        with self.assertRaises(RuntimeError): driver.validate_phase('picker',result,lines)
+        result,lines=self.full_picker()
+        result['picker']['syntheticNameInputMask']=6
+        with self.assertRaises(RuntimeError): driver.validate_phase('picker',result,lines)
+
     def test_arbitrary_binary_never_inherits_source_provenance(self):
         with tempfile.TemporaryDirectory() as directory:
             a, b = (Path(directory) / name for name in ('a', 'b'))

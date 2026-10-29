@@ -201,6 +201,9 @@ pub(super) fn picker_guard_home(app: &tauri::AppHandle) -> Result<PathBuf, Strin
     }
     Ok(fixture.root.clone())
 }
+pub(super) fn picker_phase() -> Option<&'static str> {
+    FIXTURE.get().map(|fixture| fixture.phase.as_str())
+}
 pub(super) fn picker_preview_only() -> bool {
     FIXTURE
         .get()

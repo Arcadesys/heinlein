@@ -19,11 +19,11 @@ Python driver accurately records source provenance as unknown; binary hashes alo
 cannot establish a source revision.
 
 For the independently bounded picker Preview/Cancel scenario add `--preview-only`.
-In this explicit fixture mode the suggested filename option is omitted: pinned
+In both explicit picker fixture modes the suggested filename option is omitted: pinned
 rfd otherwise appends the filename to an existing starting directory before
 setDirectoryURL. Only after own panel/message/exact directory validation, the
 main-only driver enters immutable `draft.md` via public setNameFieldStringValue
-once per phase, then rereads exact name/directory before any response action.
+once per picker phase (including full-mode phase4), then rereads exact name/directory before any response action.
 Production default still suggests `draft.md`. This proves real panel input/choice
 and completion, not default suggested-filename initialization.
 
