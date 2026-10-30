@@ -6,11 +6,16 @@ edition = "2021"
 [features]
 default = []
 standalone-native-acceptance = []
+standalone-ok-diagnostic = ["standalone-native-acceptance", "dep:cc"]
+standalone-ok-diagnostic-probes = ["standalone-ok-diagnostic"]
 revision-native-acceptance = []
 update-native-acceptance = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+cc = { version = "=1.8.0", optional = true }
 
 [dependencies]
 tauri = { version = "2", features = [] }

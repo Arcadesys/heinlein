@@ -279,6 +279,22 @@ class ReceiptTests(unittest.TestCase):
         result['picker']['syntheticNameInputMask']=6
         with self.assertRaises(RuntimeError): driver.validate_phase('picker',result,lines)
 
+    def test_d1_terminal_and_normal_are_never_acceptance(self):
+        for code,category in [(71,'rust_panic'),(72,'hook_reentry'),(81,'objc_exception'),(82,'objc_other'),(83,'invalid_dispatch')]:
+            outcome=driver.diagnostic_outcome(code,None,[{'kind':'native47-d1','category':category}])
+            self.assertEqual(outcome['classification'],'terminal_failure')
+            self.assertFalse(outcome['acceptance'])
+            self.assertTrue(outcome['terminalMarkerPresent'])
+            self.assertFalse(driver.diagnostic_outcome(code,None,[])['terminalMarkerPresent'])
+        result={'diagnosticOnly':True,'scenarioCompleted':True,'acceptance':False,'passed':False}
+        self.assertEqual(driver.diagnostic_outcome(0,result,[{'kind':'native47-d1'}])['classification'],'non_reproduction')
+        self.assertEqual(driver.diagnostic_outcome(0,result,[])['classification'],'incomplete_failure')
+        self.assertEqual(driver.diagnostic_outcome(79,None,[])['classification'],'marker_failure')
+
+    def test_d1_mode_rejects_before_spawning(self):
+        with self.assertRaises(ValueError): driver.run_phase(None,None,'picker',{},diagnostic_boundary=True)
+        with self.assertRaises(ValueError): driver.run_phase(None,None,'picker-preview-only',{},diagnostic_backtrace=True,diagnostic_boundary=True)
+
     def test_arbitrary_binary_never_inherits_source_provenance(self):
         with tempfile.TemporaryDirectory() as directory:
             a, b = (Path(directory) / name for name in ('a', 'b'))

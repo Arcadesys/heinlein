@@ -14,6 +14,12 @@ use std::{
 };
 use tauri::Manager;
 mod completion;
+#[cfg(feature = "standalone-ok-diagnostic")]
+mod diagnostic;
+#[cfg(feature = "standalone-ok-diagnostic")]
+pub(super) fn install_d1(app: &tauri::AppHandle) -> Result<(), String> {
+    diagnostic::install_verified(app)
+}
 static ACTIONS: completion::ActionCompletion = completion::ActionCompletion::new();
 static DECLARED: OnceLock<Declaration> = OnceLock::new();
 static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -269,7 +275,7 @@ fn filename_option(fixture_picker: bool) -> Option<&'static str> {
     }
 }
 fn filename_input_mode(mode: &str) -> bool {
-    matches!(mode, "picker" | "picker-preview-only")
+    matches!(mode, "picker" | "picker-preview-only" | "picker-d1")
 }
 pub(super) fn suggested_filename() -> Option<&'static str> {
     filename_option(filename_input_mode(
@@ -285,7 +291,7 @@ fn filename_input_allowed(
     directory: bool,
 ) -> bool {
     let expected = match mode {
-        "picker-preview-only" => [1, 2].contains(&phase),
+        "picker-preview-only" | "picker-d1" => [1, 2].contains(&phase),
         "picker" => [1, 2, 4].contains(&phase),
         _ => false,
     };
@@ -427,9 +433,13 @@ pub(super) fn install(window: &tauri::WebviewWindow, root: PathBuf) -> Result<()
 struct Pool(*mut c_void);
 impl Drop for Pool {
     fn drop(&mut self) {
+        #[cfg(feature = "standalone-ok-diagnostic")]
+        diagnostic::checkpoint(diagnostic::Point::BeforePoolPop);
         unsafe {
             objc_autoreleasePoolPop(self.0);
         }
+        #[cfg(feature = "standalone-ok-diagnostic")]
+        diagnostic::checkpoint(diagnostic::Point::AfterPoolPop);
     }
 }
 struct Busy;
@@ -444,6 +454,8 @@ extern "C" fn timer_callback(timer: *mut c_void, _: *mut c_void) {
         return;
     }
     if BUSY.with(|b| b.replace(true)) {
+        #[cfg(feature = "standalone-ok-diagnostic")]
+        diagnostic::reentry();
         return;
     }
     let _busy = Busy;
@@ -453,6 +465,11 @@ extern "C" fn timer_callback(timer: *mut c_void, _: *mut c_void) {
         return;
     }
     let phase = ACTIVE.load(Ordering::SeqCst);
+    #[cfg(feature = "standalone-ok-diagnostic")]
+    {
+        diagnostic::set_phase(phase);
+        diagnostic::checkpoint(diagnostic::Point::TimerEntered);
+    }
     if phase == 0 {
         if ACTIONS.count()
             == if super::standalone_native_acceptance::picker_preview_only() {
@@ -512,6 +529,12 @@ extern "C" fn timer_callback(timer: *mut c_void, _: *mut c_void) {
                 Err(code) => {
                     record_failure(code);
                 }
+            }
+            #[cfg(feature = "standalone-ok-diagnostic")]
+            {
+                diagnostic::checkpoint(diagnostic::Point::BeforeSheetDrop);
+                drop(sheet);
+                diagnostic::checkpoint(diagnostic::Point::AfterSheetDrop);
             }
         }
     });
@@ -643,10 +666,23 @@ unsafe fn drive_picker(
     {
         return Err(2);
     }
+    #[cfg(feature = "standalone-ok-diagnostic")]
+    diagnostic::checkpoint(diagnostic::Point::BeforeIssue);
     ACTIONS.issued(phase).map_err(|_| 6usize)?;
-    // Public panel actions preserve native validation and the real plugin completion callback.
+    // Same real action/retained owner; D1 only changes the diagnostic call boundary.
+    #[cfg(feature = "standalone-ok-diagnostic")]
+    if super::standalone_native_acceptance::picker_d1() {
+        diagnostic::invoke(sheet, phase);
+    } else {
+        action(sheet, if phase == 1 { "cancel:" } else { "ok:" });
+    }
+    #[cfg(not(feature = "standalone-ok-diagnostic"))]
     action(sheet, if phase == 1 { "cancel:" } else { "ok:" });
+    #[cfg(feature = "standalone-ok-diagnostic")]
+    diagnostic::checkpoint(diagnostic::Point::BeforeReturned);
     ACTIONS.returned(phase).map_err(|_| 6usize)?;
+    #[cfg(feature = "standalone-ok-diagnostic")]
+    diagnostic::checkpoint(diagnostic::Point::AfterReturned);
     stage(
         "public-panel-action-dispatched-real-completion-required",
         phase,
@@ -772,7 +808,7 @@ static READBACKS: AtomicUsize = AtomicUsize::new(0);
 pub(super) fn passed(phase: &str) -> bool {
     FAILURE.load(Ordering::SeqCst) == 0
         && ACTIVE.load(Ordering::SeqCst) == 0
-        && if phase == "picker-preview-only" {
+        && if matches!(phase, "picker-preview-only" | "picker-d1") {
             NEXT.load(Ordering::SeqCst) == 2
                 && ACTIONS.count() == 2
                 && READBACKS.load(Ordering::SeqCst) == 6

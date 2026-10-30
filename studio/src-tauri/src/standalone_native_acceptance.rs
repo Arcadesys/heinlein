@@ -205,9 +205,15 @@ pub(super) fn picker_phase() -> Option<&'static str> {
     FIXTURE.get().map(|fixture| fixture.phase.as_str())
 }
 pub(super) fn picker_preview_only() -> bool {
-    FIXTURE
-        .get()
-        .is_some_and(|fixture| fixture.phase == "picker-preview-only")
+    FIXTURE.get().is_some_and(|fixture| {
+        matches!(fixture.phase.as_str(), "picker-preview-only" | "picker-d1")
+    })
+}
+pub(super) fn picker_d1() -> bool {
+    cfg!(feature = "standalone-ok-diagnostic")
+        && FIXTURE
+            .get()
+            .is_some_and(|fixture| fixture.phase == "picker-d1")
 }
 pub(super) fn picker_root() -> Result<PathBuf, String> {
     let fixture = FIXTURE.get().ok_or("Verified picker startup required")?;
@@ -234,10 +240,14 @@ fn run_fixture() -> Result<(), String> {
             "picker",
             "picker-reopen",
             "picker-preview-only",
+            "picker-d1",
         ]
         .contains(&args[3].as_str())
     {
         return Err("Explicit fixture invocation/root/phase required".into());
+    }
+    if args[3] == "picker-d1" && !cfg!(feature = "standalone-ok-diagnostic") {
+        return Err("D1 requires its explicit diagnostic build feature".into());
     }
     let root = PathBuf::from(&args[2]);
     private(&root)?;
@@ -255,7 +265,7 @@ fn run_fixture() -> Result<(), String> {
         return Err("TMPDIR must equal fixture root before startup".into());
     }
     let sentinel = root.join("fixture-sentinel.json");
-    if ["first", "picker", "picker-preview-only"].contains(&args[3].as_str()) {
+    if ["first", "picker", "picker-preview-only", "picker-d1"].contains(&args[3].as_str()) {
         if std::fs::read_dir(&root)
             .map_err(|_| "Fixture root unavailable")?
             .next()
@@ -282,7 +292,7 @@ fn run_fixture() -> Result<(), String> {
         }
         private(p)?;
     }
-    if ["picker", "picker-preview-only"].contains(&args[3].as_str()) {
+    if ["picker", "picker-preview-only", "picker-d1"].contains(&args[3].as_str()) {
         let target = root.join("copy-targets");
         std::fs::DirBuilder::new()
             .mode(0o700)
@@ -336,7 +346,7 @@ fn run_fixture() -> Result<(), String> {
     let phase = args[3].clone();
     let script = format!(
         "globalThis.__HEINLEIN_NATIVE47__={};",
-        serde_json::json!({"phase":phase,"id":identity,"expectedRevision":expected_revision})
+        serde_json::json!({"phase":if phase=="picker-d1" {"picker-preview-only"}else{phase.as_str()},"id":identity,"expectedRevision":expected_revision})
     );
     let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
         standalone::standalone_request,
@@ -367,7 +377,7 @@ fn run_fixture() -> Result<(), String> {
             if cmd == "standalone_request" {
                 let allowed = match invoke.message.payload() {
                     tauri::ipc::InvokeBody::Json(v) => {
-                        if guarded.phase == "picker-preview-only" {
+                        if matches!(guarded.phase.as_str(),"picker-preview-only"|"picker-d1") {
                             super::standalone_picker_acceptance::preview_only_request_allowed(&v["request"])
                         } else { v["request"]["kind"].as_str().is_some_and(|kind| {
                             ["list", "create", "open", "save", "release"].contains(&kind) || (guarded.phase.starts_with("picker") && ["preview", "cancelPreview", "place"].contains(&kind) && (kind != "preview" || v["request"]["destination"] == "file"))
@@ -411,6 +421,8 @@ fn run_fixture() -> Result<(), String> {
             if FIXTURE.get().unwrap().phase.starts_with("picker") {
                 picker_guard_home(app.handle()).map_err(std::io::Error::other)?;
                 stage("immutable-fixture-private-home-resolver-validated-no-env-override");
+                #[cfg(feature="standalone-ok-diagnostic")]
+                if picker_d1(){super::standalone_picker_acceptance::install_d1(app.handle()).map_err(std::io::Error::other)?;}
                 app.handle().plugin(tauri_plugin_dialog::init())?;
                 stage("native-dialog-plugin-after-confinement-no-JS-dialog-ACL");
             }
@@ -695,7 +707,7 @@ fn run_fixture() -> Result<(), String> {
             fixture.ended.store(true,Ordering::SeqCst);
             let steps=fixture.steps.lock().unwrap();
             let complete=approved==1&&fixture.close_calls.load(Ordering::SeqCst)==1&&fixture.forbidden.load(Ordering::SeqCst)==0&&steps.iter().any(|s|s=="request-close-from-production")&&if fixture.phase.starts_with("picker"){super::standalone_picker_acceptance::passed(&fixture.phase)}else if fixture.phase=="first"{steps.iter().any(|s|s=="native-close-received-before-save-ack")&&steps.iter().any(|s|s=="durable-save-ack-released")}else{steps.iter().any(|s|s=="reopened-exact-bytes-same-id")};
-            println!("{}",serde_json::json!({"kind":"result","passed":complete,"phase":fixture.phase,"approvedProgrammaticExits":approved,"nativeTerminateCounters":quit_macos::counters(),"realIPCCommandCount":fixture.calls.load(Ordering::SeqCst),"forbiddenServiceAttempts":fixture.forbidden.load(Ordering::SeqCst),"osStoreProviderConstructorsReachable":false,"managedRuntimeAcquire":false,"physicalKeyboard":false,"picker":super::standalone_picker_acceptance::summary(),"steps":*steps}));
+            println!("{}",serde_json::json!({"kind":"result","passed":complete&&!picker_d1(),"diagnosticOnly":picker_d1(),"scenarioCompleted":complete,"acceptance":!picker_d1()&&complete,"phase":fixture.phase,"approvedProgrammaticExits":approved,"nativeTerminateCounters":quit_macos::counters(),"realIPCCommandCount":fixture.calls.load(Ordering::SeqCst),"forbiddenServiceAttempts":fixture.forbidden.load(Ordering::SeqCst),"osStoreProviderConstructorsReachable":false,"managedRuntimeAcquire":false,"physicalKeyboard":false,"picker":super::standalone_picker_acceptance::summary(),"steps":*steps}));
             let _=std::io::stdout().flush();
         }
     });

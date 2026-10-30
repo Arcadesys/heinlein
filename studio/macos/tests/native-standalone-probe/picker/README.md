@@ -111,3 +111,26 @@ Memory-only checks:
 python3 -m unittest discover -s macos/tests/native-standalone-probe/picker -p 'test_*.py'
 cargo test --offline --locked -p heinlein-studio --features standalone-native-acceptance,tauri/custom-protocol standalone_picker_acceptance::tests
 ```
+
+### D1 terminal diagnostic (not acceptance)
+
+Build with `standalone-ok-diagnostic,tauri/custom-protocol` and use the explicit
+`--preview-only --diagnostic-ok-boundary` driver options. The separate
+`standalone-ok-diagnostic-probes` feature contains no-GUI subprocess tests and
+must not be included in the disposable GUI diagnostic build. Default builds and
+ordinary fixture phases do not install the hook or use the action shim.
+
+After immutable fixture gates, the first Rust panic emits one bounded static
+location/checkpoint marker and terminates the diagnostic child without unwinding
+(exit 71; reentry 72; marker failure 79). The fixed-enum Objective-C shim invokes
+the same retained panel Cancel/OK action; a caught exception/object emits only a
+category/phase and terminates (81/82; invalid dispatch 83). It does not inspect
+exception content or fabricate a plugin response. Mixed-language catch coverage
+is limited. Normal return still requires the genuine plugin result and the
+existing off-main action-return handshake.
+
+Every terminal outcome is failure. Instrumented normal flow is classified
+`non_reproduction`, with `passed=false` and `acceptance=false`; it cannot establish
+the cause of any historical abort or replace ordinary native acceptance. The
+diagnostic changes timing and immediate terminal exit intentionally skips cleanup.
+No native attempt is authorized merely by compiling this mode.

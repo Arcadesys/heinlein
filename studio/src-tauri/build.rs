@@ -1,4 +1,20 @@
 fn main() {
+    #[cfg(all(target_os = "macos", feature = "standalone-ok-diagnostic"))]
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        let mut build = cc::Build::new();
+        build
+            .file("src/standalone_picker_acceptance/action_diagnostic.m")
+            .flag("-fobjc-exceptions")
+            .flag("-fexceptions");
+        #[cfg(feature = "standalone-ok-diagnostic-probes")]
+        build.file("src/standalone_picker_acceptance/action_diagnostic_probe.m");
+        build.compile("native47_action_diagnostic");
+        println!("cargo:rerun-if-changed=src/standalone_picker_acceptance/action_diagnostic.m");
+        println!(
+            "cargo:rerun-if-changed=src/standalone_picker_acceptance/action_diagnostic_probe.m"
+        );
+        println!("cargo:rustc-link-lib=framework=Foundation");
+    }
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
             "project_request",

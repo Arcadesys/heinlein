@@ -91,14 +91,32 @@ class BoundedDiagnostics:
         return emitted
 
 
-def run_phase(binary, root, phase, record, diagnostic_backtrace=False):
+def diagnostic_outcome(code, result, lines):
+    """D1 never establishes acceptance, including an instrumented normal run."""
+    markers=[v for v in lines if v.get('kind')=='native47-d1']
+    terminal={71:'rust_panic',72:'hook_reentry',81:'objc_exception',82:'objc_other',83:'invalid_dispatch'}
+    if code in terminal:
+        category=terminal[code]
+        matched=any(v.get('category')==category for v in markers)
+        return {'classification':'terminal_failure','acceptance':False,
+                'terminalCategory':category,'terminalMarkerPresent':matched}
+    if code==79:
+        return {'classification':'marker_failure','acceptance':False,'terminalMarkerPresent':False}
+    if code==0 and result and result.get('diagnosticOnly') is True and result.get('scenarioCompleted') is True and result.get('acceptance') is False and result.get('passed') is False and markers:
+        return {'classification':'non_reproduction','acceptance':False}
+    return {'classification':'incomplete_failure','acceptance':False}
+
+
+def run_phase(binary, root, phase, record, diagnostic_backtrace=False, diagnostic_boundary=False):
+    if diagnostic_boundary and (phase != 'picker-preview-only' or diagnostic_backtrace):
+        raise ValueError('D1 requires picker-only without backtrace mode')
     environment=child_environment(root,phase,diagnostic_backtrace)
     capture=BoundedDiagnostics(os.environ.get('HOME'))
     record.update(diagnosticBacktrace=diagnostic_backtrace,
                   diagnosticEnvironment={'RUST_BACKTRACE':'1'} if diagnostic_backtrace else {},
                   diagnosticTimingLimit='Backtrace environment may affect timing; symbols/frames best-effort; no cause inference',
                   capture=capture.stats, orderedDiagnostics=capture.lines)
-    child = subprocess.Popen([str(binary), '--standalone-native-acceptance', str(root), phase],
+    child = subprocess.Popen([str(binary), '--standalone-native-acceptance', str(root), 'picker-d1' if diagnostic_boundary else phase],
                              env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, bufsize=0, start_new_session=True)
     selector=selectors.DefaultSelector()
@@ -132,8 +150,10 @@ def run_phase(binary, root, phase, record, diagnostic_backtrace=False):
                 if decoded.get('kind')=='result': result=decoded
     code=child.wait()
     record.update(exit=code,result=result)
+    if diagnostic_boundary:
+        record.update(diagnosticOnly=True, diagnosticOutcome=diagnostic_outcome(code,result,capture.lines),acceptance=False)
     record['lifecycle'].append({'stage':'child-reaped','exit':code})
-    if abort_deadline or capture.failed or code!=0 or not result or result.get('passed') is not True:
+    if abort_deadline or capture.failed or code!=0 or not result or (record.get('diagnosticOutcome',{}).get('classification')!='non_reproduction' if diagnostic_boundary else result.get('passed') is not True):
         raise RuntimeError(f'Native phase failed exit={code} phase={phase} root={root}; preserve diagnostics')
     validate_phase(phase,result,capture.lines)
     return record
@@ -206,10 +226,13 @@ def main():
     parser.add_argument('--authorized-synthetic-native-test', action='store_true', required=True)
     parser.add_argument('--preview-only', action='store_true')
     parser.add_argument('--diagnostic-backtrace', action='store_true')
+    parser.add_argument('--diagnostic-ok-boundary', action='store_true')
     parser.add_argument('--receipt', type=Path, required=True)
     args = parser.parse_args()
     if args.diagnostic_backtrace and not args.preview_only:
         parser.error("Backtrace diagnostics require --preview-only")
+    if args.diagnostic_ok_boundary and (not args.preview_only or args.diagnostic_backtrace):
+        parser.error('D1 requires --preview-only without --diagnostic-backtrace')
     binary = args.binary.resolve(strict=True)
     metadata = binary.stat()
     if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or not str(binary).startswith('/private/tmp/heinlein-native47-'):
@@ -234,19 +257,21 @@ def main():
     subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(app)], check=True, capture_output=True)
     receipt = {**binary_receipt(binary, executable),
                'bundle': str(app), 'identifier': identifier, 'signature': 'ad-hoc; strict verified',
-               'root': str(root), 'physicalKeyboard': False, 'VoiceOver': False, 'installedApp': False, 'phases': [],'pickerOnly':args.preview_only,'placementConfirmation':not args.preview_only,'diagnosticBacktrace':args.diagnostic_backtrace}
+               'root': str(root), 'physicalKeyboard': False, 'VoiceOver': False, 'installedApp': False, 'phases': [],'pickerOnly':args.preview_only,'placementConfirmation':not args.preview_only,'diagnosticBacktrace':args.diagnostic_backtrace,'diagnosticOnly':args.diagnostic_ok_boundary,'acceptance':False}
     # Write progress after each clean child exit; failure keeps exact diagnostic root.
     try:
         for phase in (('picker-preview-only',) if args.preview_only else ('picker', 'picker-reopen')):
             record={}
             receipt['phases'].append(record)
-            record.update(run_phase(executable, root, phase, record, args.diagnostic_backtrace))
+            record.update(run_phase(executable, root, phase, record, args.diagnostic_backtrace,args.diagnostic_ok_boundary))
         if not args.preview_only:
             first=[v['value'] for v in receipt['phases'][0]['orderedDiagnostics'] if v.get('kind')=='native-picker-readback'][-1]
             reopened=[v['value'] for v in receipt['phases'][1]['orderedDiagnostics'] if v.get('kind')=='native-picker-readback'][-1]
             if any(first.get(k)!=reopened.get(k) for k in ('draftId','revision','hash','bytes','placements')):
                 raise RuntimeError('Fresh process changed original/copy/receipt binding')
-        receipt['passed'] = True
+        receipt['passed'] = not args.diagnostic_ok_boundary
+        receipt['acceptance'] = not args.diagnostic_ok_boundary
+        if args.diagnostic_ok_boundary: receipt['classification']='non_reproduction'
     except Exception as error:
         receipt['passed'] = False
         receipt['failure'] = str(error)
