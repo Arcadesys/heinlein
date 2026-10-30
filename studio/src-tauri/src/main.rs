@@ -44,6 +44,8 @@ mod revision_native_acceptance;
 mod standalone;
 #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
 mod standalone_native_acceptance;
+#[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
+mod standalone_picker_acceptance;
 mod update;
 #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
 mod update_native_acceptance;

@@ -1,0 +1,1 @@
+{"extends":"../../../../tsconfig.json","include":["renderer.ts","../ack.ts"]}
