@@ -28,12 +28,12 @@ static void terminal(unsigned category, uint32_t phase) {
     _exit(status);
 }
 
-// Fixed Cancel/OK enum only; no arbitrary selector, Rust callback or result injection.
+// Fixed Cancel-only dispatch; OK enum rejected before send. No arbitrary selector, Rust callback or result injection.
 int32_t native47_d1_action(void *retained_panel, uint32_t action, uint32_t phase) {
-    if (!retained_panel || !((action==1 && phase==1)||(action==2 && phase==2))) terminal(3,phase);
+    if (!retained_panel || !(action==1 && phase==1)) terminal(3,phase);
     @try {
         NSSavePanel *panel=(NSSavePanel *)retained_panel;
-        if (action==1) [panel cancel:nil]; else [panel ok:nil];
+        [panel cancel:nil]; // Programmatic Save panel OK is unsupported; rejected above.
         return 0; // POD: the public call returned, not a fabricated plugin response.
     } @catch (NSException *exception) {
         (void)exception;

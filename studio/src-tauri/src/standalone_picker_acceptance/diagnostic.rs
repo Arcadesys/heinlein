@@ -265,13 +265,16 @@ mod tests {
                 panic!("PRIVATE_PROBE_PAYLOAD /private/SECRET_PATH");
             }
             "objc-normal-cancel" => assert_eq!(unsafe { native47_d1_probe(0, 1) }, 0),
-            "objc-normal-ok" => assert_eq!(unsafe { native47_d1_probe(0, 2) }, 0),
+            "objc-normal-ok" => {
+                unsafe { native47_d1_probe(0, 2) };
+                panic!("unsupported OK returned");
+            }
             "objc-exception" => {
-                unsafe { native47_d1_probe(1, 2) };
+                unsafe { native47_d1_probe(1, 1) };
                 panic!("caught exception returned");
             }
             "objc-other" => {
-                unsafe { native47_d1_probe(2, 2) };
+                unsafe { native47_d1_probe(2, 1) };
                 panic!("caught object returned");
             }
             _ => panic!("Unknown NO-GUI probe"),
@@ -334,12 +337,11 @@ mod tests {
     }
     #[test]
     fn objc_no_gui_normal_calls_and_both_terminal_catches() {
-        for mode in ["objc-normal-cancel", "objc-normal-ok"] {
-            assert!(probe(mode).status.success());
-        }
+        assert!(probe("objc-normal-cancel").status.success());
         for (mode, code, category) in [
             ("objc-exception", 81, "objc_exception"),
             ("objc-other", 82, "objc_other"),
+            ("objc-normal-ok", 83, "invalid_dispatch"),
         ] {
             let out = probe(mode);
             assert_eq!(out.status.code(), Some(code));
