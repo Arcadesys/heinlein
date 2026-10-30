@@ -134,7 +134,7 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(parent,unchanged)
         for phase in ('picker','picker-reopen','first','unknown'):
             with mock.patch.object(driver.subprocess,'Popen') as spawn:
-                with self.assertRaises(ValueError):
+                with self.assertRaises(RuntimeError):
                     driver.run_phase(Path('/unused'),Path('/unused'),phase,{},True)
                 spawn.assert_not_called()
 
@@ -214,7 +214,8 @@ class ReceiptTests(unittest.TestCase):
         output={11:[b'{"kind":"progress","stage":"owned-start"}\n{"kind":"result","passed":true}\n',b''],12:[b'first panic /synthetic/source.rs:1\n',b'']}
         record={}
         clock=[0,66,66,66,66,66,66,66,66] if timeout else [0]*20
-        with mock.patch.object(driver.subprocess,'Popen',return_value=child), \
+        with mock.patch.object(driver,'require_supported_automation'), \
+             mock.patch.object(driver.subprocess,'Popen',return_value=child), \
              mock.patch.object(driver.selectors,'DefaultSelector',return_value=selector), \
              mock.patch.object(driver.os,'getpgid',return_value=123), \
              mock.patch.object(driver.os,'getpgrp',return_value=122), \
@@ -292,8 +293,23 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(driver.diagnostic_outcome(79,None,[])['classification'],'marker_failure')
 
     def test_d1_mode_rejects_before_spawning(self):
-        with self.assertRaises(ValueError): driver.run_phase(None,None,'picker',{},diagnostic_boundary=True)
-        with self.assertRaises(ValueError): driver.run_phase(None,None,'picker-preview-only',{},diagnostic_backtrace=True,diagnostic_boundary=True)
+        with self.assertRaises(RuntimeError): driver.run_phase(None,None,'picker',{},diagnostic_boundary=True)
+        with self.assertRaises(RuntimeError): driver.run_phase(None,None,'picker-preview-only',{},diagnostic_backtrace=True,diagnostic_boundary=True)
+
+    def test_all_automated_picker_modes_refuse_before_spawn(self):
+        for mode in ('picker','picker-reopen','picker-preview-only','picker-d1'):
+            record={}
+            with mock.patch.object(driver.subprocess,'Popen') as spawn:
+                with self.assertRaises(RuntimeError): driver.run_phase(None,None,mode,record)
+                spawn.assert_not_called()
+            self.assertEqual(record['classification'],'unsupported_automation')
+            self.assertFalse(record['acceptance'])
+
+    def test_cli_refuses_before_any_fixture_side_effect(self):
+        for flags in ([],['--preview-only'],['--diagnostic-backtrace'],['--diagnostic-ok-boundary'],['--diagnostic-backtrace','--diagnostic-ok-boundary'],['--preview-only','--diagnostic-backtrace'],['--preview-only','--diagnostic-ok-boundary']):
+            with mock.patch('sys.argv',['driver','--binary','/missing','--receipt','/unused','--authorized-synthetic-native-test',*flags]), mock.patch.object(Path,'resolve',side_effect=AssertionError('No file reads')), mock.patch.object(Path,'mkdir',side_effect=AssertionError('No roots')), mock.patch.object(driver.subprocess,'run',side_effect=AssertionError('No signing')), mock.patch.object(driver.subprocess,'Popen',side_effect=AssertionError('No UI')), mock.patch('sys.stderr',io.StringIO()):
+                with self.assertRaises(SystemExit) as result: driver.main()
+                self.assertEqual(result.exception.code,2)
 
     def test_arbitrary_binary_never_inherits_source_provenance(self):
         with tempfile.TemporaryDirectory() as directory:

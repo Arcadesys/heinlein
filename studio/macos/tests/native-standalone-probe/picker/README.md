@@ -1,3 +1,25 @@
+# Automated picker scenarios disabled
+
+All advertised picker scenarios (full, preview-only and D1/backtrace diagnostics)
+are unsupported and fail closed before staging/root creation/signing/spawn. Native
+entry points also reject picker modes before root access or App/plugin/store/UI
+startup; direct automated OK dispatch is denied. Acceptance is false.
+
+Apple explicitly prohibits programmatically triggering NSSavePanel OK on macOS
+10.15 and later: https://developer.apple.com/documentation/appkit/nssavepanel/ok(_:)
+A public selector declaration does not establish supported automation. The prior
+D3 exception is consistent with this restriction but its exact origin remains
+unproved. No alternate selector, button, private API or injected response is used.
+
+Production user-operated picker/Place behavior and the first/reopen standalone
+save/Quit fixture are unchanged. Historical real Cancel evidence remains partial;
+no new GUI attempt was run for this guard. The material below records historical
+fixture design and commands; those automated commands now reject and are not an
+instruction to run an unsupported action. Any manual fixture requires a separately
+reviewed explicit design and authorization.
+
+---
+
 # Disposable native standalone placement acceptance
 
 This opt-in macOS fixture exercises the production standalone bridge, Save picker,

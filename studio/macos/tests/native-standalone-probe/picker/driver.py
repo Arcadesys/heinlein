@@ -14,6 +14,15 @@ import time
 import uuid
 
 
+APPLE_OK_CONTRACT = 'https://developer.apple.com/documentation/appkit/nssavepanel/ok(_:)'
+
+def require_supported_automation(phase, record):
+    # Every advertised picker scenario depends on programmatic NSSavePanel OK.
+    record.update(passed=False, acceptance=False, classification='unsupported_automation',
+                  unsupportedAPI='NSSavePanel.ok:', appleContract=APPLE_OK_CONTRACT)
+    raise RuntimeError('Unsupported automated Save panel OK on macOS10.15+; acceptance=false; '+APPLE_OK_CONTRACT)
+
+
 def child_environment(root, phase, diagnostic_backtrace=False, parent_environment=None):
     if diagnostic_backtrace and phase != 'picker-preview-only':
         raise ValueError('Backtrace diagnostics require the single Picker-only phase')
@@ -108,6 +117,7 @@ def diagnostic_outcome(code, result, lines):
 
 
 def run_phase(binary, root, phase, record, diagnostic_backtrace=False, diagnostic_boundary=False):
+    require_supported_automation(phase, record)
     if diagnostic_boundary and (phase != 'picker-preview-only' or diagnostic_backtrace):
         raise ValueError('D1 requires picker-only without backtrace mode')
     environment=child_environment(root,phase,diagnostic_backtrace)
@@ -229,6 +239,11 @@ def main():
     parser.add_argument('--diagnostic-ok-boundary', action='store_true')
     parser.add_argument('--receipt', type=Path, required=True)
     args = parser.parse_args()
+    unsupported={}
+    try:
+        require_supported_automation('picker-preview-only' if args.preview_only else 'picker',unsupported)
+    except RuntimeError as error:
+        parser.exit(2,json.dumps(unsupported)+'\n'+str(error)+'\n')
     if args.diagnostic_backtrace and not args.preview_only:
         parser.error("Backtrace diagnostics require --preview-only")
     if args.diagnostic_ok_boundary and (not args.preview_only or args.diagnostic_backtrace):

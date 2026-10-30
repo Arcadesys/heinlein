@@ -230,6 +230,30 @@ pub(super) fn run() {
         std::process::exit(73)
     }
 }
+fn require_supported_fixture_mode(mode: &str) -> Result<(), String> {
+    if mode.starts_with("picker") {
+        return Err("unsupported_automation; acceptance=false: macOS10.15+ prohibits programmatic NSSavePanel.ok: https://developer.apple.com/documentation/appkit/nssavepanel/ok(_:)".into());
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod picker_contract_tests {
+    #[test]
+    fn unsupported_modes_reject_before_root_or_ui_but_baseline_remains() {
+        for mode in [
+            "picker",
+            "picker-reopen",
+            "picker-preview-only",
+            "picker-d1",
+        ] {
+            let error = super::require_supported_fixture_mode(mode).unwrap_err();
+            assert!(error.contains("unsupported_automation") && error.contains("acceptance=false"));
+        }
+        for mode in ["first", "reopen"] {
+            assert!(super::require_supported_fixture_mode(mode).is_ok());
+        }
+    }
+}
 fn run_fixture() -> Result<(), String> {
     let args: Vec<_> = std::env::args().collect();
     if args.len() != 4
@@ -246,6 +270,7 @@ fn run_fixture() -> Result<(), String> {
     {
         return Err("Explicit fixture invocation/root/phase required".into());
     }
+    require_supported_fixture_mode(&args[3])?;
     if args[3] == "picker-d1" && !cfg!(feature = "standalone-ok-diagnostic") {
         return Err("D1 requires its explicit diagnostic build feature".into());
     }

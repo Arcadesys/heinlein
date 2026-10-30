@@ -562,6 +562,23 @@ fn picker_field_diagnostics(
         "directoryMissing":directory.is_none(),
     })
 }
+fn require_supported_panel_action(phase: usize) -> Result<(), usize> {
+    if phase == 1 {
+        Ok(())
+    } else {
+        Err(14)
+    }
+}
+#[cfg(test)]
+mod supported_action_tests {
+    #[test]
+    fn ok_is_rejected_before_action_bookkeeping_or_dispatch() {
+        assert!(super::require_supported_panel_action(1).is_ok());
+        for phase in [0, 2, 3, 4, 5] {
+            assert_eq!(super::require_supported_panel_action(phase), Err(14));
+        }
+    }
+}
 unsafe fn drive_picker(
     d: &Declaration,
     m: &Main,
@@ -666,6 +683,8 @@ unsafe fn drive_picker(
     {
         return Err(2);
     }
+    // Defense in depth if a future caller bypasses the pre-startup mode guard.
+    require_supported_panel_action(phase)?;
     #[cfg(feature = "standalone-ok-diagnostic")]
     diagnostic::checkpoint(diagnostic::Point::BeforeIssue);
     ACTIONS.issued(phase).map_err(|_| 6usize)?;
@@ -674,10 +693,10 @@ unsafe fn drive_picker(
     if super::standalone_native_acceptance::picker_d1() {
         diagnostic::invoke(sheet, phase);
     } else {
-        action(sheet, if phase == 1 { "cancel:" } else { "ok:" });
+        action(sheet, "cancel:");
     }
     #[cfg(not(feature = "standalone-ok-diagnostic"))]
-    action(sheet, if phase == 1 { "cancel:" } else { "ok:" });
+    action(sheet, "cancel:");
     #[cfg(feature = "standalone-ok-diagnostic")]
     diagnostic::checkpoint(diagnostic::Point::BeforeReturned);
     ACTIONS.returned(phase).map_err(|_| 6usize)?;
