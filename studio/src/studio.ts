@@ -384,6 +384,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   window.addEventListener('beforeunload', unload);
   let selecting = false;
   let repository: RepositorySession | null = null;
+  let fileFirstRepository = false;
   let directoryRequest = 0;
   let documentRequest = 0;
   let manuscriptRequest = 0;
@@ -519,8 +520,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const repositoryHome=createRepositoryHome(core,{openGitHub:()=>{void github.open(true);},select:run=>selectRepository(run)});
   const localFolders=el('details');localFolders.className='local-folders';localFolders.open=true;localFolders.append(el('summary','Local folders'),open,recent);
   const listing = el('div', '', 'file-list');
+  const sourceFileGuide = el('p', 'Browse writing files to edit or review. No manuscript setup is required.', 'source-file-guide');
+  sourceFileGuide.hidden = true;
   const filesBody = el('div', '', 'panel-body');
-  filesBody.append(projectSettings,originStatus,originSend,repositoryHome.element,localFolders,directoryPath,listing);
+  filesBody.append(projectSettings,originStatus,originSend,repositoryHome.element,localFolders,sourceFileGuide,directoryPath,listing);
   if(projectLibrary.supported){repositoryHome.element.hidden=true;localFolders.hidden=true;root.classList.add('project-first');}
   files.append(repoName, filesBody);
   const manuscriptPane = el('section', '', 'panel manuscript');
@@ -594,6 +597,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   scenePane.append(sceneNavigator.element);
   const preview = el('section', '', 'panel preview');
   preview.setAttribute('aria-label', 'Document preview');
+  preview.tabIndex = 0;
   standalone=createStandaloneDrafts(core,{root,parent:preview,dirty:setDirty,sync:()=>dirtySync,leave:allowLeave,modeChanged:active=>{sharingEvidence=null;sharingGeneration++;root.classList.toggle('standalone-writing',active);if(chromeReady){renderPill();renderOrigin();if(active&&navigation.visible('manuscript'))void openDrafting();}},beforeMount:()=>{
     questions?.clear(); draftingQuestions?.clear(); reviewPanel?.clear(); selectionAsk?.destroy(); selectionAsk=null;
     chapterEditor?.destroy();chapterEditor=null;editor?.destroy();editor=null;opened=null;currentChapter=null;
@@ -698,7 +702,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     unavailable: reviewing => {
       if (!repository || !opened || repositoryDetached || disposed) return 'Open the reviewed repository before accepting an edit.';
       if (!proposals.supported) return 'Native revision approval is unavailable.';
-      if (dirty || saving || staging || writeInFlight || recovery || recoveryPending || guardPending || writePaused) return 'Save the matching scene and resolve recovery before accepting an edit. Your working text is preserved.';
+      if (dirty || saving || staging || writeInFlight || recovery || recoveryPending || guardPending || writePaused) return 'Save the matching source file and resolve recovery before accepting an edit. Your working text is preserved.';
       if (selecting || ((structuralBusy || proposalBusy) && !reviewing)) return 'Finish the current local operation first.';
       return null;
     },
@@ -1197,6 +1201,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   function renderOrigin() {
     const standaloneActive=Boolean(standalone?.active);
+    sourceFileGuide.hidden=standaloneActive||!fileFirstRepository;
     projectSettings.hidden=standaloneActive||!repository?.projectId;
     repoName.textContent=standaloneActive?'Standalone draft':repository?.name??'Open a repository';
     originStatus.textContent=(!standaloneActive&&repository?.githubWorkspaceId&&sharingEvidence?`Working branch: ${sharingEvidence.branch}. `:'')+sharingStatus(repository,standaloneActive,dirty,sharingEvidence);
@@ -1213,7 +1218,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     pillScene.disabled = !(scene && !standalone?.active); pillChapter.setAttribute('aria-label', `Chapter: ${chapterTitle ?? ''}. Choose another chapter`);
     if (draftingStarted) binderTree.refresh();
     pillScene.textContent = standalone?.active ? 'Untitled draft' : opened ? (scene && scene.title) || basename(opened.path) : 'No scene open';
-    pillScene.setAttribute('aria-label', `Scene: ${pillScene.textContent}. Choose another scene`);
+    pillScene.setAttribute('aria-label', fileFirstRepository && opened && !scene && !standalone?.active ? `Source file: ${pillScene.textContent}` : `Scene: ${pillScene.textContent}. Choose another scene`);
     const words = standalone?.active ? wordCount(standalone.text) : writingSummary?.sceneWords;
     pillWords.textContent = words == null ? '— words' : `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'}`;
     if (writingSummary) {
@@ -1259,7 +1264,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   // Routine status messages fade after a few seconds (text stays for assistive tech); errors stay put.
   let statusTimer: ReturnType<typeof setTimeout> | null = null;
   // Watches text only (never the class it toggles), so it cannot retrigger itself.
-  function reserveNoticeSpace(){root.style.setProperty('--notice-space',status.textContent&&!status.classList.contains('quiet')?`${status.offsetHeight}px`:'0px');root.style.setProperty('--manuscript-footer-space',`${corner.offsetHeight}px`);}
+  // Source notices use a fixed, scrollable slot. Their appearance/fade must not
+  // change the writing surface's padding while the author is reading or typing.
+  status.tabIndex = 0;
+  function reserveNoticeSpace(){root.style.setProperty('--notice-space','4rem');root.style.setProperty('--manuscript-footer-space',`${corner.offsetHeight}px`);}
   const noticeResize=typeof ResizeObserver==='undefined'?null:new ResizeObserver(reserveNoticeSpace);
   noticeResize?.observe(status);
   noticeResize?.observe(corner);
@@ -1394,6 +1402,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       }
       firstStory.clear(); github.clear();
       repository = selected;
+      fileFirstRepository = false;
       repositoryDetached = false;
       writing.clearManuscript();
       drafting.clear(); proposals.clear();
@@ -1410,12 +1419,21 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       }
       if (!selected.manifests.length) outline.append(el('p', selected.warning ? 'Manuscript discovery incomplete. You can still browse and read repository files.' : 'No scene manifest found. You can still browse and read repository files.', 'empty'));
       let draftState: DraftingState | null = null;
+      let draftingLoadFailed = false;
       if (drafting.supported) {
-        try { draftState = await drafting.load(); } catch (error) { reportError(error); }
+        try { draftState = await drafting.load(); } catch (error) { draftingLoadFailed = true; reportError(error); }
       }
       if (disposed || current !== generation) return;
       renderPill();
-      if (draftState?.revision || draftState?.recoveryRequired || (draftState && !selected.manifests.length)) {
+      fileFirstRepository = !selected.manifests.length && !selected.warning && !draftingLoadFailed && !draftState?.revision && !draftState?.recoveryRequired;
+      renderOrigin();
+      if (fileFirstRepository) {
+        outline.replaceChildren(el('p', sourceFileGuide.textContent!, 'empty'));
+        await showDirectory('');
+        // Open the existing file browser before resuming a document, so saved
+        // Binder/closed preferences cannot hide it or steal resumed focus.
+        navigation.select('files', false);
+      } else if (draftState?.revision || draftState?.recoveryRequired || (draftState && !selected.manifests.length)) {
         outline.replaceChildren(drafting.element); void writing.setManuscript(core, selected, draftState);
         await showDirectory('');
       } else await Promise.all([showDirectory(''), selected.manifests[0] ? showManuscript(selected.manifests[0]) : Promise.resolve()]);
@@ -1440,7 +1458,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       for (const entry of entries) {
         const folder = entry.kind === 'directory';
         const item = button(`${folder ? '▸' : '·'} ${entry.name}`, () => { void (folder ? showDirectory(entry.path) : showDocument(entry.path)); }, 'file-entry');
-        item.setAttribute('aria-label', `${folder ? 'Open folder' : 'Read file'} ${entry.name}`);
+        item.setAttribute('aria-label', `${folder ? 'Open folder' : 'Open file'} ${entry.name}`);
         if (!folder && /\.(md|markdown)$/i.test(entry.path) && drafting.supported) {
           item.draggable = true; item.title = 'Drag into the manuscript to move this file, or use Import repository files…';
           item.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(REPOSITORY_DRAG_TYPE, JSON.stringify({repositoryId: repository!.id, path: entry.path})); });
@@ -1524,6 +1542,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     editor?.destroy(); editor = null; opened = doc; saveButton = null; dirtyBadge = null; setDirty(false);
     const sceneInfo = drafting.state?.scenes.find(scene => scene.path === doc.path);
     const sceneIndex = sceneInfo ? drafting.state!.scenes.indexOf(sceneInfo) : -1;
+    const sourceKind = sceneInfo || currentBook?.volumes.some(volume => volume.chapters.some(chapter => chapter.scenes.some(scene => scene.path === doc.path))) ? 'Source scene' : 'Source file';
     const title = el('h2', assembled?.chapter.title || sceneInfo?.title || basename(doc.path), 'page-title');
     title.tabIndex = -1;
     const source = el('p', doc.path, 'path');
@@ -1536,13 +1555,13 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     // Never interpret manuscript HTML, scripts, links, or embedded instructions.
     const meta = el('div', '', 'page-meta'); meta.append(source, badge);
     const page = el('div', '', 'page');
-    page.append(el('p', assembled ? 'Assembled chapter' : sceneIndex >= 0 ? `Scene ${sceneIndex + 1} of ${drafting.state!.scenes.length}` : 'Source scene', 'eyebrow'), title, meta, metadata, text);
+    page.append(el('p', assembled ? 'Assembled chapter' : sceneIndex >= 0 ? `Scene ${sceneIndex + 1} of ${drafting.state!.scenes.length}` : sourceKind, 'eyebrow'), title, meta, metadata, text);
     preview.replaceChildren(page);
     currentChapter = assembled;
     if (assembled) renderAssembledChapter(assembled, text);
     else if (doc.generatedCompatibility) text.before(el('p', 'This assembled file has no chapter mapping in the available manifests. Open its source scenes from the file browser to edit.', 'muted'));
     if (!doc.generatedCompatibility && (/\.(md|markdown)$/i.test(doc.path)||(/\.txt$/i.test(doc.path)&&placedText?.repositoryId===repository?.id&&placedText?.path===doc.path))) {
-      badge.textContent = /\.txt$/i.test(doc.path)?'Source file · Editable text':'Source scene · Editable Markdown';
+      badge.textContent = /\.txt$/i.test(doc.path)?'Source file · Editable text':`${sourceKind} · Editable Markdown`;
       const toolbar = el('div', '', 'editor-toolbar');
       saveButton = button('Save', () => { void saveCurrent(); }, 'primary'); saveButton.disabled = true;
       dirtyBadge = el('span', 'Saved locally', 'badge'); dirtyBadge.setAttribute('role', 'status');

@@ -87,7 +87,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     function live(token: number) { return !disposed && !element.hidden && token === generation; }
     function scopeProblem() {
         if (!scope)
-            return 'Open an editable source scene or a mapped assembled chapter.';
+            return 'Open an editable source file or a mapped assembled chapter.';
         if (workflowMode) {
             const total = scope.snapshots.reduce((n, s) => n + bytes(s.source), 0) + bytes(contextNote);
             if (!selectedPaths.size)
@@ -107,7 +107,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     function update() {
         const problem = scopeProblem();
         approvalStatus.textContent = result ? (hooks.unavailable(false) ?? (pending ? 'Wait for the active reviewer batch to settle before approval.' : 'Approve… opens the final native confirmation for this exact patch.')) : '';
-        summary.textContent = scope ? `${scope.scope === 'chapter' ? 'Mapped chapter' : 'Source scene'} · ${scope.label} · ${scope.snapshots.length} source snapshot(s) · ${scope.snapshots.reduce((n, s) => n + bytes(s.source), 0).toLocaleString()} UTF-8 bytes. Includes unsaved text captured when opened; later typing is never added to this request.` : problem;
+        summary.textContent = scope ? `${scope.scope === 'chapter' ? 'Mapped chapter' : 'Source file'} · ${scope.label} · ${scope.snapshots.length} source snapshot(s) · ${scope.snapshots.reduce((n, s) => n + bytes(s.source), 0).toLocaleString()} UTF-8 bytes. Includes unsaved text captured when opened; later typing is never added to this request.` : problem;
         if (result?.schemaVersion === 2)
             summary.textContent = `Saved review ${result.reviewId} · ${result.workflow?.sources.filter(s => !s.readOnly).map(s => s.path).join(', ')}. New review settings below use the source captured when this panel opened.`;
         connection.textContent = ready() ? `ChatGPT · ${config!.model}` : config?.message ?? 'Checking ChatGPT connection…';
