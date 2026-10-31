@@ -78,8 +78,10 @@ at most 8,192 file/directory nodes and 4,094 children per directory (reserving
 two OS dot entries within the existing 4,096-entry scanner). These layout budgets
 are checked before workspace publication, including passive/filtered entries. Other limits are
 32 MiB per passive blob, 256 MiB complete tree, depth 32, 2 MiB per editable document
-and 32 MiB hydrated editor text. Fetch remains capped at 100 MiB received pack bytes
-and 50,000 objects. Private object storage is checked before/after fetch at 512 MiB
+and 32 MiB hydrated editor text. Fetch received pack bytes are capped at the
+remaining private-repository storage allowance (512 MiB minus actual bytes already stored), with a separate 50,000-object
+cap. Exhausted storage fails before transport; an empty allowance never means unlimited.
+Private object storage is checked before/after fetch at 512 MiB
 and 60,000 filesystem entries; this is a bounded check rather than a streaming disk
 quota during libgit2 decompression. Largest-blob allocation and Git metadata remain
 part of peak memory. A synthetic 96 MiB asset tree measured approximately 96 MB peak
