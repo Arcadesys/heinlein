@@ -146,6 +146,7 @@ summary { min-height: 2.75rem; padding: .6rem 0; font-weight: 500; }
 .recent button { min-height: 2.25rem; font-size: .8125rem; padding: .3rem .7rem; }
 .file-list { display: grid; gap: 2px; }
 .file-entry { width: 100%; border-color: transparent; padding-inline: 8px; font-size: .875rem; min-height: 2.25rem; }
+.files .file-entry { min-block-size: 48px; }
 .file-entry:hover { background: var(--surface-hover); border-color: transparent; color: var(--accent); }
 .file-entry.parent { color: var(--accent); }
 .manifest-picker { display: grid; gap: 5px; margin-bottom: 14px; }
@@ -553,9 +554,13 @@ dialog { color: var(--fg); }
 .local-folders { margin-block:1rem; }
 .local-folders summary { cursor:pointer; }
 .repository-origin-status { border-inline-start:3px solid currentColor; padding-inline-start:.7rem; }
-/* Notices reserve space instead of covering navigation at enlarged text sizes. */
+/* Keep a stable notice slot: transient text must not move source writing.
+   Two lines fit at the current text size; longer notices scroll by keyboard. */
+.studio:not(.standalone-writing) > .status { box-sizing:border-box; flex:none; height:4rem; overflow-y:auto; }
+.studio:not(.standalone-writing) > .status:empty { display:block; visibility:hidden; }
+.studio:not(.standalone-writing) > .status.quiet:focus { opacity:1; pointer-events:auto; }
 .studio:not(.standalone-writing) .navigator { top:calc(4.5rem + var(--notice-space,0px)); }
-.studio:not(.standalone-writing) .preview { padding-top:calc(8.25rem + var(--notice-space,0px)); }
+.studio:not(.standalone-writing) .preview { top:calc(4.5rem + var(--notice-space,0px)); padding-top:3.75rem; scroll-padding-top:0; }
 /* At narrow widths, storage/status/actions must not float over repository navigation. */
 @media (max-width:760px) {
   .studio:not(.standalone-writing) { display:flex; flex-direction:column; overflow-y:auto; }
@@ -657,6 +662,7 @@ dialog { color: var(--fg); }
    Narrow layouts already put that bar after the workspace in normal flow. */
 @media (min-width:761px) {
   .studio:not(.standalone-writing):has(#navigation-tab-manuscript[aria-selected="true"]) .navigator { bottom:calc(1.6rem + var(--manuscript-footer-space,0px)); }
+  .studio:not(.standalone-writing):has(#navigation-tab-files[aria-selected="true"]) .navigator { bottom:calc(1.6rem + var(--manuscript-footer-space,0px)); }
 }
 /* Manuscript moves use readable text grips and explicit, non-colour drop feedback. */
 .manuscript-move-grip { min-height:44px; font-size:1rem; cursor:grab; white-space:normal; text-align:start; }
@@ -678,6 +684,8 @@ dialog { color: var(--fg); }
 @media (max-width:560px) {
   .navigator:has(#navigation-tab-manuscript[aria-selected="true"]) .navigation-tabs { flex-direction:column; padding:.25rem; }
   .navigator:has(#navigation-tab-manuscript[aria-selected="true"]) .navigation-tabs [role="tab"] { flex:none; width:100%; min-height:44px; overflow-wrap:normal; word-break:normal; }
+  .navigator:has(#navigation-tab-files[aria-selected="true"]) .navigation-tabs { flex-direction:column; padding:.25rem; }
+  .navigator:has(#navigation-tab-files[aria-selected="true"]) .navigation-tabs [role="tab"] { flex:none; width:100%; min-height:48px; overflow-wrap:normal; word-break:normal; }
   #navigation-panel-manuscript { padding:.35rem; }
   #navigation-panel-manuscript .drafting-chapters { padding:.25rem; }
   #navigation-panel-manuscript .manuscript-group-card { padding:.3rem; }

@@ -2,6 +2,7 @@
 import {beforeEach,afterEach,it,expect,vi} from 'vitest';
 import {EditorView} from '@codemirror/view';
 import {mountStudio} from './studio';
+import type {RepositorySession} from './localCore';
 import {syntheticProjects} from '../tests/projectBridge';
 const apps:ReturnType<typeof mountStudio>[]=[];
 const tick=async()=>{for(let i=0;i<6;i++)await new Promise(r=>setTimeout(r,0));};
@@ -12,6 +13,36 @@ function button(text:string,scope:ParentNode=document){const b=[...scope.querySe
 async function library(){document.querySelector<HTMLButtonElement>('.project-switcher')!.click();await tick();}
 async function open(name:string){await library();button(`Open ${name}`,document.querySelector('.project-library')!).click();await tick();}
 function view(){return EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;}
+it.each([undefined,{open:true,active:'manuscript'},{open:false,active:'manuscript'}])('lands a manifest-free project on visible source files despite saved navigation %j',async(saved)=>{
+ localStorage.removeItem('heinlein-studio-navigation-v1');
+ if(saved)localStorage.setItem('heinlein-studio-navigation-v1',JSON.stringify(saved));
+ const {f}=start();await tick();const before=structuredClone(f.documents);
+ await open('Novel B');
+ expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Source files');
+ expect(document.querySelector<HTMLElement>('.navigation-drawer')?.hidden).toBe(false);
+ expect(document.querySelector('.files')?.textContent).toContain('Browse writing files to edit or review. No manuscript setup is required.');
+ const file=document.querySelector<HTMLButtonElement>('[aria-label="Open file scene.md"]');expect(file).not.toBeNull();
+ file!.click();await tick();expect(document.querySelector('.badge')?.textContent).toBe('Source file · Editable Markdown');
+ expect(document.querySelector('.page .eyebrow')?.textContent).toBe('Source file');
+ expect(document.querySelector('.pill-scene')?.getAttribute('aria-label')).toBe('Source file: scene.md');
+ expect(f.documents).toEqual(before);expect(f.draftingCalls).toEqual([]);expect(f.externalCalls).toEqual([]);
+ view().dispatch({selection:{anchor:4}});await open('Novel A');await open('Novel B');
+ expect(view().state.selection.main.anchor).toBe(4);expect(document.querySelector('.page-title')?.textContent).toBe('scene.md');expect(view().hasFocus).toBe(true);
+ expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Source files');
+ expect(f.documents).toEqual(before);localStorage.removeItem('heinlein-studio-navigation-v1');
+});
+
+it.each(['manuscript','recovery','load-error','discovery-warning','legacy'] as const)('does not infer metadata absence from %s state',async(kind)=>{
+ localStorage.setItem('heinlein-studio-navigation-v1',JSON.stringify({open:false,active:'manuscript'}));
+ const f=syntheticProjects(),load=f.core.loadDrafting!,request=f.core.projectRequest!;
+ f.core.loadDrafting=async id=>{if(kind==='load-error')throw Error('Malformed manuscript');const state=await load(id);return {...state,revision:kind==='manuscript'?'manifest-revision':null,recoveryRequired:kind==='recovery'};};
+ if(kind==='discovery-warning'||kind==='legacy')f.core.projectRequest=async r=>{const value=await request(r);return r.action==='activate'?{...(value as RepositorySession),manifests:kind==='legacy'?['scene-manifest.json']:[],warning:kind==='discovery-warning'?'Discovery incomplete':null}:value;};
+ const {root}=start(f);await tick();await open('Novel B');
+ expect(root.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Binder');
+ expect(root.querySelector<HTMLElement>('.navigation-drawer')?.hidden).toBe(true);
+ expect(root.querySelector<HTMLElement>('.source-file-guide')?.hidden).toBe(true);
+ expect(f.externalCalls).toEqual([]);expect(f.draftingCalls).toEqual([]);localStorage.removeItem('heinlein-studio-navigation-v1');
+});
 it('starts an immediately editable standalone draft and lists one local/managed inventory without remote calls',async()=>{const {f}=start();await tick();expect(document.querySelector('.standalone-editor')).not.toBeNull();await library();expect(document.querySelector('.project-library')!.textContent).toContain('Novel A');expect(document.querySelector('.project-library')!.textContent).toContain('Novel C');expect(f.externalCalls).toEqual([]);});
 it('switches local to managed and back, saving exact Unicode/newlines and resuming position',async()=>{
  const {f,app}=start();await tick();await open('Novel A');await app.showDocument('scene.md');const original=f.documents['local-a']['scene.md'];const v=view();v.dispatch({changes:{from:v.state.doc.length,insert:' More — 🦊'},selection:{anchor:4}});

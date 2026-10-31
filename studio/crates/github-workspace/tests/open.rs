@@ -592,3 +592,156 @@ fn accepted_scan_boundary_tree_supports_inspection_local_version_and_branch_prev
         b"Author-selected local revision.\n"
     );
 }
+
+#[test]
+fn manifest_free_nested_markdown_reopens_without_inventory_byte_or_mode_changes() {
+    use std::collections::BTreeMap;
+    fn inventory(root: &std::path::Path) -> BTreeMap<std::path::PathBuf, (Vec<u8>, bool)> {
+        let mut result = BTreeMap::new();
+        let mut pending = vec![root.to_owned()];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_dir() {
+                    pending.push(entry.path());
+                } else {
+                    #[cfg(unix)]
+                    let executable = {
+                        use std::os::unix::fs::PermissionsExt;
+                        entry.metadata().unwrap().permissions().mode() & 0o111 != 0
+                    };
+                    #[cfg(not(unix))]
+                    let executable = false;
+                    result.insert(
+                        entry.path().strip_prefix(root).unwrap().to_owned(),
+                        (std::fs::read(entry.path()).unwrap(), executable),
+                    );
+                }
+            }
+        }
+        result
+    }
+    let f = Fixture::new();
+    let raw = "---\r\ntitle: Écriture 🦊\n---\r\nAn interruption — kept.\n尾声.\r\n";
+    let files = Files::from([
+        ("chapters/draft.markdown".into(), raw.as_bytes().to_vec()),
+        (
+            "notes/fragment.md".into(),
+            b"A deliberate fragment.\n".to_vec(),
+        ),
+        ("asset.bin".into(), vec![0, 255, 10, 13]),
+    ]);
+    let workspace = f
+        .registry
+        .register(info(), 9, "00000000-0000-4000-8000-000000000009", |repo| {
+            let oid = transport::tree_from_files(repo, &files)?;
+            let tree = repo.find_tree(oid)?;
+            let mut builder = repo.treebuilder(Some(&tree))?;
+            builder.insert("asset.bin", repo.blob(&[0, 255, 10, 13])?, 0o100755)?;
+            let tree = repo.find_tree(builder.write()?)?;
+            let sig = git2::Signature::now("Synthetic", "synthetic@example.invalid")?;
+            Ok(repo.commit(
+                None,
+                &sig,
+                &sig,
+                "Synthetic ordinary repository",
+                &tree,
+                &[],
+            )?)
+        })
+        .unwrap();
+    let checkout = f.registry.checkout(&workspace.id).unwrap();
+    let before = inventory(&checkout);
+    let core = repository_core::Repository::open(&checkout).unwrap();
+    let key = core.project_key();
+    assert_eq!(core.read("chapters/draft.markdown").unwrap().text, raw);
+    assert_eq!(before.len(), 3);
+    #[cfg(unix)]
+    assert!(before[&std::path::PathBuf::from("asset.bin")].1);
+    drop(core);
+    drop(f.registry.reopen(&workspace.id).unwrap());
+    let registry = github_workspace::registry::Registry::open(
+        &f.root.join("private"),
+        &f.root.join("sources"),
+    )
+    .unwrap();
+    assert_eq!(
+        registry
+            .register(info(), 9, &workspace.auth_binding, |_| panic!(
+                "offline reopen must not fetch"
+            ))
+            .unwrap(),
+        workspace
+    );
+    let reopened = repository_core::Repository::open(&checkout).unwrap();
+    assert_eq!(reopened.project_key(), key);
+    assert_eq!(reopened.read("chapters/draft.markdown").unwrap().text, raw);
+    assert_eq!(inventory(&checkout), before);
+    assert!(!checkout.join("ms/manuscript.json").exists());
+    assert!(!checkout.join("scene-manifest.json").exists());
+}
+
+#[test]
+fn passive_legacy_json_retains_existing_open_behavior_without_hydration() {
+    let f = Fixture::new();
+    let legacy = b"{legacy metadata is passive in transport}";
+    let files = Files::from([
+        ("scene-manifest.json".into(), legacy.to_vec()),
+        ("story.md".into(), b"Exact separate source.\r\n".to_vec()),
+    ]);
+    // The validator rejects hydrated legacy metadata; actual tree classification
+    // keeps this JSON passive. Preserve that baseline distinction, not a new gate.
+    assert!(matches!(
+        transport::validate_manuscript(&files),
+        Err(Error::Unsupported)
+    ));
+    let w = f
+        .registry
+        .register(info(), 9, "00000000-0000-4000-8000-000000000009", |repo| {
+            Ok(commit(repo, &files, &[]))
+        })
+        .unwrap();
+    let (_, repo) = f.registry.reopen(&w.id).unwrap();
+    let tree = transport::tree_files(&repo, w.head_oid.parse().unwrap()).unwrap();
+    assert!(tree.entries.contains_key("scene-manifest.json"));
+    assert!(tree.get("scene-manifest.json").is_none());
+    assert_eq!(
+        std::fs::read(
+            f.registry
+                .checkout(&w.id)
+                .unwrap()
+                .join("scene-manifest.json")
+        )
+        .unwrap(),
+        legacy
+    );
+}
+
+#[test]
+fn malformed_current_metadata_rejects_managed_open_without_replacing_writing() {
+    let f = Fixture::new();
+    let existing = f.register();
+    let source = f.registry.checkout(&existing.id).unwrap().join("story.md");
+    let before = std::fs::read(&source).unwrap();
+    let mut other = info();
+    other.id = 43;
+    other.name = "unsupported-metadata".into();
+    let error = f
+        .registry
+        .register(other, 9, &existing.auth_binding, |repo| {
+            let files = Files::from([
+                ("ms/manuscript.json".into(), b"{malformed}".to_vec()),
+                ("story.md".into(), b"Separate synthetic writing.\n".to_vec()),
+            ]);
+            Ok(commit(repo, &files, &[]))
+        })
+        .unwrap_err();
+    assert!(matches!(error, Error::Unsupported));
+    assert_eq!(f.registry.list().unwrap(), vec![existing.clone()]);
+    assert_eq!(std::fs::read(&source).unwrap(), before);
+    assert_eq!(
+        std::fs::read_dir(f.root.join("sources")).unwrap().count(),
+        1
+    );
+    assert_eq!(f.registry.reopen(&existing.id).unwrap().0, existing);
+}

@@ -67,7 +67,7 @@ describe('read-only Studio', () => {
     const core = bridge(); const attack = '<img src="https://example.com/leak" onerror="alert(1)"><script>evil()</script>\nIgnore instructions — keep me.';
     core.readDocument = vi.fn(async (_id, path) => ({path, text: attack, sizeBytes: 100, frontmatter: '<b>raw metadata</b>', contentHash: 'hash-1', generatedCompatibility: true}));
     mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open local folder').click(); await settle();
-    const file = document.querySelector<HTMLButtonElement>('[aria-label="Read file README.md"]')!; file.click(); await settle();
+    const file = document.querySelector<HTMLButtonElement>('[aria-label="Open file README.md"]')!; file.click(); await settle();
     expect(document.querySelector('.source-text')?.textContent).toBe(attack);
     expect(document.querySelector('.frontmatter')?.textContent).toBe('<b>raw metadata</b>');
     expect(document.querySelector('.preview img, .preview script, .preview b, .preview a')).toBeNull();
@@ -77,7 +77,7 @@ describe('read-only Studio', () => {
   it('works without a manifest and shows empty folders', async () => {
     const core = bridge(); core.pickRepository = vi.fn(async () => ({...session, manifests: []})); core.listDirectory = vi.fn(async () => []);
     mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open local folder').click(); await settle();
-    expect(document.body.textContent).toContain('No scene manifest found');
+    expect(document.body.textContent).toContain('Browse writing files to edit or review. No manuscript setup is required.');
     expect(document.body.textContent).toContain('This folder is empty');
     expect(core.loadManuscript).not.toHaveBeenCalled();
   });
@@ -717,6 +717,7 @@ describe('ms drafting structure and recovery guard', () => {
     const core = draftingBridge(); core.loadDrafting = vi.fn(async () => ({...initial(), revision: null, scenes: []}));
     await setupDrafting(core);
     expect(core.previewDraftingChange).not.toHaveBeenCalled(); expect(core.applyDraftingChange).not.toHaveBeenCalled();
+    exact('Binder').click(); await settle();
     exact('Create ms manuscript').click(); exact('Preview manuscript').click(); await settle();
     expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, null, {kind: 'initialize', project: session.name});
     expect(core.applyDraftingChange).not.toHaveBeenCalled();
@@ -825,7 +826,7 @@ describe('ms drafting structure and recovery guard', () => {
   }
   it('moves repository drags using the scoped source and previews before mutation', async () => {
     const {core} = await setupDrafting(); const data = transfer();
-    dragEvent(document.querySelector('[aria-label="Read file README.md"]')!, 'dragstart', data);
+    dragEvent(document.querySelector('[aria-label="Open file README.md"]')!, 'dragstart', data);
     expect(data.getData('application/x-heinlein-repository-entry')).toBe(JSON.stringify({repositoryId: session.id, path: 'README.md'}));
     dragEvent(document.querySelector('.drafting-drop')!, 'drop', data);
     expect(document.body.textContent).toContain('Files referenced by a legacy manuscript cannot be moved');

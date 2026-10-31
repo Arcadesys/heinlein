@@ -24,10 +24,13 @@ struct Fixture {
 }
 impl Fixture {
     fn new(edits: Vec<(usize, usize, &str)>) -> Self {
+        Self::with_source(BEFORE, edits)
+    }
+    fn with_source(source: &str, edits: Vec<(usize, usize, &str)>) -> Self {
         let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let root = temp.path().join("source");
         fs::create_dir(&root).unwrap();
-        fs::write(root.join("scene.md"), BEFORE).unwrap();
+        fs::write(root.join("scene.md"), source).unwrap();
         let repo = Repository::open(&root).unwrap();
         let request = ReviewRequest {
             request_id: "synthetic-review".into(),
@@ -35,8 +38,8 @@ impl Fixture {
             scope: ReviewScope::Scene,
             snapshots: vec![ReviewSnapshot {
                 path: "scene.md".into(),
-                source: BEFORE.into(),
-                source_hash: text_hash(BEFORE),
+                source: source.into(),
+                source_hash: text_hash(source),
                 scene_id: None,
             }],
             workflow: Some(Options {
@@ -67,7 +70,7 @@ impl Fixture {
                 path: "scene.md".into(),
                 from_utf8: from,
                 to_utf8: to,
-                original: BEFORE[from..to].into(),
+                original: source[from..to].into(),
                 replacement: replacement.into(),
                 reason: "Synthetic explicit correction".into(),
             })
@@ -716,4 +719,90 @@ fn refreshing_a_matching_legacy_review_does_not_require_a_v2_record() {
         serde_json::to_value(slot.unwrap().view()).unwrap()["schemaVersion"],
         1
     );
+}
+
+#[test]
+fn manifest_free_raw_source_review_persists_without_writes_until_guarded_approval() {
+    let source = "---\r\ntitle: Écriture 🦊\nvoice: Keep — interruptions.\r\n---\n🐺 Bad.\r\n尾声 — exact.\n";
+    let offset = source.find("Bad").unwrap();
+    let mut f = Fixture::with_source(source, vec![(offset, offset + 3, "Clear")]);
+    let original_inventory: Vec<_> = fs::read_dir(f.repo.root())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert!(!f.repo.root().join("ms/manuscript.json").exists());
+    assert!(!f.repo.root().join("scene-manifest.json").exists());
+    assert_eq!(
+        fs::read(f.repo.root().join("scene.md")).unwrap(),
+        source.as_bytes()
+    );
+    f.reopen();
+    let id = f.ids()[0].clone();
+    let proposal = f.prepare(&id);
+    assert_eq!(proposal.path, "scene.md");
+    assert_eq!(
+        proposal.replacement_text,
+        source.replacen("Bad", "Clear", 1)
+    );
+    assert_eq!(
+        fs::read(f.repo.root().join("scene.md")).unwrap(),
+        source.as_bytes()
+    );
+    let mut host = Authority::default();
+    assert!(host
+        .review(
+            &f.repo,
+            "session-b",
+            &f.proposals,
+            &f.receipts,
+            &f.recovery,
+            &proposal.id,
+            true
+        )
+        .is_err());
+    let plan = host
+        .review(
+            &f.repo,
+            "session-b",
+            &f.proposals,
+            &f.receipts,
+            &f.recovery,
+            &proposal.id,
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        fs::read(f.repo.root().join("scene.md")).unwrap(),
+        source.as_bytes()
+    );
+    let result = host
+        .apply_confirmed(
+            &f.repo,
+            "session-b",
+            &f.receipts,
+            &f.recovery,
+            &plan.binding(),
+            || false,
+        )
+        .unwrap();
+    assert_eq!(result.receipt.status, "completed");
+    f.session.applied(
+        "session-b",
+        &proposal.id,
+        &proposal.base_hash,
+        &proposal.replacement_hash,
+        &proposal.diff_hash,
+    );
+    f.session.persist(&f.records, &f.repo).unwrap();
+    f.reopen();
+    assert_eq!(
+        f.repo.read("scene.md").unwrap().text,
+        source.replacen("Bad", "Clear", 1)
+    );
+    assert_eq!(f.view()["edits"][0]["status"], "accepted");
+    let inventory: Vec<_> = fs::read_dir(f.repo.root())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(inventory, original_inventory);
 }

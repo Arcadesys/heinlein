@@ -24,6 +24,48 @@ async function open() {button('Heinlein Review').click(); await vi.waitFor(() =>
 beforeEach(() => {vi.stubGlobal('crypto', webcrypto); localStorage.clear(); document.body.replaceChildren(); Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect();});
 afterEach(() => {app?.destroy(); app = undefined; vi.unstubAllGlobals();});
 describe('Studio Heinlein Review integration', () => {
+  it('reviews an unmapped Markdown source with explicit batch consent and reopens the saved review without rerunning', async () => {
+    const raw = '---\r\ntitle: "Écriture 🦊"\nvoice: "Keep — interruptions."\r\n---\nA deliberately short fragment.\r\n尾声 — exact.\n';
+    const path = 'chapters/unmapped.markdown';
+    const generic = {...session, manifests: [], projectKey: 'b'.repeat(64)};
+    const core = bridge();
+    core.readDocument.mockImplementation(async (_id, name) => ({path: name, text: raw, contentHash: 'a'.repeat(64), sizeBytes: new TextEncoder().encode(raw).length, frontmatter: null, generatedCompatibility: false}));
+    const definition = {id: 'mechanical', version: 1, displayName: 'Mechanical review', instructions: 'Keep deliberate source choices.'};
+    const coverage = [{id: 'chunk-1', sourceIndex: 0, fromUtf8: 0, toUtf8: new TextEncoder().encode(raw).length, windowFrom: 0, windowTo: new TextEncoder().encode(raw).length, reviewer: 0, status: 'queued', requestId: null, error: null}];
+    let stored: ReviewResult | null = null;
+    const native = {...core,
+      reviewDefinitions: vi.fn(async () => [definition]),
+      previewReview: vi.fn(async (_request: ReviewRequest) => structuredClone(coverage)),
+      listReviews: vi.fn(async () => stored ? [structuredClone(stored)] : []),
+    };
+    core.requestReview.mockImplementation(async request => {
+      stored = {...result(request), schemaVersion: 2, reviewId: 'unmapped-review', revision: 1, projectKey: generic.projectKey,
+        workflow: {definitions: [{instanceId: 'reviewer-1', definition, hash: 'c'.repeat(64)}], sources: [{id: 'source-1', path, sourceHash: 'a'.repeat(64), readOnly: false, order: 0}], coverage: coverage.map(c => ({...c, status: 'completed', requestId: 'mock-call'})), decisions: [], accountId: 'account-1', accountGeneration: 1, contextNotice: 'Synthetic selected source only.'}};
+      return structuredClone(stored);
+    });
+    core.getReview.mockImplementation(async () => structuredClone(stored!));
+    const mount = async () => {app = mountStudio(document.body, native); await app.selectRepository(async () => generic); await app.showDocument(path);};
+    await mount();
+    expect(core.requestReview).not.toHaveBeenCalled();expect(native.previewReview).not.toHaveBeenCalled();
+    expect(document.querySelector('.badge')?.textContent).toBe('Source file · Editable Markdown');
+    await open();
+    expect(panel().textContent).toContain('Source file');
+    expect(button('Run Heinlein Review').disabled).toBe(true);
+    button('Preview reviewer batch').click();
+    await vi.waitFor(() => expect(native.previewReview).toHaveBeenCalledOnce());
+    expect(core.requestReview).not.toHaveBeenCalled();expect(core.saveDocument).not.toHaveBeenCalled();
+    expect(native.previewReview.mock.calls[0][0]).toMatchObject({repositoryId: generic.id, scope: 'scene', snapshots: [{path, source: raw, sourceHash: 'a'.repeat(64)}], workflow: {reviewers: ['mechanical'], context: [], contextNote: ''}});
+    expect(native.previewReview.mock.calls[0][0].snapshots[0].sceneId).toBeUndefined();
+    button('Run Heinlein Review').click();await vi.waitFor(() => expect(core.requestReview).toHaveBeenCalledOnce());
+    expect(core.requestReview.mock.calls[0][0].snapshots[0].source).toBe(raw);
+    expect(core.saveDocument).not.toHaveBeenCalled();expect(core.applyProposalReview).not.toHaveBeenCalled();
+    app!.destroy();app = undefined;await mount();
+    expect(core.requestReview).toHaveBeenCalledOnce();await open();
+    await vi.waitFor(() => expect(button('Reopen saved review unmapped-review')).toBeTruthy());
+    button('Reopen saved review unmapped-review').click();await vi.waitFor(() => expect(core.getReview).toHaveBeenCalledOnce());
+    expect(core.requestReview).toHaveBeenCalledOnce();expect(native.previewReview).toHaveBeenCalledOnce();
+    expect(core.saveDocument).not.toHaveBeenCalled();expect(core.applyProposalReview).not.toHaveBeenCalled();
+  });
   it('previews and sends exact unsaved editor content only after explicit review, without implicit save', async () => {const core = bridge(); await start(core); view().dispatch({changes: {from: view().state.doc.length, insert: '\nUnsaved 🦊—fragment.'}}); await open(); expect(core.requestReview).not.toHaveBeenCalled(); expect(core.saveDocument).not.toHaveBeenCalled(); const expected = original + '\r\nUnsaved 🦊—fragment.'; expect(panel().textContent).toContain(expected); button('Run Heinlein Review').click(); await vi.waitFor(() => expect(core.requestReview).toHaveBeenCalledOnce()); expect(core.requestReview.mock.calls[0][0]).toMatchObject({repositoryId: session.id, scope: 'scene', snapshots: [{path: 'scene.md', source: expected, sourceHash: 'a'.repeat(64)}]}); expect(core.saveDocument).not.toHaveBeenCalled(); expect(core.applyProposalReview).not.toHaveBeenCalled();});
   it('keeps author editing and manual save usable while a review is pending', async () => {const core = bridge(); const pending = deferred<ReviewResult>(); core.requestReview.mockReturnValueOnce(pending.promise); await start(core); await open(); button('Run Heinlein Review').click(); await vi.waitFor(() => expect(core.requestReview).toHaveBeenCalledOnce()); expect(view().state.readOnly).toBe(false); view().dispatch({changes: {from: view().state.doc.length, insert: '!'}}); await app!.saveCurrent(); expect(core.saveDocument).toHaveBeenCalledOnce(); const request = core.requestReview.mock.calls[0][0]; pending.resolve(result(request)); await Promise.resolve(); expect(view().state.doc.toString()).toContain('Last line!'); expect(core.applyProposalReview).not.toHaveBeenCalled();});
   it('clears private snapshots and cancels pending review on scene navigation', async () => {const core = bridge(); const pending = deferred<ReviewResult>(); core.requestReview.mockReturnValueOnce(pending.promise); await start(core); await open(); button('Run Heinlein Review').click(); await vi.waitFor(() => expect(core.requestReview).toHaveBeenCalledOnce()); const request = core.requestReview.mock.calls[0][0]; await app!.showDocument('other.md'); expect(core.cancelQuestion).toHaveBeenCalledWith(request.requestId); expect(panel().hidden).toBe(true); expect(panel().textContent).not.toContain(original); pending.resolve(result(request)); await Promise.resolve(); expect(panel().hidden).toBe(true);});
