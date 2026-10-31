@@ -98,6 +98,7 @@ impl IntoIterator for Files {
 pub const MAX_TEXT_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_EDIT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_BYTES: usize = 256 * 1024 * 1024;
+const MAX_PRIVATE_BYTES: usize = 512 * 1024 * 1024;
 pub const MAX_BLOB_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_FILES: usize = MAX_WORKSPACE_ENTRIES;
 // Repository::list counts raw entries, including '.' and '..', before filtering.
@@ -504,22 +505,64 @@ fn callbacks<'a>(
 }
 pub fn fetch(repo: &Repository, url: &str, branch: &str, credential: &Credential) -> Result<Oid> {
     crate::locator(url)?;
-    object_disk_budget(repo.path())?;
+    fetch_bounded(repo, url, branch, Some(credential), MAX_PRIVATE_BYTES)
+}
+// Private transport seam for synthetic local remotes. Production always validates
+// canonical HTTPS above and supplies a live credential; no public policy override.
+fn fetch_bounded(
+    repo: &Repository,
+    url: &str,
+    branch: &str,
+    credential: Option<&Credential>,
+    storage_cap: usize,
+) -> Result<Oid> {
+    let stored = object_disk_budget(repo.path(), storage_cap)?;
+    let transfer_cap = fetch_allowance(stored, storage_cap)?;
     let failure = std::sync::Arc::new(std::sync::Mutex::new(None));
-    let result = fetch_to(
-        repo,
-        url,
-        branch,
-        callbacks(url, credential, Some(failure.clone())),
-    );
+    let slot = failure.clone();
+    let mut cb = credential
+        .map(|c| callbacks(url, c, None))
+        .unwrap_or_default();
+    cb.transfer_progress(move |p| {
+        let over = transfer_budget(p.received_bytes(), p.total_objects(), transfer_cap).err();
+        if let Some(error) = over {
+            if let Ok(mut slot) = slot.lock() {
+                *slot = Some(error);
+            }
+        }
+        credential.is_none_or(|c| c.valid()) && over.is_none()
+    });
+    let result = fetch_to(repo, url, branch, cb);
     if let Some(error) = *failure.lock().map_err(|_| Error::Storage)? {
         return Err(error);
     }
     let oid = result?;
-    object_disk_budget(repo.path())?;
+    object_disk_budget(repo.path(), storage_cap)?;
     Ok(oid)
 }
-fn object_disk_budget(root: &Path) -> Result<()> {
+// Received pack bytes and stored objects are different measurements. Bound the
+// incoming pack by remaining private storage, then check actual storage again:
+// pack indexes, metadata and decompression can consume more than received bytes.
+// This is not a streaming decompressed-disk quota or a shallow-history policy.
+fn fetch_allowance(stored: usize, storage_cap: usize) -> Result<usize> {
+    if storage_cap > MAX_PRIVATE_BYTES {
+        return Err(Error::Limit);
+    }
+    storage_cap
+        .checked_sub(stored)
+        .filter(|remaining| *remaining > 0)
+        .ok_or(Error::Limit)
+}
+fn transfer_budget(received: usize, objects: usize, cap: usize) -> Result<()> {
+    if received > cap {
+        Err(budget("fetch", "transfer bytes", received, cap))
+    } else if objects > 50_000 {
+        Err(budget("fetch", "object count", objects, 50_000))
+    } else {
+        Ok(())
+    }
+}
+fn object_disk_budget(root: &Path, cap: usize) -> Result<usize> {
     let mut pending = vec![root.to_owned()];
     let mut bytes = 0usize;
     let mut count = 0usize;
@@ -544,17 +587,12 @@ fn object_disk_budget(root: &Path) -> Result<()> {
             } else {
                 bytes = bytes.checked_add(meta.len() as usize).ok_or(Error::Limit)?;
             }
-            if bytes > 512 * 1024 * 1024 {
-                return Err(budget(
-                    "private objects",
-                    "disk bytes",
-                    bytes,
-                    512 * 1024 * 1024,
-                ));
+            if bytes > cap {
+                return Err(budget("private objects", "disk bytes", bytes, cap));
             }
         }
     }
-    Ok(())
+    Ok(bytes)
 }
 fn fetch_to(
     repo: &Repository,
@@ -755,3 +793,6 @@ mod push_tests {
             .is_empty());
     }
 }
+
+#[cfg(test)]
+mod fetch_tests;
