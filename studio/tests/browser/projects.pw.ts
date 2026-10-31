@@ -41,3 +41,32 @@ for(const removed of [false,true])test(`clean external source ${removed?'deletio
  await page.evaluate(removed=>{const f=(window as any).projectFixture;if(removed)delete f.documents['local-a']['scene.md'];else f.documents['local-a']['scene.md']='External — 🦊\r\nExact replacement.';},removed);
  await open(page,'Novel B');await expect(page.locator('.pill-project')).toHaveText('Novel B');expect(await page.evaluate(()=>(window as any).projectFixture.documents['local-a']['scene.md'])).toBe(removed?undefined:'External — 🦊\r\nExact replacement.');expect(await page.evaluate(()=>(window as any).projectFixture.externalCalls)).toEqual([]);
 });
+
+for(const high of [false,true])test(`recent project history stays explicit and readable (${high?'high contrast':'default'})`,async({page},info)=>{
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.goto('/tests/browser/projects.html?library');
+ if(high){await activate(page,page.getByRole('button',{name:'Back to writing',exact:true}));await activate(page,page.getByRole('button',{name:'Appearance',exact:false}));await activate(page,page.getByRole('button',{name:'High contrast',exact:true}));await page.keyboard.press('Escape');await library(page);}
+ const zoom=page.viewportSize()!.width===320?'200':'100';
+ for(let n=0;n<8&&await page.locator('html').getAttribute('data-zoom')!==zoom;n++)await page.keyboard.press(zoom==='200'?'Control+=':'Control+-');
+ await expect(page.locator('html')).toHaveAttribute('data-zoom',zoom);await page.evaluate(()=>document.fonts.ready);
+ const dialog=page.getByRole('dialog',{name:'Projects',exact:true}),heading=dialog.getByRole('heading',{name:'Recently opened',exact:true});
+ await expect(heading).toBeVisible();await expect(dialog).toContainText('Projects opened here, newest first.');
+ const native=await page.evaluate(()=>(window as any).projectFixture.projects.map((p:any)=>({id:p.id,name:p.name})));
+ await expect(dialog.locator('.project-name')).toHaveText(native.map((p:any)=>p.name));
+ expect(new Set(native.map((p:any)=>p.id)).size).toBe(native.length);
+ await expect(dialog).toContainText('Local folder');await expect(dialog).toContainText('Heinlein-managed GitHub copy');
+ const target=dialog.getByRole('button',{name:'Open Novel B',exact:true});
+ for(let n=0;n<100&&!await target.evaluate(el=>el===document.activeElement);n++)await page.keyboard.press('Tab');
+ await expect(target).toBeFocused();expect((await target.boundingBox())!.height).toBeGreaterThanOrEqual(48);
+ expect(await target.evaluate(el=>{const r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2),s=getComputedStyle(el);return(hit===el||el.contains(hit))&&s.outlineStyle!=='none'&&parseFloat(s.outlineWidth)>=2;})).toBe(true);
+ expect(await heading.evaluate(el=>[...el.textContent!.matchAll(/\S+/g)].every(word=>{const r=document.createRange();r.setStart(el.firstChild!,word.index!);r.setEnd(el.firstChild!,word.index!+word[0].length);return r.getClientRects().length===1;}))).toBe(true);
+ expect(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+ expect((await new AxeBuilder({page}).include('.project-library').withTags(['wcag2a','wcag2aa']).analyze()).violations.filter(v=>v.impact==='serious'||v.impact==='critical')).toEqual([]);
+ await heading.evaluate(el=>el.scrollIntoView({block:'start'}));await page.screenshot({path:info.outputPath(`recent-projects-${high?'high-contrast':'default'}-${zoom}.png`),fullPage:true});
+ // The static host deliberately supplies native order; the renderer does not
+ // fabricate a last-open time or reorder it when a project button is pressed.
+ await target.focus();await page.keyboard.press('Enter');await expect(dialog).not.toBeVisible();await expect(page.locator('.pill-project')).toHaveText('Novel B');
+ await library(page);await expect(dialog.locator('.project-name')).toHaveText(native.map((p:any)=>p.name));
+ expect(await page.evaluate(()=>(window as any).projectFixture.requests.filter((r:any)=>r.action==='activate').length)).toBe(1);
+ expect(await page.evaluate(()=>(window as any).projectFixture.externalCalls)).toEqual([]);expect(errors).toEqual([]);
+});

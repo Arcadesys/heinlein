@@ -22,8 +22,8 @@ export function createProjectLibrary(core:LocalCore,hooks:{current():RepositoryS
   body.replaceChildren(para('Choose the writing you want to return to. Project changes stay on this Mac until you explicitly send them.','project-intro'));
   const addTitle=el('h3','Add a project');addTitle.className='project-section-title';
   const actions=div('project-actions',button('Start or open a folder…',async()=>{if(await hooks.openLocal())close(true);}),button('Bring in from GitHub…',async()=>{close();hooks.openGitHub();}));actions.setAttribute('role','group');actions.setAttribute('aria-label','Add a project');actions.firstElementChild?.classList.add('project-primary');body.append(addTitle,actions);
-  const listTitle=el('h3','Your projects');listTitle.id='project-list-title';listTitle.className='project-section-title';body.append(listTitle);
-  if(!projects.length)body.append(para('No projects yet. You can keep writing in standalone drafts without setting one up.','project-empty'));
+  const listTitle=el('h3','Recently opened');listTitle.id='project-list-title';listTitle.className='project-section-title';body.append(listTitle,para('Projects opened here, newest first.','project-help'));
+  if(!projects.length)body.append(para('No recently opened projects here yet. Open a folder or bring in a GitHub project to add it here. You can also keep writing in standalone drafts.','project-empty'));
   else{const list=el('ul');list.className='project-list';list.setAttribute('aria-labelledby','project-list-title');
    for(const p of projects){const current=p.id===hooks.current()?.projectId;const row=el('li');row.className='project-row';if(current)row.setAttribute('aria-current','true');if(p.unavailable)row.dataset.unavailable='true';
     const name=el('h4',p.name);name.className='project-name';const heading=div('project-row-heading',name);if(current)heading.append(para('Current project','project-current-label'));
