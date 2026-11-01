@@ -22,6 +22,9 @@ describe('document navigation metadata',()=>{
  it('arrow focus skips unavailable tabs and blocked identities cannot activate',()=>{
   const open=vi.fn(async()=>{});const tabs=createDocumentTabs({open,close:async()=>{},read:()=>{}});document.body.replaceChildren(tabs.element);tabs.mount({path:'removed.md',kind:'source',sceneId:'gone'});tabs.mount({path:'kept.md',kind:'source',sceneId:'kept'});tabs.reconcile([{id:'kept',path:'kept.md'}]);const current=tabs.element.querySelector<HTMLButtonElement>('[aria-selected=true]')!;current.focus();current.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowUp',bubbles:true}));expect(document.activeElement).toBe(current);tabs.setBlocked(true);void tabs.activate(tabs.items()[1]);expect(open).not.toHaveBeenCalled();
  });
+ it('invalidates obsolete split cursor positions and preserves unavailable path identity',()=>{
+  const tabs=createDocumentTabs({open:async()=>{},close:async()=>{},read:()=>{}});tabs.mount({path:'story.md',kind:'source'});tabs.items()[0].position={hash:'before-split',anchor:40,head:40,scrollTop:100};tabs.invalidate('story.md');expect(tabs.items()[0].position).toBeUndefined();tabs.register({path:'suffix.md',kind:'source'});tabs.invalidate('suffix.md',true);expect(tabs.items().map(t=>({path:t.path,sceneId:t.sceneId,unavailable:t.unavailable}))).toEqual([{path:'story.md',sceneId:undefined,unavailable:undefined},{path:'suffix.md',sceneId:undefined,unavailable:true}]);
+ });
  it('reconciles by verified scene ID without treating split as rename and retains removed identity visibly',()=>{
   const tabs=createDocumentTabs({open:async()=>{},close:async()=>{},read:()=>{}});tabs.mount({path:'old.md',kind:'source',sceneId:'original'});
   tabs.reconcile([{id:'original',path:'old.md'},{id:'suffix',path:'new.md'}]);expect(tabs.active()?.path).toBe('old.md');

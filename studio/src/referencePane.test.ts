@@ -18,6 +18,9 @@ describe('saved source reference',()=>{
   const {pane,core,set}=setup();let release!:(value:ReturnType<typeof doc>)=>void;core.readDocument.mockImplementationOnce(()=>new Promise(r=>{release=r;}));const pending=pane.read({path:'old.md'});await pane.read({path:'new.md'});release(doc('old.md'));await pending;expect(pane.snapshot()?.doc.path).toBe('new.md');
   core.readDocument.mockImplementationOnce(()=>new Promise(r=>{release=r;}));const changed=pane.read({path:'late.md'});set({session:'two',generation:2});release(doc('late.md'));await changed;expect(pane.snapshot()?.doc.path).toBe('new.md');pane.clear();expect(pane.element.hidden).toBe(true);
  });
+ it('marks removed generic references unavailable and cancels only their pending path',async()=>{
+  const {pane,core}=setup();await pane.read({path:'a.md'});let release!:(value:ReturnType<typeof doc>)=>void;core.readDocument.mockImplementationOnce(()=>new Promise(r=>{release=r;}));const pending=pane.read({path:'b.md'});pane.markUnavailable('a.md');release(doc('b.md'));expect(await pending).toBe(true);expect(pane.snapshot()?.doc.path).toBe('b.md');pane.markUnavailable('b.md');expect(pane.element.textContent).toContain('Historical copy');expect(pane.element.querySelector<HTMLButtonElement>('[aria-label="Open in main pane"]')!.disabled).toBe(true);
+ });
  it('does not relabel old content after failed reads and disables removed scene editing',async()=>{
   const {pane,core}=setup();await pane.read({path:'a.md',sceneId:'a'});core.readDocument.mockRejectedValueOnce(Error('missing'));await pane.read({path:'b.md'});expect(pane.snapshot()?.doc.path).toBe('a.md');expect(pane.element.textContent).toContain('Reference read failed for b.md');pane.reconcile([]);expect(pane.element.textContent).toContain('Historical copy');expect(pane.element.querySelectorAll<HTMLButtonElement>('.reference-actions button')[1].disabled).toBe(true);
  });

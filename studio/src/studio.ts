@@ -891,8 +891,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if(refuseReferenceAction()||refuseReadingAction())return;
     if (!editor || !opened || !repository || structuralBusy || selecting || repositoryDetached || recoveryPending || guardPending || editor.view.state.readOnly) return;
     const scene = drafting.state?.scenes.find(item => item.path === opened!.path);
-    if (!scene || !drafting.state?.revision || drafting.state.recoveryRequired) {
-      status.textContent = 'Open a scene in the ms manuscript before splitting.'; return;
+    if(!drafting.supported||!drafting.state||drafting.state.recoveryRequired||(scene&&!drafting.state.revision)||!(/\.(md|markdown)$/i.test(opened.path))){
+      status.textContent='Open editable Markdown and resolve manuscript loading or recovery before splitting.';return;
     }
     const ranges = editor.view.state.selection.ranges; const range = editor.view.state.selection.main;
     const source = editor.text(); const offset = rawOffset(source, range.from);
@@ -900,17 +900,18 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const midpoint = offset > 0 && /[\uD800-\uDBFF]/.test(source[offset - 1]) && /[\uDC00-\uDFFF]/.test(source[offset] ?? '');
     const bodyStart = splitBodyStart(source);
     const invalidUnicode = new TextDecoder('utf-8', {ignoreBOM: true}).decode(new TextEncoder().encode(source)) !== source;
-    if (bodyStart === null || invalidUnicode || ranges.length !== 1 || !range.empty || offset <= (bodyStart ?? 0) || offset >= source.length || midpoint) {
+    if (bodyStart === null || invalidUnicode || (offset>0&&source[offset-1]==='\r'&&source[offset]==='\n') || ranges.length !== 1 || !range.empty || offset <= (bodyStart ?? 0) || offset >= source.length || midpoint) {
       status.textContent = 'Place one cursor inside the scene body, with text on both sides; clear any selection first.'; status.classList.add('error'); return;
     }
     const epoch = documentEpoch; const revision = edits; const repositoryId = repository.id; const path = opened.path;
     const byteOffset = new TextEncoder().encode(source.slice(0, offset)).length;
-    drafting.splitScene(scene.id, () => {
-      if (!editor || !opened || repository?.id !== repositoryId || documentEpoch !== epoch || edits !== revision || opened.path !== path || editor.text() !== source || drafting.state?.scenes.find(item => item.id === scene.id)?.path !== path || editor.view.state.selection.ranges.length !== 1 || !editor.view.state.selection.main.empty || rawOffset(source, editor.view.state.selection.main.from) !== offset) {
+    const prepare=() => {
+      if (!editor || !opened || repository?.id !== repositoryId || documentEpoch !== epoch || edits !== revision || opened.path !== path || editor.text() !== source || (scene?drafting.state?.scenes.find(item=>item.id===scene.id)?.path!==path:drafting.state?.scenes.some(item=>item.path===path)) || editor.view.state.selection.ranges.length !== 1 || !editor.view.state.selection.main.empty || rawOffset(source, editor.view.state.selection.main.from) !== offset) {
         throw new Error('The scene or cursor changed. Place the cursor again and start a new split');
       }
       return {expectedHash: opened.contentHash, byteOffset};
-    });
+    };
+    if(scene)drafting.splitScene(scene.id,prepare);else drafting.splitFile(path,prepare);
   }
   async function runStructural(action: () => Promise<void>) {
     if (disposed || structuralBusy || selecting || !repository) return;
@@ -951,42 +952,54 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   async function draftingChanged(state: DraftingState, previous: DraftingState | null, changes: DraftingFileChange[], focusPath?: string) {
     verifyStructuralBuffer(); github.sourceChanged(); firstStory.sourceChanged();
     currentBook = null; searchScopeRevision++; manuscriptSearch.invalidate();
-    const oldPath = opened?.path;
-    const oldScene = previous?.scenes.find(scene => scene.path === oldPath);
-    const sameScene = oldScene ? state.scenes.find(scene => scene.id === oldScene.id) : undefined;
+    const oldPath=opened?.path,oldText=opened?.text;
+    const oldScene=previous?.scenes.find(scene=>scene.path===oldPath);
+    const sameScene=oldScene?state.scenes.find(scene=>scene.id===oldScene.id):undefined;
     documentTabs.reconcile(state.scenes);reference.reconcile(state.scenes);
-    for(const change of changes){if(change.source)reference.markChanged(change.source);if(change.destination)reference.markChanged(change.destination);}
+    for(const change of changes){
+      if(change.source){reference.markChanged(change.source);documentTabs.invalidate(change.source);}
+      if(change.destination){reference.markChanged(change.destination);documentTabs.invalidate(change.destination);}
+      if(change.source&&(change.kind==='Undo splitFile'||(change.kind==='rollback'&&!change.destination))){documentTabs.invalidate(change.source,true);reference.markUnavailable(change.source);}
+    }
     splitReadingOffer.replaceChildren();splitReadingOffer.hidden=true;
-    const split=changes.find(change=>change.kind==='split'&&change.source&&change.destination);
+    const split=changes.find(change=>['split','splitFile'].includes(change.kind)&&change.source&&change.destination);
     const original=split&&previous?.scenes.find(scene=>scene.path===split.source);
     const retained=original&&state.scenes.find(scene=>scene.id===original.id&&scene.path===split?.source);
     const suffix=split&&state.scenes.find(scene=>scene.path===split.destination&&scene.id!==original?.id&&!previous?.scenes.some(old=>old.id===scene.id));
-    if(split&&previous&&focusPath===split.destination&&retained&&suffix){
-      // These identities are verified by the applied result, independently of
-      // whether the first suffix read can mount. Only renderDocument activates.
-      documentTabs.register({path:retained.path,sceneId:retained.id,kind:'source'});
-      documentTabs.register({path:suffix.path,sceneId:suffix.id,kind:'source'});
+    let pair:{source:string;destination:string;sourceId?:string;suffixId?:string}|null=null;
+    if(split&&focusPath===split.destination){
+      if(split.kind==='split'&&retained&&suffix)pair={source:retained.path,destination:suffix.path,sourceId:retained.id,suffixId:suffix.id};
+      else if(split.kind==='splitFile'&&split.source===oldPath&&split.destination&&split.source!==split.destination&&split.source!.slice(0,split.source!.lastIndexOf('/')+1)===split.destination.slice(0,split.destination.lastIndexOf('/')+1)&&[split.source!,split.destination].every(path=>/\.(md|markdown)$/i.test(path)))pair={source:split.source!,destination:split.destination};
     }
-    const moved = changes.find(change => change.kind!=='split'&&change.source === oldPath && change.destination)?.destination;
-    const nextPath = focusPath ?? sameScene?.path ?? moved ?? (oldScene ? null : oldPath);
-    // All buffers are saved before structural changes. Remove the old path's
-    // editor before reading its replacement; a failed read must not leave it writable.
-    if (opened) resetPreview();
-    await showDirectory(directoryPath.textContent === '/' ? '' : directoryPath.textContent || '');
-    await writing.setManuscript(core, repository!, state);
-    if (nextPath && !await showDocument(nextPath, true)) throw new Error(`The change is saved. ${status.textContent ?? 'The scene could not be reopened.'} Resolve recovery or use the file browser to retry.`);
-    if(split&&previous&&focusPath===split.destination){
-      if(retained&&suffix){
-        const session=repository?.id,current=generation;
-        const readBoth=button('Read both sections',()=>{void(async()=>{
-          if(repository?.id!==session||generation!==current||repositoryDetached)return;
-          const first=drafting.state?.scenes.find(scene=>scene.id===retained.id),second=drafting.state?.scenes.find(scene=>scene.id===suffix.id);
-          if(!first||!second)return;
-          if(opened?.path!==second.path)await showDocument(second.path);
-          if(opened?.path===second.path&&repository?.id===session&&generation===current)await reference.read({path:first.path,sceneId:first.id});
-        })();});
-        splitReadingOffer.append(el('p','Split saved as two source documents. Read both sections loads the original saved source beside the suffix; choose it to replace any existing reference.'),readBoth);splitReadingOffer.hidden=false;
-      }
+    if(pair){documentTabs.register({path:pair.source,sceneId:pair.sourceId,kind:'source'});documentTabs.register({path:pair.destination,sceneId:pair.suffixId,kind:'source'});}
+    const moved=changes.find(change=>!['split','splitFile'].includes(change.kind)&&change.source===oldPath&&change.destination)?.destination;
+    const nextPath=focusPath??sameScene?.path??moved??(oldScene?null:oldPath);
+    // The operation has already committed. Never leave its old whole-file writer
+    // alive while reloading either part or reporting a failed refresh.
+    if(opened)resetPreview();
+    if(split?.kind==='splitFile'&&!pair)throw Error('The split is saved, but its returned paths do not match this document. Reopen the files before editing.');
+    await showDirectory(directoryPath.textContent==='/'?'':directoryPath.textContent||'');
+    await writing.setManuscript(core,repository!,state);
+    if(pair&&split?.kind==='splitFile'){
+      const session=repository!.id,current=generation;
+      const read=async(path:string)=>{try{const doc=await core.readDocument(session,path);if(disposed||generation!==current||repository?.id!==session)throw Error('The project changed while refreshing the split');if(doc.path!==path||doc.generatedCompatibility)throw Error('The split source is no longer an editable file');return doc;}catch(error){if(!disposed&&generation===current&&repository?.id===session){documentTabs.invalidate(path,true);reference.markUnavailable(path);}throw error;}};
+      const [prefix,suffix]=await Promise.all([read(pair.source),read(pair.destination)]);
+      if(oldText!==undefined&&prefix.text+suffix.text!==oldText){documentTabs.invalidate(pair.source,true);documentTabs.invalidate(pair.destination,true);throw Error('The saved split changed before it could be refreshed. Reopen both source files to inspect them.');}
+    }
+    if(nextPath&&!await showDocument(nextPath,true))throw Error(`The change is saved. ${status.textContent??'The scene could not be reopened.'} Resolve recovery or use the file browser to retry.`);
+    if(pair){
+      const savedPair=pair,session=repository?.id,current=generation;
+      const readBoth=button('Read both sections',()=>{void(async()=>{
+        if(repository?.id!==session||generation!==current||repositoryDetached)return;
+        const first=savedPair.sourceId?drafting.state?.scenes.find(scene=>scene.id===savedPair.sourceId):{path:savedPair.source};
+        const second=savedPair.suffixId?drafting.state?.scenes.find(scene=>scene.id===savedPair.suffixId):{path:savedPair.destination};
+        if(!first||!second)return;
+        if(opened?.path!==second.path)await showDocument(second.path);
+        if(opened?.path===second.path&&repository?.id===session&&generation===current)await reference.read({path:first.path,sceneId:savedPair.sourceId});
+      })();});
+      splitReadingOffer.append(el('p','Split saved as two source files. Read both sections loads the original saved source beside the suffix; choose it to replace any existing reference.'),readBoth);
+      if(drafting.canUndo)splitReadingOffer.append(button('Undo last split',()=>drafting.undoLastChange()));
+      splitReadingOffer.hidden=false;
     }
     if(focusPath)structuralFocusPath=focusPath;
   }
@@ -1760,7 +1773,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       const split = button('Split scene at cursor', splitAtCursor, 'source-only');
       split.setAttribute('aria-haspopup', 'dialog'); split.setAttribute('aria-keyshortcuts', 'Control+Shift+Enter Meta+Shift+Enter');
       split.title = 'Split scene at cursor (Cmd/Ctrl+Shift+Enter)';
-      split.disabled = !drafting.state?.scenes.some(scene => scene.path === doc.path);
+      split.disabled = !drafting.supported||!drafting.state||!!drafting.state.recoveryRequired||!(/\.(md|markdown)$/i.test(doc.path));
       toolbar.append(button('Heinlein Review', () => writerAction(()=>{draftingQuestions?.close(); reviewPanel?.open();})), questionButton, askDrafting, askSelection, split, saveButton, button('Undo', () => sourceAction(()=>editor?.undo()), 'source-only'), button('Redo', () => sourceAction(()=>editor?.redo()), 'source-only'), button('Find', () => sourceAction(()=>editor?.find()), 'source-only'), dirtyBadge);
       const host = el('div', '', 'markdown-editor');
       host.addEventListener('compositionstart', () => { composing = true; noteEditing(); });

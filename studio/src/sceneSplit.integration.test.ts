@@ -8,10 +8,12 @@ const source = '---\r\ntitle: Exact\r\n---\r\nA 🐺 passage.\r\nLast line';
 const session = {id: 'session', projectKey: 'book', name: 'Synthetic', manifests: []};
 let app: ReturnType<typeof mountStudio> | undefined;
 const initial = (): DraftingState => ({manifestPath: 'ms/manuscript.json', revision: 'rev1', project: 'Book', groups: [{id: 'g', title: 'Group'}], scenes: [{id: 's1', path: 'ms/scene.md', title: 'Opening', groupId: 'g'}], untrackedPaths: [], missingPaths: []});
-function bridge() {
+function bridge(generic = false) {
+  const sourcePath=generic?'notes/story.Markdown':'ms/scene.md';
+  const state=()=>generic?{...initial(),revision:null,scenes:[],groups:[]}:initial();
   let draft: RecoveryDraft | null = null;
-  const files = new Map([['ms/scene.md', source]]);
-  let split: Extract<DraftingChange, {kind: 'splitScene'}>;
+  const files = new Map([[sourcePath, source]]);
+  let split: Extract<DraftingChange, {kind: 'splitScene'|'splitFile'}>;
   const doc = (path: string, text = files.get(path) ?? source) => ({path, text, contentHash: `hash:${text}`, sizeBytes: new TextEncoder().encode(text).length, frontmatter: null, generatedCompatibility: false});
   return {
     available: () => true, recentRepositories: vi.fn(async () => []), pickRepository: vi.fn(async () => session),
@@ -20,18 +22,18 @@ function bridge() {
     readRecovery: vi.fn(async () => draft), stageRecovery: vi.fn(async (_id, path, baseHash, text) => {draft = {id: 'draft', path, baseHash, text, updatedAt: 0}; return draft;}),
     discardRecovery: vi.fn(async () => {draft = null;}), saveDocument: vi.fn(async (_id, path, _hash, text) => {files.set(path, text); return doc(path, text);}),
     setUnsavedChanges: vi.fn(async () => {}), requestClose: vi.fn(async () => {}), onCloseRequested: vi.fn(async () => () => {}),
-    loadDrafting: vi.fn(async () => initial()),
+    loadDrafting: vi.fn(async () => state()),
     previewDraftingChange: vi.fn(async (_id, _revision, change: DraftingChange) => {
-      if (change.kind !== 'splitScene') throw new Error('Expected split'); split = change;
-      return {id: 'preview', summary: 'Split scene', warnings: [], changes: [{kind: 'split', source: 'ms/scene.md', destination: split.path}]};
+      if (change.kind !== (generic?'splitFile':'splitScene')) throw new Error('Expected split'); split = change as typeof split;
+      return {id: 'preview', summary: 'Split scene', warnings: [], changes: [{kind: generic?'splitFile':'split', source: sourcePath, destination: split.path}]};
     }),
     applyDraftingChange: vi.fn(async () => {
-      const raw = new TextEncoder().encode(files.get('ms/scene.md')!);
-      files.set('ms/scene.md', new TextDecoder().decode(raw.slice(0, split.byteOffset)));
+      const raw = new TextEncoder().encode(files.get(sourcePath)!);
+      files.set(sourcePath, new TextDecoder().decode(raw.slice(0, split.byteOffset)));
       files.set(split.path, new TextDecoder().decode(raw.slice(split.byteOffset)));
-      return {state: {...initial(), revision: 'rev2', scenes: [...initial().scenes, {id: 's2', title: split.title, path: split.path, groupId: 'g'}]}, undoId: 'undo'};
+      return {state: generic?state():{...initial(), revision: 'rev2', scenes: [...initial().scenes, {id: 's2', title: split.kind==='splitScene'?split.title:'', path: split.path, groupId: 'g'}]}, undoId: 'undo'};
     }),
-    undoDraftingChange: vi.fn(async () => {files.set('ms/scene.md', source); return initial();}),
+    undoDraftingChange: vi.fn(async () => {files.set(sourcePath, source); if(generic)files.delete(split.path); return state();}),
   } satisfies LocalCore;
 }
 function button(label: string) {const node = [...document.querySelectorAll('button')].find(node => node.textContent === label); if (!node) throw new Error(`Missing ${label}`); return node;}
@@ -52,6 +54,59 @@ beforeEach(() => {
 });
 afterEach(() => {app?.destroy(); app = undefined;});
 describe('Studio split scene at cursor', () => {
+  it('offers splitting generic story.md without manuscript setup',async()=>{
+    const core=bridge();core.loadDrafting.mockResolvedValue({...initial(),revision:null,scenes:[],groups:[]});
+    app=mountStudio(document.body,core);await app.selectRepository(async()=>session);await app.showDocument('story.md');
+    view().dispatch({selection:{anchor:view().state.doc.toString().indexOf('Last')}});
+    expect(button('Split scene at cursor').disabled).toBe(false);
+  });
+
+
+  async function startGeneric(core=bridge(true)) {
+    app=mountStudio(document.body,core);await app.selectRepository(async()=>session);await app.showDocument('notes/story.Markdown');
+    view().dispatch({selection:{anchor:view().state.doc.toString().indexOf('Last')}});return core;
+  }
+  it('splits unmapped Markdown with filename only, exact bytes, path tabs, explicit saved reference and undo',async()=>{
+    const core=await startGeneric();button('Split scene at cursor').click();
+    const form=document.querySelector('[aria-label="Split Markdown file at cursor"]')!;
+    expect(form.textContent).toContain('Cancel does not undo that save');
+    expect(form.querySelectorAll('input')).toHaveLength(1);const name=form.querySelector('input')!;expect(name.value).toBe('story-continued.Markdown');name.value='second.Markdown';
+    button('Preview split').click();await vi.waitFor(()=>expect(core.previewDraftingChange).toHaveBeenCalled());
+    expect(core.previewDraftingChange).toHaveBeenCalledWith('session',null,{kind:'splitFile',sourcePath:'notes/story.Markdown',path:'notes/second.Markdown',expectedHash:`hash:${source}`,byteOffset:new TextEncoder().encode(source.slice(0,source.indexOf('Last'))).length});
+    expect(core.applyDraftingChange).not.toHaveBeenCalled();button('Apply change').click();await vi.waitFor(()=>expect(view().state.doc.toString()).toBe('Last line'));
+    expect([...document.querySelectorAll('.document-tabs [role="tab"]')].map(t=>t.textContent)).toEqual(['notes/story.Markdown','notes/second.Markdown']);
+    expect(document.querySelector('.reference-source')?.textContent).toBe('');button('Read both sections').click();await vi.waitFor(()=>expect(document.querySelector('.reference-source')?.textContent).toBe(source.slice(0,source.indexOf('Last'))));
+    expect(core.saveDocument).not.toHaveBeenCalled();button('Undo last split').click();await vi.waitFor(()=>expect(document.querySelector('[aria-label="Review manuscript change"]')).not.toBeNull());button('Apply change').click();
+    await vi.waitFor(()=>expect(view().state.doc.toString()).toBe(source.replace(/\r\n/g,'\n')));
+    expect(core.undoDraftingChange).toHaveBeenCalledWith('session','undo');expect(document.body.textContent).toContain('notes/second.Markdown · Unavailable');
+  });
+  it('generic cancel, invalid sibling name and save failure never prepare a split',async()=>{
+    const core=await startGeneric();button('Split scene at cursor').click();button('Cancel').click();expect(core.previewDraftingChange).not.toHaveBeenCalled();
+    button('Split scene at cursor').click();const name=document.querySelector<HTMLInputElement>('[aria-label="Split Markdown file at cursor"] input')!;name.value='../outside.md';button('Preview split').click();expect(name.validationMessage).toContain('sibling filename');expect(core.previewDraftingChange).not.toHaveBeenCalled();button('Cancel').click();
+    append();core.saveDocument.mockRejectedValueOnce(Error('Synthetic save denied'));button('Split scene at cursor').click();button('Preview split').click();await vi.waitFor(()=>expect(document.body.textContent).toContain('Synthetic save denied'));expect(core.previewDraftingChange).not.toHaveBeenCalled();expect(view().state.doc.toString()).toMatch(/!$/);
+  });
+  it('generic ordinary save precedes preview and cancel does not undo it',async()=>{
+    const core=await startGeneric();append(' synthetic');await preview();expect(core.saveDocument).toHaveBeenCalledWith('session','notes/story.Markdown',`hash:${source}`,`${source} synthetic`);expect(core.previewDraftingChange.mock.calls[0][2]).toMatchObject({kind:'splitFile',expectedHash:`hash:${source} synthetic`});button('Cancel').click();expect(core.applyDraftingChange).not.toHaveBeenCalled();expect(view().state.doc.toString()).toMatch(/synthetic$/);
+  });
+  it('generic recovery disables split and a moved cursor refuses captured preview',async()=>{
+    const core=await startGeneric();button('Split scene at cursor').click();view().dispatch({selection:{anchor:view().state.selection.main.head+1}});button('Preview split').click();await vi.waitFor(()=>expect(document.body.textContent).toContain('scene or cursor changed'));expect(core.previewDraftingChange).not.toHaveBeenCalled();app!.destroy();app=undefined;document.body.replaceChildren();
+    core.loadDrafting.mockResolvedValue({...initial(),revision:null,scenes:[],groups:[],recoveryRequired:true});await startGeneric(core);expect(button('Split scene at cursor').disabled).toBe(true);
+  });
+  it('generic reference-origin selection cannot use the stale writer cursor after toolbar focus',async()=>{
+    const core=await startGeneric();document.querySelector<HTMLButtonElement>('[aria-label="Read beside active document: notes/story.Markdown"]')!.click();await vi.waitFor(()=>expect(document.querySelector('.reference-source')?.textContent).toBe(source));const pre=document.querySelector<HTMLElement>('.reference-source')!;pre.focus();const range=document.createRange();range.selectNodeContents(pre);document.getSelection()!.removeAllRanges();document.getSelection()!.addRange(range);pre.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true}));button('Split scene at cursor').focus();button('Split scene at cursor').click();expect(document.querySelector('[aria-label="Split Markdown file at cursor"]')).toBeNull();expect(core.previewDraftingChange).not.toHaveBeenCalled();expect(document.querySelector('.status')?.textContent).toContain('Activate this document');
+  });
+  it.each(['document epoch','recovery','disposed session'])('generic %s change after preview makes zero apply calls',async kind=>{
+    const core=await startGeneric();await preview();const apply=button('Apply change');
+    if(kind==='document epoch')await app!.showDocument('other.md',true);
+    else if(kind==='recovery'){core.readRecovery.mockResolvedValueOnce({id:'new-recovery',path:'notes/story.Markdown',baseHash:`hash:${source}`,text:'Pending synthetic recovery',updatedAt:0});await app!.showDocument('notes/story.Markdown',true);}
+    else{app!.destroy();app=undefined;}
+    apply.click();await new Promise(resolve=>setTimeout(resolve,0));expect(core.applyDraftingChange).not.toHaveBeenCalled();expect(core.saveDocument).not.toHaveBeenCalled();
+  });
+  it('generic committed split with unreadable suffix keeps both path tabs unavailable and no old writer',async()=>{
+    const core=await startGeneric();const read=core.readDocument.getMockImplementation()!;core.readDocument.mockImplementation(async(id,path)=>{if(path.endsWith('-continued.Markdown'))throw Error('Synthetic suffix unavailable');return read(id,path);});
+    await preview();button('Apply change').click();await vi.waitFor(()=>expect(document.body.textContent).toContain('view could not refresh'));
+    expect(document.querySelector('.markdown-editor')).toBeNull();expect([...document.querySelectorAll('.document-tabs [role="tab"]')].map(t=>t.textContent)).toEqual(['notes/story.Markdown','notes/story-continued.Markdown · Unavailable']);expect(document.querySelector('.document-tabs [aria-selected="true"]')).toBeNull();expect(core.saveDocument).not.toHaveBeenCalled();
+  });
   it('converts Unicode CRLF cursor exactly, previews, applies and baselines suffix without credit', async () => {
     const core = bridge(); await start(core); await preview();
     expect(core.previewDraftingChange).toHaveBeenCalledWith('session', 'rev1', {kind: 'splitScene', sceneId: 's1', path: 'ms/scene-continued.md', title: 'Opening continued', expectedHash: `hash:${source}`, byteOffset: new TextEncoder().encode(source.slice(0, source.indexOf('Last'))).length});

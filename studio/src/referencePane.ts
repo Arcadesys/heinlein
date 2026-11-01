@@ -44,6 +44,7 @@ export function createReferencePane(core:Pick<LocalCore,'readDocument'>,hooks:{b
  function clear(){reading=false;reader.clear();reader.element.hidden=true;source.hidden=false;request++;pending=null;target=null;snapshot=null;stale=false;unavailable=false;referenceOrigin=false;detached=false;element.hidden=true;error.textContent='';source.textContent='';path.textContent='';state.textContent='';}
  return {element,read,clear,hasSnapshot:()=>!!snapshot,fromReference:()=>referenceOrigin,activateWriter:()=>{referenceOrigin=false;},
   markChanged(changed:string){if(pending?.path===changed){request++;pending=null;}if(target?.path===changed||snapshot?.doc.path===changed){stale=true;render();}},
+  markUnavailable(path:string){if(pending?.path===path){request++;pending=null;}if(target?.path===path||snapshot?.doc.path===path){unavailable=true;stale=true;render();}},
   reconcile(scenes:readonly {id:string;path:string}[]){if(!target?.sceneId)return;const scene=scenes.find(s=>s.id===target!.sceneId);if(!scene){unavailable=true;stale=true;request++;}else if(scene.path!==target.path){target={...target,path:scene.path};stale=true;request++;}else{unavailable=false;}render();},
   setDetached(value:boolean){detached=value;render();},snapshot:()=>snapshot,
  };

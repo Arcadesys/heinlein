@@ -1,0 +1,19 @@
+import {mountStudio} from '../../src/studio';
+import {syntheticProjects} from '../projectBridge';
+import {EditorView} from '@codemirror/view';
+import {applyAppearance,loadAppearance} from '../../src/appearance';
+import type {DraftingChange,LocalCore} from '../../src/localCore';
+import '../../src/fonts.bundle';import '../../src/style.css';
+const fixture=syntheticProjects();const path='story.md';
+const original='---\r\ntitle: Invented lanterns\r\n---\r\n'+Array.from({length:32},(_,i)=>`Paragraph ${i+1}: The fox carried a lantern — 星 🦊. Invented writing bends around the quiet river. Deliberate fragments. All words here are synthetic.\r\n`).join('\n');
+fixture.documents['local-a']={[path]:original};
+const plans=new Map<string,{session:string;change:Extract<DraftingChange,{kind:'splitFile'}>;whole:string}>();let undo:{path:string;whole:string;prefix:string;suffix:string}|null=null;
+const calls={preview:0,apply:0};
+const core:LocalCore={...fixture.core,
+ previewDraftingChange:async(session,revision,change)=>{calls.preview++;if(change.kind!=='splitFile'||revision!==null)throw Error('Only synthetic generic split supported');const doc=await fixture.core.readDocument(session,change.sourcePath);if(doc.contentHash!==change.expectedHash||fixture.documents['local-a'][change.path]!==undefined)throw Error('Synthetic stale or existing destination');const id='synthetic-split';plans.set(id,{session,change,whole:doc.text});return{id,summary:'Split Markdown file',changes:[{kind:'splitFile',source:change.sourcePath,destination:change.path}],warnings:['Synthetic in-memory transaction only. Production native I/O is not used.']};},
+ applyDraftingChange:async(session,id)=>{calls.apply++;const p=plans.get(id);plans.delete(id);if(!p||p.session!==session||(await fixture.core.readDocument(session,path)).text!==p.whole||fixture.documents['local-a'][p.change.path]!==undefined)throw Error('Synthetic split changed');const bytes=new TextEncoder().encode(p.whole),prefix=new TextDecoder().decode(bytes.slice(0,p.change.byteOffset)),suffix=new TextDecoder().decode(bytes.slice(p.change.byteOffset));fixture.documents['local-a'][path]=prefix;fixture.documents['local-a'][p.change.path]=suffix;undo={path:p.change.path,whole:p.whole,prefix,suffix};return{state:(await fixture.core.loadDrafting!(session)),undoId:'synthetic-undo'};},
+ undoDraftingChange:async(session)=>{if(!undo||fixture.documents['local-a'][path]!==undo.prefix||fixture.documents['local-a'][undo.path]!==undo.suffix)throw Error('Synthetic edited undo refused');fixture.documents['local-a'][path]=undo.whole;delete fixture.documents['local-a'][undo.path];undo=null;return fixture.core.loadDrafting!(session);},
+};
+const app=mountStudio(document.querySelector<HTMLElement>('#app')!,core);const view=()=>EditorView.findFromDOM(document.querySelector('.active-document-pane .cm-editor') as HTMLElement)!;
+Object.assign(window,{fileSplitFixture:{fixture,app,original,path,view,calls,theme:(high:boolean)=>applyAppearance({...loadAppearance(),theme:high?'contrast':loadAppearance().theme}),cursor:()=>{view().dispatch({selection:{anchor:view().state.doc.toString().indexOf('Paragraph 17:')},scrollIntoView:true});view().focus();}}});
+void(async()=>{const tick=async()=>{for(let i=0;i<10;i++)await new Promise(r=>setTimeout(r,0));};await tick();document.querySelector<HTMLButtonElement>('.project-switcher')!.click();await tick();[...document.querySelectorAll<HTMLButtonElement>('.project-library button')].find(b=>b.textContent==='Open Novel A')!.click();await tick();await app.showDocument(path);const note=document.createElement('p');note.className='synthetic-project-notice';note.textContent='Synthetic Markdown split — in-memory files only. No native API, real writing, providers or uploads.';document.querySelector('.document-workspace')!.prepend(note);document.documentElement.dataset.fileSplitReady='true';})();

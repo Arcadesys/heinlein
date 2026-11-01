@@ -35,6 +35,7 @@ export function createDocumentTabs(hooks:{open(tab:DocumentTab):Promise<unknown>
   register(target:TabTarget){const tab=ensure(target);render();return tab;},
   mount(target:TabTarget){const tab=ensure(target);activeId=tab.id;render();return tab;},
   remove(tab:DocumentTab){entries=entries.filter(t=>t!==tab);if(activeId===tab.id)activeId=undefined;render();},
+  invalidate(path:string,unavailable=false){for(const tab of entries){if(tab.path===path){tab.position=undefined;if(unavailable)tab.unavailable=true;}}render();},
   unmount(){activeId=undefined;render();},
   focus(){element.querySelector<HTMLButtonElement>('[aria-selected=true]')?.focus({preventScroll:true});},
   reconcile(scenes:readonly {id:string;path:string}[]){for(const tab of entries){if(tab.kind==='assembled'&&tab.chapter){tab.unavailable=true;tab.position=undefined;continue;}if(!tab.sceneId)continue;const found=scenes.find(s=>s.id===tab.sceneId);if(found){if(tab.path!==found.path)tab.position=undefined;tab.path=found.path;tab.unavailable=false;}else{tab.unavailable=true;tab.position=undefined;}}render();},

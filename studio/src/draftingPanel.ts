@@ -56,7 +56,12 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     if (node.showModal) node.showModal(); else node.setAttribute('open', '');
     node.querySelector<HTMLElement>('input, select, button')?.focus();
   }
-  function remove(node: HTMLDialogElement) { dialogs.delete(node); node.remove(); }
+  function remove(node: HTMLDialogElement) {
+    // Finish split modal focus restoration before detaching it. Removing an open
+    // scrolled dialog can otherwise collapse the captured editor cursor.
+    if(node.classList.contains('drafting-split-dialog')&&node.open&&typeof node.close==='function')node.close();
+    dialogs.delete(node); node.remove();
+  }
   function field(node: HTMLElement, label: string, value: string, hint?: string) {
     const row = el('label', '', 'drafting-field'); row.append(el('span', label));
     const input = el('input'); input.type = 'text'; input.value = value; input.required = true; row.append(input);
@@ -94,6 +99,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   function confirmPreview(preview: DraftingPreview): Promise<boolean> {
     return new Promise(resolve => {
       const node = dialog('Review manuscript change');
+      if(preview.changes.some(change=>change.kind==='split'||change.kind==='splitFile'))node.classList.add('drafting-split-dialog');
       node.append(el('p', preview.summary));
       const list = el('ul', '', 'change-preview');
       for (const change of preview.changes) {
@@ -159,21 +165,29 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     });
   }
   function splitScene(sceneId: string, prepare: () => {expectedHash: string; byteOffset: number}) {
-    if (dialogs.size || !state?.revision || state.recoveryRequired) return;
-    const scene = state.scenes.find(item => item.id === sceneId);
-    if (!scene) return;
-    const revision = state.revision;
-    const node = dialog('Split scene at cursor'); const body = el('form');
-    const cancel = () => remove(node);
-    body.append(el('p', 'The text before the cursor keeps this scene’s identity. The remaining text becomes a new scene immediately after it, in the same group. Existing text earns no daily growth credit; the original scene retains its earlier peak.', 'muted'));
-    const title = field(body, 'New scene title', `${scene.title || 'Scene'} continued`);
-    const path = field(body, 'New scene file', scene.path.replace(/\.(md|markdown)$/i, '-continued.md'), 'Use a new Markdown path inside ms/.');
-    submitButton(body, 'Preview split', () => {
-      cancel();
-      const change = {kind: 'splitScene' as const, sceneId, title: title.value.trim(), path: path.value.trim(), expectedHash: '', byteOffset: 0};
-      void changeManuscript(change, change.path, () => { if (state?.revision !== revision) throw new Error('The manuscript changed. Start a new split'); return {...change, ...prepare()}; });
+    const scene=state?.scenes.find(item=>item.id===sceneId);if(!scene||!state?.revision)return;
+    splitSource(scene.path,prepare,scene);
+  }
+  function splitFile(sourcePath:string,prepare:()=>{expectedHash:string;byteOffset:number}) {splitSource(sourcePath,prepare);}
+  function splitSource(sourcePath:string,prepare:()=>{expectedHash:string;byteOffset:number},scene?:DraftingScene) {
+    if(dialogs.size||!state||state.recoveryRequired)return;
+    const revision=state.revision,opener=document.activeElement as HTMLElement|null;
+    const node=dialog(scene?'Split scene at cursor':'Split Markdown file at cursor'),body=el('form');node.classList.add('drafting-split-dialog');
+    const cancel=()=>{remove(node);if(opener?.isConnected)opener.focus({preventScroll:true});};
+    body.append(el('p',scene?'The prefix keeps this scene’s identity. The exact suffix becomes the next scene in the same group. Existing text earns no new growth credit.':'Keep the exact prefix here. Move the suffix to a new sibling Markdown file. No manuscript setup or metadata change.','muted'));
+    body.append(el('p','Unsaved writing is saved before preview. Cancel does not undo that save. Frontmatter stays here. Text and line endings stay exact.','drafting-warning'));
+    const title=scene?field(body,'New scene title',`${scene.title||'Scene'} continued`):null;
+    const suggested=sourcePath.replace(/\.(md|markdown)$/i,'-continued$&');
+    const path=field(body,scene?'New scene file':'New file name',scene?suggested:basename(suggested),scene?'Use a new Markdown path inside ms/.':'Use a new sibling Markdown filename. Existing files are never replaced.');
+    path.addEventListener('input',()=>path.setCustomValidity(''));
+    submitButton(body,'Preview split',()=>{
+      const name=path.value.trim();
+      if(!scene&&(/[\/\\]/.test(name)||name==='.'||name==='..')){path.setCustomValidity('Use a sibling filename without folders.');path.reportValidity();return;}
+      const destination=scene?name:sourcePath.slice(0,sourcePath.lastIndexOf('/')+1)+name;
+      const change:DraftingChange=scene?{kind:'splitScene',sceneId:scene.id,title:title!.value.trim(),path:destination,expectedHash:'',byteOffset:0}:{kind:'splitFile',sourcePath,path:destination,expectedHash:'',byteOffset:0};
+      cancel();void changeManuscript(change,destination,()=>{if(state?.revision!==revision)throw Error('The manuscript changed. Start a new split');return {...change,...prepare()};}).then(applied=>{if(!applied&&opener?.isConnected&&!document.querySelector('dialog[open]'))opener.focus({preventScroll:true});});
     });
-    body.append(button('Cancel', cancel)); node.append(body); display(node, cancel);
+    body.append(button('Cancel',cancel));node.append(body);display(node,cancel);
   }
   function moveScene(scene: DraftingScene) {
     form(`Move ${scene.title || basename(scene.path)}`, (body, submit) => {
@@ -388,7 +402,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     const ungrouped=el('div','Move to end of manuscript, without a group','manuscript-boundary-target');moveDrop(ungrouped,source=>source.kind==='scene'?{kind:'ungroupedEnd'}:null,'Drop a scene here to place it at the document end with No chapter');chapters.append(ungrouped);element.append(chapters);
 
   }
-  return { element, supported, clear, load, initialize, importExternal, splitScene, get state() { return state; },
+  return { element, supported, clear, load, initialize, importExternal, splitScene, splitFile, get state() { return state; },
     /** The same previewed, confirmed reorder as the ↑/↓ buttons. Resolves once the change settles. */
     async reorderScene(sceneId: string, delta: -1 | 1) { const scene = state?.scenes.find(item => item.id === sceneId); if (scene && state?.revision && !dialogs.size) await reorder(scene, delta); },
     newScene() { if (state?.revision && !dialogs.size) newScene(); },
