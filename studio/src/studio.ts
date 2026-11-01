@@ -480,6 +480,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (breaks.length) {
       items.push({label: 'Breaks in this scene', heading: true});
       breaks.slice(0, 12).forEach((entry, number) => items.push({label: entry.label, detail: `Passage ${number + 1}`, run: () => {
+        showSourceView();
         view!.dispatch({selection: {anchor: entry.from, head: entry.to}, scrollIntoView: true}); view!.focus();
       }}));
     }

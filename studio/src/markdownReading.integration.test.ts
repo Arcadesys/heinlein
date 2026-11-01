@@ -106,6 +106,34 @@ describe('Source and Reading in one writer', () => {
     expect(toggle('Source').getAttribute('aria-pressed')).toBe('true');
     expect(view().state.selection.main.empty).toBe(false);
   });
+  it('returns to Source before a breadcrumb passage jump, so the selection lands in a visible editor', async () => {
+    const core = bridge();
+    const text = 'One.\n\n---\n\nTwo words here.\n';
+    (core.readDocument as ReturnType<typeof vi.fn>).mockImplementation(async (_id: string, path: string) => doc(path, text));
+    Object.assign(core, {
+      loadDrafting: vi.fn(async () => ({manifestPath: 'ms/manuscript.json', revision: 'rev1', project: 'Invented', groups: [], scenes: [{id: 'a', title: 'Opening', path: 'a.md', groupId: null}], untrackedPaths: [], missingPaths: []})),
+      previewDraftingChange: vi.fn(), applyDraftingChange: vi.fn(), undoDraftingChange: vi.fn(),
+    });
+    await start(core);
+    const before = view().state.doc;
+    toggle('Reading').click();
+    const dispatch = view().dispatch.bind(view());
+    const sourceAtDispatch: boolean[] = [];
+    vi.spyOn(view(), 'dispatch').mockImplementation((...args) => {
+      sourceAtDispatch.push(reader()!.hidden && toggle('Source').getAttribute('aria-pressed') === 'true');
+      dispatch(...args);
+    });
+    document.querySelector<HTMLButtonElement>('.pill-scene')!.click();
+    const passage = await vi.waitFor(() => {const found = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(node => node.textContent?.includes('Passage 1')); expect(found).toBeTruthy(); return found!;});
+    passage.click();
+    expect(reader()!.hidden).toBe(true);
+    expect(toggle('Source').getAttribute('aria-pressed')).toBe('true');
+    expect(view().state.sliceDoc(view().state.selection.main.from, view().state.selection.main.to)).toBe('Two words here.');
+    expect(sourceAtDispatch).toEqual([true]);
+    expect(view().hasFocus).toBe(true);
+    expect(view().state.doc).toBe(before);
+    expect(core.saveDocument).not.toHaveBeenCalled();
+  });
   it('keeps saving available while in Reading', async () => {
     const core = bridge();
     await start(core);

@@ -87,6 +87,11 @@ const core: LocalCore = { available: () => true, pickRepository: async () => ses
   },
   listProposals: async () => ({ pending: [], receipts: structuredClone(stored.receipts) }), reviewProposal: unavailable, reviewProposalRevert: unavailable, applyProposalReview: unavailable, cancelProposalReview: async () => { },
 };
+// Opt-in scene state for the production breadcrumb navigation regression.
+if (params.has('sceneNavigation')) Object.assign(core, {
+  loadDrafting: async () => ({manifestPath: 'ms/manuscript.json', revision: 'synthetic-navigation', project: 'Invented demo', groups: [], scenes: [{id: 'opening', title: 'Opening', path: 'opening.md', groupId: null}], untrackedPaths: [], missingPaths: []}),
+  previewDraftingChange: unavailable, applyDraftingChange: unavailable, undoDraftingChange: unavailable,
+});
 const app = mountStudio(document.querySelector<HTMLElement>('#app')!, core);
 Object.assign(window, { readingFixture: { calls, get docs() { return stored.docs; }, baseline, get record() { return stored.record; } } });
 function mountGuide() {

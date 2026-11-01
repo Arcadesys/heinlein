@@ -277,3 +277,30 @@ test('This fixture keeps to its own storage key', async ({ page }) => {
   expect(keys.filter(key => key.includes('revision'))).toEqual([]);
   expect(keys).toContain('heinlein-markdown-reading-synthetic-v1');
 });
+
+test('breadcrumb passage jump reveals Source and focuses the exact passage with keyboard access', async ({ page }, info) => {
+  await start(page, `${url}?sceneNavigation`);
+  await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
+  const before = await source(page);
+  const editor = page.locator('.active-document-pane .cm-content');
+  await editor.click();
+  await page.keyboard.press(`${modifier}+End`);
+  await page.keyboard.insertText('\n\n---\n\nSynthetic breadcrumb passage.\n');
+  await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Reading', exact: true }).click();
+  await expect(reader(page)).toBeVisible();
+  const breadcrumb = page.locator('.pill-scene');
+  await breadcrumb.focus();
+  await page.keyboard.press('ArrowDown');
+  const passage = page.getByRole('menuitem', { name: /Synthetic breadcrumb passage.*Passage 1/ });
+  await expect(passage).toBeVisible();
+  await page.keyboard.press('End');
+  await expect(passage).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(reader(page)).toBeHidden();
+  await expect(page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Source', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(editor).toBeVisible();
+  await expect(editor).toBeFocused();
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('Synthetic breadcrumb passage.');
+  expect(await source(page)).toBe(before);
+  await page.screenshot({path: info.outputPath('breadcrumb-source-focus.png'), fullPage: true});
+});
