@@ -165,6 +165,10 @@ export function setReviewMarks(view: EditorView, marks: readonly ReviewMark[]) {
   const before = reviewMarksIn(view.state);
   if (before.length || marks.length) view.dispatch({effects: setMarks.of(marks)});
 }
+/** What Next announced wins: the first mark starting at the caret, then the innermost nonempty mark around it. An end is outside. */
+function markAtCursor(marks: readonly ReviewMark[], head: number) {
+  return marks.find(mark => mark.from === head) ?? marks.filter(mark => mark.from < head && head < mark.to).at(-1);
+}
 export interface ReviewMarkKeys { next: string; previous: string; open: string }
 function step(view: EditorView, direction: 1 | -1, keys: ReviewMarkKeys) {
   const marks = reviewMarksIn(view.state);
@@ -185,7 +189,7 @@ export function reviewMarkExtension(hooks: {open(id: string): void; invalidated(
         const marks = reviewMarksIn(view.state);
         if (!marks.length) return false;
         const head = view.state.selection.main.head;
-        const hit = marks.find(mark => mark.from <= head && head <= mark.to);
+        const hit = markAtCursor(marks, head);
         if (hit) hooks.open(hit.id);
         else view.dispatch({effects: EditorView.announce.of(`No suggestion at the cursor. ${hooks.keys.next} moves to the next one.`)});
         return true;

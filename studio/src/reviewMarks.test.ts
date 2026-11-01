@@ -2,10 +2,11 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {createEditor} from './editor';
 import type {ReviewEdit} from './localCore';
-import {computeReviewMarks, createReviewMarkPublisher, locateUtf8, resolveReviewMarks, reviewMarkExtension, reviewMarksIn, setReviewMarks, type ReviewMarkInput} from './reviewMarks';
+import {computeReviewMarks, createReviewMarkPublisher, locateUtf8, resolveReviewMarks, reviewMarkExtension, reviewMarksIn, setReviewMarks, type ReviewMark, type ReviewMarkInput} from './reviewMarks';
 const cryptoModule = 'node:crypto';
 const {webcrypto} = await import(cryptoModule) as {webcrypto: Crypto};
 import {StateEffect} from '@codemirror/state';
+import {runScopeHandlers, type EditorView} from '@codemirror/view';
 
 const bytes = (text: string) => new TextEncoder().encode(text).length;
 const hash = 'a'.repeat(64);
@@ -77,6 +78,51 @@ describe('review mark mapping', () => {
     expect(view.state.selection.main.head).toBe(selection);
     view.dispatch({changes: {from: view.state.doc.length, insert: '!'}});
     expect(reviewMarksIn(view.state)).toEqual([]);
+  });
+});
+
+describe('review mark keyboard path', () => {
+  const press = (view: EditorView, key: string, keyCode: number) => runScopeHandlers(view, new KeyboardEvent('keydown', {key, keyCode, ctrlKey: true, altKey: true, bubbles: true}), 'editor');
+  const next = (view: EditorView) => press(view, ']', 221), openAt = (view: EditorView) => press(view, 'o', 79);
+  function keyed(text: string, marks: ReviewMark[]) {
+    const opened: string[] = [];
+    mounted = createEditor(host, text, () => {}, () => {});
+    mounted.view.dispatch({effects: StateEffect.appendConfig.of(reviewMarkExtension({open: id => opened.push(id), invalidated() {}, keys: {next: 'n', previous: 'p', open: 'o'}}))});
+    setReviewMarks(mounted.view, marks);
+    return {view: mounted.view, opened};
+  }
+  const mark = (id: string, from: number, to: number, kind: ReviewMark['kind'] = 'replace', group: string | null = null): ReviewMark => ({id, from, to, kind, group});
+  it('opens the suggestion Next announced when two share a boundary', () => {
+    const {view, opened} = keyed('word. tail', [mark('word', 0, 4), mark('dot', 4, 5)]);
+    view.dispatch({selection: {anchor: 1}});
+    next(view);
+    expect(view.state.selection.main.head).toBe(4);
+    openAt(view);
+    expect(opened).toEqual(['dot']);
+  });
+  it('opens an insertion at the end of a neighbouring suggestion, and each side of it', () => {
+    const {view, opened} = keyed('word tail', [mark('word', 0, 4), mark('insert', 4, 4, 'insert'), mark('tail', 5, 9)]);
+    view.dispatch({selection: {anchor: 1}});
+    next(view);
+    openAt(view);
+    expect(opened).toEqual(['insert']);
+    view.dispatch({selection: {anchor: 2}});
+    openAt(view);
+    expect(opened).toEqual(['insert', 'word']);
+  });
+  it('treats the end of a suggestion as outside it', () => {
+    const {view, opened} = keyed('word tail', [mark('word', 0, 4)]);
+    view.dispatch({selection: {anchor: 4}});
+    expect(openAt(view)).toBe(true);
+    expect(opened).toEqual([]);
+  });
+  it('opens the innermost suggestion when overlapping alternatives surround the caret', () => {
+    const {view, opened} = keyed('long grey sheets', [mark('phrase', 0, 16, 'replace', 'g'), mark('word', 5, 9, 'replace', 'g')]);
+    view.dispatch({selection: {anchor: 6}});
+    openAt(view);
+    view.dispatch({selection: {anchor: 2}});
+    openAt(view);
+    expect(opened).toEqual(['word', 'phrase']);
   });
 });
 
