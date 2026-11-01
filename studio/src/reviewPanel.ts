@@ -1,3 +1,4 @@
+import {renderMarkdown} from './markdown';
 import type { LocalCore, QuestionStatus, ReviewEdit, ReviewResult, ReviewRequest, ReviewerDefinition, ReviewCoverage, ProposalOutcome } from './localCore';
 import { changedSpan, decisionLabel, invisibleChangeNote, lineageDelta, patchContext, pendingLabel, reviewProgress, waiting, type PatchContext } from './reviewComparison';
 import type { ReviewMarkInput } from './reviewMarks';
@@ -303,7 +304,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         else
             item.append(el('p', `${edit.role === 'proofreader' ? 'Proofreader' : 'Editor'} · ${edit.path}`, 'review-where'));
         for (const comment of edit.comments ?? [edit.reason])
-            item.append(el('p', comment, 'review-comment'));
+            item.append(renderMarkdown(comment));
         if (edit.sourceStale)
             item.append(el('p', 'This source changed outside the accepted review lineage. Request a fresh review for this source; other files remain available.', 'drafting-warning'));
         item.append(...comparison(edit, contextFor(edit, current)));
@@ -422,7 +423,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 const entry = el('article', '', 'review-history-item');
                 entry.append(el('h4', decisionLabel(item.status)), el('p', `${item.path}${item.location ? ` · Captured line ${item.location.line}, column ${item.location.column}` : ''}`, 'review-where'));
                 for (const comment of item.comments ?? [item.reason])
-                    entry.append(el('p', comment, 'review-comment'));
+                    entry.append(renderMarkdown(comment));
                 entry.append(el('h5', 'Text before this suggestion'), el('pre', item.original, 'question-text'), el('h5', 'Suggested text'), el('pre', item.replacement, 'question-text'));
                 if (item.status === 'accepted')
                     entry.append(el('p', `${receipts.has(item.id) ? `Local receipt ${receipts.get(item.id)}. ` : ''}Open Proposed revisions to see receipts and any available guarded revert.`, 'review-guidance'));

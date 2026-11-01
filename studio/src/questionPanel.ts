@@ -1,3 +1,4 @@
+import {renderMarkdown} from './markdown';
 import {captureSelectionQuestion, selectionQuestionAvailability, selectionQuestionProblem, type SelectionQuestionSnapshot, type SelectionQuestionState} from './selectionQuestion';
 import type {LocalCore, QuestionRevisionAnswer, QuestionAnswer, QuestionConnection, QuestionMessage, QuestionRequest, QuestionStatus} from './localCore';
 
@@ -397,7 +398,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     turns.forEach((turn, index) => {
       const section = el('section', '', 'question-turn');
       const usage = [turn.answer.inputTokens == null ? null : `${turn.answer.inputTokens.toLocaleString()} input tokens`, turn.answer.outputTokens == null ? null : `${turn.answer.outputTokens.toLocaleString()} output tokens`].filter(Boolean).join(' · ');
-      section.append(el('h4', 'You'), preview(turn.question, `Question ${index + 1}`), el('p', `${turn.contextBytes.toLocaleString()} UTF-8 bytes of context sent`, 'muted'), el('h4', `OpenAI · ${turn.answer.model}${turn.answer.incomplete ? ' · Incomplete answer' : ''}`), preview(turn.answer.text, `Answer ${index + 1}`), el('p', usage || 'Token usage was not returned.', 'muted'));
+      section.append(el('h4', 'You'), preview(turn.question, `Question ${index + 1}`), el('p', `${turn.contextBytes.toLocaleString()} UTF-8 bytes of context sent`, 'muted'), el('h4', `OpenAI · ${turn.answer.model}${turn.answer.incomplete ? ' · Incomplete answer' : ''}`), renderMarkdown(turn.answer.text, `Answer ${index + 1}`), el('p', usage || 'Token usage was not returned.', 'muted'));
       const origin = el('p', `Recorded origin: native OpenAI · Model: ${turn.answer.model} · Request: ${turn.answer.requestId}. Provider metadata is not authenticated authorship.`, 'muted'); section.append(origin);
       const revision = turn.revision;
       if (revision) {
