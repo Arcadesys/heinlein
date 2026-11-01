@@ -297,3 +297,26 @@ describe('optional typewriter sounds', () => {
     expect(await enablingAgain).toBe(false);
   });
 });
+
+describe('typewriter volume and cached sounds', () => {
+  it('reuses one sample per key kind, applies volume and mutes at zero', async () => {
+    const mock = audioMock();
+    const sounds = createTypewriterSound({createContext: mock.createContext});
+    await sounds.setEnabled(true);
+    sounds.setVolume(0.8); sounds.play('key');
+    expect(mock.gain.gain.value).toBeCloseTo(0.04);
+    mock.context.currentTime += 0.1; sounds.play('key');
+    expect(mock.context.createBuffer).toHaveBeenCalledTimes(1);
+    mock.context.currentTime += 0.1; sounds.play('delete');
+    mock.context.currentTime += 0.1; sounds.play('return');
+    expect(mock.context.createBuffer).toHaveBeenCalledTimes(3);
+    const lengths = mock.context.createBuffer.mock.calls.map(call => call[1]);
+    expect(lengths[1]).toBeGreaterThan(lengths[0]);
+    expect(lengths[2]).toBeGreaterThan(lengths[1]);
+    sounds.setVolume(0); mock.context.currentTime += 0.1; sounds.play();
+    expect(mock.source.start).toHaveBeenCalledTimes(4);
+    sounds.setVolume(2); expect(sounds.volume()).toBe(1);
+    sounds.setVolume(NaN); expect(sounds.volume()).toBe(1);
+    sounds.destroy();
+  });
+});
