@@ -1,5 +1,5 @@
 import type {LocalCore, Manuscript, RepositorySession} from './localCore';
-import {createDailyGoalTracker, createTypewriterSound, wordCount} from './writingFeedback';
+import {createDailyGoalTracker, createTypewriterSound, wordCount, type TypewriterKey} from './writingFeedback';
 
 export interface WritingSummary { sceneWords: number | null; credited: number; goal: number }
 export function createWritingPanel(rendered?: (summary: WritingSummary) => void) {
@@ -28,11 +28,48 @@ export function createWritingPanel(rendered?: (summary: WritingSummary) => void)
     rendered?.({sceneWords: active ? active.count : null, credited: state.words, goal: state.goal});
   }
   goalInput.addEventListener('change',()=>{const value=Number(goalInput.value); if(Number.isInteger(value)&&value>=1&&value<=1000000)tracker.setGoal(value); render();});
-  soundButton.addEventListener('click',()=>{void sound.setEnabled(!sound.enabled()).then(enabled=>{if(destroyed)return; soundButton.textContent=`Typewriter sound: ${enabled?'on':'off'}`; soundButton.setAttribute('aria-pressed',String(enabled)); if(!enabled) return; sound.play();}).catch(()=>{error.textContent='Audio unavailable; writing still works.';});});
+  const soundControls: {button: HTMLButtonElement; slider?: HTMLInputElement}[] = [{button: soundButton}];
+  function syncSound() {
+    for (const {button, slider} of soundControls) {
+      button.textContent = `Typewriter sound: ${sound.enabled() ? 'on' : 'off'}`;
+      button.setAttribute('aria-pressed', String(sound.enabled()));
+      if (slider) { slider.value = String(Math.round(sound.volume() * 100)); slider.setAttribute('aria-valuetext', `${slider.value}%`); }
+    }
+  }
+  function toggleSound() {
+    const requested = !sound.enabled();
+    void sound.setEnabled(requested).then(enabled => {
+      if (destroyed) return;
+      syncSound();
+      error.textContent = requested && !enabled ? 'Audio unavailable; writing still works.' : '';
+      if (enabled) sound.play();
+    });
+  }
+  soundButton.addEventListener('click', toggleSound);
   const timer = setInterval(render,60000);
   render();
   return {
-    element, focusGoal() { goalInput.focus(); goalInput.select(); },
+    element,
+    soundSettings() {
+      const controls = document.createElement('div'); controls.className = 'settings-group';
+      const toggle = document.createElement('button'); toggle.type = 'button';
+      toggle.addEventListener('click', toggleSound);
+      const label = document.createElement('label'); label.textContent = 'Typewriter volume ';
+      const slider = document.createElement('input'); slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.step = '1';
+      slider.setAttribute('aria-label', 'Typewriter volume');
+      slider.addEventListener('input', () => { sound.setVolume(Number(slider.value) / 100); syncSound(); });
+      slider.addEventListener('change', () => sound.play());
+      label.append(slider);
+      const note = document.createElement('p'); note.className = 'settings-hint';
+      note.textContent = 'Mechanical clicks, backspace and carriage return. Off each launch. Paste, undo and loading stay silent.';
+      controls.append(toggle, label, note); soundControls.push({button: toggle, slider}); syncSound();
+      return controls;
+    },
+    typed(kind: TypewriterKey) {
+      const enabled = sound.enabled(); sound.play(kind);
+      if (enabled && !sound.enabled()) { syncSound(); error.textContent = 'Audio unavailable; writing still works.'; }
+    },
+    focusGoal() { goalInput.focus(); goalInput.select(); },
     clearScene() { active=null; render(); },
     clearManuscript() { generation++; paths=new Set(); counts.clear(); loading=false; failed=0; bookKey=''; render(); },
     openScene(projectKey:string, path:string, text:string, sceneId?:string) {
@@ -46,7 +83,7 @@ export function createWritingPanel(rendered?: (summary: WritingSummary) => void)
     changed(before:string, after:string, origin:'user'|'history'|'programmatic'|'recovery') {
       if(!active)return; active.text=after; active.count=wordCount(after);
       if(active.projectKey)tracker.recordChange(`${active.projectKey}:${active.sceneKey}`,before,after,origin);
-      if(origin==='user'&&after.length>before.length)sound.play(); render();
+      render();
     },
     async setManuscript(core:LocalCore, repository:RepositorySession, book:Manuscript | {scenes: {path:string}[]}) {
       const request=++generation; bookKey=repository.projectKey??''; counts.clear(); revisions.clear(); failed=0; loading=true;
