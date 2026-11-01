@@ -903,3 +903,23 @@ dialog { color: var(--fg); }
 @media (min-width:761px) {
  .preview:has(> .document-workspace) {scroll-padding-block-end:calc(var(--manuscript-footer-space,4rem) + 1rem);}
 }
+
+/* Reading surfaces retain the author's text; only advice is rendered here. */
+.rendered-markdown { min-width: 0; overflow-wrap: anywhere; font: var(--type-body)/var(--leading-body) var(--font-text); }
+.question-panel .rendered-markdown { margin: .4rem 0; padding: .75rem .9rem; max-height: 28rem; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.rendered-markdown > :first-child { margin-top: 0; }
+.rendered-markdown > :last-child { margin-bottom: 0; }
+.rendered-markdown :is(h1,h2,h3,h4,h5,h6) { font-size: 1.2em; line-height: 1.4; margin: 1em 0 .5em; }
+.rendered-markdown :is(ul,ol) { padding-inline-start: 1.6em; }
+.rendered-markdown li + li { margin-top: .4em; }
+.rendered-markdown blockquote { margin-inline: 0; padding-inline-start: 1em; border-inline-start: .25rem solid var(--border); }
+.rendered-markdown pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.rendered-markdown code { font-size: 1em; }
+.rendered-markdown a { color: inherit; text-decoration: underline; text-underline-offset: .2em; }
+.rendered-markdown a:focus-visible, .rendered-markdown:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+.rendered-markdown table { display: block; max-width: 100%; overflow: auto; border-collapse: collapse; }
+.rendered-markdown :is(th,td) { padding: .5em; border: 1px solid var(--border); }
+
+.rendered-markdown p { margin-block: .65em; }
+.rendered-markdown h1 { font-size: 1.4em; }
+.rendered-markdown h2 { font-size: 1.3em; }

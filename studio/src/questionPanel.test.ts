@@ -111,6 +111,17 @@ describe('nonmodal drafting questions', () => {
     expect(panel.element.hidden).toBe(true); expect(core.askQuestion).not.toHaveBeenCalled();
     panel.open(); await vi.waitFor(() => expect(document.body.textContent).toContain('Mock provider ready')); expect(input().value).toBe('');
   });
+  it('renders answer Markdown while retaining exact Markdown in conversation history', async () => {
+    const text = '# Advice\n\n**Keep** the voice — exactly.\n\n- Read aloud';
+    const core = bridge(); core.askQuestion.mockImplementation(async request => reply(request, text));
+    await start(core); await send();
+    const answer = document.querySelector('[aria-label="Answer 1"]')!;
+    expect(answer.querySelector('h1')?.textContent).toBe('Advice');
+    expect(answer.querySelector('strong')?.textContent).toBe('Keep');
+    await send('Follow up');
+    expect(core.askQuestion.mock.calls[1][0].history[1].text).toBe(text);
+    expect(scene?.source).toBe('A 🐺 passage.\r\nNext line');
+  });
   it('renders provider text inertly, reports usage/incomplete output, and never offers application', async () => {
     const core = bridge(); core.askQuestion.mockImplementation(async request => ({...reply(request, '<img src=x onerror="alert(1)">\n<script>bad()</script>'), incomplete: true, inputTokens: 100, outputTokens: 55}));
     await start(core); await send();
