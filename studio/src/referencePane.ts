@@ -1,4 +1,6 @@
 import type {Document,LocalCore} from './localCore';
+import {frontmatterEnd,normalizeChapterText} from './assembledChapter';
+import {createMarkdownReader} from './markdownReader';
 export const REFERENCE_ACTION_MESSAGE='Activate this document to edit or review it.';
 export interface ReferenceTarget {path:string;sceneId?:string}
 export function createReferencePane(core:Pick<LocalCore,'readDocument'>,hooks:{binding():{session:string;generation:number}|null;edit(path:string):void;focusWriter():void}){
@@ -12,15 +14,24 @@ export function createReferencePane(core:Pick<LocalCore,'readDocument'>,hooks:{b
  const error=document.createElement('p');error.className='reference-error';error.setAttribute('role','status');
  const source=document.createElement('pre');source.className='reference-source';source.tabIndex=0;source.setAttribute('aria-label','Read-only saved source');
  const actions=document.createElement('div');actions.className='reference-actions';
+ // A saved copy to read. It has no review marks and no click, selection or writing authority.
+ let reading=false;
+ const reader=createMarkdownReader({label:'Saved reference, reading view',showSource:()=>{reading=false;render();},content:()=>{const text=normalizeChapterText(snapshot?.doc.text??'');const body=frontmatterEnd(text)??0;return {text,ranges:[{from:body,to:text.length}],note:body?'Frontmatter is not shown in Reading. See Source.':undefined};}});
+ const view=document.createElement('div');view.className='md-view-toggle';view.setAttribute('role','group');view.setAttribute('aria-label','Reference view');
  const make=(label:string,run:()=>void)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.addEventListener('click',run);return b;};
  const refresh=make('Refresh',()=>{if(target)void read(target);});
  const edit=make('Main pane',()=>{if(target&&!unavailable)hooks.edit(target.path);});
  const close=make('Close',()=>{clear();hooks.focusWriter();});actions.append(refresh,edit,close);
  refresh.setAttribute('aria-label','Refresh saved source');edit.setAttribute('aria-label','Open in main pane');close.setAttribute('aria-label','Close reference');
- element.append(heading,path,description,state,error,source,actions,details);
+ const showSource=make('Source',()=>{reading=false;render();}),showReading=make('Reading',()=>{reading=true;render();});
+ showSource.setAttribute('aria-label','Reference source');showReading.setAttribute('aria-label','Reference reading');view.append(showSource,showReading);
+ element.append(heading,path,description,state,error,view,source,reader.element,actions,details);
  element.addEventListener('focusin',()=>{referenceOrigin=true;});element.addEventListener('pointerdown',()=>{referenceOrigin=true;});
  function renderPath(value:string){path.replaceChildren();for(const segment of value.split(/(?<=[/\-])/)){path.append(document.createTextNode(segment),document.createElement('wbr'));}}
  function render(){element.hidden=!snapshot;if(!snapshot)return;renderPath(snapshot.doc.path+(target&&target.path!==snapshot.doc.path?`\nCurrent source path: ${target.path}`:''));source.textContent=snapshot.doc.text;
+  const markdown=/\.(md|markdown)$/i.test(snapshot.doc.path);if(!markdown)reading=false;
+  view.hidden=!markdown;source.hidden=reading;reader.element.hidden=!reading;if(reading)reader.update();else reader.clear();
+  showSource.setAttribute('aria-pressed',String(!reading));showReading.setAttribute('aria-pressed',String(reading));
   state.textContent=unavailable?'Unavailable · Historical copy.':stale?'Changed — refresh.':'Refresh to check.';
   edit.disabled=unavailable||detached;refresh.disabled=unavailable||detached;refresh.title=target&&target.path!==snapshot.doc.path?`Read current source ${target.path}`:'';
  }
@@ -30,7 +41,7 @@ export function createReferencePane(core:Pick<LocalCore,'readDocument'>,hooks:{b
    target={...next};snapshot={doc,session:binding.session};stale=false;unavailable=false;error.textContent='';render();return true;
   }catch(e){const now=hooks.binding();if(token!==request||!now||now.session!==binding.session||now.generation!==binding.generation)return false;error.textContent=`Reference read failed for ${next.path}: ${String(e)}. ${snapshot?'Previous snapshot retained.':'No snapshot loaded.'}`;if(!snapshot){element.hidden=false;renderPath(next.path);state.textContent='No saved snapshot loaded.';source.textContent='';refresh.disabled=true;edit.disabled=true;}return false;}finally{if(pending?.token===token)pending=null;}
  }
- function clear(){request++;pending=null;target=null;snapshot=null;stale=false;unavailable=false;referenceOrigin=false;detached=false;element.hidden=true;error.textContent='';source.textContent='';path.textContent='';state.textContent='';}
+ function clear(){reading=false;reader.clear();reader.element.hidden=true;source.hidden=false;request++;pending=null;target=null;snapshot=null;stale=false;unavailable=false;referenceOrigin=false;detached=false;element.hidden=true;error.textContent='';source.textContent='';path.textContent='';state.textContent='';}
  return {element,read,clear,hasSnapshot:()=>!!snapshot,fromReference:()=>referenceOrigin,activateWriter:()=>{referenceOrigin=false;},
   markChanged(changed:string){if(pending?.path===changed){request++;pending=null;}if(target?.path===changed||snapshot?.doc.path===changed){stale=true;render();}},
   reconcile(scenes:readonly {id:string;path:string}[]){if(!target?.sceneId)return;const scene=scenes.find(s=>s.id===target!.sceneId);if(!scene){unavailable=true;stale=true;request++;}else if(scene.path!==target.path){target={...target,path:scene.path};stale=true;request++;}else{unavailable=false;}render();},

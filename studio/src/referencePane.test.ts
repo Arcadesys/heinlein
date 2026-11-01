@@ -19,6 +19,27 @@ describe('saved source reference',()=>{
   core.readDocument.mockImplementationOnce(()=>new Promise(r=>{release=r;}));const changed=pane.read({path:'late.md'});set({session:'two',generation:2});release(doc('late.md'));await changed;expect(pane.snapshot()?.doc.path).toBe('new.md');pane.clear();expect(pane.element.hidden).toBe(true);
  });
  it('does not relabel old content after failed reads and disables removed scene editing',async()=>{
-  const {pane,core}=setup();await pane.read({path:'a.md',sceneId:'a'});core.readDocument.mockRejectedValueOnce(Error('missing'));await pane.read({path:'b.md'});expect(pane.snapshot()?.doc.path).toBe('a.md');expect(pane.element.textContent).toContain('Reference read failed for b.md');pane.reconcile([]);expect(pane.element.textContent).toContain('Historical copy');expect(pane.element.querySelectorAll('button')[1].disabled).toBe(true);
+  const {pane,core}=setup();await pane.read({path:'a.md',sceneId:'a'});core.readDocument.mockRejectedValueOnce(Error('missing'));await pane.read({path:'b.md'});expect(pane.snapshot()?.doc.path).toBe('a.md');expect(pane.element.textContent).toContain('Reference read failed for b.md');pane.reconcile([]);expect(pane.element.textContent).toContain('Historical copy');expect(pane.element.querySelectorAll<HTMLButtonElement>('.reference-actions button')[1].disabled).toBe(true);
+ });
+});
+describe('saved source reference reading view',()=>{
+ it('formats a copy of the saved text, keeps exact source, and offers no marks or writing authority',async()=>{
+  const {pane}=setup();await pane.read({path:'a.md'});
+  const source=pane.element.querySelector<HTMLElement>('pre')!,reading=pane.element.querySelector<HTMLButtonElement>('[aria-label="Reference reading"]')!;
+  expect(source.hidden).toBe(false);expect(reading.getAttribute('aria-pressed')).toBe('false');
+  reading.click();
+  const reader=pane.element.querySelector<HTMLElement>('.markdown-reader')!;
+  expect(reader.hidden).toBe(false);expect(source.hidden).toBe(true);expect(source.textContent).toBe(doc('a.md').text);
+  expect(reader.textContent).toContain('α — 🐺');expect(reader.textContent).not.toContain('title: 星');expect(reader.textContent).toContain('Frontmatter is not shown');
+  expect(reader.querySelectorAll('[data-review-id]')).toHaveLength(0);
+  reader.focus();expect(pane.fromReference()).toBe(true);
+  pane.element.querySelector<HTMLButtonElement>('[aria-label="Reference source"]')!.click();
+  expect(reader.hidden).toBe(true);expect(reader.textContent).not.toContain('α');
+ });
+ it('offers no reading view for text that is not Markdown, and clears the formatted copy on close',async()=>{
+  const {pane}=setup();await pane.read({path:'a.txt'});
+  expect(pane.element.querySelector<HTMLElement>('.md-view-toggle')!.hidden).toBe(true);
+  await pane.read({path:'a.md'});pane.element.querySelector<HTMLButtonElement>('[aria-label="Reference reading"]')!.click();
+  pane.clear();expect(pane.element.querySelector('.markdown-reader')!.textContent).not.toContain('α');
  });
 });

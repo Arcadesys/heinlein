@@ -30,7 +30,7 @@ export function sceneBreaks(source: string): SceneBreak[] {
 }
 
 /** Local navigation only: no filesystem, model, or persistence operations. */
-export function createSceneNavigator(current: () => EditorView | null) {
+export function createSceneNavigator(current: () => EditorView | null, beforeJump: () => void = () => {}) {
   const element = document.createElement('div'); element.className = 'panel-body scene-navigator-body'; element.id = 'scene-navigator-body';
   const summary = document.createElement('p'); summary.className = 'muted'; summary.setAttribute('role', 'status');
   const list = document.createElement('ol'); list.className = 'scene-break-list';
@@ -51,6 +51,7 @@ export function createSceneNavigator(current: () => EditorView | null) {
         if (!view || current() !== view || view.state.doc !== snapshot) {refresh(); summary.textContent = 'The document changed. Choose the passage again.'; return;}
         list.querySelectorAll('button').forEach(node => node.removeAttribute('aria-current'));
         button.setAttribute('aria-current', 'location');
+        beforeJump();
         view.dispatch({selection: {anchor: entry.from, head: entry.to}, scrollIntoView: true}); view.focus();
       });
       item.append(button); list.append(item);

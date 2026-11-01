@@ -512,6 +512,39 @@ dialog { color: var(--fg); }
 .review-new > summary { font-size: 1.15rem; font-weight: 700; }
 .review-saved-item { display: grid; gap: .3rem; justify-items: start; padding-block: .5rem; }
 .review-saved-item button { width: 100%; }
+/* Formatted reading. Sizes follow the writing tokens, so text zoom and themes apply. */
+.markdown-reader { font-family: var(--font-text, var(--text-fallback)); font-size: var(--type-body); line-height: var(--leading-body); padding-bottom: 40vh; overflow-wrap: anywhere; }
+.markdown-reader[hidden], .md-view-toggle[hidden], .reference-source[hidden] { display: none; }
+.markdown-reader:focus-visible { outline: 3px solid var(--fg); outline-offset: 4px; }
+.markdown-reader-content > * + * { margin-top: 1em; }
+.markdown-reader :is(h3,h4,h5,h6) { font-family: var(--font-ui, var(--ui-fallback)); font-weight: 700; line-height: 1.3; margin: 1.4em 0 .4em; }
+.markdown-reader .md-heading-1 { font-size: 1.7em; }
+.markdown-reader .md-heading-2 { font-size: 1.4em; }
+.markdown-reader .md-heading-3 { font-size: 1.2em; }
+.markdown-reader :is(.md-heading-4,.md-heading-5,.md-heading-6) { font-size: 1.05em; }
+.markdown-reader :is(ul,ol) { margin-block: 1em; padding-inline-start: 1.6em; }
+.markdown-reader li + li, .markdown-reader li > * + * { margin-top: .35em; }
+.markdown-reader blockquote { margin: 1em 0; padding-inline-start: 1em; border-inline-start: .25em solid var(--fg-muted); }
+.markdown-reader blockquote > * + * { margin-top: .7em; }
+.markdown-reader hr { border: 0; border-top: 2px solid var(--fg-muted); margin-block: 1.6em; }
+.markdown-reader code { font-family: var(--font-mono); font-size: .92em; padding-inline: .2em; border: 1px solid var(--border-strong); border-radius: 4px; overflow-wrap: anywhere; }
+.markdown-reader pre { margin-block: 1em; padding: .75em .9em; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: .9em; line-height: 1.5; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.markdown-reader pre code { border: 0; padding: 0; font-size: inherit; }
+.markdown-reader .md-table { overflow-x: auto; }
+.markdown-reader table { border-collapse: collapse; }
+.markdown-reader :is(th,td) { padding: .35em .6em; border: 1px solid var(--fg-muted); text-align: start; vertical-align: top; }
+.markdown-reader .md-link { text-decoration: underline dotted; text-underline-offset: .2em; }
+.markdown-reader .md-link-blocked, .markdown-reader .md-image { font-style: italic; }
+.markdown-reader .md-generated, .markdown-reader .md-note { font-family: var(--font-ui, var(--ui-fallback)); font-size: .85em; font-style: normal; }
+.markdown-reader .md-note { padding-bottom: .6em; margin-bottom: 1em; border-bottom: 1px solid var(--border-strong); }
+.markdown-reader .md-review-current { outline: 3px solid var(--fg); outline-offset: 2px; border-radius: 3px; }
+.markdown-reader button { min-height: 48px; max-width: 100%; margin-block: .25em; padding-inline: .9rem; font-family: var(--font-ui, var(--ui-fallback)); font-size: 1rem; color: var(--fg); white-space: normal; text-align: start; border: 2px solid var(--fg-muted); }
+.md-view-toggle { display: inline-flex; flex-wrap: wrap; gap: .4rem; }
+.editor-toolbar .md-view-toggle { flex-basis: 100%; margin-bottom: .5rem; }
+.editor-toolbar .md-view-toggle button, .reference-pane .md-view-toggle button { min-height: 48px; padding-inline: 1rem; color: var(--fg); font-size: 1rem; border: 2px solid var(--fg-muted); }
+.md-view-toggle button[aria-pressed="true"] { color: var(--fg); font-weight: 700; border-color: var(--fg); border-width: 3px; }
+.editor-toolbar .md-view-toggle button:disabled { border-style: dashed; opacity: 1; color: var(--fg-muted); }
+.editor-toolbar.document-reading .source-only { display: none; }
 /* Inline suggestion marks. Text decoration only: no metrics change, and the selection layer stays visible. */
 .cm-review-mark { cursor: pointer; text-decoration-color: var(--fg); text-decoration-skip-ink: none; }
 .cm-review-replace { text-decoration-line: underline; text-decoration-style: solid; text-decoration-thickness: .16em; text-underline-offset: .22em; }
@@ -904,7 +937,7 @@ dialog { color: var(--fg); }
  .preview:has(> .document-workspace) {scroll-padding-block-end:calc(var(--manuscript-footer-space,4rem) + 1rem);}
 }
 
-/* Reading surfaces retain the author's text; only advice is rendered here. */
+/* AI advice only. Manuscript Reading has its own renderer, policy and styles under .markdown-reader. */
 .rendered-markdown { min-width: 0; overflow-wrap: anywhere; font: var(--type-body)/var(--leading-body) var(--font-text); }
 .question-panel .rendered-markdown { margin: .4rem 0; padding: .75rem .9rem; max-height: 28rem; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .rendered-markdown > :first-child { margin-top: 0; }

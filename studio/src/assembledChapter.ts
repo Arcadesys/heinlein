@@ -4,6 +4,17 @@ export interface ChapterPart { document: Document; from: number; to: number; bod
 export interface AssembledChapter { chapter: Chapter; text: string; parts: ChapterPart[] }
 export const normalizeChapterText = (text: string) => text.replace(/\r\n|\r/g, '\n');
 
+/** Where the body starts in normalized text: 0 without frontmatter, null when frontmatter is left unfinished. */
+export function frontmatterEnd(source: string): number | null {
+  if (!source.startsWith('---\n')) return 0;
+  const closing = /^---[ \t]*$/gm;
+  closing.lastIndex = 4;
+  const match = closing.exec(source);
+  if (!match) return null;
+  const end = match.index + match[0].length;
+  return source[end] === '\n' ? end + 1 : end;
+}
+
 // Assemble current source snapshots, never search a stale exported chapter for
 // matching prose. All offsets are normalized UTF-16 positions, like CodeMirror.
 export function assembleChapter(chapter: Chapter, documents: Document[]): AssembledChapter {
@@ -13,15 +24,8 @@ export function assembleChapter(chapter: Chapter, documents: Document[]): Assemb
   for (const [index, document] of documents.entries()) {
     if (document.path !== chapter.scenes[index].path || document.generatedCompatibility) throw new Error('A chapter source is not an editable source scene.');
     const source = normalizeChapterText(document.text);
-    let bodyFrom = 0;
-    if (source.startsWith('---\n')) {
-      const closing = /^---[ \t]*$/gm;
-      closing.lastIndex = 4;
-      const match = closing.exec(source);
-      if (!match) throw new Error('A source scene has unfinished frontmatter. Open that source scene to resolve it.');
-      bodyFrom = match.index + match[0].length;
-      if (source[bodyFrom] === '\n') bodyFrom++;
-    }
+    const bodyFrom = frontmatterEnd(source);
+    if (bodyFrom === null) throw new Error('A source scene has unfinished frontmatter. Open that source scene to resolve it.');
     if (index) text += '\n\n';
     const from = text.length;
     text += source.slice(bodyFrom);
