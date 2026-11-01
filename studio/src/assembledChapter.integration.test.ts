@@ -68,6 +68,8 @@ describe('assembled chapter to proposed revision', () => {
     expect(view().state.doc.toString().match(/Repeated/g)).toHaveLength(2);
     button('Open source scene 1 · one.md').click(); await settle();
     expect(view().state.readOnly).toBe(false); expect(document.querySelector('.page-meta .path')?.textContent).toBe('one.md');
+    const assembledTab=[...document.querySelectorAll<HTMLButtonElement>('.document-tabs [role=tab]')].find(tab=>tab.textContent==='Assembled: one.md')!;assembledTab.click();await settle();
+    expect(view().state.readOnly).toBe(true);expect(view().state.doc.toString().match(/Repeated/g)).toHaveLength(2);expect(core.saveDocument).not.toHaveBeenCalled();
   });
   it('navigates breaks in an assembled chapter by exact position', async () => {
     const {core, files} = bridge(); files.set('one.md', 'Opening.\n---\nRepeated line.\n---\nRepeated line.');

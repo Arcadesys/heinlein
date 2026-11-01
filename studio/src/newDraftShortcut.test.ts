@@ -3,6 +3,7 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {EditorView} from '@codemirror/view';
 import {mountStudio} from './studio';
 import {syntheticDraftBridge} from '../tests/standaloneBridge';
+import {syntheticProjects} from '../tests/projectBridge';
 let app:ReturnType<typeof mountStudio>|undefined;
 beforeEach(()=>{localStorage.clear();document.body.replaceChildren();Range.prototype.getClientRects=()=>[] as unknown as DOMRectList;Range.prototype.getBoundingClientRect=()=>new DOMRect();});
 afterEach(()=>{app?.destroy();app=undefined;document.body.replaceChildren();});
@@ -38,7 +39,7 @@ describe('new Markdown draft shortcut',()=>{
     await setup();const button=document.querySelector('button[aria-keyshortcuts*="Meta+N"]')!;
     expect(button.getAttribute('aria-keyshortcuts')).toBe('Meta+N Control+N');
     document.dispatchEvent(new KeyboardEvent('keydown',{key:'/',metaKey:true,bubbles:true}));
-    expect(document.querySelector('.help-sheet')?.textContent).toContain('New Markdown draft');
+    expect(document.querySelector('.help-sheet')?.textContent).toContain('New scene in project / new standalone draft');
   });
 });
 
@@ -53,17 +54,17 @@ async function project(fail=false){
   return {bridge,save,text:view().state.doc.toString()};
 }
 function pressButton(label:string){[...document.querySelectorAll('button')].find(b=>b.textContent===label)!.click();}
-describe('new draft preserves project departure authority',()=>{
+describe('explicit New draft preserves project departure authority',()=>{
   it('cancel keeps current unsaved project text',async()=>{
-    const x=await project();shortcut();await settle();pressButton('Keep editing');await settle();
+    const x=await project();pressButton('New draft');await settle();pressButton('Keep editing');await settle();
     expect(view().state.doc.toString()).toBe(x.text);expect(document.querySelector('.standalone-page')).toBeNull();expect(x.save).not.toHaveBeenCalled();
   });
   it('explicit Save and continue keeps project text before blank draft',async()=>{
-    const x=await project();shortcut();await settle();pressButton('Save and continue');await settle();
+    const x=await project();pressButton('New draft');await settle();pressButton('Save and continue');await settle();
     expect(x.save).toHaveBeenCalledWith('project','scene.md','synthetic',x.text);expect(document.querySelector('.standalone-page')).not.toBeNull();expect(view().state.doc.toString()).toBe('');expect(document.activeElement).toBe(content());expect(x.bridge.externalCalls).toEqual([]);
   });
   it('failed project save keeps its visible writing and prevents switching',async()=>{
-    const x=await project(true);shortcut();await settle();pressButton('Save and continue');await settle();
+    const x=await project(true);pressButton('New draft');await settle();pressButton('Save and continue');await settle();
     expect(view().state.doc.toString()).toBe(x.text);expect(document.querySelector('.standalone-page')).toBeNull();expect(x.save).toHaveBeenCalledOnce();expect(x.bridge.records.size).toBe(0);
   });
 });
@@ -104,5 +105,38 @@ describe('deferred Appearance close focus ownership',()=>{
   it('restores ordinary close focus but never overrides a purposeful outside control',async()=>{
     await setup();const dialog=await open();dialog.close();deliver(dialog);expect(document.activeElement).toBe(document.querySelector('button.appearance'));
     await open();dialog.close();const outside=document.createElement('input');document.body.append(outside);outside.focus();deliver(dialog);expect(document.activeElement).toBe(outside);
+  });
+});
+
+
+describe('contextual project New refuses stale asynchronous work', () => {
+  async function initializedProject() {
+    const fixture = syntheticProjects(); fixture.seedMovement();
+    const root = document.createElement('div'); document.body.append(root);
+    app = mountStudio(root, fixture.core); await settle();
+    await app.selectRepository(() => fixture.core.pickRepository());
+    await app.showDocument('ms/arrival.md'); await settle(); content().focus();
+    return fixture;
+  }
+  it('does not open Add scene from old state after a failed manuscript reload', async () => {
+    const fixture = await initializedProject();
+    fixture.core.loadDrafting = vi.fn(async () => { throw Error('Synthetic reload refused'); });
+    shortcut(); await settle();
+    expect(document.querySelector('.drafting-dialog')).toBeNull();
+    expect(view().state.doc.toString()).toContain('Arrival');
+    expect(document.body.textContent).toContain('Synthetic reload refused');
+    expect(fixture.draftingCalls).toEqual([]); expect(fixture.draft.calls.filter(c => c.kind === 'create')).toEqual([]);
+  });
+  it('coalesces repeated requests and drops a delayed response after document navigation', async () => {
+    const fixture = await initializedProject(); const load = fixture.core.loadDrafting!;
+    let finish!: () => void;
+    fixture.core.loadDrafting = vi.fn(id => new Promise<Awaited<ReturnType<typeof load>>>(resolve => { void load(id).then(state => { finish = () => resolve(state); }); }));
+    shortcut(); shortcut(); await settle();
+    expect(fixture.core.loadDrafting).toHaveBeenCalledOnce();
+    await app!.showDocument('ms/meeting.md'); await settle(); content().focus();
+    finish(); await settle();
+    expect(document.querySelector('.drafting-dialog')).toBeNull();
+    expect(view().state.doc.toString()).toContain('Meeting'); expect(document.activeElement).toBe(content());
+    expect(fixture.draftingCalls).toEqual([]); expect(fixture.draft.calls.filter(c => c.kind === 'create')).toEqual([]);
   });
 });
