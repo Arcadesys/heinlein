@@ -14,6 +14,26 @@ use std::{
 };
 use tauri::Manager;
 mod completion;
+pub(super) mod manual_contract;
+static MANUAL: std::sync::Mutex<manual_contract::Manual> = std::sync::Mutex::new(manual_contract::Manual { completed:0, active:None, failed:false, token:false, finished:false });
+fn manual() -> bool { super::standalone_native_acceptance::picker_manual() }
+pub(super) fn manual_finished() -> bool { let m=MANUAL.lock().unwrap(); m.finished && !m.failed && !super::standalone_native_acceptance::manual_session_failed() && failure().is_none() }
+pub(super) fn manual_token(token:&str) -> Result<(),String> { if manual() { MANUAL.lock().unwrap().retain_token(token)?; } Ok(()) }
+pub(super) fn manual_result(phase:usize, result:Option<&tauri_plugin_dialog::FilePath>) -> Result<(),String> {
+    let d=DECLARED.get().ok_or("Manual declaration missing")?;
+    let path=match result { None=>None, Some(tauri_plugin_dialog::FilePath::Path(path))=>Some(path.as_path()), _=>{ MANUAL.lock().unwrap().failed=true; return Err("Manual requires exact native local FilePath".into()); } };
+    MANUAL.lock().unwrap().returned(phase,path,&d.dir.join("draft.md"))?;
+    if !paths_valid(d) { MANUAL.lock().unwrap().failed=true; return Err("Manual owned directories changed".into()); }
+    Ok(())
+}
+pub(super) fn manual_finish(app:&tauri::AppHandle) -> Result<serde_json::Value,String> {
+    manual_contract::finish_guarded(&MANUAL,
+        || READBACKS.load(Ordering::SeqCst),
+        || super::standalone_native_acceptance::manual_session_failed() || failure().is_some(),
+        || { let value=verify_readback(app,"manual-final-exact-no-copy")?;
+             let exact=value["originalExact"]==true && value["publicationAbsent"]==true;
+             Ok((value,exact)) })
+}
 #[cfg(feature = "standalone-ok-diagnostic")]
 mod diagnostic;
 #[cfg(feature = "standalone-ok-diagnostic")]
@@ -169,6 +189,12 @@ fn expected_picker(step: usize) -> bool {
     [1, 2, 4].contains(&step)
 }
 fn arm(picker: bool) -> Result<PathBuf, String> {
+    if manual() {
+        let d=DECLARED.get().ok_or("Manual declaration missing")?;
+        if !picker || !paths_valid(d) { return Err("Manual picker guard failed".into()); }
+        MANUAL.lock().unwrap().begin()?;
+        return Ok(d.dir.clone());
+    }
     if unsafe { pthread_main_np() } != 0 {
         return Err("Native picker arm must be off main".into());
     }
@@ -219,6 +245,11 @@ pub(super) fn validate_returned_picker_path(chosen: &std::path::Path) -> Result<
     let d = DECLARED
         .get()
         .ok_or("Verified native picker declaration required")?;
+    if manual() {
+        let m=MANUAL.lock().unwrap();
+        if m.failed || m.completed!=2 || chosen.as_os_str()!=d.dir.join("draft.md").as_os_str() || !paths_valid(d) { return Err("Manual exact path guard failed".into()); }
+        return Ok(());
+    }
     let phase = NEXT.load(Ordering::SeqCst);
     validate_exact_return(chosen, &d.dir.join("draft.md"), phase)?;
     // Only declared root metadata may be touched after the candidate passes lexical validation.
@@ -275,7 +306,7 @@ fn filename_option(fixture_picker: bool) -> Option<&'static str> {
     }
 }
 fn filename_input_mode(mode: &str) -> bool {
-    matches!(mode, "picker" | "picker-preview-only" | "picker-d1")
+    matches!(mode, "picker" | "picker-preview-only" | "picker-d1" | "picker-manual-preview")
 }
 pub(super) fn suggested_filename() -> Option<&'static str> {
     filename_option(filename_input_mode(
@@ -305,6 +336,7 @@ pub(super) fn abort_action_waiters() {
     record_failure(6);
 }
 pub(super) fn expected_action_phase() -> Result<usize, String> {
+    if manual() { return MANUAL.lock().unwrap().active.ok_or("Manual phase not armed".into()); }
     let phase = NEXT.load(Ordering::SeqCst);
     if failure().is_some() || phase == 0 || ACTIVE.load(Ordering::SeqCst) != phase {
         return Err("Native dialog phase unavailable before presentation".into());
@@ -358,6 +390,7 @@ pub(super) fn failure() -> Option<&'static str> {
     }
 }
 pub(super) fn summary() -> serde_json::Value {
+    if manual() { let m=MANUAL.lock().unwrap();return serde_json::json!({"manual":true,"completedManualResults":m.completed,"activePhase":m.active,"failure":m.failed,"tokenRetained":m.token,"finishRequested":m.finished,"readbackMask":READBACKS.load(Ordering::SeqCst),"automatedActions":ACTIONS.count(),"alertCalls":ALERT_CALLS.load(Ordering::SeqCst),"defaultSuggestedFilenameInitialization":false,"physicalKeyboard":false,"VoiceOver":false}); }
     serde_json::json!({"armed":NEXT.load(Ordering::SeqCst),"completedPublicActions":ACTIONS.count(),"failure":FAILURE.load(Ordering::SeqCst),"readbackMask":READBACKS.load(Ordering::SeqCst),"pickerOnly":super::standalone_native_acceptance::picker_preview_only(),"placementConfirmation":!super::standalone_native_acceptance::picker_preview_only(),"alertCalls":ALERT_CALLS.load(Ordering::SeqCst),"syntheticNameInputMask":NAME_INPUTS.load(Ordering::SeqCst),"defaultSuggestedFilenameInitialization":false,"physicalKeyboard":false,"VoiceOver":false,"allUIInProcess":false})
 }
 pub(super) fn install(window: &tauri::WebviewWindow, root: PathBuf) -> Result<(), String> {
@@ -382,6 +415,7 @@ pub(super) fn install(window: &tauri::WebviewWindow, root: PathBuf) -> Result<()
         dir,
         started: Instant::now(),
     };
+    if manual() { DECLARED.set(d).map_err(|_| "Manual declaration already installed")?; stage("manual-declaration-no-panel-timer-or-observer",0); return Ok(()); }
     let parent = window
         .ns_window()
         .map_err(|_| "Owned native parent missing")?;
@@ -825,6 +859,7 @@ const CONTENT: &str =
 const HASH: &str = "115d534fa5575cf7820a1c44c84824eb41871d514293561082f487cfcbe5a276";
 static READBACKS: AtomicUsize = AtomicUsize::new(0);
 pub(super) fn passed(phase: &str) -> bool {
+    if phase==manual_contract::MODE { return manual_finished() && READBACKS.load(Ordering::SeqCst)==14 && ALERT_CALLS.load(Ordering::SeqCst)==0 && ACTIONS.count()==0 && NEXT.load(Ordering::SeqCst)==0 && ACTIVE.load(Ordering::SeqCst)==0 && NAME_INPUTS.load(Ordering::SeqCst)==0; }
     FAILURE.load(Ordering::SeqCst) == 0
         && ACTIVE.load(Ordering::SeqCst) == 0
         && if matches!(phase, "picker-preview-only" | "picker-d1") {
@@ -857,8 +892,9 @@ pub(super) fn verify_readback(
     {
         return Err("Picker readback isolation failed".into());
     }
-    let actions = ACTIONS.count();
+    let actions = if manual() { let m=MANUAL.lock().unwrap(); if m.failed || m.active.is_some() { return Err("Manual response incomplete".into()); } m.completed } else { ACTIONS.count() };
     let (bit, placed) = match (phase, actions) {
+        ("manual-final-exact-no-copy", 2) if manual() => (3,false),
         ("picker-cancel-real-null", 1) => (1, false),
         ("picker-preview-real-token", 2) => (2, false),
         ("picker-place-cancel-real-null", 3) => (3, false),
@@ -889,6 +925,7 @@ pub(super) fn verify_readback(
         || draft.text != CONTENT
         || draft.text_hash != HASH
         || draft.state != "active"
+        || (manual() && draft.revision != 1)
         || !store
             .pending(id)
             .map_err(|_| "Synthetic intents unavailable")?

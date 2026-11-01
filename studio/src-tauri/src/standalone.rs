@@ -509,7 +509,11 @@ fn execute(
             #[cfg(target_os = "macos")]
             let _keep_owner_through_completion = &parent;
             #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
-            super::standalone_picker_acceptance::wait_action_returned(action_phase)?;
+            if super::standalone_native_acceptance::picker_manual() {
+                super::standalone_picker_acceptance::manual_result(action_phase, picked.as_ref())?;
+            } else {
+                super::standalone_picker_acceptance::wait_action_returned(action_phase)?;
+            }
             let Some(picked) = picked else {
                 return Ok(Value::Null);
             };
@@ -590,6 +594,8 @@ fn execute(
                     target,
                 },
             );
+            #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
+            super::standalone_picker_acceptance::manual_token(preview["token"].as_str().unwrap_or(""))?;
             Ok(preview)
         }
         Request::Place { token } => {
