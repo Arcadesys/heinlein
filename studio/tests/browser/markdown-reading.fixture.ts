@@ -1,6 +1,8 @@
 // Synthetic full-Studio host only; never imported by production. Invented text and a simulated backend:
 // no files, provider, native dialogs or credentials. Everything routes through the production panel and reader.
 import { mountStudio } from '../../src/studio';
+import {EditorView} from '@codemirror/view';
+import {applyAppearance, DEFAULT_APPEARANCE} from '../../src/appearance';
 import type { LocalCore, Manuscript, ProposalOutcome, ProposalReceipt, RecoveryDraft, ReviewResult } from '../../src/localCore';
 import '../../src/fonts.bundle';
 import '../../src/style.css';
@@ -93,7 +95,7 @@ if (params.has('sceneNavigation')) Object.assign(core, {
   previewDraftingChange: unavailable, applyDraftingChange: unavailable, undoDraftingChange: unavailable,
 });
 const app = mountStudio(document.querySelector<HTMLElement>('#app')!, core);
-Object.assign(window, { readingFixture: { calls, get docs() { return stored.docs; }, baseline, get record() { return stored.record; } } });
+Object.assign(window, { readingFixture: { app, view: () => EditorView.findFromDOM(document.querySelector('.active-document-pane .cm-editor') as HTMLElement)!, theme: () => applyAppearance({...DEFAULT_APPEARANCE, theme: 'contrast'}), calls, get docs() { return stored.docs; }, baseline, get record() { return stored.record; } } });
 function mountGuide() {
   const style = document.createElement('style');
   style.textContent = '.fixture-demo{padding:.75rem .9rem;border:3px dashed var(--fg);border-radius:8px}.fixture-demo>*+*{margin-top:.5rem}.fixture-demo pre{white-space:pre-wrap}.fixture-confirm{width:min(36rem,calc(100vw - 1rem));max-width:100vw;max-height:100vh;padding:1rem;color:var(--fg);background:var(--surface);border:3px solid var(--fg);font-size:1.0625rem}.fixture-confirm>*+*{margin-top:.5rem}.fixture-confirm h2{font-size:1.3rem;font-weight:700}.fixture-confirm button{display:block;width:100%;min-height:48px;margin-top:.75rem;border:2px solid var(--fg);white-space:normal}.fixture-confirm::backdrop{background:#000b}';
