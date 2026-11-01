@@ -41,7 +41,7 @@ function demoRecord(): ReviewResult {
         suggest('example-dismiss', 'Nobody looked up.', 'Nobody looked up.', 'Nobody bothered to look up.', 'Example 2 · Dismiss. This softens a short closing sentence that may be deliberate. Your call.', null),
         suggest('example-overlap-spelling', 'long grey sheets', 'grey', 'gray', 'Example 3 · Overlap, alternative A. Changes one word to the US spelling.', 'overlap'),
         suggest('example-overlap-image', 'long grey sheets', 'long grey sheets', 'slanting sheets', 'Example 3 · Overlap, alternative B. Rewrites the whole phrase, including the same word.', 'overlap'),
-        ...(markers ? [suggest('marker-delete', 'wrong again,', ' again', '', 'Marker check. A removal is marked with a line through.', null), suggest('marker-insert', ' came in late', '', ' quietly', 'Marker check. An insertion is marked with a small bar.', null)] : []),
+        ...(markers ? [suggest('marker-delete', 'wrong again,', ' again', '', 'Marker check. A removal is marked with a line through.', null), suggest('marker-insert', ' came in late', '', ' quietly', 'Marker check. An insertion is marked with a small bar.', null), suggest('marker-comma', ', and the harbor', ',', ';', 'Marker check. This punctuation change starts where the removal ends.', null), suggest('marker-wolf', '🐺 came', '🐺', '🦊', 'Marker check. The insertion starts where this change ends.', null)] : []),
     ] };
 }
 // Stands in for the native macOS confirmation so the demo stays readable at large text in any browser panel.

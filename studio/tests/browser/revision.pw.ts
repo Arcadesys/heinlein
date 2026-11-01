@@ -260,7 +260,7 @@ test('demo marks: insertion and removal markers are visible, click through and d
     await page.evaluate(() => localStorage.clear());
     await page.goto(url);
     const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
-    await expect(panel.locator('.review-edit')).toHaveCount(6);
+    await expect(panel.locator('.review-edit')).toHaveCount(8);
     await expect(mark(page, 'marker-delete')).toHaveText(' again');
     const point = page.locator('.cm-review-point');
     await expect(point).toHaveCount(1);
@@ -281,7 +281,7 @@ test('demo marks: an approved insertion keeps the other marks on their exact wor
     await page.evaluate(() => localStorage.clear());
     await page.goto(url);
     const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
-    await expect(page.locator('.cm-content [data-review-id]')).toHaveCount(6);
+    await expect(page.locator('.cm-content [data-review-id]')).toHaveCount(8);
     await activate(panel.locator('[data-finding-id="marker-insert"]').getByRole('button', approve));
     await activate(page.getByRole('dialog', { name: 'Simulated final confirmation' }).getByRole('button', { name: 'Confirm and apply', exact: true }));
     await expect(mark(page, 'marker-insert')).toHaveCount(0);
@@ -290,8 +290,30 @@ test('demo marks: an approved insertion keeps the other marks on their exact wor
     await expect(mark(page, 'example-dismiss')).toHaveText('Nobody looked up.');
     expect(await source(page)).toContain('The ferry 🐺 quietly came in late — it always did.\r\n');
     await panel.getByRole('button', { name: 'Refresh review', exact: true }).click();
-    await expect(panel.locator('.review-mark-status')).toContainText('5 of 5 waiting suggestions are marked');
+    await expect(panel.locator('.review-mark-status')).toContainText('7 of 7 waiting suggestions are marked');
     await expect(mark(page, 'example-approve')).toHaveText('were');
+});
+test('demo marks: Next then Open reaches the exact card at shared boundaries, and text stays unchanged', async ({ page }) => {
+    const url = `${demo}&markers=1`;
+    await page.goto(url);
+    await page.evaluate(() => localStorage.clear());
+    await page.goto(url);
+    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
+    await expect(page.locator('.cm-content [data-review-id]')).toHaveCount(8);
+    const baseline = await source(page);
+    const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+    // Marks in text order: wolf, then the insertion at its end, then were, then the removal with the comma right after it.
+    for (const id of ['marker-wolf', 'marker-insert', 'example-approve', 'marker-delete', 'marker-comma']) {
+        await panel.getByRole('button', { name: 'Return to writing', exact: true }).click();
+        await expect(page.locator('.cm-content')).toBeFocused();
+        await page.keyboard.press(`${modifier}+Alt+]`);
+        await page.keyboard.press(`${modifier}+Alt+o`);
+        await expect(panel.locator(`[data-finding-id="${id}"] h4`)).toBeFocused();
+        await expect(panel.locator(`[data-finding-id="${id}"]`)).toHaveClass(/review-opened/);
+        await expect(panel.locator('.review-opened')).toHaveCount(1);
+    }
+    expect(await source(page)).toBe(baseline);
+    expect(await page.evaluate(() => (window as any).reviewFixture.calls.filter((c: any) => c.action !== 'preview'))).toEqual([]);
 });
 test('demo marks: closing the review removes every mark and they never changed the layout or text', async ({ page }) => {
     const panel = await openDemo(page);
