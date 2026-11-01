@@ -965,7 +965,7 @@ dialog { color: var(--fg); }
 .drafting-split-dialog .drafting-warning { padding:.35rem; }
 
 /* Writing workspace: chrome owns its space once; panes own their scrolling. */
-.studio:not(.standalone-writing):has(.document-workspace) { display:grid; grid-template-rows:auto 4rem minmax(0,1fr); height:100dvh; overflow:hidden; }
+.studio:not(.standalone-writing):has(.document-workspace) { display:grid; grid-template-rows:auto max(36px,2rem) minmax(0,1fr); height:100dvh; overflow:hidden; }
 .studio:not(.standalone-writing):has(.document-workspace) > .status-pill { grid-row:1; position:relative; inset:auto; transform:none; width:100%; max-width:none; margin:0; padding:4px 8px; border-radius:0; flex-wrap:wrap; gap:4px; align-self:stretch; justify-content:space-between; }
 .studio:not(.standalone-writing):has(.document-workspace) > .status-pill > button { min-block-size:48px; font-size:1rem; padding:4px 12px; }
 .studio .action-storage { display:none !important; }
@@ -978,11 +978,11 @@ dialog { color: var(--fg); }
 .studio:not(.standalone-writing):has(.document-workspace) .navigator button { min-block-size:48px; }
 .studio:not(.standalone-writing):has(.document-workspace) .preview { grid-column:2; position:relative; inset:auto; min-block-size:0; min-inline-size:0; overflow:hidden; padding:0; scroll-padding:0; }
 .studio:not(.standalone-writing):has(.document-workspace) .document-workspace { height:100%; min-block-size:0; display:flex; flex-direction:column; padding:0; }
-.document-workspace .document-tabs { flex:none; display:flex; flex-wrap:wrap; gap:4px; padding:4px; min-inline-size:0; container-type:normal; }
-.document-workspace .document-tab-area { display:block; flex:1 1 100%; max-block-size:none; min-inline-size:0; overflow-x:auto; overflow-y:hidden; padding:3px; }
+.document-workspace .document-tabs { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:4px; min-inline-size:0; container-type:normal; }
+.document-workspace .document-tab-area { display:block; flex:1 1 10ch; max-block-size:none; min-inline-size:0; overflow-x:auto; overflow-y:hidden; padding:3px; }
 .document-workspace .document-tabs [role=tablist] { display:flex; flex-wrap:nowrap; gap:6px; width:max-content; max-width:none; }
 .document-workspace .document-tabs [role=tab] { display:block; width:auto; flex:none; white-space:nowrap; min-block-size:48px; font-size:1rem; padding:4px 12px; }
-.document-tab-actions { display:flex; flex-wrap:wrap; gap:4px; }
+.document-tab-actions { display:flex; flex:0 0 auto; flex-wrap:wrap; gap:4px; max-inline-size:100%; }
 .document-workspace .document-tab-actions button { min-block-size:48px; font-size:1rem; padding:4px 12px; }
 .document-workspace .document-reading-panes { flex:1; min-block-size:0; display:grid; grid-template-rows:minmax(0,1fr); align-items:stretch; overflow:hidden; }
 .document-workspace .active-document-pane,.document-workspace .reference-pane { height:100%; min-block-size:0; max-block-size:none !important; overflow:auto; scroll-padding:4px; padding:8px; }
@@ -1045,10 +1045,18 @@ dialog { color: var(--fg); }
 .notice-slot > .pill-save { padding:4px 8px; color:var(--fg); font-size:1rem; font-weight:600; align-self:center; overflow-wrap:normal; }
 .notice-slot .pill-dot { display:none; }
 .notice-slot > .status { position:relative; inset:auto; transform:none; width:100%; max-width:none; height:100%; margin:0; padding:4px 8px; overflow:auto; border-radius:0; text-align:start; font-size:1rem; }
-.studio:not(.standalone-writing):has(.document-workspace) > .notice-slot { grid-row:2; position:relative; inset:auto; transform:none; width:100%; max-width:none; height:4rem; }
+.studio:not(.standalone-writing):has(.document-workspace) > .notice-slot { grid-row:2; position:relative; inset:auto; transform:none; width:100%; max-width:none; height:100%; }
 .standalone-writing > .notice-slot { display:contents; }
 .standalone-writing > .notice-slot > .status { position:relative; inset:auto; transform:none; width:auto; max-width:calc(100% - 1rem); margin:.5rem; height:4rem; }
 .standalone-writing > .status-pill > .navigation-toggle { display:none; }
 @media(max-width:480px) { .notice-slot { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); gap:0; } .notice-slot > .pill-save { padding-block:0; } }
 /* The live save model remains visible even where legacy compact chrome hid it. */
 .studio .notice-slot > .pill-save,.studio.standalone-writing > .status-pill > .pill-save { display:inline-flex; }
+
+/* Keep routine save notices stable without reserving a paragraph of empty chrome.
+   Long messages scroll inside the same row, so autosave cannot move the caret. */
+.studio:not(.standalone-writing):has(.document-workspace) > .notice-slot { grid-template-columns:8ch minmax(0,1fr); grid-template-rows:minmax(0,1fr); gap:4px; }
+.studio:not(.standalone-writing):has(.document-workspace) > .notice-slot > .pill-save { padding-block:0; line-height:1.5; }
+.source-project-info { margin-block-end:.4rem; }
+.source-project-info > summary { min-block-size:48px; padding:.25rem 0; display:list-item; cursor:pointer; }
+.source-project-info[open] > :not(summary) { margin-block:.4rem; }
