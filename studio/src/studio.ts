@@ -586,6 +586,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   const updates=createUpdatePanel(core,{quit:quitSafely});
   const updateEntry=button('Updates…',()=>{void updates.open();},'update-entry');updateEntry.setAttribute('aria-haspopup','dialog');
+  const openGitHubEntry = button('Open GitHub project…', () => {void github.open(true);}, 'github-open-entry');
+  openGitHubEntry.setAttribute('aria-haspopup', 'dialog');
   const githubEntry = button('GitHub actions…', () => {void github.open();}, 'github-entry');
   githubEntry.setAttribute('aria-haspopup', 'dialog');
   const github = createGitHubPanel(core, {
@@ -603,7 +605,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       else {resetPreview(); await showDirectory('');}
     },
   });
-  corner.prepend(firstStoryEntry, githubEntry, updateEntry);
+  corner.prepend(openGitHubEntry, firstStoryEntry, githubEntry, updateEntry);
   const draftingEntry = button('ms drafting', () => { void openDrafting(); }, 'drafting-entry');
   draftingEntry.hidden = true;
   const outline = el('div');
