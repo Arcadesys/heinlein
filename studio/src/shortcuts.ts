@@ -7,6 +7,9 @@ export const SHORTCUT_GROUPS: {name: string; items: {label: string; keys: string
   {name: 'Write', items: [
     {label: 'New scene in project / new standalone draft', keys: '⌘N'}, {label: 'Save now', keys: '⌘S'}, {label: 'Split scene at cursor', keys: '⌘⇧↵'}, {label: 'Undo / redo', keys: '⌘Z  ⌘⇧Z'}, {label: 'Find in scene', keys: '⌘F'}, {label: 'Find in manuscript', keys: '⌘⇧F'},
   ]},
+  {name: 'Review', items: [
+    {label: 'Next / previous marked suggestion', keys: '⌘⌥] ⌘⌥['}, {label: 'Open marked suggestion at cursor', keys: '⌘⌥O'},
+  ]},
   {name: 'Ask', items: [
     {label: 'Ask Heinlein about selection', keys: '⌘J'}, {label: 'Capture selection into Questions', keys: '⌘⌥↵'}, {label: 'Close Questions', keys: 'esc'},
   ]},

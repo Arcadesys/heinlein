@@ -2,6 +2,7 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {EditorView} from '@codemirror/view';
 import {mountStudio} from './studio';
+import {reviewMarksIn} from './reviewMarks';
 import type {LocalCore, Manuscript, ReviewRequest, ReviewResult, ProposalReview, ProposalBinding, ProposalOutcome} from './localCore';
 const cryptoModule = 'node:crypto';
 const {webcrypto} = await import(cryptoModule) as {webcrypto: Crypto};
@@ -92,6 +93,64 @@ describe('Studio Heinlein Review integration', () => {
     }
     expect(disk).toContain('paragraph'); expect(disk).toContain('Final line'); expect(native.saveDocument).not.toHaveBeenCalled();
     expect(panel().querySelectorAll('button[data-edit-action="accept"]')).toHaveLength(0);
+  });
+
+  describe('inline suggestion marks', () => {
+    const at = (text: string, word: string) => new TextEncoder().encode(text.slice(0, text.indexOf(word))).length;
+    const edit = (path: string, word: string): ReviewResult['edits'][number] => ({id: `${path}-${word}`, path, fromUtf8: at(original, word), toUtf8: at(original, word) + new TextEncoder().encode(word).length, original: word, replacement: 'new', reason: 'Synthetic', role: 'editor', status: 'pending', proposalId: null});
+    const run = async (core: ReturnType<typeof bridge>, edits: ReviewResult['edits']) => {core.requestReview.mockImplementation(async request => ({...result(request), edits})); await open(); button('Run Heinlein Review').click(); await vi.waitFor(() => expect(panel().querySelectorAll('.review-edit').length).toBe(edits.length));};
+    const words = () => reviewMarksIn(view().state).map(mark => view().state.sliceDoc(mark.from, mark.to));
+    it('marks a source file only for its own path and exact text', async () => {
+      const core = bridge(); await start(core);
+      await run(core, [edit('scene.md', 'passage')]);
+      expect(words()).toEqual(['passage']);
+      expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n'));
+      expect(core.saveDocument).not.toHaveBeenCalled();
+    });
+    it('maps an assembled chapter part to its own body, keeping the right scene and skipping frontmatter', async () => {
+      const core = bridge(); await start(core); await app!.showDocument('chapter.md');
+      await run(core, [edit('other.md', 'passage'), edit('scene.md', 'Exact')]);
+      const marks = reviewMarksIn(view().state);
+      expect(marks.map(mark => mark.id)).toEqual(['other.md-passage']);
+      const body = 'A 🐺 passage.\nLast line';
+      expect(view().state.doc.toString()).toBe(`${body}\n\n${body}`);
+      expect(marks[0].from).toBe(body.length + 2 + body.indexOf('passage'));
+    });
+    it('clears on a typed edit and does not return until a refreshed review proves the match', async () => {
+      const core = bridge(); await start(core);
+      await run(core, [edit('scene.md', 'passage')]);
+      view().dispatch({changes: {from: 0, insert: 'x'}});
+      expect(reviewMarksIn(view().state)).toEqual([]);
+      expect(panel().textContent).toContain('Highlights are off because the open text changed');
+    });
+    it('marks nothing over unsaved text at review time', async () => {
+      const core = bridge(); await start(core);
+      view().dispatch({changes: {from: view().state.doc.length, insert: '!'}});
+      await run(core, [edit('scene.md', 'passage')]);
+      expect(reviewMarksIn(view().state)).toEqual([]);
+    });
+    it('clears when the review closes, and a new document starts without marks', async () => {
+      const core = bridge(); await start(core);
+      await run(core, [edit('scene.md', 'passage')]);
+      button('Close review').click();
+      expect(reviewMarksIn(view().state)).toEqual([]);
+      await open(); button('Run Heinlein Review').click(); await vi.waitFor(() => expect(reviewMarksIn(view().state)).toHaveLength(1));
+      await app!.showDocument('other.md');
+      expect(reviewMarksIn(view().state)).toEqual([]);
+      expect(panel().hidden).toBe(true);
+    });
+    it('clears when the repository changes, without touching the document', async () => {
+      const core = bridge(); await start(core);
+      await run(core, [edit('scene.md', 'passage')]);
+      const text = view().state.doc.toString();
+      core.readDocument.mockImplementation(async () => { throw new Error('Synthetic read failure'); });
+      await app!.selectRepository(async () => ({...session, id: 'another-repository'})).catch(() => {});
+      expect(panel().hidden).toBe(true);
+      const remaining = document.querySelector('.cm-editor');
+      if (remaining) expect(reviewMarksIn(view().state)).toEqual([]);
+      expect(text).toContain('passage');
+      expect(core.saveDocument).not.toHaveBeenCalled();
+    });
   });
 
 });

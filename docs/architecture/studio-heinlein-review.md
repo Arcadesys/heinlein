@@ -17,19 +17,29 @@ gate, and no reviewer can save, publish, expand context or choose another accoun
    explicitly selected ChatGPT account/model. **Continue next reviewer batch**
    authorizes another bounded batch on the same captured scope and definition
    snapshots. There is no aggregator model, automatic retry or account fallback.
-4. Each pending card shows its file, original UTF-8 byte range, full before/after
-   diff, comments and reviewer provenance. Captured line/column is derived from the
-   immutable baseline (one-based Unicode characters); byte ranges remain authority. **Approve…** prepares this exact patch
+4. Each pending card shows its file, current and proposed text in byte-verified
+   context, comments and reviewer; exact UTF-8 byte range, patch and full provenance
+   are under **Exact patch details**. Captured line/column is derived from the
+   immutable baseline (one-based Unicode characters); byte ranges remain authority. **Approve this change…** prepares this exact patch
    and opens the ONE existing native final confirmation. There is no manual copy
    or separate comparison step. Save matching text and resolve recovery first.
 5. Overlapping/dependent suggestions have no default winner. Choosing an
    alternative does not apply it. Final approval names the chosen finding and
    all competing alternatives to dismiss; changed membership invalidates it.
    Competitors become `supersededByAuthorChoice`, with audit retained.
-6. **Reject edit** durably records rejection before the card disappears. Reload
+6. **Reject this change** durably records rejection before the card disappears. Reload
    saved reviews after navigation or restart without running reviewers again.
    Versioned JSON/history retains accepted, rejected, superseded and blocked
    findings. Exact rejected fingerprints stay dismissed in regenerated results.
+7. Waiting suggestions are marked inline in the open source file or mapped assembled
+   chapter as CodeMirror decorations; they change no text. Clicking one, or
+   Cmd/Ctrl+Alt+] and [ then Cmd/Ctrl+Alt+O, only opens its card; competing
+   alternatives open as a group with nothing chosen. A mark needs the same repository
+   and path, clean text, no `sourceStale`, and exact `original` bytes at the range,
+   plus the baseline hash. After approvals, the open text with accepted patches
+   reversed on a copy must hash to that baseline, so a change anywhere else in the
+   file removes the marks. Any edit clears them until **Refresh review**; text is
+   never searched and ranges are never mapped forward.
 
 ## Definitions, bounds and truthful coverage
 

@@ -37,7 +37,7 @@ it('waits for durable rejection before hiding, keeps errors visible, then reopen
     resolve(structuredClone(f.record()));
     await tick();
     expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(2);
-    expect(document.activeElement?.tagName).toBe('BUTTON');
+    expect(document.activeElement).toBe(panel!.element.querySelector('[data-finding-id="alternative"] input[type=radio]'));
     await f.click('Close review');
     panel!.open();
     await vi.waitFor(() => expect(f.button('Reopen saved review review-stable')).toBeTruthy());
