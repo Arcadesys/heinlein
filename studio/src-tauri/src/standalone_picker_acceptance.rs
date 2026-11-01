@@ -15,8 +15,16 @@ use std::{
 use tauri::Manager;
 mod completion;
 pub(super) mod manual_contract;
-static MANUAL: std::sync::Mutex<manual_contract::Manual> = std::sync::Mutex::new(manual_contract::Manual { completed:0, active:None, failed:false, token:false, finished:false });
+static MANUAL: std::sync::Mutex<manual_contract::Manual> = std::sync::Mutex::new(manual_contract::Manual { observation_nonce:None, completed:0, active:None, failed:false, token:false, finished:false });
 fn manual() -> bool { super::standalone_native_acceptance::picker_manual() }
+pub(super) fn manual_observe(line:&str, acknowledge:impl FnOnce(&str)) -> Result<(),String> {
+    let mut m=MANUAL.lock().unwrap();
+    if super::standalone_native_acceptance::manual_session_failed() || failure().is_some() { m.failed=true; return Err("Failed manual session".into()); }
+    let nonce=m.observe(line)?;
+    acknowledge(&nonce); // ACK is emitted under the same mutex, before begin or seed replay can pass.
+    Ok(())
+}
+pub(super) fn manual_observed() -> bool { let m=MANUAL.lock().unwrap();m.observation_nonce.is_some() && !m.failed && !super::standalone_native_acceptance::manual_session_failed() }
 pub(super) fn manual_finished() -> bool { let m=MANUAL.lock().unwrap(); m.finished && !m.failed && !super::standalone_native_acceptance::manual_session_failed() && failure().is_none() }
 pub(super) fn manual_token(token:&str) -> Result<(),String> { if manual() { MANUAL.lock().unwrap().retain_token(token)?; } Ok(()) }
 pub(super) fn manual_result(phase:usize, result:Option<&tauri_plugin_dialog::FilePath>) -> Result<(),String> {

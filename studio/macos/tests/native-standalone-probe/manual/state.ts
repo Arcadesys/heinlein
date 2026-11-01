@@ -2,8 +2,10 @@ export const mode='picker-manual-preview';
 export class ManualState {
  phase:'starting'|'cancel'|'cancel-open'|'save'|'save-open'|'ready'|'finishing'|'incomplete'='starting';
  error='';
+ observed=false;
+ observationReady(){if(this.phase!=='incomplete')this.observed=true;}
  start(){if(this.phase!=='starting')return this.fail('Duplicate startup');this.phase='cancel';}
- open(){if(this.phase==='cancel')this.phase='cancel-open';else if(this.phase==='save')this.phase='save-open';else this.fail('Unexpected picker request');}
+ open(){if(!this.observed)return this.fail('Independent startup observation and Terminal readiness required');if(this.phase==='cancel')this.phase='cancel-open';else if(this.phase==='save')this.phase='save-open';else this.fail('Unexpected picker request');}
  result(value:unknown,validToken:(value:unknown)=>boolean){if(this.phase==='cancel-open'&&value===null)this.phase='save';else if(this.phase==='save-open'&&validToken(value))this.phase='ready';else this.fail('Unexpected picker result; stop as incomplete');}
  finish(){if(this.phase!=='ready')return this.fail('Verified preview required');this.phase='finishing';}
  fail(reason:string):never{this.error=reason;this.phase='incomplete';throw Error(reason);}

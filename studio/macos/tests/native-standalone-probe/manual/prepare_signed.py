@@ -317,7 +317,10 @@ background service or automatically opened Terminal. launch_future.py requires
 --authorize-native-launch and --operator-owned-terminal and a retained live FD.
 Its synced one-shot claim precedes any spawn; failure/double invocation cannot retry.
 An independent observe_future.py context must confirm this exact owned startup
-BEFORE human Open/Cancel/Save/Finish steps. No automated UI/human-step deadline.
+BEFORE human Open/Cancel/Save/Finish steps. Type its exact ready STARTUP_NONCE
+command once in the retained launch Terminal. Wait for native readiness; Open stays
+disabled until the mutex-protected native latch. A unique matching nonce ACK must
+precede picker readbacks in final evidence. No automated UI/human-step deadline.
 Only verify_future.py via the reviewed official guarded read_final_receipt can
 establish final receipt authority; JSON acceptance:true alone never does.
 

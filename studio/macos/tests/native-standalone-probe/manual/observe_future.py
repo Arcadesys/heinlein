@@ -40,6 +40,6 @@ def main():
     proof={k:startup[k] for k in ('pid','collectorPID','childStart','collectorStart','startupNonce','signedSha256','root')}
     proof.update(observerPID=os.getpid(),observerConfirmedLive=True,observedAt=time.time())
     reviewed=load_reviewed(p);reviewed.atomic_receipt(Path(p['control']['path'])/'startup-observed.json',proof)
-    print(json.dumps({'startupObserved':True,'acceptance':False,'humanStepsMayBeginOnlyUnderCurrentAuthorization':True}))
+    print(json.dumps({'startupObserved':True,'acceptance':False,'humanStepsMayBeginOnlyUnderCurrentAuthorization':False,'terminalReadinessCommand':'ready '+startup['startupNonce'],'next':'Type this one command in the retained launch Terminal; wait for native readiness before picker steps'}))
 
 if __name__=='__main__':main()

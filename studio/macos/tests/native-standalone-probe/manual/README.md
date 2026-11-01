@@ -12,6 +12,7 @@ A later authorized run must bind a unique disposable identity, fresh canonical o
 
 ## Human steps — after separate launch authorization
 
+0. Keep the launch Terminal input connected. In an independent context, run the pinned observer after the launch-context handoff. Its output supplies exactly `ready STARTUP_NONCE`. Type that one command in the retained launch Terminal. The collector validates the bound proof while the exact child is live, then sends one bounded owned-stdin readiness line. Native latches it once under the same manual mutex before any picker action and acknowledges the nonce. Open stays disabled until native readiness; Stop remains available. Missing, early, duplicate, wrong, late or failed readiness is incomplete, without a retry or human-step deadline.
 1. Read the exact synthetic folder/name cue. Choose **Step 1: Open picker**, then personally click **Cancel**. The genuine production rfd completion must return `None`.
 2. Choose **Step 2: Open picker**, use ONLY the displayed owned `copy-targets` folder, type exactly `draft.md`, then personally click **Save**. Save returns a retained production preview token. It never places a copy. The native `FilePath::Path` must match the exact lexical path before resolution or candidate metadata access. URLs, aliases, external paths, duplicates, reversed order and unexpected nulls fail closed. Filename suggestion is disabled only for this fixture; default filename initialization remains unproved.
 3. Read the verified status. Choose **Finish and close disposable test** only after the true token and exact original/no-copy readbacks. Native Finish first requires both earlier real readback bits and clear global/picker/manual failure latches before any final readback. It then rechecks those facts and failure latches before finish/guarded quit. Missing or delayed evidence cannot request quit. No close is initiated by a UI timer or by completion alone.
@@ -99,8 +100,11 @@ automatically opened Terminal. A user must own the Terminal input for the full r
   --independent-context-confirmed`: use a genuinely independent context after the
   launch-context handoff, before any human picker steps. It examines only this run's
   claimed child/collector PIDs, start identities and exact executable paths. It
-  records source-defined startup observation; a process session alone proves no
-  survival. Mismatch is incomplete; no scans, retries, signals or automatic UI.
+  records source-defined startup observation and prints the one Terminal readiness
+  command; a process session alone proves no survival. The observer does not unlock
+  Open itself. Type the command in the retained launch Terminal, then wait for native
+  readiness. Receipt protocol requires the unique matching nonce ACK before the first
+  native picker readback; late observation cannot authorize completed steps. Mismatch is incomplete; no scans, retries, signals or automatic UI.
 - `verify_future.py --preflight PREFLIGHT --preflight-sha256 INDEPENDENT_PIN`: calls
   the official guarded `driver.read_final_receipt` with expected run/binary/root and
   control identity from the independently pinned preparation, never the candidate.
@@ -108,7 +112,7 @@ automatically opened Terminal. A user must own the Terminal input for the full r
   `acceptance:true` alone never establishes authority.
 
 Human Cancel/Save-preview/Finish stay user-paced, with no human-step deadline or
-Place/automation. These helpers add no default/native fixture behavior. Mock/static
+Place/automation. The manual-only observation gate preserves default and nonmanual fixture behavior. Mock/static
 checks use `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s manual
 -p test_preparation.py -v`; they build/sign/launch nothing. Their success is neither
 native acceptance nor permission to run a generated helper.

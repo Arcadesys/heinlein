@@ -15,6 +15,8 @@ import future_support as support
 import prepare_signed as prep
 import observe_future as observer
 import verify_future as verifier
+import driver
+from test_driver import evidence
 
 HERE = Path(__file__).resolve().parent
 
@@ -169,6 +171,32 @@ class Controls(unittest.TestCase):
                         mock.patch.object(verifier, 'load_reviewed', return_value=reviewed), contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(verifier.main(), code)
                 reviewed.read_final_receipt.assert_called_once_with(p['control']['path'], p['binding'], p['control']['identity'])
+
+    def test_late_observation_after_picker_results_cannot_accept(self):
+        # SIMULATED genuine-shaped native evidence, both picker callbacks already complete.
+        # A later observer must not turn this sequence into acceptance without a prior native gate.
+        with tempfile.TemporaryDirectory() as folder:
+            control = Path(folder).resolve()
+            p = self.prepared(control)
+            record = {**p['binding'], 'pid': 123456, 'collectorPID': 123457,
+                      'childStart': 'SIMULATED-child-start', 'collectorStart': 'SIMULATED-collector-start',
+                      'startupNonce': 'SIMULATED-startup', 'startedAt': 10,
+                      'diagnostics': [v for v in evidence() if v.get('kind')=='native-picker-readback'][:2]}
+            proof = {key: record[key] for key in ('pid', 'collectorPID', 'childStart', 'collectorStart',
+                                                  'startupNonce', 'signedSha256', 'root')}
+            proof.update(observerPID=123458, observerConfirmedLive=True, observedAt=20)
+            path = control / 'startup-observed.json'
+            path.write_text(json.dumps(proof))
+            path.chmod(0o600)
+            with mock.patch.object(driver.time, 'time', return_value=30):
+                record['startupIdentityVerified'] = driver.startup_proof(path, record)
+            capture = driver.Capture()
+            capture.feed('stdout', b''.join(json.dumps(value).encode() + b'\n' for value in evidence() if value.get('kind')!='native-observation-ready'))
+            capture.finish('stdout')
+            capture.finish('stderr')
+            result = driver.finalize(control / 'receipt.json', record, capture, 0, True,
+                                     expected_binding=p['binding'])
+            self.assertFalse(result['acceptance'], 'Late observation accepted completed picker steps without prior native gate')
 
     def test_sanitized_environments_home_unchanged(self):
         parent = {'HOME': '/unchanged', 'PATH': '/usr/bin', 'OPENAI_API_KEY': 'not-copied',

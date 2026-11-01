@@ -17,6 +17,7 @@ pub fn diagnostic_allowed(stage: &str) -> bool {
 }
 #[derive(Default)]
 pub struct Manual {
+    pub observation_nonce: Option<String>,
     pub completed: usize,
     pub active: Option<usize>,
     pub failed: bool,
@@ -28,8 +29,20 @@ impl Manual {
         self.failed = true;
         Err("Manual callback order/path/token invalid; stop as incomplete".into())
     }
+    pub fn observe(&mut self, line: &str) -> Result<String, String> {
+        let Some(nonce) = line.strip_prefix("observation-ready ") else { return self.reject(); };
+        // Exact one bounded UUID line. This channel is owned by the proof-validating collector.
+        let valid = nonce.len() == 36 && nonce.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) { b == b'-' } else { b.is_ascii_digit() || (b'a'..=b'f').contains(&b) }
+        });
+        if !valid || self.failed || self.observation_nonce.is_some() || self.completed != 0 || self.active.is_some() || self.finished {
+            return self.reject();
+        }
+        self.observation_nonce = Some(nonce.to_owned());
+        Ok(nonce.to_owned())
+    }
     pub fn begin(&mut self) -> Result<usize, String> {
-        if self.failed || self.active.is_some() || self.completed >= 2 {
+        if self.failed || self.observation_nonce.is_none() || self.active.is_some() || self.completed >= 2 {
             return self.reject();
         }
         let phase = self.completed + 1;
@@ -113,11 +126,35 @@ pub fn finish_guarded<T>(
 mod tests {
     use super::*;
     const TARGET: &str = "/private/tmp/owned/copy-targets/draft.md";
-    fn ready() -> Manual {
+    const NONCE: &str = "11111111-2222-4333-8444-555555555555";
+    fn observed() -> Manual {
         let mut m = Manual::default();
+        m.observe(&format!("observation-ready {NONCE}")).unwrap();
+        m
+    }
+    fn ready() -> Manual {
+        let mut m = observed();
         let p = m.begin().unwrap();
         m.returned(p, None, Path::new(TARGET)).unwrap();
         m
+    }
+    #[test]
+    fn observation_required_once_before_any_picker_action() {
+        let mut m = Manual::default();
+        assert!(m.begin().is_err()); // Premature IPC latches failure, cannot recover later.
+        assert!(m.observe(&format!("observation-ready {NONCE}")).is_err());
+        let mut m = observed();
+        assert!(m.observe(&format!("observation-ready {NONCE}")).is_err());
+        let mut m = ready();
+        assert!(m.observe(&format!("observation-ready {NONCE}")).is_err());
+        for line in ["", "observation-ready bad", "abort", "observation-ready 11111111-2222-4333-8444-555555555555\nextra"] {
+            let mut m = Manual::default();
+            assert!(m.observe(line).is_err());
+            assert!(m.begin().is_err());
+        }
+        let mut m = observed();
+        assert_eq!(m.observation_nonce.as_deref(), Some(NONCE));
+        assert_eq!(m.begin().unwrap(), 1);
     }
     #[test]
     fn legacy_auto_quit_diagnostics_are_not_manual_authority() {
@@ -164,10 +201,10 @@ mod tests {
         let mut m = ready();
         let p = m.begin().unwrap();
         assert!(m.returned(p, None, Path::new(TARGET)).is_err());
-        let mut m = Manual::default();
+        let mut m = observed();
         m.begin().unwrap();
         assert!(m.begin().is_err());
-        let mut m = Manual::default();
+        let mut m = observed();
         m.begin().unwrap();
         assert!(m
             .returned(1, Some(Path::new(TARGET)), Path::new(TARGET))
