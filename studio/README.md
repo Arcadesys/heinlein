@@ -382,6 +382,18 @@ reopen/restart/regenerated duplicates. Saved review reload never runs providers.
 See [the review contract](../docs/architecture/studio-heinlein-review.md) for
 limits, lineage, source safety and synthetic versus native/live evidence.
 
+Markdown files and assembled chapters have an explicit **Source / Reading** control,
+defaulting to Source for the session. Reading formats the current text from the one
+writer, using the Markdown parser the editor already ships. Raw HTML stays literal,
+code never runs, images are not loaded, links do not navigate and unsafe link schemes
+are labelled. Waiting review suggestions stay clickable where their exact source text is
+visible; suggestions that change only markup get a **Formatting suggestion** button.
+Reading has no editing selection, so Ask, Split, Undo, Redo and Find need Source. It is
+bounded to 2 MiB, shows entities literally, and is not a full CommonMark renderer. Saved
+references have the same control, with no suggestions or writing authority. Reading is
+separate from AI answer rendering, whose links are active: manuscript text is the
+author's, so Reading keeps exact source positions and never navigates.
+
 ### Open a GitHub repository
 
 Use **Open from GitHub…** in Repository navigation (or **Choose a GitHub repository…** on the welcome page). Heinlein manages the working files on this Mac. Recent GitHub repositories reopen by their native registry identity, including offline; no local folder picker or clone path is required. **Local folders** and standalone **Drafts** remain separate.
