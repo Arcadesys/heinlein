@@ -98,6 +98,12 @@ pub enum DraftingChange {
         group_id: Option<String>,
         before_id: Option<String>,
     },
+    SplitFile {
+        source_path: String,
+        path: String,
+        expected_hash: String,
+        byte_offset: usize,
+    },
     SplitScene {
         scene_id: String,
         path: String,
@@ -593,8 +599,53 @@ fn validate_split_offset(text: &str, offset: usize) -> Result<()> {
 
 // Existing journals only create/delete Markdown. Permit replacement exclusively
 // for a lossless split (or its inverse), tied to the matching index transition.
+fn validate_split_payload(source: &Edit, target: &Edit, inverse: bool) -> Result<()> {
+    let invalid = || Error::UntrustedTransaction;
+    let (whole, prefix, absent, suffix) = if inverse {
+        (&source.after, &source.before, &target.after, &target.before)
+    } else {
+        (&source.before, &source.after, &target.before, &target.after)
+    };
+    let whole = whole.as_ref().ok_or_else(invalid)?;
+    let prefix = prefix.as_ref().ok_or_else(invalid)?;
+    let suffix = suffix.as_ref().ok_or_else(invalid)?;
+    if absent.is_some()
+        || whole.mode != prefix.mode
+        || suffix.mode != whole.mode
+        || whole.text.len() != prefix.text.len() + suffix.text.len()
+        || !whole.text.starts_with(&prefix.text)
+        || !whole.text.ends_with(&suffix.text)
+        || validate_split_offset(&whole.text, prefix.text.len()).is_err()
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
 fn validate_split_journal(journal: &Journal) -> Result<()> {
     let invalid = || Error::UntrustedTransaction;
+    if journal.edits.len() == 2 && journal.edits.iter().all(|e| e.path != MANIFEST) {
+        let source = journal
+            .edits
+            .iter()
+            .find(|e| e.before.is_some() && e.after.is_some())
+            .ok_or_else(invalid)?;
+        let target = journal
+            .edits
+            .iter()
+            .find(|e| e.path != source.path)
+            .ok_or_else(invalid)?;
+        if parent(&source.path) != parent(&target.path)
+            || source.path.to_lowercase() == target.path.to_lowercase()
+        {
+            return Err(invalid());
+        }
+        let inverse = match (&target.before, &target.after) {
+            (None, Some(_)) => false,
+            (Some(_), None) => true,
+            _ => return Err(invalid()),
+        };
+        return validate_split_payload(source, target, inverse);
+    }
     if journal.edits.len() != 3 {
         return Err(invalid());
     }
@@ -622,24 +673,7 @@ fn validate_split_journal(journal: &Journal) -> Result<()> {
         .iter()
         .find(|e| e.path != MANIFEST && e.path != source.path)
         .ok_or_else(invalid)?;
-    let (whole, prefix, absent, suffix) = if inverse {
-        (&source.after, &source.before, &target.after, &target.before)
-    } else {
-        (&source.before, &source.after, &target.before, &target.after)
-    };
-    let whole = whole.as_ref().ok_or_else(invalid)?;
-    let prefix = prefix.as_ref().ok_or_else(invalid)?;
-    let suffix = suffix.as_ref().ok_or_else(invalid)?;
-    if absent.is_some()
-        || whole.mode != prefix.mode
-        || suffix.mode != whole.mode
-        || whole.text.len() != prefix.text.len() + suffix.text.len()
-        || !whole.text.starts_with(&prefix.text)
-        || !whole.text.ends_with(&suffix.text)
-        || validate_split_offset(&whole.text, prefix.text.len()).is_err()
-    {
-        return Err(invalid());
-    }
+    validate_split_payload(source, target, inverse)?;
     let position = before
         .scenes
         .iter()
@@ -661,6 +695,20 @@ fn validate_split_journal(journal: &Journal) -> Result<()> {
         return Err(invalid());
     }
     Ok(())
+}
+fn file_split_registered(edits: &[Edit], manifest: Option<&Manifest>) -> bool {
+    edits.len() == 2
+        && edits.iter().all(|e| e.path != MANIFEST)
+        && edits
+            .iter()
+            .any(|e| e.before.is_some() && e.after.is_some())
+        && manifest.is_some_and(|m| {
+            m.scenes.iter().any(|scene| {
+                edits
+                    .iter()
+                    .any(|edit| edit.path.to_lowercase() == scene.path.to_lowercase())
+            })
+        })
 }
 fn validate_journal(journal: &Journal, repository_key: &str) -> Result<()> {
     if journal.schema_version != 1
@@ -862,6 +910,7 @@ impl Repository {
         if state.recovery_required {
             return Err(Error::DraftingPending);
         }
+        let file_only = matches!(change, DraftingChange::SplitFile { .. });
         let (existing, before_manifest) = self.drafting_manifest()?;
         let members = self.drafting_members()?;
         let mut manifest = existing.clone().unwrap_or(Manifest {
@@ -872,6 +921,7 @@ impl Repository {
             scenes: vec![],
         });
         if existing.is_none()
+            && !file_only
             && !matches!(
                 change,
                 DraftingChange::Initialize { .. } | DraftingChange::MigrateLegacy { .. }
@@ -888,6 +938,7 @@ impl Repository {
             return Err(Error::DraftingCollision);
         }
         if (!state.untracked_paths.is_empty() || !state.missing_paths.is_empty())
+            && !file_only
             && !matches!(
                 change,
                 DraftingChange::Reconcile {} | DraftingChange::Initialize { .. }
@@ -969,6 +1020,67 @@ impl Repository {
                     &before_id,
                 )?;
                 plan.preview.summary = "Create an empty Markdown scene".into();
+            }
+            DraftingChange::SplitFile {
+                source_path,
+                path,
+                expected_hash,
+                byte_offset,
+            } => {
+                validate_markdown(&source_path)?;
+                validate_markdown(&path)?;
+                if parent(&source_path) != parent(&path) {
+                    return Err(Error::InvalidPath);
+                }
+                // Membership is native authority. A file-only request cannot
+                // alter a registered scene or fill a registered missing path.
+                if manifest.scenes.iter().any(|scene| {
+                    scene.path.to_lowercase() == source_path.to_lowercase()
+                        || scene.path.to_lowercase() == path.to_lowercase()
+                }) {
+                    return Err(Error::ReadOnly);
+                }
+                self.allowed(&source_path, false)?;
+                self.check_write_manifests(&source_path)?;
+                self.refuse_legacy_scene_move(&source_path)?;
+                let before = self.snapshot(&source_path)?.ok_or(Error::NotFound)?;
+                if content_hash(&before.text) != expected_hash {
+                    return Err(Error::DraftingChanged);
+                }
+                if before.mode & 0o222 == 0 {
+                    return Err(Error::Denied);
+                }
+                validate_split_offset(&before.text, byte_offset)?;
+                self.add_markdown_file(
+                    &mut plan,
+                    &path,
+                    before.text[byte_offset..].to_owned(),
+                    None,
+                )?;
+                plan.edits
+                    .last_mut()
+                    .ok_or(Error::Io)?
+                    .after
+                    .as_mut()
+                    .ok_or(Error::Io)?
+                    .mode = before.mode;
+                plan.edits.push(Edit {
+                    path: source_path.clone(),
+                    before: Some(before.clone()),
+                    after: Some(Bytes {
+                        text: before.text[..byte_offset].to_owned(),
+                        mode: before.mode,
+                    }),
+                });
+                plan.recovery_paths.push(source_path.clone());
+                plan.preview.changes.push(DraftingChangeView {
+                    kind: "splitFile".into(),
+                    source: Some(source_path),
+                    destination: Some(path),
+                });
+                plan.preview.summary =
+                    "Split a Markdown file into its exact prefix and sibling suffix".into();
+                plan.preview.warnings.push("Manuscript metadata is unchanged. Frontmatter stays only in the original file. No headers, Markdown fences, links or newlines are repaired or duplicated.".into());
             }
             DraftingChange::SplitScene {
                 scene_id,
@@ -1431,20 +1543,22 @@ impl Repository {
             }
             DraftingChange::RecoverInterrupted {} => unreachable!(),
         }
-        let after = manifest_text(&manifest)?;
-        let before = self.snapshot(MANIFEST)?;
-        if before.as_ref().map(|b| &b.text) != Some(&after) {
-            let mode = before.as_ref().map_or(0o600, |b| b.mode);
-            plan.edits.push(Edit {
-                path: MANIFEST.into(),
-                before,
-                after: Some(Bytes { text: after, mode }),
-            });
-            plan.preview.changes.push(DraftingChangeView {
-                kind: "index".into(),
-                source: plan.before_manifest.as_ref().map(|_| MANIFEST.into()),
-                destination: Some(MANIFEST.into()),
-            });
+        if !file_only {
+            let after = manifest_text(&manifest)?;
+            let before = self.snapshot(MANIFEST)?;
+            if before.as_ref().map(|b| &b.text) != Some(&after) {
+                let mode = before.as_ref().map_or(0o600, |b| b.mode);
+                plan.edits.push(Edit {
+                    path: MANIFEST.into(),
+                    before,
+                    after: Some(Bytes { text: after, mode }),
+                });
+                plan.preview.changes.push(DraftingChangeView {
+                    kind: "index".into(),
+                    source: plan.before_manifest.as_ref().map(|_| MANIFEST.into()),
+                    destination: Some(MANIFEST.into()),
+                });
+            }
         }
         self.check_plan_limits(&plan)?;
         recovery.with_clean_paths(self, &plan.recovery_paths, || Ok(()))?;
@@ -1496,6 +1610,16 @@ impl Repository {
         source: Option<String>,
     ) -> Result<()> {
         scene_path(path)?;
+        self.add_markdown_file(plan, path, text, source)
+    }
+    fn add_markdown_file(
+        &self,
+        plan: &mut DraftingPlan,
+        path: &str,
+        text: String,
+        source: Option<String>,
+    ) -> Result<()> {
+        validate_markdown(path)?;
         self.allowed(path, false)?;
         self.check_write_manifests(path)?;
         if self.snapshot(path)?.is_some()
@@ -1670,7 +1794,10 @@ impl Repository {
         if plan.repository_key != self.project_key() {
             return Err(Error::DraftingChanged);
         }
-        let (_, text) = self.drafting_manifest()?;
+        let (manifest, text) = self.drafting_manifest()?;
+        if file_split_registered(&plan.edits, manifest.as_ref()) {
+            return Err(Error::DraftingChanged);
+        }
         if text != plan.before_manifest || self.drafting_members()? != plan.before_members {
             return Err(Error::DraftingChanged);
         }
@@ -1874,7 +2001,12 @@ impl Repository {
         recovery.verify_structure_receipt(self, &content_hash(&text))?;
         let journal: Journal = serde_json::from_str(&text).map_err(|_| Error::DraftingUncertain)?;
         validate_journal(&journal, &self.project_key())?;
-        let (_, before_manifest) = self.drafting_manifest()?;
+        let (manifest, before_manifest) = self.drafting_manifest()?;
+        // Classify the original authenticated journal, before deriving a partial
+        // inverse. A newly registered path cannot use file-only rollback.
+        if file_split_registered(&journal.edits, manifest.as_ref()) {
+            return Err(Error::DraftingChanged);
+        }
         let mut plan = DraftingPlan {
             preview: DraftingPreview {
                 id: uuid(),
@@ -3306,6 +3438,7 @@ mod tests {
         assert!(!f.repo.load_drafting().unwrap().recovery_required);
     }
     include!("drafting_moves_tests.rs");
+    include!("drafting_file_split_tests.rs");
 }
 
 #[cfg(all(test, unix))]

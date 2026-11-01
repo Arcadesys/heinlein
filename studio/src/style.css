@@ -956,3 +956,10 @@ dialog { color: var(--fg); }
 .rendered-markdown p { margin-block: .65em; }
 .rendered-markdown h1 { font-size: 1.4em; }
 .rendered-markdown h2 { font-size: 1.3em; }
+
+/* Split form targets remain generous without changing other drafting dialogs. */
+.drafting-split-dialog :is(button,input) { min-block-size:48px; }
+
+.drafting-split-dialog { box-sizing:border-box; width:min(42rem,calc(100vw - 16px)); max-width:calc(100vw - 16px); max-height:calc(100dvh - 16px); padding:clamp(12px,2vw,24px); }
+.drafting-split-dialog :is(h2,p,label,li) { overflow-wrap:normal; word-break:normal; }
+.drafting-split-dialog .drafting-warning { padding:.35rem; }

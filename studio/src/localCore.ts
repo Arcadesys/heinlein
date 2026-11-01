@@ -24,6 +24,7 @@ export type SceneDestination = {kind:'before'|'after';sceneId:string;groupId:str
 export type DraftingChange =
   | { kind: 'initialize'; project: string }
   | { kind: 'createScene'; title: string; path: string; groupId?: string | null; beforeId?: string | null }
+  | { kind: 'splitFile'; sourcePath: string; path: string; expectedHash: string; byteOffset: number }
   | { kind: 'splitScene'; sceneId: string; path: string; title: string; expectedHash: string; byteOffset: number }
   | { kind: 'createGroup'; title: string }
   | { kind: 'moveScene'; sceneId: string; path: string; groupId?: string | null; beforeId?: string | null }
