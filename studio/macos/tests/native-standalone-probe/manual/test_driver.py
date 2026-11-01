@@ -13,8 +13,10 @@ spec=importlib.util.spec_from_file_location('manual_driver',Path(__file__).with_
 d=importlib.util.module_from_spec(spec);spec.loader.exec_module(d)
 BINDING=dict(runId='SIMULATED-run',receiptNonce='SIMULATED-nonce',binary='/owned/SIMULATED',signedSha256='a'*64,root='/private/tmp/SIMULATED')
 
+NONCE='11111111-2222-4333-8444-555555555555'
+
 def evidence():
-    values=[]
+    values=[{'kind':'native-observation-ready','startupNonce':NONCE}]
     for name,actions in [('picker-cancel-real-null',1),('picker-preview-real-token',2),('manual-final-exact-no-copy',2)]:
         values.append({'kind':'native-picker-readback','value':dict(stage=name,nativeActions=actions,originalExact=True,publicationAbsent=True,copyExact=False,placements=0,pendingIntents=0,revision=1,bytes=94,hash='115d534fa5575cf7820a1c44c84824eb41871d514293561082f487cfcbe5a276',draftId='SIMULATED-ID')})
     values += [dict(kind='progress',stage=s) for s in ['manual-finish-exact-no-copy','production-exit-guards-approved-Some0']]
@@ -24,17 +26,17 @@ def evidence():
 class Contract(unittest.TestCase):
     def capture(self):
         c=d.Capture();c.feed('stdout',b''.join(json.dumps(v).encode()+b'\n' for v in evidence()));c.finish('stdout');c.finish('stderr');return c
-    def test_simulated_protocol(self):self.assertTrue(d.protocol(evidence()))
+    def test_simulated_protocol(self):self.assertTrue(d.protocol(evidence(),NONCE))
     def test_order_duplicate_null_no_place_and_alerts_fail(self):
         for change in ['order','duplicate','missing','null','place','actions','alert','token','finish']:
             v=copy.deepcopy(evidence())
-            if change=='order':v[0],v[1]=v[1],v[0]
+            if change=='order':v[1],v[2]=v[2],v[1]
             elif change=='duplicate':v.append(copy.deepcopy(v[-1]))
-            elif change=='missing':v.pop(1)
-            elif change=='null':v[1]['value']['originalExact']=False
+            elif change=='missing':v.pop(2)
+            elif change=='null':v[2]['value']['originalExact']=False
             elif change=='place':v.insert(0,dict(kind='progress',stage='picker-copy-real-receipt'))
             else:v[-1]['picker'][{'actions':'automatedActions','alert':'alertCalls','token':'tokenRetained','finish':'finishRequested'}[change]]=1 if change in ['actions','alert'] else False
-            self.assertFalse(d.protocol(v),change)
+            self.assertFalse(d.protocol(v,NONCE),change)
     def test_exact_lexical_paths_only(self):
         root='/private/tmp/owned';self.assertTrue(d.lexical(root+'/copy-targets/draft.md',root))
         for path in ['/outside/draft.md',root+'/copy-targets/./draft.md',root+'/copy-targets/../copy-targets/draft.md','file://'+root+'/copy-targets/draft.md',None]:self.assertFalse(d.lexical(path,root))
@@ -53,7 +55,7 @@ class Contract(unittest.TestCase):
             path=Path(root).resolve()/'receipt.json'
             for bad in ['none','eof','reap','stop','overflow','truncated','startup','exit']:
                 control=Path(root).resolve()/bad;control.mkdir(mode=0o700);path=control/'receipt.json'
-                c=self.capture();record={**BINDING,'startupIdentityVerified':bad!='startup'}
+                c=self.capture();record={**BINDING,'startupNonce':NONCE,'observationReadySent':True,'startupIdentityVerified':bad!='startup'}
                 if bad=='eof':c.eof.remove('stderr')
                 if bad=='overflow':c.overflow=True
                 if bad=='truncated':c.truncated=True
@@ -62,7 +64,7 @@ class Contract(unittest.TestCase):
     def test_atomic_readback_and_failure_never_memory_pass(self):
         with tempfile.TemporaryDirectory() as root:
             path=Path(root).resolve()/'receipt.json';self.assertEqual(d.atomic_receipt(path,{'acceptance':False}),{'acceptance':False});self.assertEqual(path.stat().st_mode&0o777,0o600)
-            record={**BINDING,'startupIdentityVerified':True}
+            record={**BINDING,'startupNonce':NONCE,'observationReadySent':True,'startupIdentityVerified':True}
             with mock.patch.object(d.os,'fsync',side_effect=OSError('synthetic disk failure')):
                 with self.assertRaises(OSError):d.finalize(path,record,self.capture(),0,True,expected_binding=BINDING)
             self.assertFalse(record['acceptance']);self.assertIsNone(d.read_final_receipt(path.parent,BINDING,d.private(path.parent)))
@@ -103,7 +105,7 @@ class Contract(unittest.TestCase):
                     try:
                         with mock.patch.object(d.os,'read',side_effect=read),mock.patch.object(d,'atomic_receipt',side_effect=write),mock.patch.object(d,'Capture',side_effect=capture),mock.patch.object(d.subprocess,'Popen',return_value=child) as popen,mock.patch.object(d.subprocess,'check_output',return_value='SIMULATED-start'),mock.patch.object(d.os,'getpgid',return_value=123456),mock.patch.object(d,'startup_proof',return_value=True),mock.patch('sys.stdout',new_callable=io.StringIO) as stdout:
                             result=d.collect_owned(binary,root,root,binding,operator)
-                            self.assertEqual(result['acceptance'],issue=='none');self.assertEqual(result['streamsEOF'],['stderr'] if issue=='readerror' else ['stderr','stdout']);child.wait.assert_called_once();
+                            self.assertFalse(result['acceptance']);self.assertEqual(result['streamsEOF'],['stderr'] if issue=='readerror' else ['stderr','stdout']);child.wait.assert_called_once();
                             if issue=='readerror':
                                 self.assertEqual(result['readErrors'],['stdout']);self.assertEqual(result['missingEOFStreams'],['stdout']);self.assertEqual(result['diagnostics'][0],evidence()[0]);self.assertFalse(result['acceptance'])
                             self.assertEqual(stdout.getvalue(),'');self.assertTrue(popen.call_args.kwargs['start_new_session']);self.assertEqual(len(popen.call_args.args[0]),4)
@@ -146,7 +148,7 @@ class Contract(unittest.TestCase):
                 try:
                     with mock.patch.object(d.subprocess,'Popen',return_value=child),mock.patch.object(d.subprocess,'check_output',return_value='SIMULATED-start'),mock.patch.object(d.os,'getpgid',return_value=123456),mock.patch.object(d,'startup_proof',return_value=True),mock.patch.object(d.selectors,'DefaultSelector',Selector),mock.patch.object(d.time,'monotonic',side_effect=lambda:clock[0]),mock.patch.object(d.os,'kill') as kill,mock.patch.object(d.os,'killpg') as killpg:
                         result=d.collect_owned(binary,root,root,binding,operator)
-                        self.assertEqual(result['acceptance'],scenario in ['delayed','alive']);self.assertTrue(result['reaped']);self.assertEqual(result['exit'],0);child.wait.assert_called_once();self.assertIn(prefix,result['diagnostics']);self.assertEqual(result,json.loads((root/'receipt.json').read_text()))
+                        self.assertFalse(result['acceptance']);self.assertTrue(result['reaped']);self.assertEqual(result['exit'],0);child.wait.assert_called_once();self.assertIn(prefix,result['diagnostics']);self.assertEqual(result,json.loads((root/'receipt.json').read_text()))
                         self.assertGreater(polls[0],1);kill.assert_not_called();killpg.assert_not_called();child.terminate.assert_not_called();child.kill.assert_not_called()
                         if scenario in ['held','continuous']:
                             self.assertEqual(result['missingEOFStreams'],['stdout']);self.assertEqual(result['streamsEOF'],['stderr']);self.assertTrue(result['postExitDrainExpired']);self.assertLessEqual(clock[0],2.5)
@@ -188,7 +190,7 @@ class Contract(unittest.TestCase):
                     for handle in handles+writers:handle.close()
 
     def complete(self, control):
-        return d.finalize(control/'receipt.json',{**BINDING,'startupIdentityVerified':True},self.capture(),0,True,expected_binding=BINDING)
+        return d.finalize(control/'receipt.json',{**BINDING,'startupNonce':NONCE,'observationReadySent':True,'startupIdentityVerified':True},self.capture(),0,True,expected_binding=BINDING)
 
     def test_postreplace_sync_or_readback_failure_surviving_candidate_is_not_authority(self):
         for seam in ['directory-sync','readback']:
@@ -200,7 +202,7 @@ class Contract(unittest.TestCase):
                 def read(fd,name,limit):
                     if seam=='readback' and name=='receipt.json':raise OSError('SIMULATED candidate readback failure')
                     return actual_read(fd,name,limit)
-                record={**BINDING,'startupIdentityVerified':True}
+                record={**BINDING,'startupNonce':NONCE,'observationReadySent':True,'startupIdentityVerified':True}
                 with mock.patch.object(d.os,'fsync',side_effect=sync),mock.patch.object(d,'_read_owned',side_effect=read),mock.patch.object(Path,'unlink',side_effect=OSError('SIMULATED invalidation unavailable')) as unlink:
                     with self.assertRaises(OSError):d.finalize(path,record,self.capture(),0,True,expected_binding=BINDING)
                     unlink.assert_not_called()
@@ -284,3 +286,70 @@ class Contract(unittest.TestCase):
                 popen.assert_not_called()
 
 if __name__=='__main__':unittest.main()
+
+class ObservationOrder(unittest.TestCase):
+    def test_terminal_ready_validates_live_exact_proof_once_before_native_steps(self):
+        for issue in ['none','missing-proof','wrong-command','duplicate','late','child-exited','write-error','partial-write']:
+            with self.subTest(issue=issue), tempfile.TemporaryDirectory() as folder:
+                record={'startupNonce':NONCE}
+                if issue=='duplicate':record['observationReadySent']=True
+                capture=d.Capture()
+                if issue=='late':capture.records=evidence()[1:3]
+                child=mock.Mock();child.poll.return_value=0 if issue=='child-exited' else None
+                line=('observation-ready '+NONCE+'\n').encode()
+                command=('ready '+('wrong' if issue=='wrong-command' else NONCE)+'\n').encode()
+                with mock.patch.object(d,'startup_proof',return_value=issue!='missing-proof'), mock.patch.object(d.os,'write',return_value=len(line) if issue!='partial-write' else 1) as write:
+                    if issue=='write-error':write.side_effect=OSError('SIMULATED write failure')
+                    if issue=='none':
+                        d.send_observation_ready(command,child,Path(folder),record,capture)
+                        self.assertTrue(record['startupIdentityVerified']);self.assertTrue(record['observationReadySent'])
+                        write.assert_called_once_with(child.stdin.fileno(),line)
+                    else:
+                        with self.assertRaises((ValueError,OSError)):d.send_observation_ready(command,child,Path(folder),record,capture)
+                        if issue not in ['write-error','partial-write']:write.assert_not_called()
+
+    def test_native_ack_unique_matching_and_before_readbacks(self):
+        self.assertTrue(d.protocol(evidence(),NONCE))
+        for issue in ['missing','duplicate','wrong','late']:
+            records=copy.deepcopy(evidence());ack=records.pop(0)
+            if issue=='duplicate':records[:0]=[ack,copy.deepcopy(ack)]
+            if issue=='wrong':ack['startupNonce']='wrong';records.insert(0,ack)
+            if issue=='late':records.insert(2,ack)
+            self.assertFalse(d.protocol(records,NONCE),issue)
+
+    def test_actual_collector_explicit_ready_then_native_ack_green(self):
+        # Actual collector loop, mocked owned child/process identities; all callbacks SIMULATED.
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve();binary=root/'SIMULATED';binary.write_bytes(b'NO NATIVE EXECUTION')
+            rd,ow=os.pipe();out=os.fdopen(rd,'rb',buffering=0)
+            rd,ew=os.pipe();err=os.fdopen(rd,'rb',buffering=0)
+            rd,iw=os.pipe();childin=os.fdopen(iw,'wb',buffering=0);input_reader=os.fdopen(rd,'rb',buffering=0);os.set_blocking(rd,False)
+            rd,tw=os.pipe();operator=os.fdopen(rd,'rb',buffering=0);terminal=os.fdopen(tw,'wb',buffering=0)
+            phase=[0];actual_selector=d.selectors.DefaultSelector
+            class Selector:
+                def __init__(self):self.inner=actual_selector()
+                def register(self,*args):return self.inner.register(*args)
+                def unregister(self,*args):return self.inner.unregister(*args)
+                def get_map(self):return self.inner.get_map()
+                def close(self):self.inner.close()
+                def select(self,timeout):
+                    if phase[0]==0:terminal.write(('ready '+NONCE+'\n').encode());phase[0]=1
+                    elif phase[0]==1:
+                        self_line=input_reader.read(len(('observation-ready '+NONCE+'\n').encode()))
+                        if self_line!=('observation-ready '+NONCE+'\n').encode():raise AssertionError('Missing ordered native control line')
+                        os.write(ow,b''.join(json.dumps(v).encode()+b'\n' for v in evidence()));os.close(ow);os.close(ew);phase[0]=2
+                    return self.inner.select(.01)
+            child=mock.Mock(pid=123456,stdin=childin,stdout=out,stderr=err)
+            child.poll.side_effect=lambda:0 if phase[0]>=2 else None;child.wait.return_value=0
+            binding={**BINDING,'root':str(root),'binary':str(binary),'signedSha256':d.binary_hash(binary),'launchAuthorized':True}
+            class Thread:
+                def __init__(self,target,**kwargs):self.target=target
+                def start(self):self.target()
+                def join(self,*args):pass
+                def is_alive(self):return False
+            try:
+                with mock.patch.object(d.subprocess,'Popen',return_value=child),mock.patch.object(d.subprocess,'check_output',return_value='SIMULATED-start'),mock.patch.object(d.os,'getpgid',return_value=123456),mock.patch.object(d.uuid,'uuid4',return_value=NONCE),mock.patch.object(d.threading,'Thread',Thread),mock.patch.object(d.selectors,'DefaultSelector',Selector),mock.patch.object(d,'startup_proof',return_value=True) as proof,mock.patch.object(d.os,'kill') as kill:
+                    result=d.collect_owned(binary,root,root,binding,operator)
+                    self.assertTrue(result['acceptance']);self.assertTrue(result['observationReadySent']);self.assertEqual(proof.call_count,2);child.wait.assert_called_once();kill.assert_not_called()
+            finally:
+                operator.close();terminal.close();input_reader.close()

@@ -610,7 +610,10 @@ fn run_fixture() -> Result<(), String> {
                         .is_err()
                     {
                         fail(&h, "synthetic-draft-id-write-failed")
-                    } else if picker_manual() { let _=h.emit("native47-manual-seeded",()); }
+                    } else if picker_manual() {
+                        let _=h.emit("native47-manual-seeded",());
+                        if super::standalone_picker_acceptance::manual_observed() { let _=h.emit("native47-observation-ready",()); }
+                    }
                 }
                 if name == "save-IPC-queued" || name == "reopened-exact-bytes-same-id" {
                     native_quit();
@@ -739,10 +742,31 @@ fn run_fixture() -> Result<(), String> {
     });
     let h = app.handle().clone();
     std::thread::spawn(move || {
-        for line in std::io::stdin().lock().lines().map_while(Result::ok) {
-            if line.trim() == "abort" {
-                fail(&h, "operator-cooperative-abort");
-                break;
+        if !picker_manual() {
+            for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+                if line.trim()=="abort" { fail(&h,"operator-cooperative-abort");break; }
+            }
+            return; // Preserve existing nonmanual control behavior.
+        }
+        // Bounded owned control channel; no watcher, timer or UI action.
+        let mut input=std::io::stdin().lock();
+        loop {
+            let mut bytes=Vec::new();
+            match std::io::BufRead::read_until(&mut std::io::Read::take(std::io::Read::by_ref(&mut input),128), b'\n', &mut bytes) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {},
+            }
+            if bytes.len()>=128 || bytes.last()!=Some(&b'\n') { fail(&h,"invalid-operator-control-incomplete"); break; }
+            bytes.pop();
+            let Ok(line)=std::str::from_utf8(&bytes) else { fail(&h,"invalid-operator-control-incomplete");break; };
+            if line=="abort" { fail(&h,"operator-cooperative-abort");break; }
+            if picker_manual() {
+                let ready=super::standalone_picker_acceptance::manual_observe(line, |nonce| {
+                    println!("{}",serde_json::json!({"kind":"native-observation-ready","startupNonce":nonce}));
+                    let _=std::io::stdout().flush();
+                    let _=h.emit("native47-observation-ready",());
+                });
+                if ready.is_err() { fail(&h,"invalid-observation-order-incomplete");break; }
             }
         }
         if picker_manual() { fail(&h,"collector-disconnected-incomplete"); }

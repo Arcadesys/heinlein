@@ -154,9 +154,14 @@ class Capture:
         self.eof.add(stream)
 
 
-def protocol(records):
+def protocol(records, startup_nonce=None):
     """Only native stdout results/readbacks count; renderer text alone proves nothing."""
     records=[v for v in records if v.get('kind')!='stderr-prefix']
+    acks = [v for v in records if v.get('kind') == 'native-observation-ready']
+    if (not isinstance(startup_nonce, str) or len(acks) != 1 or
+            acks[0].get('startupNonce') != startup_nonce or
+            any(v.get('kind') == 'native-picker-readback' for v in records[:records.index(acks[0])])):
+        return False
     results = [v for v in records if v.get('kind') == 'result']
     readbacks = [v.get('value', {}) for v in records if v.get('kind') == 'native-picker-readback']
     stages = [v.get('stage', '') for v in records if v.get('kind') == 'progress']
@@ -264,7 +269,7 @@ def _candidate_valid(value, expected):
             value.get('overflow') is False and value.get('truncated') is False and
             not value.get('storageFailure') and not value.get('setupFailure') and not value.get('readErrors') and
             not value.get('postExitDrainExpired') and not value.get('missingEOFStreams') and
-            isinstance(value.get('diagnostics'),list) and protocol(value['diagnostics']))
+            value.get('observationReadySent') is True and isinstance(value.get('diagnostics'),list) and protocol(value['diagnostics'],value.get('startupNonce')))
 
 
 def read_final_receipt(control, expected, control_identity):
@@ -331,7 +336,7 @@ def commit_final_receipt(path, record, expected):
 
 def finalize(path, record, capture, code, reaped, stopped=False, *, expected_binding):
     passed = (record.get('startupIdentityVerified') is True and code == 0 and reaped and capture.eof == {'stdout', 'stderr'} and
-              not capture.overflow and not capture.truncated and not stopped and protocol(capture.records))
+              record.get('observationReadySent') is True and not capture.overflow and not capture.truncated and not stopped and protocol(capture.records,record.get('startupNonce')))
     record.update(passed=passed, acceptance=passed, classification='pass' if passed else 'incomplete',
                   exit=code, reaped=reaped, streamsEOF=sorted(capture.eof), stopped=stopped,
                   overflow=capture.overflow, truncated=capture.truncated, bytesRead=capture.bytes_read,
@@ -357,6 +362,22 @@ def startup_proof(path, record):
             value.get('observerConfirmedLive') is True and
             isinstance(value.get('observerPID'),int) and value['observerPID'] not in (record['pid'],record['collectorPID']) and
             isinstance(value.get('observedAt'),(int,float)) and record['startedAt']<=value['observedAt']<=time.time())
+
+
+def send_observation_ready(command, child, control, record, capture):
+    """One explicit retained-Terminal command, never a watcher or human-step timer."""
+    expected = ('ready ' + record['startupNonce'] + '\n').encode('ascii')
+    if (command != expected or record.get('observationReadySent') or child.poll() is not None or
+            any(v.get('kind') in ('native-observation-ready', 'native-picker-readback', 'result') for v in capture.records) or
+            not startup_proof(control / 'startup-observed.json', record)):
+        raise ValueError('Invalid, early, duplicate or late observation readiness')
+    line = ('observation-ready ' + record['startupNonce'] + '\n').encode('ascii')
+    if child.poll() is not None:
+        raise ValueError('Owned child exited during observation verification')
+    if len(line) >= 128 or os.write(child.stdin.fileno(), line) != len(line):
+        raise ValueError('Incomplete observation control write')
+    record['startupIdentityVerified'] = True
+    record['observationReadySent'] = True
 
 
 def collect_owned(binary, root, control, binding, operator):
@@ -389,6 +410,7 @@ def collect_owned(binary, root, control, binding, operator):
     code=None
     drain_deadline=None
     drain_expired=False
+    operator_pending=b''
     child = subprocess.Popen([str(binary), '--standalone-native-acceptance', str(root), MODE],
                              env=environment(root), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, bufsize=0, start_new_session=True)
@@ -439,11 +461,21 @@ def collect_owned(binary, root, control, binding, operator):
                     else:stopped=True
                     continue  # No bytes and no genuine EOF were observed.
                 if key.data == 'operator':
-                    # Any operator command or disconnected control stream is incomplete.
+                    # Human steps remain unbounded. Only this explicit command can unlock them.
                     if not data:
                         selector.unregister(key.fileobj)
-                    if not stopped:
-                        stopped = True
+                        stopped=True
+                    elif not stopped:
+                        operator_pending += data
+                        if len(operator_pending) >= 128:
+                            stopped=True
+                        elif b'\n' in operator_pending:
+                            try:
+                                send_observation_ready(operator_pending, child, control, record, capture)
+                                operator_pending=b''
+                            except (OSError, ValueError, KeyError):
+                                stopped=True
+                    if stopped:
                         try:
                             os.write(child.stdin.fileno(), b'abort\n')
                         except (BrokenPipeError, BlockingIOError):
@@ -459,7 +491,7 @@ def collect_owned(binary, root, control, binding, operator):
         if writer.is_alive():
             storage_failed[0]=True
         try:
-            record['startupIdentityVerified']=startup_proof(control / 'startup-observed.json',record)
+            record['startupIdentityVerified']=record.get('observationReadySent') is True and startup_proof(control / 'startup-observed.json',record)
         except (OSError,ValueError):
             record['startupIdentityVerified']=False
         record['storageFailure']=storage_failed[0]
