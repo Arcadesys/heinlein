@@ -14,17 +14,20 @@ export interface MenuItem {
 export function attachMenu(trigger: HTMLButtonElement, label: string, items: () => MenuItem[]) {
   trigger.setAttribute('aria-haspopup', 'menu'); trigger.setAttribute('aria-expanded', 'false');
   let panel: HTMLDivElement | null = null;
+  let host: HTMLDialogElement | null = null;
+  const dismiss = () => close(false);
   function buttons() { return panel ? [...panel.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)')] : []; }
   function close(focus = true) {
     if (!panel) return;
     panel.remove(); panel = null;
+    host?.removeEventListener('dismiss-menus', dismiss); host = null;
     trigger.setAttribute('aria-expanded', 'false');
     document.removeEventListener('pointerdown', outside, true); window.removeEventListener('resize', reposition);
     if (focus && trigger.isConnected) trigger.focus();
   }
   function outside(event: Event) { if (panel && !panel.contains(event.target as Node) && !trigger.contains(event.target as Node)) close(false); }
   function reposition() {
-    if (!panel) return;
+    if (!panel || host) return;
     const box = trigger.getBoundingClientRect();
     panel.style.top = `${box.bottom + 6}px`;
     panel.style.left = `${Math.max(8, Math.min(box.left, window.innerWidth - panel.offsetWidth - 8))}px`;
@@ -59,7 +62,11 @@ export function attachMenu(trigger: HTMLButtonElement, label: string, items: () 
       else if (event.key === 'Home') { event.preventDefault(); all[0]?.focus(); }
       else if (event.key === 'End') { event.preventDefault(); all[all.length - 1]?.focus(); }
     });
-    document.body.append(panel);
+    host = trigger.closest<HTMLDialogElement>('dialog[open]');
+    if (host) {
+      // Keep modal descendants focusable and in the dialog's scrolling flow.
+      trigger.after(panel); host.addEventListener('dismiss-menus', dismiss);
+    } else document.body.append(panel);
     trigger.setAttribute('aria-expanded', 'true');
     document.addEventListener('pointerdown', outside, true); window.addEventListener('resize', reposition);
     reposition();

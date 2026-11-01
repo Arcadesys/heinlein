@@ -13,7 +13,7 @@ function bridge(draft: RecoveryDraft | null = null) {
 let app: ReturnType<typeof mountStudio>;
 const view = () => EditorView.findFromDOM(document.querySelector('.active-document-pane .cm-editor') as HTMLElement)!;
 const reader = () => document.querySelector<HTMLElement>('.active-document-pane .markdown-reader');
-const toggle = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('.active-document-pane .md-view-toggle button')].find(node => node.textContent === label)!;
+const toggle = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('.document-command-bar .md-view-toggle button')].find(node => node.textContent === label)!;
 const status = () => document.querySelector('.status')!.textContent;
 const tab = (path: string) => [...document.querySelectorAll<HTMLButtonElement>('[role=tab][id^=document-tab]')].find(node => node.textContent?.includes(path))!;
 async function start(core: LocalCore, path = 'a.md') {app = mountStudio(document.body, core); await app.selectRepository(async () => session); await app.showDocument(path);}
@@ -93,7 +93,7 @@ describe('Source and Reading in one writer', () => {
     await start(bridge(), 'a.markdown');
     expect(toggle('Reading')).toBeTruthy();
     await app.showDocument('notes.txt');
-    expect(document.querySelector('.active-document-pane .md-view-toggle')).toBeNull();
+    expect(document.querySelector('.document-command-bar .md-view-toggle')).toBeNull();
   });
   it('returns to Source before a scene jump, so the selection lands in a visible editor', async () => {
     const core = bridge();
