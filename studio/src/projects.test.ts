@@ -42,3 +42,12 @@ it('explains an empty private history and preserves unavailable entries without 
  expect(names()).toEqual(['Lantern chapters','River notebook']);expect(library!.element.textContent).toContain('Unavailable: Writing folder unavailable');
  expect(library!.element.querySelector('.project-drafts .project-name')).toBeNull();expect(button('New standalone draft')).toBeTruthy();
 });
+it('distinguishes independent local and managed projects with the same name before opening either',async()=>{
+ const f=setup([{...managed,name:'The Zoo'},{...local,name:'The Zoo'}]);await library!.open();
+ expect(names()).toEqual(['The Zoo','The Zoo']);
+ expect(library!.element.querySelectorAll('.project-copy-warning')).toHaveLength(2);
+ expect(library!.element.textContent).toContain('Edits in this project do not automatically appear');
+ button('Open The Zoo · GitHub copy').click();await tick();expect(f.hooks.switchProject).toHaveBeenLastCalledWith('managed-stable');
+ await library!.open();button('Open The Zoo · Local folder').click();await tick();expect(f.hooks.switchProject).toHaveBeenLastCalledWith('local-stable');
+ expect(f.request.mock.calls).toEqual([[{action:'list'}],[{action:'list'}]]);
+});
