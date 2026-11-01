@@ -613,7 +613,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const manuscriptBody = el('div', '', 'panel-body');
   const searchManuscript = button('Find in manuscript', openManuscriptSearch);
   searchManuscript.setAttribute('aria-keyshortcuts', 'Control+Shift+F Meta+Shift+F');
-  const binderTree = createBinderTree({state: () => (standalone?.active ? null : drafting.state), currentPath: () => opened?.path ?? null, open: path => { void showDocument(path); }});
+  const binderTree = createBinderTree({state: () => (standalone?.active ? null : drafting.state), currentPath: () => opened?.path ?? null, open: path => { void showDocument(path); }, bindMoveSource: (node, source) => drafting.bindMoveSource(node, source), bindMoveTarget: (node, resolve, label) => drafting.bindMoveTarget(node, resolve, label)});
   manuscriptBody.append(draftingEntry, searchManuscript, binderTree.element, manifests, outline);
   manuscriptPane.append(manuscriptBody);
   const sceneNavigator = createSceneNavigator(() => editor?.view ?? chapterEditor?.view ?? null, () => showSourceView());
@@ -732,7 +732,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   appCommands=actionMenu('More actions',[...corner.children,...pill.children].filter(node=>node!==pillProject&&node!==pillSave) as HTMLElement[],root,()=>repository?.name??'Heinlein Studio',refreshHeaderLayout);
   pill.replaceChildren(pillProject,appCommands.button,appCommands.storage);pill.prepend(navigation.element.querySelector('.navigation-toggle')!);corner.hidden=true;
   headerMedia=window.matchMedia?.('(max-width:480px)');headerMedia?.addEventListener?.('change',refreshHeaderLayout);
-  function refreshHeaderLayout(){if(!appCommands)return;if(standalone?.active)pill.insertBefore(pillSave,appCommands.button);else noticeSlot.prepend(pillSave);const compact=!!headerMedia?.matches&&preview.contains(documentWorkspace)&&!standalone?.active;if(!appCommands.isOpen()){if(compact)appCommands.storage.prepend(pillProject);else pill.insertBefore(pillProject,appCommands.button);}if(compact){const context=el('span',repository?.name??'Project','header-project-context');appCommands.button.replaceChildren(context,document.createTextNode(' · More'));appCommands.button.setAttribute('aria-label',`${repository?.name??'Project'} · More actions`);}else{appCommands.button.textContent='More actions';appCommands.button.setAttribute('aria-label','More actions');}}
+  function refreshHeaderLayout(){
+    if(!appCommands)return;
+    if(standalone?.active)pill.insertBefore(pillSave,appCommands.button);else noticeSlot.prepend(pillSave);
+    // Project switching stays a direct action at every window size.
+    if(!appCommands.isOpen())pill.insertBefore(pillProject,appCommands.button);
+    const compact=!!headerMedia?.matches&&preview.contains(documentWorkspace)&&!standalone?.active;
+    appCommands.button.textContent=compact?'More':'More actions';
+    appCommands.button.setAttribute('aria-label','More actions');
+  }
   root.replaceChildren(glow, ...(projectLibrary.supported ? [pill, layout] : [layout, pill]), noticeSlot, goalCard, corner, firstStory.element, github.element, updates.element, projectLibrary.element);
   const drafting = createDraftingPanel(core, {
     root, repository: () => standalone?.active?null:repository, run: runStructural, verify: verifyStructuralBuffer, selectedPath:()=>opened?.path??null,
@@ -1223,6 +1231,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     lookControls.push(() => toggle.setAttribute('aria-checked', String(look[key])));
     row.append(el('span', label), toggle); modes.append(row);
   }
+  group('editor', 'Typewriter sounds').append(writing.soundSettings());
   sections.get('keys')!.append(shortcutSheet());
 
   sidebar.append(button('Done', () => { themeBuilder.close(); if (dialog.close) dialog.close(); else { dialog.removeAttribute('open'); appearance.focus(); } }, 'primary'));
@@ -1816,7 +1825,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         if (writePaused === 'discard' && !repositoryDetached) writePaused = null;
         setDirty(raw !== opened?.text);
         scheduleAutosave(); sceneNavigator.schedule();
-      }, () => { void saveCurrent(); });
+      }, () => { void saveCurrent(); }, kind => writing.typed(kind));
       editor.view.dispatch({effects: StateEffect.appendConfig.of(reviewMarks())});
       if(core.projectRequest){editor.view.dispatch({effects:StateEffect.appendConfig.of(EditorView.updateListener.of(update=>{if(update.selectionSet)scheduleProjectPosition();}))});editor.view.scrollDOM.addEventListener('scroll',scheduleProjectPosition);}
       createDocumentDetails(metadata, editor);
