@@ -1876,6 +1876,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
           status.textContent = 'The source scene changed or needs recovery. It is open for inspection; select the passage again before proposing a revision.';
           return;
         }
+        showSourceView();
         editor.view.dispatch({selection: {anchor: target.from, head: target.to}, scrollIntoView: true});
         draftingQuestions?.open(); draftingQuestions?.setMode('revision');
         await askDraftingSelection();

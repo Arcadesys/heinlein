@@ -134,6 +134,25 @@ describe('Source and Reading in one writer', () => {
     expect(view().state.doc).toBe(before);
     expect(core.saveDocument).not.toHaveBeenCalled();
   });
+  it('opens the source scene in Source when revising from a chapter, even if that scene was left in Reading', async () => {
+    const book = {path: 'scene-manifest.json', project: 'Invented', schemaVersion: 1, volumes: [{number: 1, title: 'Volume', path: '', chapters: [{number: 1, title: 'Chapter', path: '', source: 'chapter.md', scenes: [{path: 'a.md'}]}]}]};
+    const core = bridge();
+    (core.loadManuscript as ReturnType<typeof vi.fn>).mockImplementation(async () => book);
+    app = mountStudio(document.body, core);
+    await app.selectRepository(async () => ({...session, manifests: ['scene-manifest.json']}));
+    await app.showDocument('a.md');
+    toggle('Reading').click();
+    await app.showDocument('chapter.md');
+    expect(toggle('Source').getAttribute('aria-pressed')).toBe('true');
+    const body = view().state.doc.toString();
+    view().dispatch({selection: {anchor: body.indexOf('second'), head: body.indexOf('second') + 6}});
+    [...document.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'Revise source passage')!.click();
+    await vi.waitFor(() => expect(document.querySelector('.active-document-pane .markdown-editor:not(.assembled-editor)')).toBeTruthy());
+    await vi.waitFor(() => expect(view().state.sliceDoc(view().state.selection.main.from, view().state.selection.main.to)).toBe('second'));
+    expect(reader()!.hidden).toBe(true);
+    expect(toggle('Source').getAttribute('aria-pressed')).toBe('true');
+    expect(status()).not.toContain('Switch to Source');
+  });
   it('keeps saving available while in Reading', async () => {
     const core = bridge();
     await start(core);
