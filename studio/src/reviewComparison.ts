@@ -63,9 +63,12 @@ export function invisibleChangeNote(original: string, replacement: string): stri
   return parts.length ? `This suggestion only changes spacing or line breaks: it ${parts.join(' and ')}.` : null;
 }
 
-/** The same accepted-edit sum the native host uses to place a later patch. It never reads current text. */
+/**
+ * The same accepted-edit sum the native host uses to place a later patch. It never reads current text.
+ * Native sums before the target is accepted; this also places accepted edits, so a target never counts itself.
+ */
 export function lineageDelta(edits: readonly ReviewEdit[], edit: ReviewEdit) {
-  return edits.filter(e => e.status === 'accepted' && e.path === edit.path && e.toUtf8 <= edit.fromUtf8).reduce((n, e) => n + encoder.encode(e.replacement).length - encoder.encode(e.original).length, 0);
+  return edits.filter(e => e.id !== edit.id && e.status === 'accepted' && e.path === edit.path && e.toUtf8 <= edit.fromUtf8).reduce((n, e) => n + encoder.encode(e.replacement).length - encoder.encode(e.original).length, 0);
 }
 
 export const waiting = (edit: Pick<ReviewEdit, 'status'>) => edit.status === 'pending' || edit.status === 'prepared';

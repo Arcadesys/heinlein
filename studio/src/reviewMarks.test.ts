@@ -100,6 +100,30 @@ describe('review mark lineage proof', () => {
     expect(marks.map(mark => mark.id)).toEqual(['b']);
     expect(view.state.sliceDoc(marks[0].from, marks[0].to)).toBe('three');
   });
+  it('keeps later suggestions marked after an approved insertion, alone or after other approvals', async () => {
+    const plain = 'abc def';
+    const insertion = (at: number, text: string): ReviewEdit => ({...edit('i', 'abc', text, {status: 'accepted'}, plain), id: `insert-${at}`, fromUtf8: at, toUtf8: at, original: '', replacement: text});
+    const pending = edit('p', 'def', 'new', {}, plain);
+    const first = 'X🐺abc def';
+    const {view} = open(first);
+    const marks = await computeReviewMarks(input([insertion(0, 'X🐺'), pending], await sha(plain)), [target(first, 'changed-hash')]);
+    expect(marks.map(mark => mark.id)).toEqual(['p']);
+    expect(view.state.sliceDoc(marks[0].from, marks[0].to)).toBe('def');
+    const replaced = edit('r', 'abc', 'ABCDE', {status: 'accepted'}, plain);
+    const chained = 'ABCDE Ydef';
+    const chainedMarks = await computeReviewMarks(input([replaced, insertion(4, 'Y'), pending], await sha(plain)), [target(chained, 'changed-hash')]);
+    expect(chainedMarks.map(mark => mark.id)).toEqual(['p']);
+    expect(chained.slice(chainedMarks[0].from, chainedMarks[0].to)).toBe('def');
+    const atFirst = bytes(source.slice(0, source.indexOf('first')));
+    const interior = source.replace('first', '👩🏽‍🚀\r\nfirst');
+    mounted.destroy();
+    const unicode = open(interior);
+    const unicodeMarks = await computeReviewMarks(input([insertion(atFirst, '👩🏽‍🚀\r\n'), later], await sha(source)), [target(interior, 'changed-hash')]);
+    expect(unicodeMarks.map(mark => mark.id)).toEqual(['b']);
+    expect(unicode.view.state.sliceDoc(unicodeMarks[0].from, unicodeMarks[0].to)).toBe('three');
+    const external = 'Xabc dez';
+    expect(await computeReviewMarks(input([insertion(0, 'X'), edit('q', 'abc', 'new', {}, plain)], await sha(plain)), [target(external, 'changed-hash')])).toEqual([]);
+  });
   it('fails closed on a wrong baseline hash or without local SHA-256', async () => {
     expect(await computeReviewMarks(input([accepted, later], 'b'.repeat(64)), [target(applied, 'changed-hash')])).toEqual([]);
     const right = await sha(source);

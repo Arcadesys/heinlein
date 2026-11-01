@@ -275,6 +275,24 @@ test('demo marks: insertion and removal markers are visible, click through and d
     await page.mouse.click(box.x, box.y + box.height / 2);
     await expect(panel.locator('[data-finding-id="marker-insert"] h4')).toBeFocused();
 });
+test('demo marks: an approved insertion keeps the other marks on their exact words, including after Refresh review', async ({ page }) => {
+    const url = `${demo}&markers=1`;
+    await page.goto(url);
+    await page.evaluate(() => localStorage.clear());
+    await page.goto(url);
+    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
+    await expect(page.locator('.cm-content [data-review-id]')).toHaveCount(6);
+    await activate(panel.locator('[data-finding-id="marker-insert"]').getByRole('button', approve));
+    await activate(page.getByRole('dialog', { name: 'Simulated final confirmation' }).getByRole('button', { name: 'Confirm and apply', exact: true }));
+    await expect(mark(page, 'marker-insert')).toHaveCount(0);
+    await expect(mark(page, 'example-approve')).toHaveText('were');
+    await expect(mark(page, 'marker-delete')).toHaveText(' again');
+    await expect(mark(page, 'example-dismiss')).toHaveText('Nobody looked up.');
+    expect(await source(page)).toContain('The ferry 🐺 quietly came in late — it always did.\r\n');
+    await panel.getByRole('button', { name: 'Refresh review', exact: true }).click();
+    await expect(panel.locator('.review-mark-status')).toContainText('5 of 5 waiting suggestions are marked');
+    await expect(mark(page, 'example-approve')).toHaveText('were');
+});
 test('demo marks: closing the review removes every mark and they never changed the layout or text', async ({ page }) => {
     const panel = await openDemo(page);
     await expect(page.locator('.cm-content [data-review-id]')).toHaveCount(4);
