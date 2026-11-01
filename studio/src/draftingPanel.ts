@@ -289,7 +289,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   }
   function sourceName(source:MoveSource){return source.kind==='group'?state?.groups.find(g=>g.id===source.id)?.title??'group':state?.scenes.find(s=>s.id===source.id)?.title??'scene';}
   function focusMove(source:MoveSource){element.querySelector<HTMLButtonElement>(`[data-move-kind="${source.kind}"][data-move-id="${source.id}"]`)?.focus();}
-  function clearDrag(){drag=null;delete element.dataset.dragKind;element.querySelectorAll('.move-drop-active').forEach(n=>{n.classList.remove('move-drop-active');delete (n as HTMLElement).dataset.dropSide;});element.querySelectorAll<HTMLElement>('[data-drop-label]').forEach(n=>n.textContent=n.dataset.dropLabel!);}
+  function clearDrag(){drag=null;delete element.dataset.dragKind;hooks.root.querySelectorAll('.move-drop-active').forEach(n=>{n.classList.remove('move-drop-active');delete (n as HTMLElement).dataset.dropSide;});hooks.root.querySelectorAll<HTMLElement>('[data-drop-label]').forEach(n=>n.textContent=n.dataset.dropLabel!);}
   async function performMove(source:MoveSource,target:MoveTarget,revision:string,repositoryId:string){
     if(movementBusy||!state?.revision||dialogs.size||state.recoveryRequired)return;
     if(state.revision!==revision||hooks.repository()?.id!==repositoryId){hooks.report('The manuscript changed during the move. Nothing was submitted; start again.',true);clearDrag();return;}
@@ -321,8 +321,12 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   }
   function moveGrip(source:MoveSource){const grip=button(`Drag ${source.kind==='group'?'group':'scene'}: ${sourceName(source)}`,()=>{moveForm(source);},'manuscript-move-grip');grip.dataset.moveKind=source.kind;grip.dataset.moveId=source.id;grip.draggable=true;grip.title='Drag to a labelled position, or activate to choose a position with the keyboard.';
     if(source.kind==='group'&&state?.groupMoveIssue){grip.disabled=true;grip.setAttribute('aria-describedby','manuscript-group-move-issue');}
+    bindMoveSource(grip,source);return grip;
+  }
+  function bindMoveSource(grip:HTMLElement,source:MoveSource){
+    grip.draggable=true;
     grip.addEventListener('dragstart',event=>{if(!event.dataTransfer||!state?.revision||movementBusy||dialogs.size||state.recoveryRequired||!hooks.repository()){event.preventDefault();return;}clearDrag();drag={token:crypto.randomUUID(),source,repositoryId:hooks.repository()!.id,revision:state.revision};event.dataTransfer.clearData();event.dataTransfer.effectAllowed='move';event.dataTransfer.setData(source.kind==='group'?GROUP_DRAG_TYPE:SCENE_DRAG_TYPE,drag.token);element.dataset.dragKind=source.kind;moveLive.textContent=`Moving “${sourceName(source)}”. Drop on a labelled position to preview; Escape cancels.`;});
-    grip.addEventListener('dragend',clearDrag);return grip;
+    grip.addEventListener('dragend',clearDrag);
   }
   function moveDrop(node:HTMLElement,resolve:(source:MoveSource,event:DragEvent)=>MoveTarget|null,label:string){
     const caption=el('span',label,'manuscript-drop-label');caption.dataset.dropLabel=label;node.append(caption);
@@ -402,7 +406,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     const ungrouped=el('div','Move to end of manuscript, without a group','manuscript-boundary-target');moveDrop(ungrouped,source=>source.kind==='scene'?{kind:'ungroupedEnd'}:null,'Drop a scene here to place it at the document end with No chapter');chapters.append(ungrouped);element.append(chapters);
 
   }
-  return { element, supported, clear, load, initialize, importExternal, splitScene, splitFile, get state() { return state; },
+  return { element, supported, clear, load, initialize, importExternal, splitScene, splitFile, bindMoveSource, bindMoveTarget: moveDrop, get state() { return state; },
     /** The same previewed, confirmed reorder as the ↑/↓ buttons. Resolves once the change settles. */
     async reorderScene(sceneId: string, delta: -1 | 1) { const scene = state?.scenes.find(item => item.id === sceneId); if (scene && state?.revision && !dialogs.size) await reorder(scene, delta); },
     newScene() { if (state?.revision && !dialogs.size) newScene(); },

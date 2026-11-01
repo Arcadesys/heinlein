@@ -1,8 +1,9 @@
-import { Annotation, Compartment, EditorState, StateEffect, StateField } from '@codemirror/state';
+import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction } from '@codemirror/state';
 import { EditorView, keymap, drawSelection } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, invertedEffects, undo, redo } from '@codemirror/commands';
 import { search, searchKeymap, openSearchPanel } from '@codemirror/search';
 import { markdown } from '@codemirror/lang-markdown';
+import type { TypewriterKey } from './writingFeedback';
 import { focusMode } from './focusMode';
 
 // CodeMirror uses LF positions internally. Preserve every untouched source byte,
@@ -50,7 +51,7 @@ function historyEndings(text: string): RawHistory {
   }
   return {length: text.length - removed, breaks, endings};
 }
-export function createEditor(parent: HTMLElement, source: string, changed: (raw: string, origin: EditorChangeOrigin) => void, save: () => void) {
+export function createEditor(parent: HTMLElement, source: string, changed: (raw: string, origin: EditorChangeOrigin) => void, save: () => void, typed?: (kind: TypewriterKey) => void) {
   let raw = source;
   let savedSource = source;
   const editable = new Compartment();
@@ -94,6 +95,20 @@ export function createEditor(parent: HTMLElement, source: string, changed: (raw:
         const origin = exact?.origin ?? (update.transactions.some(transaction => transaction.isUserEvent('undo') || transaction.isUserEvent('redo')) ? 'history'
           : update.transactions.some(transaction => transaction.isUserEvent('input') || transaction.isUserEvent('delete') || transaction.isUserEvent('move')) ? 'user' : 'programmatic');
         changed(raw, origin);
+        // Transaction events distinguish actual typing from paste, drop, history and loads.
+        // Composition updates stay silent to avoid repeated IME clicks.
+        if (!update.state.readOnly && origin === 'user' && !view.composing) {
+          for (const transaction of update.transactions) {
+            if (!transaction.docChanged) continue;
+            if (transaction.isUserEvent('delete')) { typed?.('delete'); break; }
+            let newline = false;
+            transaction.changes.iterChanges((_a, _b, _c, _d, insert) => { if (insert.lines > 1) newline = true; });
+            // CodeMirror's Return command uses the plain input event.
+            if (transaction.isUserEvent('input.type') || (newline && transaction.annotation(Transaction.userEvent) === 'input')) {
+              typed?.(newline ? 'return' : 'key'); break;
+            }
+          }
+        }
       }),
       focusMode,
       // Colors and type come from Appearance tokens on :root, so themes restyle the editor live.

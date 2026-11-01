@@ -165,6 +165,7 @@ export function createDailyGoalTracker(options: DailyGoalOptions = {}) {
   };
 }
 
+export type TypewriterKey = 'key' | 'delete' | 'return';
 export interface TypewriterSoundOptions { createContext?: () => AudioContext }
 /** Off by default. Call setEnabled(true) directly from a user click/tap gesture. */
 export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
@@ -172,6 +173,8 @@ export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
   let enabled = false;
   let generation = 0;
   let lastClick = -Infinity;
+  let volume = 0.5;
+  const buffers = new Map<TypewriterKey, AudioBuffer>();
   const makeContext = options.createContext ?? (() => {
     const Audio = globalThis.AudioContext ?? (globalThis as typeof globalThis & {webkitAudioContext?: typeof AudioContext}).webkitAudioContext;
     if (!Audio) throw new Error('Web Audio is unavailable');
@@ -184,23 +187,38 @@ export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
       enabled = false;
       if (!value) return false;
       try {
-        if (!context || context.state === 'closed') { context = makeContext(); lastClick = -Infinity; }
+        if (!context || context.state === 'closed') { context = makeContext(); lastClick = -Infinity; buffers.clear(); }
         if (context.state === 'suspended') await context.resume();
         if (request !== generation) return enabled;
         enabled = context.state === 'running';
       } catch { if (request === generation) enabled = false; }
       return enabled;
     },
-    play(): void {
-      if (!enabled || !context || context.state !== 'running' || context.currentTime - lastClick < 0.025) return;
+    volume: () => volume,
+    setVolume(value: number): void { if (Number.isFinite(value)) volume = Math.max(0, Math.min(1, value)); },
+    play(kind: TypewriterKey = 'key'): void {
+      if (!enabled || volume === 0 || !context || context.state !== 'running' || context.currentTime - lastClick < 0.025) return;
       try {
         lastClick = context.currentTime;
-        const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * 0.018), context.sampleRate);
-        const samples = buffer.getChannelData(0);
-        for (let i = 0; i < samples.length; i++) samples[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / samples.length, 3);
+        // Reuse each mechanical strike and release after its first playback.
+        let buffer = buffers.get(kind);
+        if (!buffer) {
+          const duration = kind === 'return' ? 0.16 : kind === 'delete' ? 0.045 : 0.035;
+          buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+          const samples = buffer.getChannelData(0);
+          const frequency = kind === 'return' ? 1650 : kind === 'delete' ? 850 : 1150;
+          for (let i = 0; i < samples.length; i++) {
+            const t = i / context.sampleRate;
+            const strike = Math.exp(-t * 240);
+            const release = t > 0.014 ? 0.35 * Math.exp(-(t - 0.014) * 180) : 0;
+            const ring = kind === 'return' ? 0.4 * Math.sin(2 * Math.PI * frequency * t) * Math.exp(-t * 32) : 0;
+            samples[i] = (Math.random() * 2 - 1) * (strike + release) + ring;
+          }
+          buffers.set(kind, buffer);
+        }
         const source = context.createBufferSource();
         const gain = context.createGain();
-        gain.gain.value = 0.025;
+        gain.gain.value = 0.05 * volume;
         source.buffer = buffer;
         source.connect(gain);
         gain.connect(context.destination);
@@ -213,6 +231,7 @@ export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
       enabled = false;
       try { if (context && context.state !== 'closed') void context.close().catch(() => {}); } catch { /* optional audio must not block teardown */ }
       context = undefined;
+      buffers.clear();
     },
   };
 }

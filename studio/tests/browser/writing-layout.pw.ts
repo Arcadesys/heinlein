@@ -42,3 +42,14 @@ for(const activation of ['click','ArrowDown'])for(const kind of ['chapter','scen
  await page.screenshot({path:info.outputPath(`nested-${kind}-${activation}-hc200.png`)});await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(trigger).toBeFocused();await expect(dialog).toBeVisible();await page.keyboard.press('ArrowDown');await dialog.getByRole('button',{name:'Return to writing',exact:true}).click();await expect(page.getByRole('menu')).toHaveCount(0);
  await page.locator('.status-pill > button[aria-haspopup=dialog]').last().click();await dialog.locator(`.pill-${kind}`).click();await dialog.getByRole('menuitem',{name:kind==='chapter'?/^Middle/:/^Meeting/}).click();await expect(dialog).toHaveCount(0);await expect(page.getByRole('tab',{name:kind==='chapter'?'ms/bridge.md':'ms/meeting.md',exact:true})).toHaveAttribute('aria-selected','true');expect(await page.evaluate(()=>(window as any).layoutFixture.fixture.externalCalls)).toEqual([]);
 });
+
+test('project picker stays directly visible at narrow widths and after resizing',async({page})=>{
+ await page.goto('/tests/browser/writing-layout.html');await page.waitForFunction(()=>document.documentElement.dataset.layoutReady==='true');
+ for(const width of [320,480,1280,320]){
+  await page.setViewportSize({width,height:740});
+  const picker=page.locator('.status-pill > .project-switcher');await expect(picker).toBeVisible();
+  expect(await picker.evaluate(el=>{const r=el.getBoundingClientRect();return r.x>=0&&r.right<=innerWidth&&el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
+  await picker.click();await expect(page.getByRole('dialog',{name:'Projects',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Back to writing',exact:true}).click();await expect(picker).toBeVisible();
+ }
+});

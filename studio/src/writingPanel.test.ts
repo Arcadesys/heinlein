@@ -92,3 +92,36 @@ describe('writing progress panel',()=>{
   });
 
 });
+
+describe('typewriter settings', () => {
+  it('syncs the progress toggle with editor settings and handles unavailable audio', async () => {
+    const start = vi.fn();
+    vi.stubGlobal('AudioContext', class {
+      state = 'running'; currentTime = 0; sampleRate = 48000; destination = {};
+      createBuffer(_channels: number, length: number) { return {getChannelData: () => new Float32Array(length)}; }
+      createBufferSource() { return {connect() {}, disconnect() {}, start, buffer: null, onended: null}; }
+      createGain() { return {connect() {}, disconnect() {}, gain: {value: 1}}; }
+      async close() {}
+    });
+    const settings = panel.soundSettings(); document.body.append(settings);
+    const toggle = settings.querySelector('button')!;
+    const slider = settings.querySelector('input')!;
+    toggle.click(); await Promise.resolve();
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(panel.element.querySelector('button')!.getAttribute('aria-pressed')).toBe('true');
+    slider.value = '0'; slider.dispatchEvent(new Event('input'));
+    expect(slider.getAttribute('aria-valuetext')).toBe('0%');
+    panel.typed('key'); expect(start).toHaveBeenCalledOnce(); // enable preview only
+    panel.element.querySelector('button')!.click(); await Promise.resolve();
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(panel.element.querySelector('[role="status"]')!.textContent).toBe('');
+  });
+  it('reports unavailable audio without enabling either toggle', async () => {
+    vi.stubGlobal('AudioContext', undefined);
+    vi.stubGlobal('webkitAudioContext', undefined);
+    const settings = panel.soundSettings();
+    settings.querySelector('button')!.click(); await Promise.resolve();
+    expect(settings.querySelector('button')!.getAttribute('aria-pressed')).toBe('false');
+    expect(panel.element.textContent).toContain('Audio unavailable; writing still works.');
+  });
+});

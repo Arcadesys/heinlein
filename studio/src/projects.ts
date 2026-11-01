@@ -25,13 +25,14 @@ export function createProjectLibrary(core:LocalCore,hooks:{current():RepositoryS
   const listTitle=el('h3','Recently opened');listTitle.id='project-list-title';listTitle.className='project-section-title';body.append(listTitle,para('Projects opened here, newest first.','project-help'));
   if(!projects.length)body.append(para('No recently opened projects here yet. Open a folder or bring in a GitHub project to add it here. You can also keep writing in standalone drafts.','project-empty'));
   else{const list=el('ul');list.className='project-list';list.setAttribute('aria-labelledby','project-list-title');
-   for(const p of projects){const current=p.id===hooks.current()?.projectId;const row=el('li');row.className='project-row';if(current)row.setAttribute('aria-current','true');if(p.unavailable)row.dataset.unavailable='true';
+   for(const p of projects){const duplicate=projects.filter(other=>other.name===p.name).length>1;const copyLabel=p.kind==='local'?'Local folder':'GitHub copy';const current=p.id===hooks.current()?.projectId;const row=el('li');row.className='project-row';if(current)row.setAttribute('aria-current','true');if(p.unavailable)row.dataset.unavailable='true';
     const name=el('h4',p.name);name.className='project-name';const heading=div('project-row-heading',name);if(current)heading.append(para('Current project','project-current-label'));
     const where=para('','project-origin');where.append(el('span',origin(p)));if(p.github){const repo=el('span',`${p.github.owner}/${p.github.repository}`);repo.className='project-repository';where.append(repo);}const meta=div('project-row-meta',where);
+    if(duplicate)meta.append(para('Separate writing copy. Edits in this project do not automatically appear in the other project with this name.','project-copy-warning'));
     if(p.resume)meta.append(para(`Last document: ${p.resume.path}`,'project-resume'));
     if(p.unavailable)meta.append(para(`Unavailable: ${p.unavailable}. Your other projects and drafts are unchanged.`,'project-unavailable'));
-    const open=button(`Open ${p.name}`,async()=>{if(await hooks.switchProject(p.id))close(true);else status.textContent='Project not changed. Your current writing is still here; resolve the save or recovery message before switching.';});open.classList.add('project-open');
-    const config=button(`Manage ${p.name}`,()=>settings(p.id));config.classList.add('project-settings-link');
+    const open=button(`Open ${p.name}${duplicate?` · ${copyLabel}`:''}`,async()=>{if(await hooks.switchProject(p.id))close(true);else status.textContent='Project not changed. Your current writing is still here; resolve the save or recovery message before switching.';});open.classList.add('project-open');
+    const config=button(`Manage ${p.name}${duplicate?` · ${copyLabel}`:''}`,()=>settings(p.id));config.classList.add('project-settings-link');
     row.append(div('project-row-info',heading,meta),div('project-row-actions',open,config));list.append(row);
    }body.append(list);}
   const draftsTitle=el('h3','Standalone drafts');draftsTitle.className='project-section-title';

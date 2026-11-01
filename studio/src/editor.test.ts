@@ -98,3 +98,27 @@ describe('byte-preserving editor changes', () => {
     editor.destroy();
   }, 20000);
 });
+
+describe('typewriter feedback routing', () => {
+  it('sounds typed characters, replacement typing, return and delete, but skips paste, history and loads', () => {
+    const heard: string[] = [];
+    const editor = createEditor(document.createElement('div'), 'hello', () => {}, () => {}, kind => heard.push(kind));
+    const change = (from: number, to: number, insert: string, event: string) => editor.view.dispatch({
+      changes: {from, to, insert}, annotations: Transaction.userEvent.of(event),
+    });
+    change(5, 5, '!', 'input.type');
+    change(0, 1, 'H', 'input.type');
+    change(6, 6, '\n', 'input');
+    change(5, 6, '', 'delete.backward');
+    expect(heard).toEqual(['key', 'key', 'return', 'delete']);
+    change(0, 0, 'pasted', 'input.paste');
+    change(0, 0, 'dropped', 'input.drop');
+    editor.undo(); editor.redo();
+    editor.replaceText('loaded');
+    editor.replaceText('recovered', 'recovery');
+    editor.setEditable(false);
+    change(0, 0, 'x', 'input.type');
+    expect(heard).toHaveLength(4);
+    editor.destroy();
+  });
+});
