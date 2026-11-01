@@ -13,6 +13,27 @@ function button(text:string,scope:ParentNode=document){const b=[...scope.querySe
 async function library(){document.querySelector<HTMLButtonElement>('.project-switcher')!.click();await tick();}
 async function open(name:string){await library();button(`Open ${name}`,document.querySelector('.project-library')!).click();await tick();}
 function view(){return EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;}
+it.each([null,'Novel A'])('opens the GitHub repository chooser directly from More actions with project %s',async(name)=>{
+ const f=syntheticProjects(),request=f.core.githubRequest!;
+ const account={id:9,login:'writer'};
+ const github=vi.fn(async(r:Parameters<typeof request>[0])=>{
+  if(r.action==='status')return {auth:{configured:true,account,confirmed:true,pending:null,message:'Connected'},error:null,workspaces:[],app:{id:1,clientId:'synthetic',owner:'writer',slug:'heinlein',installUrl:'https://github.com/apps/heinlein'}};
+  if(r.action==='repositories')return {id:'repository-list',account,repositories:[{id:42,owner:'writer',name:'novel',private:true,defaultBranch:'main',installationId:7}],unavailable:0};
+  return request(r);
+ });f.core.githubRequest=github;
+ start(f);await tick();if(name)await open(name);
+ const before=JSON.stringify(f.documents);
+ button('More actions').click();
+ const menu=document.querySelector<HTMLDialogElement>('.workspace-actions-dialog')!;
+ expect(menu.open).toBe(true);
+ button('Open GitHub project…',menu).click();
+ await vi.waitFor(()=>expect(document.querySelector('.github-panel')?.textContent).toContain('Preview writer/novel…'));
+ expect(document.querySelector('.workspace-actions-dialog')).toBeNull();
+ expect(document.querySelector<HTMLDialogElement>('.github-panel')!.open).toBe(true);
+ expect(github.mock.calls.map(([r])=>r.action)).toEqual(expect.arrayContaining(['status','repositories']));
+ expect(github.mock.calls.some(([r])=>r.action==='confirmOpen')).toBe(false);
+ expect(JSON.stringify(f.documents)).toBe(before);expect(f.externalCalls).toEqual([]);
+});
 it.each([undefined,{open:true,active:'manuscript'},{open:false,active:'manuscript'}])('lands a manifest-free project on visible source files despite saved navigation %j',async(saved)=>{
  localStorage.removeItem('heinlein-studio-navigation-v1');
  if(saved)localStorage.setItem('heinlein-studio-navigation-v1',JSON.stringify(saved));
