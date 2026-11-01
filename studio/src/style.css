@@ -456,13 +456,98 @@ dialog { color: var(--fg); }
 }
 
 /* Non-modal advisory review keeps the manuscript editor usable while inference runs. */
-.heinlein-review-panel { position: fixed; z-index: 12; inset: 5rem 1rem 1rem auto; width: min(32rem, calc(100vw - 2rem)); overflow: auto; padding: 1.25rem; background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: 0 1rem 3rem #0005; }
-.heinlein-review-panel[hidden] { display: none; }
-.heinlein-review-panel h2 { margin-top: 0; }
-.heinlein-review-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18rem; overflow: auto; }
-.review-edit { border-top: 1px solid var(--border); padding-block: 1rem; }
-.review-edit h3, .review-edit h4 { margin-block: .5rem; }
-.review-edit button { margin: .25rem; }
+:root { --review-width: min(34rem, 48vw); }
+.heinlein-review-panel { position: fixed; z-index: 12; inset: 5rem 1rem 1rem auto; width: var(--review-width); overflow: auto; padding: 0 1.25rem 2rem; scroll-padding-block: 5.5rem 1rem; background: var(--surface); color: var(--fg); border: 2px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: 0 1rem 3rem #0005; font-size: 1.0625rem; line-height: 1.6; }
+.heinlein-review-panel[hidden], .heinlein-review-panel.review-tucked { display: none; }
+.heinlein-review-panel [hidden] { display: none; }
+.heinlein-review-panel > * + * { margin-top: .85rem; }
+.heinlein-review-panel h2 { margin: 0; font-size: 1.375rem; font-weight: 700; }
+.heinlein-review-panel h3 { font-size: 1.25rem; font-weight: 700; margin-block: 1rem .35rem; }
+.heinlein-review-panel h4 { font-size: 1.15rem; font-weight: 700; margin: 0; }
+.heinlein-review-panel h5 { font-size: 1rem; font-weight: 700; margin: .9rem 0 .3rem; }
+.heinlein-review-panel :is(h2,h3,h4):focus { outline: none; }
+.heinlein-review-panel :is(h2,h3,h4):focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+.heinlein-review-panel pre { margin: 0; padding: .75rem .9rem; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-family: var(--font-text); font-size: 1.0625rem; line-height: 1.65; max-height: 18rem; overflow: auto; background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.review-head { position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem .75rem; margin-inline: -1.25rem; padding: .6rem 1.25rem; background: var(--surface); border-bottom: 2px solid var(--border-strong); }
+.review-nav { display: flex; flex-wrap: wrap; gap: .5rem; }
+.review-guidance { margin-block: .5rem; }
+.review-progress { font-weight: 600; margin-bottom: .75rem; }
+.review-edit { padding-block: 1rem 1.25rem; border-top: 2px solid var(--border-strong); }
+.review-edit > * + * { margin-top: .4rem; }
+.review-chip { display: inline-block; max-width: 100%; padding: .1rem .55rem; font-size: 1rem; font-weight: 600; border: 2px solid var(--fg-muted); border-radius: var(--radius-sm); }
+.review-chip-warning { color: var(--warn); border-color: var(--warn); }
+.review-where { font-size: 1rem; }
+.review-comment { font-weight: 500; margin-block: .5rem; }
+.review-edit .review-diff { max-height: none; overflow: visible; }
+.review-diff[data-side="proposed"] { border: 2px solid var(--fg); }
+.review-diff :is(del,ins) { padding-inline: .15em; font-weight: 700; color: inherit; border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.review-diff del { text-decoration: line-through 2px; outline: 1px dashed currentColor; outline-offset: -1px; }
+.review-diff ins { text-decoration: underline 3px; text-underline-offset: .18em; background: var(--selection); }
+/* Generated text announces the change to assistive technology without entering the exact source text or a copy. */
+.review-diff :is(del,ins)::before, .review-diff :is(del,ins)::after { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.review-diff del::before { content: " [removed: "; }
+.review-diff ins::before { content: " [added: "; }
+.review-diff :is(del,ins)::after { content: "] "; }
+.review-point { display: inline-block; width: .3rem; height: 1.1em; margin-inline: .1em; vertical-align: text-bottom; background: var(--fg); }
+.review-cut::before { content: "… "; font-weight: 700; }
+.review-cut:last-child::before { content: " …"; }
+.review-decision { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: .85rem; }
+.heinlein-review-panel .review-approve { background: var(--fg); color: var(--bg); border: 2px solid var(--fg); font-weight: 700; }
+.heinlein-review-panel .review-approve:hover { background: var(--fg); color: var(--bg); border-color: var(--accent); }
+.heinlein-review-panel button { border: 2px solid var(--fg-muted); padding-inline: .9rem; white-space: normal; text-align: start; }
+.heinlein-review-panel button:disabled { opacity: 1; color: var(--fg-muted); background: transparent; border: 2px dashed var(--fg-muted); }
+.review-why { font-weight: 600; margin-top: .5rem; }
+.review-choice { margin-top: .75rem; padding: .35rem .6rem; font-weight: 600; border: 2px solid var(--fg-muted); border-radius: var(--radius-sm); cursor: pointer; }
+.review-choice:has(input:checked) { border-color: var(--fg); border-width: 3px; }
+.heinlein-review-panel .review-choice { flex-wrap: wrap; overflow-wrap: break-word; }
+.review-conflict { margin: 1rem 0; padding: .5rem .9rem .25rem; min-width: 0; border: 2px solid var(--fg-muted); border-radius: var(--radius-sm); }
+.review-conflict legend { padding-inline: .4rem; font-weight: 700; }
+.review-decision-note { margin-block: .75rem; padding: .65rem .85rem; font-weight: 600; border: 2px solid var(--fg); border-left-width: .5rem; border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+.review-technical code { display: block; overflow-wrap: anywhere; font-size: .95rem; }
+.review-technical > * + *, .review-history > * + *, .review-about > * + * { margin-top: .5rem; }
+.review-history, .review-about { margin-top: .5rem; border-top: 1px solid var(--border-strong); }
+.review-history-item { padding-block: .75rem; border-top: 1px solid var(--border); }
+.review-new { padding-top: .25rem; border-top: 2px solid var(--border-strong); }
+.review-new > * + * { margin-top: .75rem; }
+.review-new > summary { font-size: 1.15rem; font-weight: 700; }
+.review-saved-item { display: grid; gap: .3rem; justify-items: start; padding-block: .5rem; }
+.review-saved-item button { width: 100%; }
+/* Inline suggestion marks. Text decoration only: no metrics change, and the selection layer stays visible. */
+.cm-review-mark { cursor: pointer; text-decoration-color: var(--fg); text-decoration-skip-ink: none; }
+.cm-review-replace { text-decoration-line: underline; text-decoration-style: solid; text-decoration-thickness: .16em; text-underline-offset: .22em; }
+.cm-review-delete { text-decoration-line: underline line-through; text-decoration-style: solid; text-decoration-thickness: .12em; text-underline-offset: .22em; }
+.cm-review-overlap { text-decoration-line: underline; text-decoration-style: wavy; text-decoration-thickness: .1em; text-underline-offset: .22em; }
+.cm-review-point { position: relative; cursor: pointer; }
+.cm-review-point::before { content: ""; position: absolute; left: -.5em; top: 0; width: 1em; height: 1.4em; }
+.cm-review-point::after { content: ""; position: absolute; left: -.1em; top: .1em; width: .2em; height: 1.2em; background: var(--fg); pointer-events: none; }
+.review-opened { outline: 3px solid var(--fg); outline-offset: 2px; border-radius: var(--radius-sm); }
+.review-edit.review-opened { padding-inline: .5rem; }
+.review-result-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.review-result-actions:not(:has(> :not([hidden]))) { display: none; }
+.review-result-actions p { flex-basis: 100%; }
+/* Beside the editor when there is room, so the panel never sits on top of the text being reviewed. */
+@media (min-width: 901px) {
+  :root:not([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .studio:not(.standalone-writing):has(> .heinlein-review-panel:not([hidden],.review-tucked)) .preview { padding-right: calc(var(--review-width) + 2rem); }
+}
+/* A full reading sheet when it is not: narrow windows and large text get the whole viewport, and covered chrome leaves the tab order. */
+@media (max-width: 900px) {
+  .heinlein-review-panel { inset: 0; width: auto; border: 0; border-radius: 0; padding: 0 .6rem 2rem; scroll-padding-block: 1rem; }
+  .review-head { position: static; margin-inline: -.6rem; padding: .35rem .6rem; gap: .3rem; }
+  .review-head h2 { font-size: 1rem; }
+  .review-nav { gap: .3rem; width: 100%; }
+  .review-nav button { line-height: 1.2; padding-block: .25rem; }
+  .review-conflict { margin-inline: 0; padding-inline: 0; border-inline: 0; border-radius: 0; }
+  .heinlein-review-panel pre { padding: .4rem .5rem; }
+  .studio:has(> .heinlein-review-panel:not([hidden],.review-tucked)) > :not(.heinlein-review-panel, dialog) { visibility: hidden; }
+}
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel { inset: 0; width: auto; border: 0; border-radius: 0; padding: 0 .6rem 2rem; scroll-padding-block: 1rem; }
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .review-head { position: static; margin-inline: -.6rem; padding: .35rem .6rem; gap: .3rem; }
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .review-head h2 { font-size: 1rem; }
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .review-nav { gap: .3rem; }
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .review-nav button { line-height: 1.2; padding-block: .25rem; }
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .review-conflict { margin-inline: 0; padding-inline: 0; border-inline: 0; border-radius: 0; }
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel pre { padding: .4rem .5rem; }
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .studio:has(> .heinlein-review-panel:not([hidden],.review-tucked)) > :not(.heinlein-review-panel, dialog) { visibility: hidden; }
 
 /* Optional story guide: large targets, one column, no colour-only progress. */
 .first-story { color: var(--fg); background: var(--bg); border: 2px solid var(--border); border-radius: 12px; width: min(46rem, calc(100vw - 1rem)); max-width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); padding: clamp(.75rem, 3vw, 2rem); overflow: auto; font-size: max(18px, 1rem); line-height: 1.6; box-sizing: border-box; }
@@ -509,8 +594,9 @@ dialog { color: var(--fg); }
 .update-panel button { min-height:48px; max-width:100%; padding:.7rem; margin:.4rem; font:inherit; white-space:normal; }
 .update-panel :focus-visible { outline:3px solid var(--fg); outline-offset:3px; }
 /* Review controls and diffs remain usable with large text and narrow reflow. */
-.heinlein-review-panel :is(button,select,input:not([type=checkbox]):not([type=radio]),textarea) { min-height: 44px; max-width: 100%; font: inherit; }
-.heinlein-review-panel label { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-block:.25rem; min-height: 44px; overflow-wrap: anywhere; }
+.heinlein-review-panel :is(button,select,input:not([type=checkbox]):not([type=radio]),textarea) { min-height: 48px; max-width: 100%; font: inherit; }
+.heinlein-review-panel summary { min-height: 48px; }
+.heinlein-review-panel label { display: flex; align-items: center; flex-wrap: nowrap; gap: .6rem; margin-block:.25rem; min-height: 48px; overflow-wrap: anywhere; }
 .heinlein-review-panel label:has(select), .heinlein-review-panel label:has(textarea) { align-items: stretch; flex-direction: column; }
 .heinlein-review-panel :is(input[type=checkbox],input[type=radio]) { width: 1.5rem; height: 1.5rem; flex: 0 0 auto; }
 .heinlein-review-panel :is(button,select,textarea,input):focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }

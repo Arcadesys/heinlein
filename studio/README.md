@@ -374,10 +374,10 @@ available. Combined selected context is bounded to 1 MiB and 128 windows, with n
 silent truncation or automatic retry.
 
 The consolidated versioned JSON contains exact prepared patches, comments,
-locations, immutable reviewer snapshots, coverage and decisions. **Approve…**
+locations, immutable reviewer snapshots, coverage and decisions. **Approve this change…**
 applies an exact patch only after the existing native final confirmation. Choose
 conflicting alternatives explicitly; unrelated suggestions remain usable after
-approved byte shifts. **Reject edit** persists before dismissal, including across
+approved byte shifts. **Reject this change** persists before dismissal, including across
 reopen/restart/regenerated duplicates. Saved review reload never runs providers.
 See [the review contract](../docs/architecture/studio-heinlein-review.md) for
 limits, lineage, source safety and synthetic versus native/live evidence.

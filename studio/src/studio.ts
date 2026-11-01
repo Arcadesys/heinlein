@@ -10,6 +10,7 @@ import {createUpdatePanel} from './updatePanel';
 import {createGitHubPanel} from './githubPanel';
 import {createFirstStory} from './firstStory';
 import { createReviewPanel } from './reviewPanel';
+import { createReviewMarkPublisher, reviewMarkExtension, reviewMarksIn, setReviewMarks, type ReviewMarkTarget } from './reviewMarks';
 import { createDocumentDetails } from './documentDetails';
 import { createSceneNavigator, sceneBreaks } from './sceneNavigator';
 import { createNavigationDrawer } from './navigationDrawer';
@@ -188,6 +189,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (chromeReady) renderOrigin();
     draftingQuestions?.stateChanged();
     reviewPanel?.stateChanged();
+    const marked = (chapterEditor ?? editor)?.view;
+    if (reviewPanel && marked && reviewMarksIn(marked.state).length && !reviewMarkTargets()) {setReviewMarks(marked, []); reviewPanel.marksInvalidated();}
   }
   function setDirty(value: boolean) {
     dirty = value;
@@ -752,10 +755,23 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     reviewProposal: async (id, guard) => {reviewApplying = true; try {await proposals.reviewProposal(id, guard);} finally {reviewApplying = false;}},
     approveReview: async (run,guard)=>{reviewApplying=true;let outcome:import('./localCore').ProposalOutcome|null=null;try{await runProposal(async()=>{const problem=guard();if(problem)throw new Error(problem);outcome=await run();if(outcome&&outcome.receipt.status!=='failed')await proposalChanged(outcome.receipt.path);});return outcome;}finally{reviewApplying=false;}},
     openConnection: () => {reviewPanel?.clear(); if (draftingQuestions) {root.append(draftingQuestions.element); draftingQuestions.open();}},
+    announce: text => {status.classList.remove('error'); status.textContent = text;},
+    marksChanged: (input, report) => reviewMarkPublisher.publish(input, report),
     focusEditor: () => (editor ?? chapterEditor)?.view.focus(),
   });
   root.append(reviewPanel.element);
 
+  // Marks show only over clean text this exact view can prove it holds. Chapter parts already carry their source mapping.
+  function reviewMarkTargets(): ReviewMarkTarget[] | null {
+    if (!repository || repositoryDetached || disposed || selecting || structuralBusy || dirty || saving || staging || writeInFlight || recovery || recoveryPending || guardPending || writePaused) return null;
+    if (currentChapter && chapterEditor) return currentChapter.parts.map(part => ({path: part.document.path, source: part.document.text, contentHash: part.document.contentHash,
+      toView: position => {const view = part.from + position - part.bodyFrom; return position >= part.bodyFrom && view <= part.to ? view : null;}}));
+    if (editor && opened && !opened.generatedCompatibility) return [{path: opened.path, source: editor.text(), contentHash: opened.contentHash, toView: position => position}];
+    return null;
+  }
+  const reviewMarkPublisher = createReviewMarkPublisher({view: () => (chapterEditor ?? editor)?.view ?? null, targets: reviewMarkTargets,
+    owns: input => input.repositoryId === repository?.id && (!input.projectKey || !repository.projectKey || input.projectKey === repository.projectKey)});
+  const reviewMarks = () => reviewMarkExtension({open: id => {reviewPanel?.openSuggestion(id);}, invalidated: () => reviewPanel?.marksInvalidated(), keys: {next: formatKeys('⌘⌥]'), previous: formatKeys('⌘⌥['), open: formatKeys('⌘⌥O')}});
   function revisionUnavailable(reviewing = false) {
     if(reference.fromReference())return REFERENCE_ACTION_MESSAGE;
     if (!proposals.supported) return 'Revision review is unavailable in this native host.';
@@ -1712,6 +1728,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         setDirty(raw !== opened?.text);
         scheduleAutosave(); sceneNavigator.schedule();
       }, () => { void saveCurrent(); });
+      editor.view.dispatch({effects: StateEffect.appendConfig.of(reviewMarks())});
       if(core.projectRequest){editor.view.dispatch({effects:StateEffect.appendConfig.of(EditorView.updateListener.of(update=>{if(update.selectionSet)scheduleProjectPosition();}))});editor.view.scrollDOM.addEventListener('scroll',scheduleProjectPosition);}
       createDocumentDetails(metadata, editor);
       editor.view.dispatch({effects: StateEffect.appendConfig.of(EditorView.updateListener.of(update => {if (update.docChanged || update.selectionSet) draftingQuestions?.stateChanged();}))});
@@ -1738,6 +1755,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     text.replaceWith(explanation, toolbar, host, sources);
     const reader = createEditor(host, assembled.text, () => {}, () => {});
     chapterEditor = reader; reader.setEditable(false);
+    reader.view.dispatch({effects: StateEffect.appendConfig.of(reviewMarks())});
     reader.view.contentDOM.setAttribute('aria-label', 'Assembled chapter — select a passage to revise its source');
     reader.view.contentDOM.setAttribute('aria-readonly', 'true');
     reader.view.contentDOM.tabIndex = 0;
