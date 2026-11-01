@@ -1,0 +1,38 @@
+import {emit,listen} from '@tauri-apps/api/event';
+import {localCore} from '../../../../src/localCore';
+import {expected,expectedHash} from '../ack';
+import {ManualState,ManualVerification,nativeFailure,mode} from './state';
+import './manual.css';
+type Config={phase:string;directory:string;filename:string};
+const injected=(globalThis as unknown as {__HEINLEIN_NATIVE47__?:Config}).__HEINLEIN_NATIVE47__;
+const simulated=!injected&&new URLSearchParams(location.search).has('simulated');
+const config=injected??{phase:mode,directory:'/private/tmp/SIMULATED/copy-targets',filename:'draft.md'};
+const state=new ManualState();let handle='',id='',finishRequested=false,terminal=false,verifying=false;let rejectSeed:((error:Error)=>void)|undefined;
+const verification=new ManualVerification(()=>failed(nativeFailure,false));
+const element=(id:string)=>document.getElementById(id)!;
+const open=element('open') as HTMLButtonElement,finish=element('finish') as HTMLButtonElement;
+const stage=(stage:string)=>emit('native47-diagnostic',{stage});
+const assert=(ok:unknown,message:string)=>{if(!ok)throw Error(message);};
+function render(message?:string){open.disabled=terminal||verifying||!['cancel','save'].includes(state.phase);finish.disabled=terminal||verifying||state.phase!=='ready';open.textContent=state.phase==='save'?'Step 2: Open picker — you click Save':'Step 1: Open picker — you click Cancel';element('status').textContent=(simulated?'SIMULATED — ':'')+(message??({starting:'Starting synthetic source…',cancel:'Ready. Open the picker, then click Cancel.', 'cancel-open':'Waiting for you to click Cancel. No deadline.',save:'Cancel verified. Open the picker again; type draft.md, then click Save. Save previews only.', 'save-open':'Waiting for your Save. Save returns a preview; no copy is placed.',ready:'Cancel and exact Save preview verified. Original unchanged; no copy. You may Finish.',finishing:'Finish requested. Waiting for guarded quit; no acceptance claim until durable collector receipt.',incomplete:'Incomplete. Stop this test; do not retry.'}[state.phase]));}
+function failed(error:unknown,reportNative=true){if(terminal)return;terminal=true;state.phase='incomplete';state.error=String(error);verification.fail();rejectSeed?.(Error(nativeFailure));rejectSeed=undefined;render('Incomplete: '+state.error);element('status').focus();if(!simulated&&reportNative)void emit('native47-diagnostic',{stage:'renderer-failed',detail:state.error.slice(0,240)}).catch(()=>{});}
+function validPreview(value:unknown){const v=value as Record<string,unknown>|null;return !!v&&typeof v.token==='string'&&v.token.length>0&&v.destination===config.directory+'/draft.md'&&v.text===expected&&v.hash===expectedHash&&v.revision===1;}
+function validReadback(v:Record<string,unknown>){return v.originalExact===true&&v.publicationAbsent===true&&v.copyExact===false&&v.pendingIntents===0&&v.placements===0&&v.hash===expectedHash&&v.draftId===id&&v.revision===1;}
+async function verify(stageName:string){
+ const pending=verification.wait(stageName,validReadback);
+ if(simulated){if(!new URLSearchParams(location.search).has('holdReadback'))queueMicrotask(()=>window.dispatchEvent(new CustomEvent('manual-simulated-readback',{detail:{stage:stageName,originalExact:true,publicationAbsent:true,copyExact:false,pendingIntents:0,placements:0,hash:expectedHash,draftId:id,revision:1}})));}
+ else void stage(stageName).catch(error=>failed(error));
+ await pending;
+}
+async function result(value:unknown){if(terminal)return;state.result(value,validPreview);verifying=true;render('Waiting for native readback. Source and copy state are unverified.');await verify(state.phase==='save'?'picker-cancel-real-null':'picker-preview-real-token');verifying=false;if(terminal)return;render();element('status').focus();}
+open.onclick=()=>{void(async()=>{state.open();render();if(simulated){element('simulation').hidden=false;return;}const value=await localCore.standalone!({kind:'preview',handle,revision:1,hash:expectedHash,destination:'file',name:'',title:'',project:''});await result(value);})().catch(failed);};
+for(const [name,value] of [['cancel',null],['save',{token:'SIMULATED',destination:config.directory+'/draft.md',text:expected,hash:expectedHash,revision:1}],['wrong',{token:'SIMULATED',destination:'/outside/draft.md'}]] as const)(element(name) as HTMLButtonElement).onclick=()=>{if(!simulated)return;void result(value).catch(failed);element('simulation').hidden=true;};
+finish.onclick=()=>{void(async()=>{state.finish();finishRequested=true;render();if(simulated){render('SIMULATED Finish only. No native callback, quit, or acceptance performed.');return;}await stage('manual-finish-requested');})().catch(failed);};
+element('stop').onclick=()=>{terminal=true;state.phase='incomplete';verification.fail();rejectSeed?.(Error(nativeFailure));rejectSeed=undefined;render('Stopped as incomplete. No acceptance.');if(!simulated)void stage('manual-stop').catch(failed);};
+async function main(){assert(config.phase===mode&&config.filename==='draft.md','Exact manual mode and filename required');element('source').textContent=expected;element('scope').textContent=simulated?'SIMULATED browser layout. No native acceptance.':'Disposable synthetic source. Human-operated native picker only.';element('cue').textContent='Use ONLY this folder: '+config.directory+'\nType exactly: draft.md\nSave means preview, never Place.';
+ if(simulated){id='SIMULATED-ID';Object.defineProperty(window,'__MANUAL_SIMULATED__',{value:{get pendingVerification(){return verification.waiting;}}});window.addEventListener('manual-simulated-native-failure',()=>verification.fail());window.addEventListener('manual-simulated-readback',event=>verification.success((event as CustomEvent<Record<string,unknown>>).detail));}
+ else {await listen('native47-manual-failed',()=>verification.fail());await listen<Record<string,unknown>>('native47-picker-readback',event=>verification.success(event.payload));await localCore.onCloseRequested(async()=>{if(!finishRequested||state.phase!=='finishing')return;try{await stage('request-close-from-production');await localCore.requestClose(true);}catch(e){failed(e);}finally{await localCore.finishQuitRequest!();}});
+ let seededResolve!:()=>void;const seeded=new Promise<void>((resolve,reject)=>{seededResolve=resolve;rejectSeed=reject;});void seeded.catch(()=>{});const stopSeed=await listen('native47-manual-seeded',()=>seededResolve());
+ if(terminal){stopSeed();return;}
+ const created=await localCore.standalone!({kind:'create',text:expected}) as {handle:string;loaded:{draft:{id:string;text:string;textHash:string;revision:number}}};if(terminal){stopSeed();return;}const d=created.loaded.draft;assert(d.text===expected&&d.textHash===expectedHash&&d.revision===1,'Exact source seed required');handle=created.handle;id=d.id;try{await emit('native47-diagnostic',{stage:'seed-identity',id});await seeded;}finally{rejectSeed=undefined;stopSeed();}if(terminal)return;await localCore.setUnsavedChanges(false);
+ }if(terminal)return;state.start();render();open.focus();}
+window.addEventListener('error',e=>failed(e.message));window.addEventListener('unhandledrejection',e=>failed(e.reason));void main().catch(failed);

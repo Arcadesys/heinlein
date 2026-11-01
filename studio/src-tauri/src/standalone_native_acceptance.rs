@@ -86,18 +86,20 @@ pub(super) fn file_create(path: &Path, value: &serde_json::Value) -> Result<(), 
         .map_err(|_| "Fixture directory sync failed".into())
 }
 fn fail(app: &tauri::AppHandle, reason: &str) {
+    FIXTURE.get().unwrap().abort.store(true, Ordering::SeqCst);
     stage(reason);
-    if FIXTURE
+    if !picker_manual() && FIXTURE
         .get()
         .is_some_and(|fixture| fixture.phase.starts_with("picker"))
     {
         super::standalone_picker_acceptance::abort_action_waiters();
     }
-    FIXTURE.get().unwrap().abort.store(true, Ordering::SeqCst);
-    app.exit(73);
+    if picker_manual() { let _=app.emit("native47-manual-failed",serde_json::json!({"failed":true})); }
+    if !picker_manual() || matches!(reason,"operator-cooperative-abort"|"manual-stop-incomplete") { app.exit(73); }
 }
 // Own AppKit action, always queued outside any Tauri callback. No AX/IPC/input injection.
 fn native_quit() {
+    if picker_manual() && !super::standalone_picker_acceptance::manual_finished() { return; }
     use std::ffi::{c_char, c_void};
     #[link(name = "objc")]
     extern "C" {
@@ -111,6 +113,7 @@ fn native_quit() {
         fn dispatch_async_f(q: *mut c_void, c: *mut c_void, f: extern "C" fn(*mut c_void));
     }
     extern "C" fn perform(_: *mut c_void) {
+        if picker_manual() && !super::standalone_picker_acceptance::manual_finished() { return; }
         unsafe {
             let get: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
                 std::mem::transmute(objc_msgSend as *const ());
@@ -204,9 +207,11 @@ pub(super) fn picker_guard_home(app: &tauri::AppHandle) -> Result<PathBuf, Strin
 pub(super) fn picker_phase() -> Option<&'static str> {
     FIXTURE.get().map(|fixture| fixture.phase.as_str())
 }
+pub(super) fn manual_session_failed() -> bool { FIXTURE.get().map_or(true, |f| f.abort.load(Ordering::SeqCst)) }
+pub(super) fn picker_manual() -> bool { picker_phase()==Some("picker-manual-preview") }
 pub(super) fn picker_preview_only() -> bool {
     FIXTURE.get().is_some_and(|fixture| {
-        matches!(fixture.phase.as_str(), "picker-preview-only" | "picker-d1")
+        matches!(fixture.phase.as_str(), "picker-preview-only" | "picker-d1" | "picker-manual-preview")
     })
 }
 pub(super) fn picker_d1() -> bool {
@@ -231,7 +236,8 @@ pub(super) fn run() {
     }
 }
 fn require_supported_fixture_mode(mode: &str) -> Result<(), String> {
-    if mode.starts_with("picker") {
+    if mode=="picker-manual-preview" && cfg!(feature="standalone-ok-diagnostic") { return Err("Manual mode excludes diagnostic features".into()); }
+    if mode.starts_with("picker") && mode != "picker-manual-preview" {
         return Err("unsupported_automation; acceptance=false: macOS10.15+ prohibits programmatic NSSavePanel.ok: https://developer.apple.com/documentation/appkit/nssavepanel/ok(_:)".into());
     }
     Ok(())
@@ -252,6 +258,7 @@ mod picker_contract_tests {
         for mode in ["first", "reopen"] {
             assert!(super::require_supported_fixture_mode(mode).is_ok());
         }
+        assert_eq!(super::require_supported_fixture_mode("picker-manual-preview").is_ok(), !cfg!(feature="standalone-ok-diagnostic"));
     }
 }
 fn run_fixture() -> Result<(), String> {
@@ -265,6 +272,7 @@ fn run_fixture() -> Result<(), String> {
             "picker-reopen",
             "picker-preview-only",
             "picker-d1",
+            "picker-manual-preview",
         ]
         .contains(&args[3].as_str())
     {
@@ -290,7 +298,7 @@ fn run_fixture() -> Result<(), String> {
         return Err("TMPDIR must equal fixture root before startup".into());
     }
     let sentinel = root.join("fixture-sentinel.json");
-    if ["first", "picker", "picker-preview-only", "picker-d1"].contains(&args[3].as_str()) {
+    if ["first", "picker", "picker-preview-only", "picker-d1", "picker-manual-preview"].contains(&args[3].as_str()) {
         if std::fs::read_dir(&root)
             .map_err(|_| "Fixture root unavailable")?
             .next()
@@ -317,7 +325,7 @@ fn run_fixture() -> Result<(), String> {
         }
         private(p)?;
     }
-    if ["picker", "picker-preview-only", "picker-d1"].contains(&args[3].as_str()) {
+    if ["picker", "picker-preview-only", "picker-d1", "picker-manual-preview"].contains(&args[3].as_str()) {
         let target = root.join("copy-targets");
         std::fs::DirBuilder::new()
             .mode(0o700)
@@ -347,7 +355,9 @@ fn run_fixture() -> Result<(), String> {
         .set(fixture.clone())
         .map_err(|_| "Fixture already initialized")?;
     stage("feature-explicit-invocation-private-root-sentinel-validated");
-    let mut context = if fixture.phase.starts_with("picker") {
+    let mut context = if picker_manual() {
+        tauri::generate_context!("../macos/tests/native-standalone-probe/manual/tauri.conf.json")
+    } else if fixture.phase.starts_with("picker") {
         tauri::generate_context!("../macos/tests/native-standalone-probe/picker/tauri.conf.json")
     } else {
         tauri::generate_context!("../macos/tests/native-standalone-probe/tauri.conf.json")
@@ -371,7 +381,7 @@ fn run_fixture() -> Result<(), String> {
     let phase = args[3].clone();
     let script = format!(
         "globalThis.__HEINLEIN_NATIVE47__={};",
-        serde_json::json!({"phase":if phase=="picker-d1" {"picker-preview-only"}else{phase.as_str()},"id":identity,"expectedRevision":expected_revision})
+        serde_json::json!({"phase":if phase=="picker-d1" {"picker-preview-only"}else{phase.as_str()},"id":identity,"expectedRevision":expected_revision,"directory":root.join("copy-targets"),"filename":"draft.md"})
     );
     let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
         standalone::standalone_request,
@@ -402,7 +412,7 @@ fn run_fixture() -> Result<(), String> {
             if cmd == "standalone_request" {
                 let allowed = match invoke.message.payload() {
                     tauri::ipc::InvokeBody::Json(v) => {
-                        if matches!(guarded.phase.as_str(),"picker-preview-only"|"picker-d1") {
+                        if matches!(guarded.phase.as_str(),"picker-preview-only"|"picker-d1"|"picker-manual-preview") {
                             super::standalone_picker_acceptance::preview_only_request_allowed(&v["request"])
                         } else { v["request"]["kind"].as_str().is_some_and(|kind| {
                             ["list", "create", "open", "save", "release"].contains(&kind) || (guarded.phase.starts_with("picker") && ["preview", "cancelPreview", "place"].contains(&kind) && (kind != "preview" || v["request"]["destination"] == "file"))
@@ -420,6 +430,10 @@ fn run_fixture() -> Result<(), String> {
             }
             if guarded.calls.fetch_add(1, Ordering::SeqCst) == 0 {
                 stage("first-renderer-IPC");
+            }
+            if picker_manual() && ["request_close","quit_request_finished"].contains(&cmd) && !super::standalone_picker_acceptance::manual_finished() {
+                guarded.forbidden.fetch_add(1, Ordering::SeqCst);
+                invoke.resolver.reject("Manual Finish required after exact/no-copy verification"); return true;
             }
             if cmd == "request_close" {
                 guarded.close_calls.fetch_add(1, Ordering::SeqCst);
@@ -462,6 +476,18 @@ fn run_fixture() -> Result<(), String> {
                     fail(&h, "missing-renderer-stage");
                     return;
                 };
+                if picker_manual() && name=="manual-stop" { fail(&h,"manual-stop-incomplete"); return; }
+                if picker_manual() && name=="manual-finish-requested" {
+                    let app=h.clone();std::thread::spawn(move || {
+                        match super::standalone_picker_acceptance::manual_finish(&app) {
+                            Ok(value)=> { println!("{}",serde_json::json!({"kind":"native-picker-readback","value":value})); let _=std::io::stdout().flush();stage("manual-finish-exact-no-copy");native_quit(); },
+                            Err(reason)=>fail(&app,&reason),
+                        }
+                    });return;
+                }
+                if picker_manual() && !super::standalone_picker_acceptance::manual_contract::diagnostic_allowed(name) {
+                    fail(&h,"unexpected-manual-renderer-stage-incomplete");return;
+                }
                 let allowed = [
                     "close-handler-entered",
                     "callback-dispatched",
@@ -524,7 +550,7 @@ fn run_fixture() -> Result<(), String> {
                 }
                 if name.starts_with("picker-") && f.phase.starts_with("picker") {
                     if name == "picker-all-evidence-ready" {
-                        native_quit();
+                        if !picker_manual() { native_quit(); }
                     } else {
                         let app = h.clone(); let phase = name.to_string();
                         std::thread::spawn(move || {
@@ -584,7 +610,7 @@ fn run_fixture() -> Result<(), String> {
                         .is_err()
                     {
                         fail(&h, "synthetic-draft-id-write-failed")
-                    }
+                    } else if picker_manual() { let _=h.emit("native47-manual-seeded",()); }
                 }
                 if name == "save-IPC-queued" || name == "reopened-exact-bytes-same-id" {
                     native_quit();
@@ -696,6 +722,7 @@ fn run_fixture() -> Result<(), String> {
     let h = app.handle().clone();
     let f = fixture.clone();
     std::thread::spawn(move || {
+        if picker_manual() { return; } // No human-step deadline or automatic exit.
         for _ in 0..600 {
             std::thread::sleep(Duration::from_millis(100));
             if f.ended.load(Ordering::SeqCst) {
@@ -718,6 +745,7 @@ fn run_fixture() -> Result<(), String> {
                 break;
             }
         }
+        if picker_manual() { fail(&h,"collector-disconnected-incomplete"); }
     });
     let mut approved = 0;
     let code=app.run_return(move|app,event|{
