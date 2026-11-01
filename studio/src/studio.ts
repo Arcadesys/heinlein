@@ -1,3 +1,4 @@
+import {actionMenu} from './actionMenu';
 import {createDocumentTabs,type DocumentTab} from './documentTabs';
 import {createReferencePane,REFERENCE_ACTION_MESSAGE} from './referencePane';
 import {requestGitHub} from './githubRequests';
@@ -99,6 +100,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let documentReader: ReturnType<typeof createMarkdownReader> | null = null;
   let documentView: {host: HTMLElement; toolbar: HTMLElement; source: HTMLButtonElement; reading: HTMLButtonElement; editor: EditorView; modeChanged?: (mode: 'source' | 'reading') => void} | null = null;
   let readerSourceScroll = 0;
+  let editorCommands:ReturnType<typeof actionMenu>|null=null;
   const readingDocuments = new Set<string>();
   let currentChapter: AssembledChapter | null = null;
   let questionButton: HTMLButtonElement | null = null;
@@ -187,7 +189,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const label = recoveryPending ? 'Recovery available' : saving ? 'Saving on this Mac…' : dirty ? (writePaused ? 'Unsaved · autosave paused' : 'Unsaved changes') : 'Saved on this Mac';
     if (dirtyBadge) dirtyBadge.textContent = label;
     if (chromeReady) {
-      pillSaveLabel.textContent = standalone?.active ? (dirty?'Keeping on this Mac…':'Kept on this Mac') : dirtyBadge ? label : opened?.generatedCompatibility ? 'Assembled chapter' : opened ? 'Read-only' : 'Nothing open';
+      const fullState=standalone?.active ? (dirty?'Keeping on this Mac…':'Kept on this Mac') : dirtyBadge ? label : opened?.generatedCompatibility ? 'Assembled chapter' : opened ? 'Read-only' : 'Nothing open';
+      pillSaveLabel.textContent=standalone?.active?(dirty?'Keeping':'Kept'):dirtyBadge?(recoveryPending?'Recovery':writePaused?'Paused':saving?'Saving':dirty?'Unsaved':'Saved'):opened?.generatedCompatibility?'Assembled':opened?'Read-only':'Nothing open';pillSave.setAttribute('aria-label',fullState);
       pillSave.dataset.state = !dirtyBadge ? 'idle' : recoveryPending || writePaused ? 'error' : saving ? 'saving' : dirty ? 'dirty' : 'saved';
     }
     if (saveButton) saveButton.disabled = saving || recoveryPending || !dirty;
@@ -425,6 +428,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   proposalsEntry.hidden = true;
 
   // Floating status pill: where you are, what you've written, and the way into everything else.
+  let appCommands:ReturnType<typeof actionMenu>|undefined;
+  let headerMedia:MediaQueryList|undefined;
   const pill = el('header', '', 'status-pill chrome');
   pill.setAttribute('aria-label', 'Writing status');
   const pillProject = core.projectRequest?button('Projects…',()=>void projectLibrary.open(),'pill-project project-switcher'):el('span','Heinlein Studio','pill-muted pill-project');
@@ -488,6 +493,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   })];
   pill.append(pillProject, el('span', '/', 'pill-muted'), pillChapter, pillChapterSep, pillScene, el('span', '', 'pill-rule'), pillWords, pillSave, goalButton, proposalsEntry, paletteButton);
   const status = el('p', 'Open from GitHub, open a local folder, or start a draft.', 'status');
+  const noticeSlot=el('div','','notice-slot');pillSave.setAttribute('role','status');noticeSlot.append(pillSave,status);
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
   // Messages like "Opening your writing…" mean work is under way; show a spinner until the text changes.
@@ -615,14 +621,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const activeDocumentPane=el('section','','active-document-pane');activeDocumentPane.id='active-document-pane';activeDocumentPane.setAttribute('role','tabpanel');
   const readingPanes=el('div','','document-reading-panes');
   const documentWorkspace=el('div','','document-workspace');
+  const documentCommandBar=el('div','','document-command-bar');
   const splitReadingOffer=el('div','','split-reading-offer');splitReadingOffer.hidden=true;
   const reference=createReferencePane(core,{binding:()=>!disposed&&!selecting&&!repositoryDetached&&repository?{session:repository.id,generation}:null,
     edit:path=>{void showDocument(path);},focusWriter:()=>{focusWriterView();if(!editor&&!chapterEditor)activeDocumentPane.focus();}});
   const documentTabs=createDocumentTabs({open:openDocumentTab,close:closeDocumentTab,read:tab=>{if(!repositoryDetached&&!selecting)void reference.read({path:tab.path,sceneId:tab.sceneId});}});
-  for(const event of ['focusin','pointerdown'])activeDocumentPane.addEventListener(event,e=>{if((e.target as Element)?.closest('.markdown-editor,.source-text,.markdown-reader,.md-view-toggle'))reference.activateWriter();});activeDocumentPane.tabIndex=-1;
+  for(const host of [activeDocumentPane,documentCommandBar])for(const event of ['focusin','pointerdown'])host.addEventListener(event,e=>{if((e.target as Element)?.closest('.markdown-editor,.source-text,.markdown-reader,.md-view-toggle'))reference.activateWriter();});activeDocumentPane.tabIndex=-1;
   activeDocumentPane.addEventListener('scroll',scheduleProjectPosition);
-  readingPanes.append(activeDocumentPane,reference.element);documentWorkspace.append(documentTabs.element,splitReadingOffer,readingPanes);
-  function mountActive(page:HTMLElement){activeDocumentPane.replaceChildren(page);if(!preview.contains(documentWorkspace))preview.replaceChildren(documentWorkspace);}
+  readingPanes.append(activeDocumentPane,reference.element);documentWorkspace.append(documentTabs.element,documentCommandBar,splitReadingOffer,readingPanes);
+  function mountActive(page:HTMLElement){if(window.matchMedia?.('(max-width:760px)').matches)navigation.close();activeDocumentPane.replaceChildren(page);if(!preview.contains(documentWorkspace))preview.replaceChildren(documentWorkspace);refreshHeaderLayout();}
   function refuseReferenceAction(){if(!reference.fromReference())return false;status.textContent=REFERENCE_ACTION_MESSAGE;status.classList.add('error');return true;}
   function writerAction(run:()=>void){if(!refuseReferenceAction())run();}
   // Reading has no editing selection: nothing may act on the hidden editor's caret or selection from there.
@@ -646,7 +653,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       // The toggle keeps focus, so it has to stay in view with the start of the formatted text.
       // Only the real scroller moves: scrollIntoView would also shift the overflow-hidden Studio root.
       const scroller=primaryScroller();
-      if(scroller){const top=Math.max(scroller.getBoundingClientRect().top,documentTabs.element.getBoundingClientRect().bottom);scroller.scrollTop+=view.source.getBoundingClientRect().top-top-8;}
+      if(scroller&&scroller.contains(view.toolbar)){const top=Math.max(scroller.getBoundingClientRect().top,documentTabs.element.getBoundingClientRect().bottom);scroller.scrollTop+=view.source.getBoundingClientRect().top-top-8;}
     }else if(mode==='source'&&readingActive()){
       reader.element.hidden=true;view.host.hidden=false;
       const scroller=primaryScroller();if(scroller)scroller.scrollTop=readerSourceScroll;
@@ -664,12 +671,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const source=button('Source',()=>{setDocumentView('source');focusWriterView();}),reading=button('Reading',()=>setDocumentView('reading'));
     source.setAttribute('aria-pressed','true');reading.setAttribute('aria-pressed','false');
     group.append(source,reading);toolbar.prepend(group);
+    const secondary=[...toolbar.children].filter(node=>node!==group) as HTMLElement[];const metadata=host.closest('.page')?.querySelector<HTMLElement>('.metadata');if(metadata)secondary.push(metadata);const badge=host.closest('.page')?.querySelector<HTMLElement>('.page-meta .badge');if(badge)secondary.push(badge);
+    editorCommands?.destroy();const commands=actionMenu('Editor actions',secondary,root);editorCommands=commands;const role=host.closest('.page')?.querySelector<HTMLElement>('.document-role');if(role){commands.button.replaceChildren(role,document.createTextNode(' actions'));commands.button.setAttribute('aria-description','Editor actions for this document');}toolbar.append(commands.button,commands.storage);documentCommandBar.replaceChildren(toolbar);
     documentReader=reader;documentView={host,toolbar,source,reading,editor:target,modeChanged};
     target.dispatch({effects:StateEffect.appendConfig.of(EditorView.updateListener.of(update=>{if(documentReader===reader&&readingActive()&&(update.docChanged||reviewMarksIn(update.state)!==reviewMarksIn(update.startState)))reader.update();}))});
     const key=readingKey();if(key&&readingDocuments.has(key)&&!recoveryPending)setDocumentView('reading');
   }
   function primaryScroller():HTMLElement|null {
     if(!editor)return null;
+    if(activeDocumentPane.contains(editor.view.dom)&&activeDocumentPane.clientHeight>0)return activeDocumentPane;
     for(let node:HTMLElement|null=editor.view.scrollDOM;node&&preview.contains(node);node=node.parentElement){
       if(node.clientHeight>0&&node.scrollHeight>node.clientHeight+1&&/(auto|scroll)/.test(getComputedStyle(node).overflowY))return node;
     }
@@ -696,7 +706,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   standalone=createStandaloneDrafts(core,{root,parent:preview,dirty:setDirty,sync:()=>dirtySync,leave:allowLeave,modeChanged:active=>{sharingEvidence=null;sharingGeneration++;root.classList.toggle('standalone-writing',active);if(chromeReady){renderPill();renderOrigin();if(active&&navigation.visible('manuscript'))void openDrafting();}},beforeMount:()=>{
     documentTabs.clear();reference.clear();
     questions?.clear(); draftingQuestions?.clear(); reviewPanel?.clear(); selectionAsk?.destroy(); selectionAsk=null;
-    documentReader=null;documentView=null;chapterEditor?.destroy();chapterEditor=null;editor?.destroy();editor=null;opened=null;currentChapter=null;
+    editorCommands?.destroy();editorCommands=null;documentCommandBar.replaceChildren();documentReader=null;documentView=null;chapterEditor?.destroy();chapterEditor=null;editor?.destroy();editor=null;opened=null;currentChapter=null;
     cancelAutosave();cancelSaveNotice();documentEpoch++;recovery=null;recoveryPending=false;writePaused=null;saveButton=null;dirtyBadge=null;writing.clearScene();
   },openCopy:async(session,path)=>{placedText={repositoryId:session.id,path};await selectRepository(()=>Promise.resolve(session));if(repository?.id===session.id)await showDocument(path);}});
   if(standalone.supported){
@@ -714,7 +724,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   layout.append(navigation.element, preview);
   chromeReady = true;
   resetPreview();
-  root.replaceChildren(glow, ...(projectLibrary.supported ? [pill, layout] : [layout, pill]), status, goalCard, corner, firstStory.element, github.element, updates.element, projectLibrary.element);
+  appCommands=actionMenu('More actions',[...corner.children,...pill.children].filter(node=>node!==pillProject&&node!==pillSave) as HTMLElement[],root,()=>repository?.name??'Heinlein Studio',refreshHeaderLayout);
+  pill.replaceChildren(pillProject,appCommands.button,appCommands.storage);pill.prepend(navigation.element.querySelector('.navigation-toggle')!);corner.hidden=true;
+  headerMedia=window.matchMedia?.('(max-width:480px)');headerMedia?.addEventListener?.('change',refreshHeaderLayout);
+  function refreshHeaderLayout(){if(!appCommands)return;if(standalone?.active)pill.insertBefore(pillSave,appCommands.button);else noticeSlot.prepend(pillSave);const compact=!!headerMedia?.matches&&preview.contains(documentWorkspace)&&!standalone?.active;if(!appCommands.isOpen()){if(compact)appCommands.storage.prepend(pillProject);else pill.insertBefore(pillProject,appCommands.button);}if(compact){const context=el('span',repository?.name??'Project','header-project-context');appCommands.button.replaceChildren(context,document.createTextNode(' · More'));appCommands.button.setAttribute('aria-label',`${repository?.name??'Project'} · More actions`);}else{appCommands.button.textContent='More actions';appCommands.button.setAttribute('aria-label','More actions');}}
+  root.replaceChildren(glow, ...(projectLibrary.supported ? [pill, layout] : [layout, pill]), noticeSlot, goalCard, corner, firstStory.element, github.element, updates.element, projectLibrary.element);
   const drafting = createDraftingPanel(core, {
     root, repository: () => standalone?.active?null:repository, run: runStructural, verify: verifyStructuralBuffer, selectedPath:()=>opened?.path??null,
     show: () => { renderPill(); outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
@@ -1394,6 +1408,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if (repository && !standalone?.active) newDraftButton.removeAttribute('aria-keyshortcuts');
       else newDraftButton.setAttribute('aria-keyshortcuts', 'Meta+N Control+N');
     }
+    refreshHeaderLayout();
     pillProject.textContent = projectLibrary.supported?(standalone?.active?'Standalone draft · Projects…':repository?.name??'Projects…'):documentOrigin(repository,Boolean(standalone?.active));
     if(projectLibrary.supported)pillProject.setAttribute('aria-label',`Projects. ${standalone?.active?'Standalone draft':repository?.name??'No project selected'}`);
     const scene = opened && drafting.state?.scenes.find(item => item.path === opened!.path);
@@ -1474,7 +1489,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (!reviewApplying) reviewPanel?.clear(); currentChapter = null;
     writing.clearScene();
     cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; recoveryErrorMessage = null; recovery = null; recoveryPending = false; writePaused = null;
-    documentReader = null; documentView = null;
+    editorCommands?.destroy();editorCommands=null;documentCommandBar.replaceChildren();documentReader = null; documentView = null;
     chapterEditor?.destroy(); chapterEditor = null;
     editor?.destroy(); editor = null; opened = null; saveButton = null; dirtyBadge = null; setDirty(false); documentTabs.unmount();activeDocumentPane.removeAttribute('aria-labelledby');
     sceneNavigator.refresh();
@@ -1723,7 +1738,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   function renderDocument(doc: Document, draft: RecoveryDraft | null = null, assembled: AssembledChapter | null = null) {
     standalone?.detach();
-    documentReader = null; documentView = null;
+    editorCommands?.destroy();editorCommands=null;documentCommandBar.replaceChildren();documentReader = null; documentView = null;
     chapterEditor?.destroy(); chapterEditor = null;
     questions?.clear();
     selectionAsk?.destroy(); selectionAsk = null;
@@ -1739,7 +1754,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const title = el('h2', assembled?.chapter.title || sceneInfo?.title || basename(doc.path), 'page-title');
     title.tabIndex = -1;
     const source = el('p', doc.path, 'path');
-    const documentRole=el('p',doc.generatedCompatibility?'Reading assembled source':/\.(md|markdown)$/i.test(doc.path)||(/\.txt$/i.test(doc.path)&&placedText?.repositoryId===repository?.id&&placedText?.path===doc.path)?'Editing':'Reading source','document-role');
+    const documentRole=el('span',doc.generatedCompatibility?'Reading assembled source':/\.(md|markdown)$/i.test(doc.path)||(/\.txt$/i.test(doc.path)&&placedText?.repositoryId===repository?.id&&placedText?.path===doc.path)?'Editing':'Reading source','document-role');
     const badge = el('p', doc.generatedCompatibility ? 'Assembled chapter · Revise its source scenes' : 'Source file · Read-only', 'badge');
     const metadata = el('details', '', 'metadata');
     metadata.append(el('summary', 'Frontmatter & source metadata'), el('p', `${doc.sizeBytes.toLocaleString()} bytes · Raw UTF-8 source`), el('pre', doc.frontmatter ?? 'No frontmatter', 'frontmatter'));
@@ -1963,6 +1978,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { reference.clear();documentTabs.clear();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();editorCommands?.destroy();navigation.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); sceneNavigator.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

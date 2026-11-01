@@ -20,6 +20,7 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
       else if (legacy?.files === true && legacy?.manuscript === false) active = 'manuscript';
     }
   } catch { /* Invalid or unavailable storage must not prevent navigation. */ }
+  const small=window.matchMedia?.('(max-width:760px)');
   const element = document.createElement('nav');
   element.className = 'navigator'; element.setAttribute('aria-label', 'Binder, scene breaks, and source files');
   const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'navigation-toggle';
@@ -52,7 +53,9 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
     panels[key].id = `navigation-panel-${key}`; panels[key].setAttribute('role', 'tabpanel');
     panels[key].setAttribute('aria-labelledby', tab.id); panels[key].tabIndex = 0;
   }
-  drawer.append(tablist, files, manuscript, scenes); element.append(toggle, drawer);
+  const modal=document.createElement('dialog');modal.className='appearance-dialog navigation-modal';modal.setAttribute('aria-label','Navigation');const back=document.createElement('button');back.type='button';back.textContent='Return to writing';back.addEventListener('click',()=>setOpen(false,true));modal.append(back);
+  drawer.append(tablist, files, manuscript, scenes); element.append(toggle, drawer,modal);
+  modal.addEventListener('cancel',event=>{event.preventDefault();setOpen(false,true);});
   toggle.addEventListener('click', () => setOpen(!open, true));
   element.addEventListener('keydown', event => {
     if (event.key === 'Escape' && open && !event.isComposing) {
@@ -60,7 +63,9 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
     }
   });
   function render() {
-    drawer.hidden = !open; element.classList.toggle('navigation-closed', !open);
+    if(small?.matches&&open){modal.append(drawer);drawer.hidden=false;if(modal.isConnected&&!modal.open&&modal.showModal)modal.showModal();}
+    else{if(modal.open&&modal.close)modal.close();element.append(drawer);drawer.hidden=!open;}
+     element.classList.toggle('navigation-closed', !open);
     toggle.textContent = open ? 'Close navigation' : 'Navigation';
     toggle.setAttribute('aria-expanded', String(open));
     toggle.title = `${open ? 'Close' : 'Open'} navigation (Cmd/Ctrl+\\)`;
@@ -81,6 +86,7 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
   function select(key: NavigationTab, focus = true) {
     active = key; setOpen(true, focus); selected?.(key);
   }
-  render();
-  return {element, select, toggle: () => setOpen(!open, true), visible: (key: NavigationTab) => open && key === active};
+  const resize=()=>render();small?.addEventListener?.('change',resize);
+  render();queueMicrotask(()=>{if(element.isConnected)render();});
+  return {element, close:()=>setOpen(false), destroy:()=>{small?.removeEventListener?.('change',resize);if(modal.open&&modal.close)modal.close();modal.remove();}, select, toggle: () => setOpen(!open, true), visible: (key: NavigationTab) => open && key === active};
 }

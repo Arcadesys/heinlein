@@ -81,7 +81,7 @@ describe('deferred Appearance close focus ownership',()=>{
   afterEach(()=>{
     for(const [name,descriptor] of [['showModal',originalShow],['close',originalClose]] as const){if(descriptor)Object.defineProperty(HTMLDialogElement.prototype,name,descriptor);else Reflect.deleteProperty(HTMLDialogElement.prototype,name);}
   });
-  async function open(){document.querySelector<HTMLButtonElement>('button.appearance')!.click();await settle();return document.querySelector<HTMLDialogElement>('dialog.appearance-dialog')!;}
+  async function open(){document.querySelector<HTMLButtonElement>('button.appearance')!.click();await settle();return document.querySelector<HTMLDialogElement>('dialog[aria-labelledby="appearance-title"]')!;}
   const deliver=(dialog:HTMLDialogElement)=>dialog.dispatchEvent(new Event('close'));
   it.each(['','Already kept — café 🦊'])('does not steal a newly mounted blank editor after %j',async text=>{
     const bridge=await setup();

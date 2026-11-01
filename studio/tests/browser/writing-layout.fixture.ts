@@ -1,0 +1,12 @@
+import {mountStudio} from '../../src/studio';
+import {syntheticProjects} from '../projectBridge';
+import {EditorView} from '@codemirror/view';
+import {applyAppearance,loadAppearance} from '../../src/appearance';
+import '../../src/fonts.bundle';import '../../src/style.css';
+const fixture=syntheticProjects();const paths=['invented-archive/lantern-survey/chapters/first-garden/opening.md','invented-archive/lantern-survey/chapters/second-river/opening.md',...Array.from({length:10},(_,i)=>`invented-archive/lantern-survey/chapters/garden-${i+3}/scene-${i+3}.md`)];
+const raw=(n:number)=>Array.from({length:80},(_,i)=>`Foxes rest — 星 🦊. Paragraph ${i+1} describes an invented lantern. A patient badger kept the river map dry. This is synthetic prose ${n}, made for testing reading and writing without actual manuscripts.\r\n`).join('\n');
+fixture.documents['local-a']=Object.fromEntries(paths.map((p,i)=>[p,raw(i)]));
+let holdSave=false,releaseSave:(()=>void)|undefined;const save=fixture.core.saveDocument;fixture.core.saveDocument=async(...args)=>{if(holdSave){holdSave=false;await new Promise<void>(r=>{releaseSave=r;});}return save(...args);};
+const app=mountStudio(document.querySelector<HTMLElement>('#app')!,fixture.core);const view=()=>EditorView.findFromDOM(document.querySelector('.active-document-pane .cm-editor') as HTMLElement)!;
+Object.assign(window,{layoutFixture:{fixture,app,paths,view,holdNextSave:()=>{holdSave=true;},releaseSave:()=>{releaseSave?.();releaseSave=undefined;},theme:(high:boolean)=>applyAppearance({...loadAppearance(),theme:high?'contrast':loadAppearance().theme})}});
+void(async()=>{const tick=async()=>{for(let i=0;i<8;i++)await new Promise(r=>setTimeout(r,0));};await tick();document.querySelector<HTMLButtonElement>('.project-switcher')!.click();await tick();[...document.querySelectorAll<HTMLButtonElement>('.project-library button')].find(b=>b.textContent==='Open Novel A')!.click();await tick();if(new URLSearchParams(location.search).has('many'))for(const path of paths)await app.showDocument(path);await app.showDocument(paths[0]);document.documentElement.dataset.layoutReady='true';})();

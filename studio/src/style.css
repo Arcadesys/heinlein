@@ -963,3 +963,91 @@ dialog { color: var(--fg); }
 .drafting-split-dialog { box-sizing:border-box; width:min(42rem,calc(100vw - 16px)); max-width:calc(100vw - 16px); max-height:calc(100dvh - 16px); padding:clamp(12px,2vw,24px); }
 .drafting-split-dialog :is(h2,p,label,li) { overflow-wrap:normal; word-break:normal; }
 .drafting-split-dialog .drafting-warning { padding:.35rem; }
+
+/* Writing workspace: chrome owns its space once; panes own their scrolling. */
+.studio:not(.standalone-writing):has(.document-workspace) { display:grid; grid-template-rows:auto 4rem minmax(0,1fr); height:100dvh; overflow:hidden; }
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill { grid-row:1; position:relative; inset:auto; transform:none; width:100%; max-width:none; margin:0; padding:4px 8px; border-radius:0; flex-wrap:wrap; gap:4px; align-self:stretch; justify-content:space-between; }
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill > button { min-block-size:48px; font-size:1rem; padding:4px 12px; }
+.studio .action-storage { display:none !important; }
+.studio > .corner-actions[hidden] { display:none; }
+.studio:not(.standalone-writing):has(.document-workspace) > .status { grid-row:2; position:relative; inset:auto; transform:none; width:100%; max-width:none; height:4rem; margin:0; border-radius:0; padding:4px 12px; align-self:stretch; overflow:auto; font-size:1rem; }
+.studio:not(.standalone-writing):has(.document-workspace) > .workspace { grid-row:3; position:relative; inset:auto; display:grid; grid-template-columns:0 minmax(0,1fr); min-block-size:0; overflow:hidden; }
+.studio:not(.standalone-writing):has(.document-workspace) > .workspace.navigation-open { grid-template-columns:minmax(190px,min(32vw,19rem)) minmax(0,1fr); }
+.studio:not(.standalone-writing):has(.document-workspace) .navigator { grid-column:1; position:relative; inset:auto; width:100%; margin:0; min-block-size:0; padding:4px; overflow:hidden; }
+.studio:not(.standalone-writing):has(.document-workspace) .navigator.navigation-closed { position:absolute; width:auto; z-index:8; top:4px; left:4px; overflow:visible; }
+.studio:not(.standalone-writing):has(.document-workspace) .navigator button { min-block-size:48px; }
+.studio:not(.standalone-writing):has(.document-workspace) .preview { grid-column:2; position:relative; inset:auto; min-block-size:0; min-inline-size:0; overflow:hidden; padding:0; scroll-padding:0; }
+.studio:not(.standalone-writing):has(.document-workspace) .document-workspace { height:100%; min-block-size:0; display:flex; flex-direction:column; padding:0; }
+.document-workspace .document-tabs { flex:none; display:flex; flex-wrap:wrap; gap:4px; padding:4px; min-inline-size:0; container-type:normal; }
+.document-workspace .document-tab-area { display:block; flex:1 1 100%; max-block-size:none; min-inline-size:0; overflow-x:auto; overflow-y:hidden; padding:3px; }
+.document-workspace .document-tabs [role=tablist] { display:flex; flex-wrap:nowrap; gap:6px; width:max-content; max-width:none; }
+.document-workspace .document-tabs [role=tab] { display:block; width:auto; flex:none; white-space:nowrap; min-block-size:48px; font-size:1rem; padding:4px 12px; }
+.document-tab-actions { display:flex; flex-wrap:wrap; gap:4px; }
+.document-workspace .document-tab-actions button { min-block-size:48px; font-size:1rem; padding:4px 12px; }
+.document-workspace .document-reading-panes { flex:1; min-block-size:0; display:grid; grid-template-rows:minmax(0,1fr); align-items:stretch; overflow:hidden; }
+.document-workspace .active-document-pane,.document-workspace .reference-pane { height:100%; min-block-size:0; max-block-size:none !important; overflow:auto; scroll-padding:4px; padding:8px; }
+.document-workspace .active-document-pane .page { max-width:var(--measure); margin:auto; padding:0 !important; }
+.document-workspace .page > :is(.eyebrow,.page-title,.page-meta) { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.document-workspace .editor-toolbar { margin:0 0 6px; gap:4px; align-items:center; }
+.document-workspace .editor-toolbar > button,.document-workspace .editor-toolbar .md-view-toggle button { min-block-size:48px; font-size:1rem; padding:4px 10px; }
+.document-workspace .editor-toolbar .md-view-toggle { flex-basis:auto; margin:0; gap:4px; }
+.document-workspace .reference-source { max-block-size:none; overflow:visible; }
+.workspace-actions-dialog { box-sizing:border-box; width:min(42rem,calc(100vw - 16px)); max-width:calc(100vw - 16px); max-height:calc(100dvh - 16px); padding:clamp(12px,2vw,24px); }
+.workspace-actions-dialog :is(button,summary,input,select) { min-block-size:48px; font-size:1rem; }
+.workspace-actions-dialog :is(p,h2,button,summary) { word-break:normal; overflow-wrap:normal; }
+.workspace-action-controls { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+.workspace-action-controls.document-reading .source-only { display:none; }
+.document-full-path { overflow-wrap:anywhere !important; user-select:text; }
+@media(max-width:760px) {
+ .studio:not(.standalone-writing):has(.document-workspace) > .workspace.navigation-open { grid-template-columns:0 minmax(0,1fr); }
+ .studio:not(.standalone-writing):has(.document-workspace) .navigator:not(.navigation-closed) { position:absolute; inset:0; width:100%; z-index:20; background:var(--bg); max-height:none; }
+ .studio:not(.standalone-writing):has(.document-workspace) .navigation-drawer { max-height:none; }
+}
+@media(max-width:1000px) {
+ .document-workspace .document-reading-panes:has(.reference-pane:not([hidden])) { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,3fr) minmax(0,2fr); }
+}
+:root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"]) .document-workspace .document-reading-panes:has(.reference-pane:not([hidden])) { grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,3fr) minmax(0,2fr); }
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill .project-switcher { width:auto; flex:0 1 auto; }
+.navigation-modal:not([open]) { display:none; }
+.navigation-modal { pointer-events:auto; width:min(44rem,calc(100vw - 16px)); max-width:calc(100vw - 16px); height:calc(100dvh - 16px); max-height:calc(100dvh - 16px); padding:8px; }
+.navigation-modal[open] { display:flex; flex-direction:column; gap:4px; }
+.navigation-modal .navigation-drawer { min-height:0;flex:1;max-height:none; }
+.navigation-modal :is(button,summary) { min-block-size:48px; }
+.navigation-modal .navigation-tabs { flex-wrap:wrap; }
+.navigation-modal .navigation-tabs [role=tab] { flex:1 1 100%;white-space:normal;overflow-wrap:normal;font-size:1rem; }
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill .project-switcher { max-width:min(14rem,30vw); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill.chrome,.studio:not(.standalone-writing):has(.document-workspace) > .status-pill.chrome > * { opacity:1; }
+.document-workspace .editor-toolbar .document-role { display:inline; font:inherit; color:inherit; }
+.document-command-bar { flex:none; padding:4px 8px; }
+.document-command-bar .editor-toolbar { margin:0; }
+.document-workspace .active-document-pane { padding:4px; }
+.document-workspace .page > .page-meta { position:static; width:auto; height:auto; clip-path:none; white-space:normal; margin:0; }
+.document-workspace .page-meta > .path { display:none; }
+.document-workspace .page-meta:empty { display:none; }
+.document-workspace .document-tabs.tabs-compact { flex-wrap:nowrap; align-items:center; }
+.document-workspace .tabs-compact .document-tab-area { flex:1 1 auto; }
+.document-workspace .tabs-compact .document-tab-actions { flex:none; }
+.document-workspace .tabs-compact .document-tab-actions > button { min-block-size:48px; padding:4px 10px; font-size:1rem; }
+.header-project-context { display:inline-block; max-inline-size:50vw; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; }
+@media(max-width:480px) {
+ .document-workspace .document-tabs.tabs-compact { flex-wrap:wrap; }
+ .document-workspace .tabs-compact .document-tab-area { flex-basis:100%; }
+ .studio:not(.standalone-writing):has(.document-workspace) > .status-pill { justify-content:space-between; }
+}
+@media(max-width:1000px) {
+ .document-workspace .document-reading-panes:has(.reference-pane:not([hidden])) { grid-template-rows:minmax(0,3fr) minmax(80px,2fr); }
+ .document-workspace .document-reading-panes:has(.reference-pane:not([hidden])) > .reference-pane { padding:4px; }
+}
+:root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"]) .document-workspace .document-reading-panes:has(.reference-pane:not([hidden])) { grid-template-rows:minmax(0,3fr) minmax(80px,2fr); }
+:root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"]) .document-workspace .document-reading-panes:has(.reference-pane:not([hidden])) > .reference-pane { padding:4px; }
+.notice-slot { position:absolute; top:4.25rem; left:50%; transform:translateX(-50%); width:calc(100% - 16px); max-width:60rem; height:4rem; display:grid; grid-template-columns:8ch minmax(0,1fr); align-items:stretch; gap:4px; overflow:hidden; }
+.notice-slot > .pill-save { padding:4px 8px; color:var(--fg); font-size:1rem; font-weight:600; align-self:center; overflow-wrap:normal; }
+.notice-slot .pill-dot { display:none; }
+.notice-slot > .status { position:relative; inset:auto; transform:none; width:100%; max-width:none; height:100%; margin:0; padding:4px 8px; overflow:auto; border-radius:0; text-align:start; font-size:1rem; }
+.studio:not(.standalone-writing):has(.document-workspace) > .notice-slot { grid-row:2; position:relative; inset:auto; transform:none; width:100%; max-width:none; height:4rem; }
+.standalone-writing > .notice-slot { display:contents; }
+.standalone-writing > .notice-slot > .status { position:relative; inset:auto; transform:none; width:auto; max-width:calc(100% - 1rem); margin:.5rem; height:4rem; }
+.standalone-writing > .status-pill > .navigation-toggle { display:none; }
+@media(max-width:480px) { .notice-slot { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); gap:0; } .notice-slot > .pill-save { padding-block:0; } }
+/* The live save model remains visible even where legacy compact chrome hid it. */
+.studio .notice-slot > .pill-save,.studio.standalone-writing > .status-pill > .pill-save { display:inline-flex; }
