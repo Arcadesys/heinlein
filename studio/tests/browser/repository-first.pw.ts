@@ -69,7 +69,9 @@ for(const saved of [null,{open:true,active:'manuscript'},{open:false,active:'man
   await activate(page.locator('.project-switcher'));await activate(page.getByRole('button',{name:'Open Novel B',exact:true}));
   const original=await page.evaluate(()=>structuredClone((window as any).projectFixture.documents));
   await expect(page.getByRole('tab',{name:'Source files',exact:true})).toHaveAttribute('aria-selected','true');
-  const guide=page.locator('.source-file-guide');await expect(guide).toBeVisible();
+  const guide=page.locator('.source-file-guide');await expect(guide).toBeHidden();
+  await activate(page.locator('.source-project-info > summary'));await expect(guide).toBeVisible();
+  await activate(page.locator('.source-project-info > summary'));await expect(guide).toBeHidden();
   await expect(guide).toHaveText('Browse writing files to edit or review. No manuscript setup is required.');
   for(const high of [false,true]){
    if(high){await activate(page.getByRole('button',{name:'Appearance',exact:false}));await activate(page.getByRole('button',{name:'High contrast',exact:true}));await page.keyboard.press('Escape');}

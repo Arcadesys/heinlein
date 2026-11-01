@@ -542,8 +542,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const listing = el('div', '', 'file-list');
   const sourceFileGuide = el('p', 'Browse writing files to edit or review. No manuscript setup is required.', 'source-file-guide');
   sourceFileGuide.hidden = true;
+  const projectInfo = el('details', '', 'source-project-info');
+  projectInfo.hidden = true;
+  projectInfo.append(el('summary', 'Project & GitHub'), projectSettings, originStatus, originSend, sourceFileGuide);
   const filesBody = el('div', '', 'panel-body');
-  filesBody.append(projectSettings,originStatus,originSend,repositoryHome.element,localFolders,sourceFileGuide,directoryPath,listing);
+  filesBody.append(projectInfo,repositoryHome.element,localFolders,directoryPath,listing);
   if(projectLibrary.supported){repositoryHome.element.hidden=true;localFolders.hidden=true;root.classList.add('project-first');}
   files.append(repoName, filesBody);
   const manuscriptPane = el('section', '', 'panel manuscript');
@@ -1395,6 +1398,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   function renderOrigin() {
     const standaloneActive=Boolean(standalone?.active);
+    projectInfo.hidden=standaloneActive||!repository;
     sourceFileGuide.hidden=standaloneActive||!fileFirstRepository;
     projectSettings.hidden=standaloneActive||!repository?.projectId;
     repoName.textContent=standaloneActive?'Standalone draft':repository?.name??'Open a repository';
