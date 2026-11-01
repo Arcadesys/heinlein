@@ -510,7 +510,7 @@ dialog { color: var(--fg); }
 .update-panel :focus-visible { outline:3px solid var(--fg); outline-offset:3px; }
 /* Review controls and diffs remain usable with large text and narrow reflow. */
 .heinlein-review-panel :is(button,select,input:not([type=checkbox]):not([type=radio]),textarea) { min-height: 44px; max-width: 100%; font: inherit; }
-.heinlein-review-panel label { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-block: .75rem; min-height: 44px; overflow-wrap: anywhere; }
+.heinlein-review-panel label { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-block:.25rem; min-height: 44px; overflow-wrap: anywhere; }
 .heinlein-review-panel label:has(select), .heinlein-review-panel label:has(textarea) { align-items: stretch; flex-direction: column; }
 .heinlein-review-panel :is(input[type=checkbox],input[type=radio]) { width: 1.5rem; height: 1.5rem; flex: 0 0 auto; }
 .heinlein-review-panel :is(button,select,textarea,input):focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
@@ -746,4 +746,74 @@ dialog { color: var(--fg); }
   .project-first .pill-project { flex:1 1 100%; max-width:none; justify-content:space-between; }
   .project-first .pill-rule { display:none; }
   .project-first .preview { padding-top:12rem; }
+}
+
+/* Document navigation and saved-source reading share one writer, with stable pane chrome. */
+.document-workspace { min-inline-size: 0; }
+.document-tabs { padding: 1rem; border-block-end: 2px solid var(--border); }
+.document-tabs-title {font-size:1rem;line-height:1.2;font-weight:700;margin:0 0 .4rem;}
+.document-tab-area { display:grid;grid-template-columns:minmax(0,1fr) auto;max-block-size:min(16rem,28dvh);overflow:auto;gap:.6rem;padding:.3rem; }
+.document-tabs [role="tablist"],.document-tab-action-list { display:grid;grid-template-rows:subgrid;gap:.6rem; }
+.document-tabs [role="tablist"] {grid-column:1;}
+.document-tab-action-list {grid-column:2;}
+.document-tabs [role="tab"] {grid-row:calc(var(--tab-index) * 2 + 1) / span 2;}
+.document-tab-row {grid-row:calc(var(--tab-index) * 2 + 1) / span 2;display:flex;gap:.4rem;min-inline-size:0;}
+.document-tabs button { scroll-margin-block:.4rem;min-block-size:48px;white-space:normal;overflow-wrap:normal;word-break:normal;text-align:start; }
+.document-tabs [aria-selected="true"] { outline: 3px solid currentColor; outline-offset: -5px; font-weight: 700; }
+.document-reading-panes { display: grid; grid-template-columns: minmax(0,1fr); align-items: start; }
+.document-reading-panes:has(.reference-pane:not([hidden])) { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+.active-document-pane { min-inline-size:0;max-block-size:75vh;overflow:auto;scroll-padding-block:1rem; }
+.document-reading-panes:has(.reference-pane:not([hidden])) .active-document-pane .page { padding: 1rem; }
+.reference-pane { min-inline-size:0;padding:1rem;border-inline-start:2px solid currentColor;line-height:1.4; }
+.reference-pane[hidden],.split-reading-offer[hidden],.document-tabs[hidden] { display: none; }
+.reference-pane h2 { font-size:1rem;font-weight:700;line-height:1.3;margin-block-end:.25rem; }
+.reference-path {white-space:pre-wrap;overflow-wrap:normal;word-break:normal;}
+.reference-state { min-block-size:2lh;max-block-size:2lh; overflow: auto; margin-block: .75rem; }
+.reference-error:empty { display: none; }
+.reference-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+.reference-actions button,.split-reading-offer button { min-block-size: 48px; white-space: normal; word-break: normal; }
+.reference-source { max-block-size:60vh;min-block-size:30vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;padding:.5rem;margin-block:.5rem;font:var(--type-body)/var(--leading-body) var(--font-text,var(--text-fallback));border:1px solid currentColor;tab-size:2; }
+.split-reading-offer { padding: 1rem; border-block-end: 1px solid currentColor; }
+@media (max-width: 1100px) {
+ .document-reading-panes:has(.reference-pane:not([hidden])) { grid-template-columns: minmax(0,1fr); }
+ .reference-pane { border-inline-start: 0; border-block-start: 2px solid currentColor; }
+}
+@media (max-width: 650px) {
+ .document-tab-area {grid-template-columns:minmax(0,1fr);}
+ .document-tabs [role="tablist"],.document-tab-action-list {grid-column:1;}
+ .document-tabs [role="tab"] {grid-row:calc(var(--tab-index) * 2 + 1);}
+ .document-tab-row {grid-row:calc(var(--tab-index) * 2 + 2);display:grid;grid-template-columns:minmax(0,1fr);}
+
+ .document-tabs,.reference-pane { padding: .5rem; }
+ .reference-actions { display: grid; grid-template-columns: minmax(0,1fr); }
+}
+
+.document-reading-panes:has(.reference-pane:not([hidden])) .active-document-pane { max-block-size: 75vh; overflow: auto; scroll-padding-block: 1rem; }
+:root[data-zoom="150"] .document-reading-panes:has(.reference-pane:not([hidden])),
+:root[data-zoom="175"] .document-reading-panes:has(.reference-pane:not([hidden])),
+:root[data-zoom="200"] .document-reading-panes:has(.reference-pane:not([hidden])) { grid-template-columns: minmax(0,1fr); }
+/* The aligned subgrids share row tracks; only actual action controls receive pointer hits. */
+.document-tab-action-list { pointer-events: none; }
+.document-tab-row { pointer-events: auto; }
+
+.document-tabs { container: document-tabs / inline-size; }
+@container document-tabs (max-width: 650px) {
+ .document-tab-area {grid-template-columns:minmax(0,1fr);}
+ .document-tabs [role="tablist"],.document-tab-action-list {grid-column:1;}
+ .document-tabs [role="tab"] {grid-row:calc(var(--tab-index) * 2 + 1);}
+ .document-tab-row {grid-row:calc(var(--tab-index) * 2 + 2);display:grid;grid-template-columns:minmax(0,1fr);}
+}
+
+.document-tabs [role="tab"] { min-inline-size:0;inline-size:100%;padding-inline:.3rem; }
+
+.reference-details summary {min-block-size:48px;white-space:normal;}
+.reference-actions button {scroll-margin-block:1rem;}
+
+/* New reading actions must scroll wholly clear of the existing measured footer. */
+@media (min-width:761px) {
+ .document-workspace {padding-block-end:calc(var(--manuscript-footer-space,4rem) + 1rem);}
+ .reference-actions button,.reference-details summary {scroll-margin-block-end:calc(var(--manuscript-footer-space,4rem) + 1rem);}
+}
+@media (min-width:761px) {
+ .preview:has(> .document-workspace) {scroll-padding-block-end:calc(var(--manuscript-footer-space,4rem) + 1rem);}
 }

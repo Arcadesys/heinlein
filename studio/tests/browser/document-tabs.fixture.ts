@@ -1,0 +1,26 @@
+import {mountStudio} from '../../src/studio';
+import {syntheticProjects} from '../projectBridge';
+import {EditorView} from '@codemirror/view';
+import {applyAppearance,loadAppearance} from '../../src/appearance';
+import '../../src/fonts.bundle';import '../../src/style.css';
+const fixture=syntheticProjects();const generic=new URLSearchParams(location.search).has('generic');
+if(!generic)fixture.seedMovement();
+const paths=generic?['first-reading.md','second-reading.md']:['ms/arrival.md','ms/meeting.md'];
+const raw=(name:string)=>`---\r\ntitle: Synthetic ${name}\r\n---\r\n`+Array.from({length:48},(_,i)=>`Paragraph ${i+1}: Invented foxes read a map — 星 🦊. This synthetic passage keeps deliberate fragments, long wrapped lines and mixed newlines. No real writing is used.\r\n`).join('\n');
+paths.forEach((p,i)=>fixture.documents['local-a'][p]=raw(i?'Meeting':'Arrival'));
+const notice=document.createElement('p');notice.className='synthetic-project-notice';notice.textContent='Synthetic document workspace — no real files, accounts, uploads or native API. One writer and one saved-source reference.';notice.style.padding='.5rem';notice.style.border='1px solid currentColor';
+const app=mountStudio(document.querySelector<HTMLElement>('#app')!,fixture.core);
+Object.assign(window,{documentFixture:{fixture,app,paths,theme:(high:boolean)=>applyAppearance({...loadAppearance(),theme:high?'contrast':loadAppearance().theme}),view:()=>EditorView.findFromDOM(document.querySelector('.active-document-pane .cm-editor') as HTMLElement)}});
+void(async()=>{
+ const tick=()=>new Promise(r=>setTimeout(r,0));
+ for(let i=0;i<10;i++)await tick();
+ document.querySelector<HTMLButtonElement>('.project-switcher')!.click();
+ for(let i=0;i<10;i++)await tick();
+ [...document.querySelectorAll<HTMLButtonElement>('.project-library button')].find(b=>b.textContent==='Open Novel A')!.click();
+ for(let i=0;i<10;i++)await tick();
+ await app.showDocument(paths[1]);await app.showDocument(paths[0]);
+ document.querySelector<HTMLButtonElement>(`[aria-label="Read beside active document: ${paths[1]}"]`)!.click();
+ for(let i=0;i<10;i++)await tick();
+ document.querySelector('.document-workspace')!.prepend(notice);
+ document.documentElement.dataset.tabsReady='true';
+})();
