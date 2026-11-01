@@ -1060,3 +1060,9 @@ dialog { color: var(--fg); }
 .source-project-info { margin-block-end:.4rem; }
 .source-project-info > summary { min-block-size:48px; padding:.25rem 0; display:list-item; cursor:pointer; }
 .source-project-info[open] > :not(summary) { margin-block:.4rem; }
+
+/* Keep chapter drop feedback readable without widening the navigation tree. */
+.binder-scene[draggable="true"] { cursor: grab; }
+.binder-chapter-toggle { flex-wrap: wrap; }
+.binder-chapter-toggle > .manuscript-drop-label { display: none; }
+.binder-chapter-toggle.move-drop-active > .manuscript-drop-label { display: block; flex-basis: 100%; text-align: left; }
