@@ -46,7 +46,8 @@ for(const activation of ['click','ArrowDown'])for(const kind of ['chapter','scen
 test('project picker stays directly visible at narrow widths and after resizing',async({page})=>{
  await page.goto('/tests/browser/writing-layout.html');await page.waitForFunction(()=>document.documentElement.dataset.layoutReady==='true');
  for(const width of [320,480,1280,320]){
-  await page.setViewportSize({width,height:740});
+  await page.setViewportSize({width,height:740});await page.waitForTimeout(100);
+  const nav=page.getByRole('dialog',{name:'Navigation'});if(await nav.isVisible())await page.keyboard.press('Escape');
   const picker=page.locator('.status-pill > .project-switcher');await expect(picker).toBeVisible();
   expect(await picker.evaluate(el=>{const r=el.getBoundingClientRect();return r.x>=0&&r.right<=innerWidth&&el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})).toBe(true);
   await picker.click();await expect(page.getByRole('dialog',{name:'Projects',exact:true})).toBeVisible();
