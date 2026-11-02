@@ -8,11 +8,17 @@ test.beforeEach(async({page})=>{
 test.afterEach(async({page})=>{expect(runtimeErrors.get(page)).toEqual([]);expect(outbound.get(page)).toEqual([]);});
 const fixture = (page:Page, action:'select'|'finish') => page.evaluate(action=>{const f=(window as unknown as {questionsFixture:Record<string,()=>unknown>}).questionsFixture;return f[action]();},action);
 const state = (page:Page) => page.evaluate(()=>(window as unknown as {questionsFixture:{state():{source:string;original:string;applied:number;canceled:number;rejected:number;sent:number;reviewed:number}}}).questionsFixture.state());
+const textLayout = (page:Page) => page.locator('.cm-content').evaluate(node => {
+  const rect = node.getBoundingClientRect();
+  return {left:rect.left,width:rect.width,lines:[...node.children].map(line=>{const r=line.getBoundingClientRect();return {left:r.left,width:r.width,height:r.height};})};
+});
 async function openPassage(page:Page) {
   await page.goto('/tests/browser/questions.html');await expect(page).toHaveTitle('Passage Questions fixture');await expect(page).toHaveURL(/questions\.html$/);await expect(page.locator('vite-error-overlay')).toHaveCount(0);await expect(page.locator('.cm-content')).toBeVisible();
   await fixture(page,'select');
+  const layout = await textLayout(page);
   await page.keyboard.press('Control+j');
   await expect(page.locator('.question-panel')).toBeVisible();
+  return layout;
 }
 async function sendRevision(page:Page) {
   const pane=page.locator('.question-panel');await pane.getByRole('combobox',{name:'Response mode'}).selectOption('revision');
@@ -20,12 +26,18 @@ async function sendRevision(page:Page) {
 }
 test('passage chip survives collapse, background completion, exact diff and guarded apply',async({page},info)=>{
   await page.setViewportSize({width:1600,height:1000});const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
-  await openPassage(page);await sendRevision(page);const pane=page.locator('.question-panel');
-  await pane.getByRole('button',{name:'Collapse',exact:true}).click();await expect(page.locator('.question-passage-chip').filter({hasText:'Asking…'})).toBeVisible();
-  await fixture(page,'finish');await expect(page.locator('.question-passage-chip').filter({hasText:'1 suggestion'})).toBeVisible();expect((await state(page)).canceled).toBe(0);
+  const layout = await openPassage(page);await sendRevision(page);const pane=page.locator('.question-panel');
+  await pane.getByRole('button',{name:'Collapse',exact:true}).click();await expect(page.locator('.question-passage-chip[aria-label="Asking… at this passage"]')).toBeVisible();
+  await expect.poll(()=>textLayout(page)).toEqual(layout);
+  await fixture(page,'finish');await expect(page.locator('.question-passage-chip[aria-label="1 suggestion at this passage"]')).toBeVisible();expect((await state(page)).canceled).toBe(0);
+  await expect.poll(()=>textLayout(page)).toEqual(layout);
+  const chip = page.locator('.question-passage-chip');
+  await expect(chip).toHaveText('');await expect(chip.locator('svg')).toBeVisible();await expect(chip).toHaveAttribute('title','1 suggestion at this passage');
+  const target = await chip.boundingBox();expect(target!.width).toBeGreaterThanOrEqual(44);expect(target!.height).toBeGreaterThanOrEqual(44);
+  await page.screenshot({path:`/tmp/heinlein-revision-sparkle-${info.project.name}.png`});
   await expect(page.locator('.cm-content')).toBeFocused();
-  await page.locator('.question-passage-chip').filter({hasText:'1 suggestion'}).click();
-  const chipBounds=await page.locator('.question-passage-chip').filter({hasText:'1 suggestion'}).boundingBox();const paneBounds=await pane.boundingBox();expect(chipBounds!.x+chipBounds!.width).toBeLessThanOrEqual(paneBounds!.x);
+  await page.locator('.question-passage-chip[aria-label="1 suggestion at this passage"]').click();
+  const chipBounds=await page.locator('.question-passage-chip[aria-label="1 suggestion at this passage"]').boundingBox();const paneBounds=await pane.boundingBox();expect(chipBounds!.x+chipBounds!.width).toBeLessThanOrEqual(paneBounds!.x);
   await expect(pane.getByLabel('Original passage',{exact:true})).toHaveText('Rain tapped the glass roof.');await expect(pane.getByLabel('Suggested passage',{exact:true})).toHaveText('Rain drummed against the glass roof.');
   await expect(pane.locator('.question-diff-remove')).toHaveText('tapped');await expect(pane.locator('.question-diff-add')).toHaveText('drummed against');
   expect((await state(page)).source).toBe((await state(page)).original);
@@ -63,7 +75,7 @@ test('dismiss records rejection without applying',async({page})=>{
 test('editing the manuscript removes stale anchors and disables applying the old suggestion',async({page})=>{
   await page.setViewportSize({width:1600,height:1000});await openPassage(page);await sendRevision(page);await fixture(page,'finish');const pane=page.locator('.question-panel');await expect(pane.getByRole('button',{name:'Apply…',exact:true})).toBeVisible();
   await pane.getByRole('button',{name:'Collapse',exact:true}).click();await page.keyboard.press('ArrowRight');await page.keyboard.type('!');
-  await expect(page.locator('.question-passage-chip').filter({hasText:'1 suggestion'})).toHaveCount(0);
+  await expect(page.locator('.question-passage-chip[aria-label="1 suggestion at this passage"]')).toHaveCount(0);
   await page.locator('.editor-toolbar button[aria-controls="drafting-questions"]').click();await pane.locator('.question-passage-picker > summary').click();
   await expect(pane.getByRole('button',{name:/Passage 1 · Source changed/})).toBeVisible();await expect(pane.getByRole('button',{name:'Apply…',exact:true})).toBeDisabled();expect((await state(page)).sent).toBe(1);expect((await state(page)).applied).toBe(0);
 });

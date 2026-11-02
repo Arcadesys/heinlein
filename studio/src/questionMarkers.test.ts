@@ -9,13 +9,15 @@ describe('question passage decorations',()=>{
     const from=source.indexOf('Rain'),to=source.indexOf('\r\nAfter');
     editor.setPassages([{id:'one',from,to,label:'1 suggestion',active:true,open:()=>{}}]);editor.selectPassage(from,to);
     expect(editor.view.state.sliceDoc(editor.view.state.selection.main.from,editor.view.state.selection.main.to)).toBe('Rain — 🐺.');expect(editor.text()).toBe(source);
-    expect(host.querySelector('.question-passage-chip')?.textContent).toBe('1 suggestion');
+    expect(host.querySelector('.question-passage-chip')?.textContent).toBe('');
+    expect(host.querySelector('.question-passage-chip')?.getAttribute('aria-label')).toBe('1 suggestion at this passage');
+    expect(host.querySelector('.question-passage-chip svg')?.getAttribute('aria-hidden')).toBe('true');
     editor.view.dispatch({changes:{from:0,insert:'x'}});expect(host.querySelector('.question-passage-chip')).toBeNull();
   });
   it('groups adjacent anchors into a single large target with a toolbar/pane equivalent',()=>{
     const host=document.createElement('div');document.body.append(host);editor=createEditor(host,'one\ntwo\nthree',()=>{},()=>{});
     editor.setPassages([{id:'one',from:0,to:3,label:'Answer ready',active:false,open:()=>{}},{id:'two',from:4,to:7,label:'1 suggestion',active:false,open:()=>{}}]);
-    expect(host.querySelectorAll('.question-passage-chip')).toHaveLength(1);expect(host.querySelector('.question-passage-chip')?.textContent).toBe('2 passages');
+    expect(host.querySelectorAll('.question-passage-chip')).toHaveLength(1);expect(host.querySelector('.question-passage-chip')?.getAttribute('aria-label')).toBe('2 passages · Answer ready at this passage');
     expect(host.querySelector<HTMLButtonElement>('.question-passage-chip')?.tabIndex).toBe(-1);
   });
 });

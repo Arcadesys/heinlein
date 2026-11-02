@@ -1211,8 +1211,9 @@ dialog { color: var(--fg); }
 .question-full-review:focus { outline: none; }
 .cm-editor .question-gutter { background: transparent; border: 0; color: var(--fg); flex-shrink: 0; }
 .cm-editor .question-gutter .cm-gutterElement { padding: 0 .25rem 0 .75rem; }
-.question-passage-chips { display: grid; gap: .5rem; width: 8.75rem; }
-.question-passage-chip { width: 100%; min-height: 3rem; border: 2px solid var(--accent); border-radius: var(--radius-sm); background: var(--bg); color: var(--fg); font: 600 1rem/1.3 var(--font-ui, var(--ui-fallback)); padding: .4rem .5rem; white-space: normal; cursor: pointer; }
+.question-passage-chips { display: grid; gap: .5rem; width: 3rem; }
+.question-passage-chip { display: grid; place-items: center; width: 3rem; height: 3rem; min-height: 3rem; border: 2px solid var(--accent); border-radius: var(--radius-sm); background: var(--bg); color: var(--fg); padding: .5rem; cursor: pointer; }
+.question-passage-chip svg { width: 1.5rem; height: 1.5rem; fill: currentColor; }
 .question-passage-chip[aria-pressed="true"] { background: var(--selection); }
 .question-passage-highlight { text-decoration: underline; text-decoration-style: dotted; text-decoration-color: var(--accent); text-underline-offset: .3em; }
 .question-panel-integrated :focus-visible, .question-passage-chip:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
