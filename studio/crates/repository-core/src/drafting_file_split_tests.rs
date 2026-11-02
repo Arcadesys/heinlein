@@ -457,3 +457,59 @@ fn file_split_legacy_and_generated_guards_recheck_at_apply() {
         );
     }
 }
+
+#[test]
+fn split_destination_extension_error_is_specific_and_never_changes_source() {
+    let f = Fixture::new();
+    f.put("story.md", "first second");
+    for destination in ["second section", "second.txt"] {
+        let error = f.preview(file_split_change("story.md", destination, "first second", 6)).unwrap_err();
+        assert_eq!(error, Error::InvalidMarkdownDestination);
+        assert!(error.to_string().contains(".md or .markdown"));
+        assert_eq!(fs::read_to_string(f.repo.root().join("story.md")).unwrap(), "first second");
+        assert!(!f.repo.root().join(destination).exists());
+    }
+}
+
+fn rename_change(source: &str, destination: &str) -> DraftingChange {
+    DraftingChange::RenameFile {source_path:source.into(),path:destination.into()}
+}
+#[test]
+fn sidebar_rename_preserves_bytes_mode_reopen_and_undo_without_manuscript_setup() {
+    use std::os::unix::fs::PermissionsExt;
+    let f=Fixture::new();let text="---\r\ntitle: 星\r\n---\r\nA 🐺 fragment—exact.\r\n![asset](image.png)";
+    f.put("notes/original.Markdown",text);
+    fs::set_permissions(f.repo.root().join("notes/original.Markdown"),fs::Permissions::from_mode(0o640)).unwrap();
+    let plan=f.preview(rename_change("notes/original.Markdown","notes/renamed.Markdown")).unwrap();
+    assert_eq!(plan.edits.len(),2);let undo=f.repo.apply_drafting(&plan,&f.recovery).unwrap();
+    assert!(!f.repo.root().join("notes/original.Markdown").exists());assert!(!f.repo.root().join(MANIFEST).exists());
+    let reopened=Repository::open(f.repo.root()).unwrap();assert_eq!(reopened.read("notes/renamed.Markdown").unwrap().text,text);
+    assert_eq!(reopened.snapshot("notes/renamed.Markdown").unwrap().unwrap().mode,0o640);
+    f.repo.undo_drafting(&undo,&f.recovery).unwrap();assert_eq!(f.repo.read("notes/original.Markdown").unwrap().text,text);assert!(!f.repo.root().join("notes/renamed.Markdown").exists());
+}
+#[test]
+fn sidebar_rename_registered_scene_preserves_identity_order_and_metadata() {
+    let f=Fixture::new();f.initialize();f.create("ms/first.md");f.create("ms/second.md");
+    let before=f.repo.load_drafting().unwrap();let undo=f.apply(rename_change("ms/first.md","ms/renamed.md"));let after=f.repo.load_drafting().unwrap();
+    assert_eq!(after.scenes[0].id,before.scenes[0].id);assert_eq!(after.scenes[0].title,before.scenes[0].title);assert_eq!(after.scenes[0].group_id,before.scenes[0].group_id);assert_eq!(after.scenes[0].path,"ms/renamed.md");assert_eq!(after.scenes[1].id,before.scenes[1].id);
+    f.repo.undo_drafting(&undo,&f.recovery).unwrap();assert_eq!(f.repo.load_drafting().unwrap().scenes[0].path,"ms/first.md");
+}
+#[test]
+fn sidebar_rename_collision_traversal_legacy_generated_and_source_races_fail_closed() {
+    let f=Fixture::new();f.put("old.md","exact source");f.put("exists.md","other source");
+    assert!(f.preview(rename_change("old.md","exists.md")).is_err());assert!(f.preview(rename_change("old.md","../new.md")).is_err());assert!(f.preview(rename_change("old.md","folder/new.md")).is_err());
+    let plan=f.preview(rename_change("old.md","new.md")).unwrap();f.put("old.md","newer writing");assert!(f.repo.apply_drafting(&plan,&f.recovery).is_err());assert!(!f.repo.root().join("new.md").exists());assert_eq!(f.repo.read("old.md").unwrap().text,"newer writing");
+    f.put("scene-manifest.json",r#"{"schema_version":1,"project":"Old","volumes":[],"sources":[{"path":"old.md"}]}"#);assert_eq!(f.preview(rename_change("old.md","new.md")).unwrap_err(),Error::ReadOnly);
+    f.put("scene-manifest.json",r#"{"schema_version":1,"project":"Old","volumes":[{"number":1,"title":"V","directory":"v","chapters":[{"number":1,"title":"C","directory":"c","source":"generated.md","scenes":["old.md"]}]}]}"#);assert_eq!(f.preview(rename_change("old.md","new.md")).unwrap_err(),Error::LegacySceneMove);
+}
+
+#[test]
+fn sidebar_rename_refuses_readonly_source_and_edited_undo() {
+    use std::os::unix::fs::PermissionsExt;
+    let f=Fixture::new();f.put("old.md","original");
+    fs::set_permissions(f.repo.root().join("old.md"),fs::Permissions::from_mode(0o400)).unwrap();
+    assert_eq!(f.preview(rename_change("old.md","new.md")).unwrap_err(),Error::Denied);
+    assert!(f.repo.root().join("old.md").exists());assert!(!f.repo.root().join("new.md").exists());
+    fs::set_permissions(f.repo.root().join("old.md"),fs::Permissions::from_mode(0o600)).unwrap();
+    let undo=f.apply(rename_change("old.md","new.md"));f.put("new.md","new author writing");assert!(f.repo.undo_drafting(&undo,&f.recovery).is_err());assert_eq!(f.repo.read("new.md").unwrap().text,"new author writing");assert!(!f.repo.root().join("old.md").exists());
+}

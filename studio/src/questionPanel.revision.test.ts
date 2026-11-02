@@ -29,7 +29,7 @@ async function start(bridge = core()) {
 }
 async function sendRevision() {mode('revision'); write(); button('Send to OpenAI').click(); await vi.waitFor(() => expect(button('Review proposed revision')).toBeDefined());}
 beforeEach(async () => {
-  vi.stubGlobal('crypto', webcrypto); document.body.replaceChildren(); review.mockClear(); prepare.mockReset(); prepare.mockResolvedValue(); unavailable = null;
+  localStorage.clear(); vi.stubGlobal('crypto', webcrypto); document.body.replaceChildren(); review.mockClear(); prepare.mockReset(); prepare.mockResolvedValue(); unavailable = null;
   const source = 'Before\r\nA 🐺 passage.\r\nAfter';
   const digest = await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(source));
   state = {repositoryId: 'repo', path: 'scene.md', sceneId: 'scene', documentEpoch: 4, revision: 7, source, sourceHash: [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join(''), from: 8, to: source.indexOf('\r\nAfter'), readOnly: false, recoveryPending: false, busy: false, detached: false};
@@ -129,7 +129,7 @@ describe('explicit revision requests', () => {
     const digest = await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(state.source)); state.sourceHash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
     const bridge = core(); bridge.suggestQuestionRevision.mockImplementation(async request => ({...answer(request), text: 'e'.repeat(10000), replacementText: 'r'.repeat(1000)})); await start(bridge); mode('revision');
     for (let index = 0; index < 3; index++) {write(`Revision ${index}`); button('Send to OpenAI').click(); await vi.waitFor(() => expect(bridge.suggestQuestionRevision).toHaveBeenCalledTimes(index + 1)); await vi.waitFor(() => expect(button('Cancel request').hidden).toBe(true));}
-    expect(document.querySelectorAll('.question-turn')).toHaveLength(2); expect(panel.element.textContent).not.toContain('Revision 0');
+    expect(document.querySelectorAll('.question-turn')).toHaveLength(3); expect(panel.element.textContent).toContain('Revision 0'); expect(document.querySelector('[aria-label="Original target 1"]')).toBeNull();
   });
   it('rejects incomplete or invalid revision results without offering review', async () => {
     const bridge = core(); bridge.suggestQuestionRevision.mockImplementation(async request => ({...answer(request), incomplete: true})); await start(bridge); mode('revision'); write(); button('Send to OpenAI').click();

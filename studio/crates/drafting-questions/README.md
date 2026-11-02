@@ -14,9 +14,9 @@ Live consent, account eligibility, and end-to-end inference require native testi
 
 ## Bounds and behavior
 
-- Question: 4,000 UTF-8 bytes; context: 16,000 UTF-8 bytes
+- Question: 4,000 UTF-8 bytes; full-scene question context: 64,000 UTF-8 bytes (revision context remains 16,000)
 - History: at most eight messages, only user/assistant roles
-- Question + context + history: at most 32,000 UTF-8 bytes
+- Question + context + history: at most 96,000 UTF-8 bytes
 - Revision requests require empty history and a nonempty target of at most
   16,000 UTF-8 bytes. Question + optional context + target share the 32,000-byte
   budget; only those exact author-previewed strings enter the provider payload

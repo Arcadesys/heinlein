@@ -1121,3 +1121,8 @@ dialog { color: var(--fg); }
  .question-panel .question-settings,.question-panel .question-conversation,.question-panel .question-composer { max-height:none; overflow:visible; }
  .question-panel .question-conversation { min-height:12rem; }
 }
+/* File actions stay separate from opening the file, with full keyboard targets. */
+.file-entry-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:stretch; gap:.35rem; }
+.file-entry-row > .file-entry { min-inline-size:0; min-block-size:48px; overflow-wrap:anywhere; }
+.file-entry-row > .file-rename { min-block-size:48px; padding:.5rem .65rem; white-space:normal; }
+@media(max-width:380px) { .file-entry-row { grid-template-columns:minmax(0,1fr); gap:0; margin-block-end:.65rem; } .file-entry-row > .file-rename { justify-self:start; } }

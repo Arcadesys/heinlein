@@ -59,6 +59,7 @@ pub enum Error {
     UnsupportedPlatform,
     Conflict,
     ReadOnly,
+    InvalidMarkdownDestination,
     SaveUncertain,
     InvalidRecovery,
     RecoveryIo,
@@ -93,6 +94,7 @@ impl fmt::Display for Error {
             Self::InvalidManifest => "Scene manifest is invalid or unsupported",
             Self::Io => "Repository I/O failed; the draft was not saved",
             Self::Conflict => "Document changed on disk; reload before saving",
+            Self::InvalidMarkdownDestination => "Use a new Markdown filename ending in .md or .markdown for the split",
             Self::ReadOnly => "This file is read-only. Open a source scene to edit an assembled chapter.",
             Self::SaveUncertain => {
                 "Document replaced, but durability could not be confirmed; reload before retrying"

@@ -13,8 +13,11 @@ use tokio::sync::watch;
 
 pub const MAX_QUESTION_BYTES: usize = 4_000;
 pub const MAX_CONTEXT_BYTES: usize = 16_000;
+/// Full-scene question context; revision targets retain the smaller limit.
+pub const MAX_SCENE_CONTEXT_BYTES: usize = 64_000;
 pub const MAX_HISTORY_MESSAGES: usize = 8;
-pub const MAX_INPUT_BYTES: usize = 32_000;
+pub const MAX_INPUT_BYTES: usize = 96_000;
+pub const MAX_REVISION_INPUT_BYTES: usize = 32_000;
 pub const MAX_ANSWER_BYTES: usize = 32_000;
 pub const MAX_OUTPUT_TOKENS: u32 = 2_000;
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -289,7 +292,7 @@ impl QuestionRequest {
         if !valid_id(&self.request_id)
             || self.question.trim().is_empty()
             || self.question.len() > MAX_QUESTION_BYTES
-            || self.context.len() > MAX_CONTEXT_BYTES
+            || self.context.len() > MAX_SCENE_CONTEXT_BYTES
             || self.history.len() > MAX_HISTORY_MESSAGES
         {
             return Err(QuestionError::invalid_request());
@@ -341,9 +344,10 @@ pub fn validate_revision_request(
 ) -> Result<(), QuestionError> {
     request.validate()?;
     if !request.history.is_empty()
+        || request.context.len() > MAX_CONTEXT_BYTES
         || selected.is_empty()
         || selected.len() > MAX_CONTEXT_BYTES
-        || request.question.len() + request.context.len() + selected.len() > MAX_INPUT_BYTES
+        || request.question.len() + request.context.len() + selected.len() > MAX_REVISION_INPUT_BYTES
     {
         return Err(QuestionError::invalid_revision());
     }

@@ -230,3 +230,9 @@ describe('Studio attributed revision workflow', () => {
     expect(document.body.textContent).toContain('Studio explicit rejection'); expect([...document.querySelectorAll('button')].some(node => node.textContent === 'Review revert')).toBe(false);
   });
 });
+
+it('restores project chat across Studio scene switches and sends current Reading scene bytes',async()=>{
+ const bridge=core();await start(bridge);await open();question('First scene');button('Send to OpenAI').click();await vi.waitFor(()=>expect(bridge.askQuestion).toHaveBeenCalledTimes(1));await vi.waitFor(()=>expect(button('Cancel request').hidden).toBe(true));
+ bridge.readDocument.mockResolvedValueOnce({path:'second.md',text:'Second scene 🐺\r\nExact',contentHash:'b'.repeat(64),sizeBytes:26,frontmatter:null,generatedCompatibility:false});
+ await app!.showDocument('second.md');button('Reading').click();await open();expect(document.querySelector('.question-transcript')!.textContent).toContain('First scene');question('Discuss current scene');button('Send to OpenAI').click();await vi.waitFor(()=>expect(bridge.askQuestion).toHaveBeenCalledTimes(2));expect(bridge.askQuestion.mock.calls[1][0]).toMatchObject({context:'Second scene 🐺\r\nExact',history:[{role:'user',text:'First scene'},{role:'assistant',text:'Read-only mock advice'}]});expect(bridge.saveDocument).not.toHaveBeenCalled();
+});

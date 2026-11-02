@@ -236,3 +236,26 @@ describe('Studio split scene at cursor', () => {
     expect(view().state.doc.toString()).toMatch(/late$/); expect(document.body.textContent).toContain('view could not refresh');
   });
 });
+
+
+it.each(['second scene','second.MARKDOWN'])('accepts a new Markdown split filename %s without a misleading read-only error',async filename=>{
+ const core=bridge(true);app=mountStudio(document.body,core);await app.selectRepository(async()=>session);await app.showDocument('notes/story.Markdown');view().dispatch({selection:{anchor:view().state.doc.toString().indexOf('Last')}});
+ button('Split scene at cursor').click();const input=document.querySelector<HTMLInputElement>('[aria-label="Split Markdown file at cursor"] input')!;input.value=filename;button('Preview split').click();await vi.waitFor(()=>expect(core.previewDraftingChange).toHaveBeenCalledTimes(1));expect(core.previewDraftingChange.mock.calls[0][2]).toMatchObject({kind:'splitFile',path:`notes/${filename.includes('.')?filename:filename+'.md'}`});
+});
+it('explains an unsupported split extension before calling native preview',async()=>{
+ const core=bridge(true);app=mountStudio(document.body,core);await app.selectRepository(async()=>session);await app.showDocument('notes/story.Markdown');view().dispatch({selection:{anchor:view().state.doc.toString().indexOf('Last')}});
+ button('Split scene at cursor').click();const input=document.querySelector<HTMLInputElement>('[aria-label="Split Markdown file at cursor"] input')!;input.value='second.txt';button('Preview split').click();expect(input.validationMessage).toContain('.md or .markdown');expect(core.previewDraftingChange).not.toHaveBeenCalled();expect(core.applyDraftingChange).not.toHaveBeenCalled();
+});
+
+it('serializes split refresh reads for hosts with an exclusive managed-workspace lock',async()=>{
+ const core=bridge(true);let committed=false,busy=false,overlaps=0;
+ const apply=core.applyDraftingChange.getMockImplementation()!;core.applyDraftingChange.mockImplementation(async()=>{const result=await apply();committed=true;return result;});
+ const read=core.readDocument.getMockImplementation()!;core.readDocument.mockImplementation(async(...args)=>{
+  if(!committed)return read(...args);
+  if(busy){overlaps++;throw Error('Another Heinlein instance is using this project.');}
+  busy=true;try{await new Promise(resolve=>setTimeout(resolve,10));return await read(...args);}finally{busy=false;}
+ });
+ app=mountStudio(document.body,core);await app.selectRepository(async()=>session);await app.showDocument('notes/story.Markdown');view().dispatch({selection:{anchor:view().state.doc.toString().indexOf('Last')}});await preview();button('Apply change').click();
+ await vi.waitFor(()=>expect(core.applyDraftingChange).toHaveBeenCalledTimes(1));await vi.waitFor(()=>expect(document.querySelector('[aria-label="Review manuscript change"]')).toBeNull());
+ await new Promise(resolve=>setTimeout(resolve,60));expect(overlaps).toBe(0);expect(view().state.doc.toString()).toBe('Last line');expect(document.body.textContent).not.toContain('view could not refresh');
+});
