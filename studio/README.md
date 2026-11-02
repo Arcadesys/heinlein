@@ -4,43 +4,42 @@ An additive native desktop editor with local autosave and explicit recovery deci
 folder, browse its files, and use a scene manifest to navigate the manuscript.
 The existing Python publisher and its CLI remain unchanged.
 
-## rc1 candidate packaging
+## 1.6 release packaging
 
-The literal release tag is `rc1`; Studio's internal SemVer is `1.5.0-rc.1`.
-The existing Python publisher remains independently versioned at `0.1.0`.
+Heinlein Studio is version **1.6.0**, tagged **v1.6.0**. The independent Python
+publisher remains at **0.1.0**.
 
-On an Apple Silicon Mac, build the separate candidate with:
+On an Apple Silicon Mac, build the version-pinned app with:
 
 ```sh
 cd studio
 npm ci
-npm run tauri build -- --config src-tauri/tauri.rc.conf.json --bundles app --ci
+npm run tauri build -- --config src-tauri/tauri.release.conf.json --bundles app --ci
 ```
 
-This produces **Heinlein Studio RC1.app** with bundle identifier
-`me.thearcades.heinlein.studio.rc1` and separate app data, leaving an existing
-Heinlein Studio installation/profile alone. It is a self-contained build of the
-checked-out source: no launcher fetches or rebuilds moving main on launch.
-The RC configuration uses ad-hoc signing, not a certified Developer ID or Apple
-notarization. An ARM64 build supports Apple Silicon; it is not a universal,
-Intel, Windows or Linux release. macOS 11 is the packaging minimum, not a claim
-that runtime acceptance was performed on every supported OS.
+This produces **Heinlein Studio.app**, using the stable identifier
+`me.thearcades.heinlein.studio`. Release downloads include an app ZIP and a DMG.
+Both contain the same self-contained app; it does not fetch or rebuild moving
+main when launched. The older RC1 app uses a separate profile and identifier.
 
-Extract the app ZIP, keep its RC1 name, and copy it to your user Applications
-folder or run it from the extracted folder. Do not replace the stable app.
-macOS may require Finder's **Open** or **System Settings → Privacy & Security**
-approval for this non-notarized candidate. Verify the published SHA256 before
-opening it; never disable Gatekeeper globally. Removing the RC app does not
-remove its isolated guide/recovery data.
+Quit every other copy of Heinlein Studio before opening the downloaded app.
+Expand the ZIP, or open the DMG and copy the app to Applications. Existing managed
+source-update installations in `~/Applications` should use their own updater
+instead of replacing their launcher with the standalone release app. The fixed
+release app does not include that source-update launcher.
 
-Python wheel/source assets are separate from the Mac app. Install the wheel in
-a dedicated Python 3.11+ environment; Python dependencies, Pandoc and Chrome
-(for PDF) are external prerequisites, not bundled in the app or wheel. The
-source archive is restricted to publisher code/templates/package metadata;
-no manuscripts, examples, credentials or native app profiles belong in assets.
-Release notes and checksums identify the exact source commit and observed
-architecture/signing. A successful package build is not OS picker, VoiceOver,
-provider, live Linux or power-loss acceptance.
+The build is ARM64 for Apple Silicon, ad-hoc signed, and not notarized or signed
+with a Developer ID certificate. The declared packaging minimum is macOS 11;
+older macOS runtime compatibility is not verified. No Intel, Linux or Windows
+installer is included. Verify `SHA256SUMS` before opening a download. macOS may
+require **Open Anyway** in **System Settings → Privacy & Security**.
+
+Publisher wheel/source assets are separate from the app. Install the wheel in a
+Python 3.11+ virtual environment. Python dependencies, Pandoc, and Chrome (for PDF)
+are external prerequisites. Publisher source archives contain code, templates,
+and package metadata; they exclude manuscripts, examples, credentials, and app
+profiles. Release notes and the release manifest identify source provenance,
+checks, and remaining runtime limits.
 
 ## GitHub projects
 
