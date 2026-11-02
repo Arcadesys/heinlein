@@ -487,7 +487,11 @@ impl ReviewSession {
             .iter()
             .map(|s| (s.path.clone(), s.source.clone()))
             .collect();
-        let context_notice = "Each call sees one editable core, bounded neighboring prose and an explicit window of the selected read-only context. It does not see the whole work at once. At most eight calls run per explicit batch; incomplete coverage is not a complete review.".into();
+        let context_notice = if options.full_context_order.is_some() {
+            "Each call receives the complete selected context in library order. Each target is reviewed separately. At most eight calls run per explicit batch; incomplete coverage is not a complete review."
+        } else {
+            "Each call sees one editable core, bounded neighboring prose and an explicit window of the selected read-only context. It does not see the whole work at once. At most eight calls run per explicit batch; incomplete coverage is not a complete review."
+        }.into();
         let result = ReviewResult {
             review_id: uuid::Uuid::new_v4().to_string(),
             request_id: request.request_id.clone(),
@@ -1462,6 +1466,7 @@ mod tests {
             reviewers: vec!["contextual".into(); reviewers],
             context: vec![],
             context_note: String::new(),
+            full_context_order: None,
             ranges: vec![],
             review_id: None,
         });

@@ -16,7 +16,7 @@ beforeEach(()=>{localStorage.clear();document.body.replaceChildren();Range.proto
    for(const path of ['a.md','b.md'])writeFileSync(join(folder,path),path==='a.md'?raw:'Invented B — 星.\r\n',{mode:0o600});
    const before=['a.md','b.md'].map(path=>({path,bytes:readFileSync(join(folder,path)),mode:statSync(join(folder,path)).mode}));
    const {core}=bridge();core.readDocument.mockImplementation(async(_id,path)=>doc(path,readFileSync(join(folder,path),'utf8')));
-   await start(core);await app.showDocument('b.md');await app.showDocument('a.md');button('Read beside active document: b.md').click();
+   await start(core);await app.showDocument('b.md');await app.showDocument('a.md');button('Read beside…').click();button('Read beside active document: b.md').click();
    await vi.waitFor(()=>expect(document.querySelector('.reference-source')?.textContent).toBe('Invented B — 星.\r\n'));button('Refresh saved source').click();await vi.waitFor(()=>expect(core.readDocument).toHaveBeenCalledTimes(5));
    for(const file of before){expect(readFileSync(join(folder,file.path)).equals(file.bytes)).toBe(true);expect(statSync(join(folder,file.path)).mode).toBe(file.mode);}
    expect(core.stageRecovery).not.toHaveBeenCalled();expect(core.saveDocument).not.toHaveBeenCalled();

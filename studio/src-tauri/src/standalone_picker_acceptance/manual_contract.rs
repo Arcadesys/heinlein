@@ -30,19 +30,36 @@ impl Manual {
         Err("Manual callback order/path/token invalid; stop as incomplete".into())
     }
     pub fn observe(&mut self, line: &str) -> Result<String, String> {
-        let Some(nonce) = line.strip_prefix("observation-ready ") else { return self.reject(); };
+        let Some(nonce) = line.strip_prefix("observation-ready ") else {
+            return self.reject();
+        };
         // Exact one bounded UUID line. This channel is owned by the proof-validating collector.
-        let valid = nonce.len() == 36 && nonce.bytes().enumerate().all(|(i, b)| {
-            if [8, 13, 18, 23].contains(&i) { b == b'-' } else { b.is_ascii_digit() || (b'a'..=b'f').contains(&b) }
-        });
-        if !valid || self.failed || self.observation_nonce.is_some() || self.completed != 0 || self.active.is_some() || self.finished {
+        let valid = nonce.len() == 36
+            && nonce.bytes().enumerate().all(|(i, b)| {
+                if [8, 13, 18, 23].contains(&i) {
+                    b == b'-'
+                } else {
+                    b.is_ascii_digit() || (b'a'..=b'f').contains(&b)
+                }
+            });
+        if !valid
+            || self.failed
+            || self.observation_nonce.is_some()
+            || self.completed != 0
+            || self.active.is_some()
+            || self.finished
+        {
             return self.reject();
         }
         self.observation_nonce = Some(nonce.to_owned());
         Ok(nonce.to_owned())
     }
     pub fn begin(&mut self) -> Result<usize, String> {
-        if self.failed || self.observation_nonce.is_none() || self.active.is_some() || self.completed >= 2 {
+        if self.failed
+            || self.observation_nonce.is_none()
+            || self.active.is_some()
+            || self.completed >= 2
+        {
             return self.reject();
         }
         let phase = self.completed + 1;
@@ -147,7 +164,12 @@ mod tests {
         assert!(m.observe(&format!("observation-ready {NONCE}")).is_err());
         let mut m = ready();
         assert!(m.observe(&format!("observation-ready {NONCE}")).is_err());
-        for line in ["", "observation-ready bad", "abort", "observation-ready 11111111-2222-4333-8444-555555555555\nextra"] {
+        for line in [
+            "",
+            "observation-ready bad",
+            "abort",
+            "observation-ready 11111111-2222-4333-8444-555555555555\nextra",
+        ] {
             let mut m = Manual::default();
             assert!(m.observe(line).is_err());
             assert!(m.begin().is_err());

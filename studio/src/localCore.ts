@@ -14,14 +14,18 @@ export interface Chapter { number: number; title: string; path: string; source: 
 export interface Manuscript { path: string; project: string; schemaVersion: number; volumes: {number: number; title: string; path: string; chapters: Chapter[]}[] }
 export interface DraftingGroup { id: string; title: string }
 export interface DraftingScene { id: string; title: string; path: string; groupId: string | null }
+export interface LibraryEntry { id: string; kind: 'group' | 'scene'; parentId: string | null }
 export interface DraftingState {
   manifestPath: string; revision: string | null; project: string;
   groups: DraftingGroup[]; scenes: DraftingScene[];
+  library?: LibraryEntry[];
+  libraryLegacy?: boolean;
   untrackedPaths: string[]; missingPaths: string[]; recoveryRequired?: boolean;
   groupMoveIssue?: string | null;
 }
 export type SceneDestination = {kind:'before'|'after';sceneId:string;groupId:string|null}|{kind:'groupEnd';groupId:string}|{kind:'ungroupedEnd'};
 export type DraftingChange =
+  | { kind: 'organizeLibrary'; groups: DraftingGroup[]; sceneTitles: {id: string; title: string}[]; entries: LibraryEntry[] }
   | { kind: 'initialize'; project: string }
   | { kind: 'createScene'; title: string; path: string; groupId?: string | null; beforeId?: string | null }
   | { kind: 'renameFile'; sourcePath: string; path: string }
@@ -65,7 +69,7 @@ export interface QuestionRevisionAnswer extends QuestionAnswer { proposalId: str
 export interface QuestionAnswer { requestId: string; text: string; model: string; inputTokens?: number | null; outputTokens?: number | null; incomplete: boolean }
 export interface ReviewSnapshot { path: string; source: string; sourceHash: string;sceneId?:string|null }
 export interface ReviewerDefinition {id:string; version:number; displayName:string; instructions:string}
-export interface ReviewOptions {reviewers:string[]; context:ReviewSnapshot[]; contextNote:string; ranges:{path:string;fromUtf8:number;toUtf8:number}[];reviewId?:string|null}
+export interface ReviewOptions {reviewers:string[]; context:ReviewSnapshot[]; contextNote:string; ranges:{path:string;fromUtf8:number;toUtf8:number}[];reviewId?:string|null;fullContextOrder?:string[]}
 export interface ReviewCoverage {contextRanges?:{sourceIndex:number;fromUtf8:number;toUtf8:number}[];id:string; sourceIndex:number;fromUtf8:number;toUtf8:number;windowFrom:number;windowTo:number;reviewer:number;status:string;requestId:string|null;error:string|null}
 export interface ReviewRequest { requestId: string; repositoryId: string; scope: 'scene' | 'chapter'; snapshots: ReviewSnapshot[]; workflow?:ReviewOptions|null }
 export interface ReviewEdit { location?:{line:number;column:number}; id: string; path: string; fromUtf8: number; toUtf8: number; original: string; replacement: string; reason: string; role: 'proofreader' | 'editor'; status: 'pending' | 'prepared' | 'accepted' | 'rejected' | 'supersededByAuthorChoice' | 'blockedByAppliedDecision'; proposalId: string | null; fingerprint?:string;comments?:string[];provenance?:{instanceId:string;definitionId:string;definitionVersion:number;displayName:string;requestId:string;model:string;accountId:string;accountGeneration:number}[];patch?:string;patchHash?:string;conflictGroup?:string|null;selected?:boolean;sourceStale?:boolean }
@@ -112,6 +116,7 @@ export interface LocalCore {
   previewDraftingChange?(repositoryId: string, expectedRevision: string | null, change: DraftingChange): Promise<DraftingPreview>;
   applyDraftingChange?(repositoryId: string, previewId: string): Promise<DraftingResult>;
   undoDraftingChange?(repositoryId: string, undoId: string): Promise<DraftingState>;
+  historyDraftingChange?(repositoryId: string, direction: 'undo' | 'redo', metadataOnly?: boolean): Promise<{state: DraftingState; canUndo: boolean; canRedo: boolean; metadataOnly: boolean}>;
   pickDraftingImport?(repositoryId: string): Promise<DraftingSelection | null>;
   onDraftingImportError?(callback: (message: string) => void): Promise<() => void>;
   onDraftingFilesDropped?(callback: (selection: DraftingSelection) => void): Promise<() => void>;
@@ -174,6 +179,7 @@ export const localCore: LocalCore = {
   previewDraftingChange: (repositoryId, expectedRevision, change) => invoke('preview_drafting_change', {repositoryId, expectedRevision, change}),
   applyDraftingChange: (repositoryId, previewId) => invoke('apply_drafting_change', {repositoryId, previewId}),
   undoDraftingChange: (repositoryId, undoId) => invoke('undo_drafting_change', {repositoryId, undoId}),
+  historyDraftingChange: (repositoryId, direction, metadataOnly = false) => invoke('history_drafting_change', {repositoryId, direction, metadataOnly}),
   pickDraftingImport: repositoryId => invoke('pick_drafting_import', {repositoryId}),
   onDraftingImportError: callback => listen<string>('drafting-import-error', event => callback(event.payload)),
   onDraftingFilesDropped: callback => listen<DraftingSelection>('drafting-files-dropped', event => callback(event.payload)),

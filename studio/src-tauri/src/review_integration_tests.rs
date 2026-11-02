@@ -46,6 +46,7 @@ impl Fixture {
                 reviewers: vec!["contextual".into()],
                 context: vec![],
                 context_note: String::new(),
+                full_context_order: None,
                 ranges: vec![],
                 review_id: None,
             }),

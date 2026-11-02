@@ -347,7 +347,8 @@ pub fn validate_revision_request(
         || request.context.len() > MAX_CONTEXT_BYTES
         || selected.is_empty()
         || selected.len() > MAX_CONTEXT_BYTES
-        || request.question.len() + request.context.len() + selected.len() > MAX_REVISION_INPUT_BYTES
+        || request.question.len() + request.context.len() + selected.len()
+            > MAX_REVISION_INPUT_BYTES
     {
         return Err(QuestionError::invalid_revision());
     }

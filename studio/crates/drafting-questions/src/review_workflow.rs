@@ -26,6 +26,9 @@ pub struct Options {
     pub context: Vec<ReviewSnapshot>,
     #[serde(default)]
     pub context_note: String,
+    /// When present, every call receives these complete snapshots in this order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_context_order: Option<Vec<String>>,
     #[serde(default)]
     pub ranges: Vec<EditableRange>,
     #[serde(default)]
@@ -123,6 +126,17 @@ pub fn validate(r: &ReviewRequest) -> Result<(), QuestionError> {
         bytes = bytes.checked_add(s.source.len()).ok_or_else(invalid)?;
         let _ = readonly;
     }
+    if let Some(order) = &o.full_context_order {
+        let mut seen = std::collections::HashSet::new();
+        if order.len() > 128
+            || order
+                .iter()
+                .any(|path| !seen.insert(path) || !paths.contains(path))
+            || o.context.iter().any(|source| !seen.contains(&source.path))
+        {
+            return Err(invalid());
+        }
+    }
     if bytes > 1024 * 1024 || o.context_note.len() > 4000 {
         return Err(invalid());
     }
@@ -174,7 +188,23 @@ pub fn plan(r: &ReviewRequest) -> Result<Vec<Coverage>, QuestionError> {
     validate(r)?;
     let o = r.workflow.as_ref().unwrap();
     let context_bytes = o.context.iter().map(|s| s.source.len()).sum::<usize>();
-    let context_budget = if context_bytes == 0 {
+    let full_bytes = o.full_context_order.as_ref().map(|order| {
+        order
+            .iter()
+            .map(|path| {
+                r.snapshots
+                    .iter()
+                    .chain(&o.context)
+                    .find(|s| &s.path == path)
+                    .unwrap()
+                    .source
+                    .len()
+            })
+            .sum::<usize>()
+    });
+    let context_budget = if let Some(bytes) = full_bytes {
+        bytes
+    } else if context_bytes == 0 {
         0
     } else {
         context_bytes.div_ceil(127) + 8
@@ -183,6 +213,13 @@ pub fn plan(r: &ReviewRequest) -> Result<Vec<Coverage>, QuestionError> {
         .checked_sub(o.context_note.len() + context_budget + 1000)
         .filter(|v| *v >= 4)
         .ok_or_else(invalid)?;
+    if full_bytes.is_some()
+        && r.snapshots
+            .iter()
+            .any(|source| source.source.len() > core_budget)
+    {
+        return Err(invalid());
+    }
     let mut contexts: Vec<Vec<ContextRange>> = Vec::new();
     let mut current = Vec::new();
     let mut available = context_budget;
@@ -386,19 +423,43 @@ impl QuestionService {
                 source_hash: source.source_hash.clone(),
                 scene_id: source.scene_id.clone(),
             }];
-            sub.workflow.as_mut().unwrap().context = coverage
-                .context_ranges
-                .iter()
-                .map(|range| {
-                    let original = &opts.context[range.source_index];
-                    ReviewSnapshot {
-                        path: original.path.clone(),
-                        source: original.source[range.from_utf8..range.to_utf8].into(),
-                        source_hash: original.source_hash.clone(),
-                        scene_id: original.scene_id.clone(),
-                    }
-                })
-                .collect();
+            sub.workflow.as_mut().unwrap().context = if let Some(order) = &opts.full_context_order {
+                order
+                    .iter()
+                    .enumerate()
+                    .map(|(index, path)| {
+                        let mut item = request
+                            .snapshots
+                            .iter()
+                            .chain(&opts.context)
+                            .find(|s| &s.path == path)
+                            .unwrap()
+                            .clone();
+                        // These paths are internal to the bounded model call and are
+                        // never sent. They keep read-only context distinct from its target.
+                        item.path = format!("__context_{index}.md");
+                        while item.path == source.path {
+                            item.path.insert(0, '_');
+                        }
+                        item
+                    })
+                    .collect()
+            } else {
+                coverage
+                    .context_ranges
+                    .iter()
+                    .map(|range| {
+                        let original = &opts.context[range.source_index];
+                        ReviewSnapshot {
+                            path: original.path.clone(),
+                            source: original.source[range.from_utf8..range.to_utf8].into(),
+                            source_hash: original.source_hash.clone(),
+                            scene_id: original.scene_id.clone(),
+                        }
+                    })
+                    .collect()
+            };
+            sub.workflow.as_mut().unwrap().full_context_order = None;
             sub.workflow.as_mut().unwrap().ranges = vec![EditableRange {
                 path: source.path.clone(),
                 from_utf8: coverage.from_utf8 - coverage.window_from,
@@ -514,6 +575,7 @@ mod tests {
                 reviewers: vec!["contextual".into()],
                 context: vec![],
                 context_note: String::new(),
+                full_context_order: None,
                 ranges: vec![],
                 review_id: None,
             }),
@@ -542,6 +604,81 @@ mod tests {
         too_large = request("story");
         too_large.workflow.as_mut().unwrap().context_note = "x".repeat(4001);
         assert!(plan(&too_large).is_err());
+    }
+    #[tokio::test]
+    async fn complete_library_context_is_ordered_in_every_target_call_and_oversize_refuses() {
+        let mut r = request("First target");
+        r.scope = ReviewScope::Chapter;
+        r.snapshots.push(ReviewSnapshot {
+            path: "second.md".into(),
+            source: "Second target".into(),
+            source_hash: "b".repeat(64),
+            scene_id: None,
+        });
+        let options = r.workflow.as_mut().unwrap();
+        options.context.push(ReviewSnapshot {
+            path: "notes.md".into(),
+            source: "Context note".into(),
+            source_hash: "c".repeat(64),
+            scene_id: None,
+        });
+        options.full_context_order = Some(vec![
+            "notes.md".into(),
+            "scene.md".into(),
+            "second.md".into(),
+        ]);
+        let coverage = plan(&r).unwrap();
+        assert_eq!(coverage.len(), 2);
+        let mut too_large = r.clone();
+        too_large.workflow.as_mut().unwrap().context[0].source = "x".repeat(16000);
+        assert!(plan(&too_large).is_err());
+        let service = QuestionService::default();
+        let permit = service
+            .reserve(&r.question_request().unwrap(), "account")
+            .unwrap();
+        let config = Configuration::new("synthetic-token", "test-model")
+            .unwrap()
+            .with_account("account")
+            .unwrap();
+        let mut count = 0;
+        let batch = service
+            .review_batch_with(
+                r,
+                config,
+                permit,
+                coverage,
+                vec![definitions().remove(1)],
+                1024,
+                |_| Ok(()),
+                |_, body| {
+                    count += 1;
+                    let envelope: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    let input: serde_json::Value =
+                        serde_json::from_str(envelope["input"][0]["content"].as_str().unwrap())
+                            .unwrap();
+                    assert_eq!(
+                        input["readOnlyContext"],
+                        serde_json::json!(["Context note", "First target", "Second target"])
+                    );
+                    async { Ok(response(serde_json::json!([]))) }
+                },
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        assert_eq!(count, 2);
+        assert!(
+            batch
+                .calls
+                .iter()
+                .all(|call| call.coverage.status == "completed"),
+            "{:?}",
+            batch
+                .calls
+                .iter()
+                .map(|c| (&c.coverage.status, &c.coverage.error))
+                .collect::<Vec<_>>()
+        );
     }
     #[tokio::test]
     async fn serial_batch_stops_at_eight_and_retains_good_siblings_after_schema_failure() {

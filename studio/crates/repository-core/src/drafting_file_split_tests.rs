@@ -152,6 +152,8 @@ fn file_split_registration_after_interruption_refuses_rollback_before_inverse_pl
             id: uuid(),
             project: "External author index".into(),
             groups: vec![],
+            library: None,
+            preserve_flat_order: false,
             scenes: vec![DraftingScene {
                 id: uuid(),
                 title: "Registered after interruption".into(),
@@ -226,6 +228,8 @@ fn file_split_registration_after_rollback_preview_is_already_guarded_at_apply() 
             id: uuid(),
             project: "External index".into(),
             groups: vec![],
+            library: None,
+            preserve_flat_order: false,
             scenes: vec![DraftingScene {
                 id: uuid(),
                 title: "Registered".into(),

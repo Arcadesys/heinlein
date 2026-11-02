@@ -41,7 +41,8 @@ describe('unified navigation drawer', () => {
     const {drawer, manuscript, toggle, tabs} = setup(); drawer.select('manuscript');
     const control = manuscript.querySelector('button')!; control.focus(); key(control, 'Escape');
     expect(document.activeElement).toBe(toggle); expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    expect(document.getElementById('navigation-drawer')!.hidden).toBe(true);
+    expect(document.getElementById('navigation-drawer')!.getAttribute('aria-hidden')).toBe('true');
+    expect(document.getElementById('navigation-drawer')!.inert).toBe(true);
     toggle.click(); expect(document.activeElement).toBe(tabs[1]); expect(drawer.visible('manuscript')).toBe(true);
   });
   it.each([REPOSITORY_DRAG_TYPE, SCENE_DRAG_TYPE])('reveals existing drop targets for internal drags: %s', type => {

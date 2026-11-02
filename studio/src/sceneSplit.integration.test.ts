@@ -109,7 +109,7 @@ describe('Studio split scene at cursor', () => {
   });
   it('converts Unicode CRLF cursor exactly, previews, applies and baselines suffix without credit', async () => {
     const core = bridge(); await start(core); await preview();
-    expect(core.previewDraftingChange).toHaveBeenCalledWith('session', 'rev1', {kind: 'splitScene', sceneId: 's1', path: 'ms/scene-continued.md', title: 'Opening continued', expectedHash: `hash:${source}`, byteOffset: new TextEncoder().encode(source.slice(0, source.indexOf('Last'))).length});
+    expect(core.previewDraftingChange).toHaveBeenCalledWith('session', 'rev1', {kind: 'splitScene', sceneId: 's1', path: expect.stringMatching(/^ms\/sheet-[0-9a-f-]+\.md$/), title: 'Opening continued', expectedHash: `hash:${source}`, byteOffset: new TextEncoder().encode(source.slice(0, source.indexOf('Last'))).length});
     expect(core.applyDraftingChange).not.toHaveBeenCalled(); button('Apply change').click();
     await vi.waitFor(() => expect(view().state.doc.toString()).toBe('Last line'));
     expect(document.body.textContent).toContain('0 / 1,000 daily growth credited');
@@ -124,7 +124,8 @@ describe('Studio split scene at cursor', () => {
     button('Read beside active document: ms/scene.md').click();
     await vi.waitFor(()=>expect(document.querySelector('.reference-source')?.textContent).toBe(source));
     view().dispatch({selection:{anchor:view().state.doc.toString().indexOf('Last')}});await preview();button('Apply change').click();
-    await vi.waitFor(()=>expect(document.querySelector('.document-tabs [role="tab"][aria-selected="true"]')?.getAttribute('aria-label')).toBe('ms/scene-continued.md'));
+    await vi.waitFor(()=>expect(document.querySelector('.document-tabs [role="tab"][aria-selected="true"]')?.getAttribute('aria-label')).toMatch(/^ms\/sheet-[0-9a-f-]+\.md$/));
+    const suffixPath=document.querySelector('.document-tabs [role="tab"][aria-selected="true"]')!.getAttribute('aria-label')!;
     expect(document.getElementById(original)?.getAttribute('aria-label')).toBe('ms/scene.md');
     expect(document.querySelectorAll('.document-tabs [role="tab"]')).toHaveLength(15);
     expect(document.querySelector('.reference-source')?.textContent).toBe(source);
@@ -132,7 +133,7 @@ describe('Studio split scene at cursor', () => {
     button('Read both sections').click();await vi.waitFor(()=>expect(document.querySelector('.reference-source')?.textContent).toBe(source.slice(0,source.indexOf('Last'))));
     expect(view().state.doc.toString()).toBe('Last line');expect(core.saveDocument).not.toHaveBeenCalled();
     button('Undo last change').click();await vi.waitFor(()=>expect(document.querySelector('[aria-label="Review manuscript change"]')).not.toBeNull());button('Apply change').click();
-    await vi.waitFor(()=>expect([...document.querySelectorAll('.document-tabs [role="tab"]')].some(t=>t.getAttribute('aria-label')==='ms/scene-continued.md · Unavailable')).toBe(true));
+    await vi.waitFor(()=>expect([...document.querySelectorAll('.document-tabs [role="tab"]')].some(t=>t.getAttribute('aria-label')===`${suffixPath} · Unavailable`)).toBe(true));
     expect(document.getElementById(original)?.getAttribute('aria-label')).toBe('ms/scene.md');
     await new Promise(resolve=>setTimeout(resolve,0));await app!.showDocument('ms/scene.md');
     for(let i=0;i<13;i++)button(`Close document other-${i}.md`).click();
@@ -141,9 +142,9 @@ describe('Studio split scene at cursor', () => {
     expect(document.querySelectorAll('.document-tabs [role="tab"]')).toHaveLength(1);
   });
   it('registers both verified split identities when the saved suffix cannot initially reopen',async()=>{
-    const core=bridge();const read=core.readDocument.getMockImplementation()!;core.readDocument.mockImplementation(async(id,path)=>{if(path==='ms/scene-continued.md')throw Error('Synthetic suffix read unavailable');return read(id,path);});
+    const core=bridge();const read=core.readDocument.getMockImplementation()!;core.readDocument.mockImplementation(async(id,path)=>{if(/^ms\/sheet-[0-9a-f-]+\.md$/.test(path))throw Error('Synthetic suffix read unavailable');return read(id,path);});
     await start(core);await preview();button('Apply change').click();await vi.waitFor(()=>expect(document.body.textContent).toContain('view could not refresh'));
-    expect([...document.querySelectorAll('.document-tabs [role="tab"]')].map(t=>t.getAttribute('aria-label'))).toEqual(['ms/scene.md','ms/scene-continued.md']);expect(document.querySelector('.document-tabs [aria-selected="true"]')).toBeNull();expect(document.querySelector('.markdown-editor')).toBeNull();expect(core.saveDocument).not.toHaveBeenCalled();
+    expect([...document.querySelectorAll('.document-tabs [role="tab"]')].map(t=>t.getAttribute('aria-label'))).toEqual(['ms/scene.md',expect.stringMatching(/^ms\/sheet-[0-9a-f-]+\.md$/)]);expect(document.querySelector('.document-tabs [aria-selected="true"]')).toBeNull();expect(document.querySelector('.markdown-editor')).toBeNull();expect(core.saveDocument).not.toHaveBeenCalled();
   });
   it('adds no successful suffix tab on canceled or failed split',async()=>{
     const core=bridge();await start(core);await preview();button('Cancel').click();expect(document.querySelectorAll('.document-tabs [role="tab"]')).toHaveLength(1);
@@ -171,6 +172,7 @@ describe('Studio split scene at cursor', () => {
   it('supports keyboard shortcut and cancels preview without writing', async () => {
     const core = bridge(); await start(core);
     view().contentDOM.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', ctrlKey: true, shiftKey: true, bubbles: true}));
+    expect(document.querySelector('[aria-label="Split scene at cursor"]')!.textContent).not.toContain('file');
     button('Preview split').click(); await vi.waitFor(() => expect(document.querySelector('[aria-label="Review manuscript change"]')).not.toBeNull());
     button('Cancel').click(); expect(core.applyDraftingChange).not.toHaveBeenCalled(); expect(core.saveDocument).not.toHaveBeenCalled();
   });

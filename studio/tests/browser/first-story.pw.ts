@@ -60,6 +60,27 @@ test('global guide action remains clickable over navigation with enlarged platfo
   await entry.click();await expect(page.getByRole('dialog',{name:'Your first story'})).toBeVisible();
   await page.getByRole('button',{name:'Close guide',exact:true}).click();await expect(entry).toBeFocused();
 });
+test('navigation remains a left overlay drawer in standalone writing and stays keyboard accessible',async({page})=>{
+  await page.goto('/tests/browser/first-story.html?draft=1');
+  await expect(page.locator('.cm-content')).toContainText('Synthetic scene');
+  // Recreate the standalone-writing layout used by local drafts without touching any persisted data.
+  await page.locator('.studio').evaluate(el=>el.classList.add('standalone-writing'));
+  const closed = page.getByRole('button',{name:'Navigation',exact:true}); if(await closed.isVisible()) await closed.click();
+  const nav=page.locator('.navigator');const drawer=page.locator('#navigation-drawer');
+  const navBox=await nav.boundingBox();expect(navBox).not.toBeNull();expect(navBox!.x).toBeLessThan(32);
+  expect(navBox!.width).toBeLessThan(400);
+  const editor=await page.locator('.preview').boundingBox();expect(editor).not.toBeNull();expect(editor!.x).toBeLessThan(navBox!.x+navBox!.width);
+  await expect(page.getByRole('button',{name:'Close navigation'})).toHaveAttribute('aria-expanded','true');
+  expect(await new AxeBuilder({page}).include('.navigator').analyze()).toMatchObject({violations:[]});
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button',{name:'Navigation'})).toBeFocused();
+  await expect(drawer).toHaveAttribute('aria-hidden','true');expect(await drawer.evaluate(el=>(el as HTMLElement).inert)).toBe(true);
+  const closedTransform=await drawer.evaluate(el=>getComputedStyle(el).transform);expect(closedTransform).not.toBe('none');
+  await page.getByRole('button',{name:'Navigation'}).click();
+  await expect(page.getByRole('tab',{name:'Repository'})).toBeFocused();
+  await expect(drawer).toHaveAttribute('aria-hidden','false');expect(await drawer.evaluate(el=>(el as HTMLElement).inert)).toBe(false);
+  expect(await page.locator('.studio').evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+});
 test('proof goes stale after saved edits; preview cancel and synthetic native confirmation stay explicit',async({page})=>{
   await page.goto('/tests/browser/first-story.html?draft=1');await expect(page.locator('.cm-content')).toContainText('Synthetic scene');
   await page.getByRole('button',{name:'First story',exact:true}).click();await page.getByRole('button',{name:'Start my story guide'}).click();await stage(page,5);

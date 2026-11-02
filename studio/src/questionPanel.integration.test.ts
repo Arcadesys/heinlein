@@ -24,7 +24,7 @@ function core() {
     cancelQuestion: vi.fn(async (_requestId: string) => true),
   } satisfies LocalCore;
 }
-function button(label: string) {const found = [...document.querySelectorAll('button')].find(node => node.textContent === label); if (!found) throw new Error(`Missing ${label}`); return found;}
+function button(label: string) {const scope = label === 'Return to writing' ? document.querySelector('[aria-label="Drafting questions"]')! : document; const found = [...scope.querySelectorAll('button')].find(node => node.textContent === label); if (!found) throw new Error(`Missing ${label}`); return found;}
 const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
 const panel = () => document.querySelector<HTMLElement>('[aria-label="Drafting questions"]')!;
 function question(value: string) {const input = document.querySelector<HTMLTextAreaElement>('[aria-label="Your drafting question"]')!; input.value = value; input.dispatchEvent(new Event('input', {bubbles: true}));}
@@ -80,7 +80,7 @@ describe('Studio in-app drafting questions', () => {
     const second = deferred<QuestionAnswer>(); bridge.askQuestion.mockReturnValueOnce(second.promise); question('Old repository question'); button('Send to OpenAI').click(); const request2 = bridge.askQuestion.mock.calls[1][0];
     await app!.selectRepository(async () => ({...session, id: 'different-session'})); expect(bridge.cancelQuestion).toHaveBeenCalledWith(request2.requestId);
     second.resolve({requestId: request2.requestId, text: 'Late other repository answer', model: 'mock-model', incomplete: false}); await Promise.resolve();
-    await app!.showDocument('next.md'); await open(); expect(panel().textContent).not.toContain('Late other repository answer'); expect(panel().textContent).toContain('No manuscript text will be sent');
+    await app!.showDocument('next.md'); await open(); expect(panel().textContent).not.toContain('Late other repository answer'); expect(panel().textContent).toContain('Current scene · next.md');
   });
   it('keeps local drafting and save usable when OpenAI is unconfigured', async () => {
     const bridge = core(); bridge.questionStatus.mockResolvedValue({...await bridge.questionStatus(), configured: false, model: '', message: 'OpenAI is not configured.'}); await start(bridge); await open();
@@ -123,7 +123,7 @@ describe('Studio in-app drafting questions', () => {
     if (change === 'scene') await app!.showDocument('other.md'); else if (change === 'close') button('Close questions').click(); else if (change === 'clear') button('Clear conversation').click(); else view().dispatch({selection: {anchor: 4, head: 7}});
     digest.resolve(new ArrayBuffer(32)); await new Promise(resolve => setTimeout(resolve, 20));
     expect(panel().hidden).toBe(change !== 'clear'); expect(bridge.askQuestion).not.toHaveBeenCalled();
-    expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe('');
+    expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe(change === 'clear' ? original : '');
     expect(document.querySelectorAll('.selection-ask-action')).toHaveLength(1);
   });
   it('captures a new selection into an existing panel, cancels its old request, and ignores late text', async () => {
@@ -225,7 +225,7 @@ describe('Studio attributed revision workflow', () => {
     const bridge = await revisionCore(); await start(bridge); button('Proposed revisions').click(); await vi.waitFor(() => expect(document.querySelector('[aria-label="Proposed revisions and receipts"]')).not.toBeNull());
     expect(document.body.textContent).toContain('Native OpenAI suggestion'); button('Reject proposal').click(); await vi.waitFor(() => expect(document.body.textContent).toContain('Immutable local rejection receipt: receipt'));
     expect(bridge.rejectProposal).toHaveBeenCalledWith(session.id, 'proposal'); expect(bridge.saveDocument).not.toHaveBeenCalled(); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
-    button('Close').click(); bridge.listProposals.mockResolvedValue({pending: [], receipts: [await bridge.rejectProposal()] } as never); button('Proposed revisions').click();
+    [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Proposed revisions and receipts"] button')].find(node=>node.textContent==='Close')!.click(); bridge.listProposals.mockResolvedValue({pending: [], receipts: [await bridge.rejectProposal()] } as never); button('Proposed revisions').click();
     await vi.waitFor(() => expect(document.querySelector('.proposal-receipt')?.textContent).toContain('Reject · scene.md · rejected'));
     expect(document.body.textContent).toContain('Studio explicit rejection'); expect([...document.querySelectorAll('button')].some(node => node.textContent === 'Review revert')).toBe(false);
   });

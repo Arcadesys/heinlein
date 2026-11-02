@@ -48,7 +48,7 @@ describe('Studio Heinlein Review integration', () => {
     const mount = async () => {app = mountStudio(document.body, native); await app.selectRepository(async () => generic); await app.showDocument(path);};
     await mount();
     expect(core.requestReview).not.toHaveBeenCalled();expect(native.previewReview).not.toHaveBeenCalled();
-    expect(document.querySelector('.badge')?.textContent).toBe('Source file · Editable Markdown');
+    expect([...document.querySelectorAll('.badge')].map(node=>node.textContent)).toContain('Source file · Editable Markdown');
     await open();
     expect(panel().textContent).toContain('Source file');
     expect(button('Run Heinlein Review').disabled).toBe(true);

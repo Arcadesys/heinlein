@@ -595,7 +595,9 @@ fn execute(
                 },
             );
             #[cfg(all(feature = "standalone-native-acceptance", target_os = "macos"))]
-            super::standalone_picker_acceptance::manual_token(preview["token"].as_str().unwrap_or(""))?;
+            super::standalone_picker_acceptance::manual_token(
+                preview["token"].as_str().unwrap_or(""),
+            )?;
             Ok(preview)
         }
         Request::Place { token } => {

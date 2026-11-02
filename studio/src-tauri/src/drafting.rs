@@ -12,7 +12,8 @@ use tauri_plugin_dialog::DialogExt;
 #[derive(Default)]
 pub(crate) struct DraftingHost {
     preview: Option<(String, DraftingPlan)>,
-    undo: Option<(String, DraftingUndo)>,
+    undo: Vec<(String, DraftingUndo)>,
+    redo: Vec<(String, DraftingUndo)>,
     selection: Option<(String, String, Vec<DraftingExternalFile>)>,
 }
 #[derive(Clone, Serialize)]
@@ -73,7 +74,9 @@ pub(crate) async fn preview_drafting_change(
             .map_err(|_| "Another folder or structure change is in progress")?;
         let _mutation = state.mutation_gate.author_operation()?;
         state.mutation_gate.invalidate();
-        clean_editor(&state)?;
+        if !matches!(&change, DraftingChange::OrganizeLibrary { .. }) {
+            clean_editor(&state)?;
+        }
         let mut host = state
             .drafting
             .lock()
@@ -121,7 +124,6 @@ pub(crate) async fn apply_drafting_change(
             .map_err(|_| "Another folder or structure change is in progress")?;
         let _mutation = state.mutation_gate.author_operation()?;
         state.mutation_gate.invalidate();
-        clean_editor(&state)?;
         let mut host = state
             .drafting
             .lock()
@@ -133,17 +135,28 @@ pub(crate) async fn apply_drafting_change(
         if session != &repository_id || plan.preview.id != preview_id {
             return Err("Preview expired; preview the change again".into());
         }
+        if !plan.is_metadata_only() {
+            clean_editor(&state)?;
+        }
         let plan = plan.clone();
         host.preview = None;
         let undo = with_repository(&app, &repository_id, |repo| {
             with_recovery(&app, |recovery| repo.apply_drafting(&plan, recovery))
         })?;
         let undo_id = undo.is_available().then(|| undo.id.clone());
-        host.undo = if undo.is_available() {
-            Some((repository_id.clone(), undo))
+        if host
+            .undo
+            .last()
+            .is_some_and(|(session, _)| session != &repository_id)
+        {
+            host.undo.clear();
+        }
+        host.redo.clear();
+        if undo.is_available() {
+            host.undo.push((repository_id.clone(), undo));
         } else {
-            None
-        };
+            host.undo.clear();
+        }
         host.selection = None;
         let snapshot = with_repository(&app, &repository_id, |repo| {
             repo.load_drafting().map_err(|e| e.to_string())
@@ -182,17 +195,85 @@ pub(crate) async fn undo_drafting_change(
             .map_err(|_| "Manuscript operations unavailable")?;
         let (session, undo) = host
             .undo
-            .as_ref()
+            .last()
             .ok_or("No manuscript change is available to undo")?;
         if session != &repository_id || undo.id != undo_id {
             return Err("Undo expired; refresh the manuscript".into());
         }
-        let snapshot = with_repository(&app, &repository_id, |repo| {
-            with_recovery(&app, |recovery| repo.undo_drafting(undo, recovery))
+        let (snapshot, inverse) = with_repository(&app, &repository_id, |repo| {
+            with_recovery(&app, |recovery| repo.reverse_drafting(undo, recovery))
         })?;
-        host.undo = None;
+        host.undo.pop();
+        host.redo.push((repository_id.clone(), inverse));
         host.preview = None;
         Ok(snapshot)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HistoryResult {
+    state: DraftingState,
+    can_undo: bool,
+    can_redo: bool,
+    metadata_only: bool,
+}
+
+#[tauri::command]
+pub(crate) async fn history_drafting_change(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    direction: String,
+    metadata_only: Option<bool>,
+) -> Result<HistoryResult, String> {
+    check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<BrowserState>();
+        let _selection = state
+            .selection_gate
+            .try_lock()
+            .map_err(|_| "Another folder or structure change is in progress")?;
+        let _mutation = state.mutation_gate.author_operation()?;
+        state.mutation_gate.invalidate();
+        let mut host = state
+            .drafting
+            .lock()
+            .map_err(|_| "Manuscript operations unavailable")?;
+        let source = match direction.as_str() {
+            "undo" => &host.undo,
+            "redo" => &host.redo,
+            _ => return Err("Invalid history direction".into()),
+        };
+        let (session, entry) = source.last().ok_or("No library history is available")?;
+        if session != &repository_id {
+            return Err("History belongs to another project".into());
+        }
+        let metadata_only_entry = entry.is_metadata_only();
+        if metadata_only.unwrap_or(false) && !metadata_only_entry {
+            return Err("HISTORY_REQUIRES_SAVED_EDITOR".into());
+        }
+        if !metadata_only_entry {
+            clean_editor(&state)?;
+        }
+        let (snapshot, inverse) = with_repository(&app, &repository_id, |repo| {
+            with_recovery(&app, |recovery| repo.reverse_drafting(entry, recovery))
+        })?;
+        if direction == "undo" {
+            host.undo.pop();
+            host.redo.push((repository_id.clone(), inverse));
+        } else {
+            host.redo.pop();
+            host.undo.push((repository_id.clone(), inverse));
+        }
+        host.preview = None;
+        Ok(HistoryResult {
+            state: snapshot,
+            can_undo: !host.undo.is_empty(),
+            can_redo: !host.redo.is_empty(),
+            metadata_only: metadata_only_entry,
+        })
     })
     .await
     .map_err(|e| e.to_string())?
