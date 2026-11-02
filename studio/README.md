@@ -271,7 +271,7 @@ handle-based filesystem implementation and equivalent tests.
 
 ## Ask about a selection
 
-Highlight one passage in an editable scene and choose **Ask about selection**.
+Highlight one passage in an editable scene, open **Heinlein**, and choose **Copy as prompt…**.
 This separate dialog prepares a question for manual copy/paste into ChatGPT and
 sends nothing automatically. For connected, read-only Q&A, use the Questions panel below. Optional nearby context
 starts off and is previewed before copying. You can paste a proposed replacement,
@@ -284,20 +284,23 @@ for exact anchors, clipboard considerations and integration limits.
 
 ## Drafting questions with ChatGPT
 
-Highlight a passage and choose the contextual **Ask Heinlein** button to open the
-**Questions** side panel with that exact selection captured. This prepares your
-question; it does not send it. The panel also opens from the toolbar without
-sharing any manuscript context. Choose
+Highlight a passage and choose the passage marker or the toolbar's **Heinlein**
+button to open the **Heinlein** pane with that exact selection quoted at the top.
+This prepares your question; it does not send it. With no selection, the pane opens
+without sharing any manuscript context. The header's ChatGPT status opens account,
+model and storage settings; they appear automatically until you are connected. Choose
 **Continue with ChatGPT**, review the plan-use permission in your system browser,
 and choose a model available to that account. Model availability and plan eligibility
 are determined by OpenAI; Heinlein does not silently switch to API-key billing.
 
 Context starts empty. Capture a selection or the current scene only when you want
-to include it, inspect the exact context/history preview, then choose **Send to
-OpenAI**. You can keep writing and saving while the answer is pending. Ask returns
-advice. Choose **Suggest revision** explicitly for a proposed edit to a clean saved
-selection. Review the exact pending proposal, then accept through native confirmation
-or reject it. Changed source or dirty/recovery conflicts block application. Accepted
+to include it, inspect the exact context/history preview under **What will be sent**, then choose
+**Ask** or **Suggest rewrite**. Each is an explicit send. You can keep writing and
+saving while the answer is pending. Ask returns advice. Suggest rewrite proposes an edit
+to a clean saved selection and shows Original and Suggested text. **Apply…** goes to
+native confirmation when the whole-scene change is exactly that shown passage change;
+otherwise, or on **Show full scene comparison**, the full comparison appears first.
+**Dismiss** rejects it. After a confirmed apply, **Undo change** opens the guarded revert. Changed source or dirty/recovery conflicts block application. Accepted
 changes keep attributed receipts and the existing guarded, same-session revert.
 
 Sign-in and model transport live in the native host. No credential belongs in the
@@ -361,7 +364,8 @@ native WebKit persistence, screen-reader acceptance or resolution of issue #22.
 
 ## Heinlein Review
 
-Choose **Heinlein Review** in a source scene or mapped assembled chapter. Choose
+Open **Heinlein** and choose the **Whole scene** tab in a source scene, or **Heinlein**
+in a mapped assembled chapter. **Review library sheets…** is in the same tab. Choose
 editable sources versus read-only context, one to three reviewer instances and
 optional author notes, then **Preview reviewer batch**. **Run Heinlein Review**
 uses only your selected ChatGPT account/model, at most eight serial calls per

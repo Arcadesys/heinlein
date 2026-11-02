@@ -34,7 +34,12 @@ function bridge() {
     undoDraftingChange: vi.fn(async () => {files.set('ms/scene.md', source); return initial();}),
   } satisfies LocalCore;
 }
-function button(label: string) {const node = [...document.querySelectorAll('button')].find(node => node.textContent === label); if (!node) throw new Error(`Missing ${label}`); return node;}
+function button(label: string) {
+  let node = [...document.querySelectorAll('button')].find(node => node.textContent === label && !node.closest('.row-menu-items'));
+  const menu = document.querySelector<HTMLDetailsElement>('details.project-menu');
+  if (!node && menu) { menu.open = true; menu.dispatchEvent(new Event('toggle')); node = [...document.querySelectorAll<HTMLButtonElement>('.row-menu-items[aria-label="Project actions"] button')].find(node => node.textContent === label); }
+  if (!node) throw new Error(`Missing ${label}`); return node;
+}
 const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
 async function start(core: LocalCore) {
   app = mountStudio(document.body, core); await app.selectRepository(async () => session); await app.showDocument('ms/scene.md');
@@ -54,7 +59,7 @@ afterEach(() => {app?.destroy(); app = undefined;});
 describe('Studio split scene at cursor', () => {
   it('converts Unicode CRLF cursor exactly, previews, applies and baselines suffix without credit', async () => {
     const core = bridge(); await start(core); await preview();
-    expect(core.previewDraftingChange).toHaveBeenCalledWith('session', 'rev1', {kind: 'splitScene', sceneId: 's1', path: 'ms/scene-continued.md', title: 'Opening continued', expectedHash: `hash:${source}`, byteOffset: new TextEncoder().encode(source.slice(0, source.indexOf('Last'))).length});
+    expect(core.previewDraftingChange).toHaveBeenCalledWith('session', 'rev1', {kind: 'splitScene', sceneId: 's1', path: expect.stringMatching(/^ms\/sheet-[0-9a-f-]+\.md$/), title: 'Opening continued', expectedHash: `hash:${source}`, byteOffset: new TextEncoder().encode(source.slice(0, source.indexOf('Last'))).length});
     expect(core.applyDraftingChange).not.toHaveBeenCalled(); button('Apply change').click();
     await vi.waitFor(() => expect(view().state.doc.toString()).toBe('Last line'));
     expect(document.body.textContent).toContain('0 / 1,000 daily growth credited');
@@ -83,6 +88,7 @@ describe('Studio split scene at cursor', () => {
   it('supports keyboard shortcut and cancels preview without writing', async () => {
     const core = bridge(); await start(core);
     view().contentDOM.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', ctrlKey: true, shiftKey: true, bubbles: true}));
+    expect(document.querySelector('[aria-label="Split scene at cursor"]')!.textContent).not.toContain('file');
     button('Preview split').click(); await vi.waitFor(() => expect(document.querySelector('[aria-label="Review manuscript change"]')).not.toBeNull());
     button('Cancel').click(); expect(core.applyDraftingChange).not.toHaveBeenCalled(); expect(core.saveDocument).not.toHaveBeenCalled();
   });

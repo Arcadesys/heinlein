@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-load-drafting"
+description = "Enables the load_drafting command without any pre-configured scope."
+commands.allow = ["load_drafting"]
+
+[[permission]]
+identifier = "deny-load-drafting"
+description = "Denies the load_drafting command without any pre-configured scope."
+commands.deny = ["load_drafting"]

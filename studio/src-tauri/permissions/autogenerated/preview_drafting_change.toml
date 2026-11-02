@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-drafting-change"
+description = "Enables the preview_drafting_change command without any pre-configured scope."
+commands.allow = ["preview_drafting_change"]
+
+[[permission]]
+identifier = "deny-preview-drafting-change"
+description = "Denies the preview_drafting_change command without any pre-configured scope."
+commands.deny = ["preview_drafting_change"]

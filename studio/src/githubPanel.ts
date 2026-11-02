@@ -29,6 +29,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
     let feedbackTitle = '';
     let feedbackBody = '';
     let url = '';
+    let guided = false;
     async function request<T>(r: GitHubRequest) { if (!core.githubRequest)
         throw new Error('GitHub projects are available in the native Heinlein app.'); return await core.githubRequest(r) as T; }
     function cancelPlan() { if (plan) {
@@ -148,8 +149,10 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         }
         if (!snapshot)
             return;
+        if (!project) body.append(node('p', 'To create a draft pull request, open a GitHub project copy below. A local folder is separate; its files are not automatically copied or sent.'));
         if (project) {
             const w = project.workspace;
+            body.append(button('Create or update a draft pull request…', async () => { guided = true; renderGuide(); }));
             body.append(node('p', `${w.repo.owner}/${w.repo.name} · ${w.repo.private ? 'Private' : 'Public'}`), node('p', 'Saved on this computer is separate from Version saved and Sent to GitHub.'), node('p', `Local version: ${w.headOid.slice(0, 12)}. ${w.remoteOid === w.headOid ? 'This version was sent to GitHub.' : 'Local versions may not have been sent.'} ${w.pr ? `Feedback request #${w.pr.number}: ${w.pr.state}${w.pr.draft ? ' (draft)' : ''}.` : ''}`), button('Save a version on this computer…', async () => renderVersion()), button('Send local versions to GitHub…', async () => renderShare('push')), button('Request feedback with a draft pull request…', async () => renderShare('feedback')), button('Review changes on the feedback branch…', () => incoming('feedback')), button('Review changes on the original branch…', () => incoming('default')), node('p', 'After feedback is closed or merged, first review the original branch, then start a fresh feedback branch. Your local versions are retained.'), button('Start a fresh feedback branch…', async () => { await options.authorAction(async () => { await request({ action: 'freshBranch', repositoryId: session().id }); }); await load(); }));
             if(w.pr)body.append(button(`Open feedback request #${w.pr.number}`,async()=>{await request({action:'openFeedback',repositoryId:session().id});}));
             for (const r of project.receipts) {
@@ -182,6 +185,25 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         focus();
     }
     function previewBox() { body.querySelector('[data-github-preview]')?.remove(); const box = node('section'); box.dataset.githubPreview = ''; box.setAttribute('aria-label', 'GitHub action preview'); body.append(box); return box; }
+    function renderGuide() {
+        cancelPlan();
+        heading('Create or update a draft pull request');
+        const w = project!.workspace;
+        body.append(node('p', `${w.repo.owner}/${w.repo.name} · ${w.repo.private ? 'Private' : 'Public'}`),
+            node('p', 'Follow these steps to share selected saved files. Each step has its own preview and confirmation. GitHub repository automation may run when versions are sent.'));
+        body.append(node('h4', '1. Save a local version'),
+            node('p', project!.changes.length ? `${project!.changes.length} changed files are available to select. Files you leave unchecked stay out of this version.` : 'No unversioned file changes are listed. You can continue with existing local versions.'),
+            button('Choose files and save a local version…', async () => renderVersion()));
+        body.append(node('h4', '2. Send local versions to GitHub'),
+            node('p', w.remoteOid === w.headOid ? 'The current local version has been sent.' : 'Preview and send your saved local versions to the project’s feedback branch.'),
+            button('Preview sending local versions…', async () => renderShare('push')));
+        body.append(node('h4', '3. Create a draft pull request'),
+            node('p', w.pr?.state === 'open' ? `Pull request #${w.pr.number} is already open${w.pr.draft ? ' as a draft' : ''}. Sending more versions updates its branch.` : w.pr ? 'The previous pull request is closed. Return to the GitHub project, review the original branch, and start a fresh feedback branch first.' : 'After sending, enter a title and description and preview the draft pull request. This does not merge it.' ));
+        if (w.pr?.state === 'open') body.append(button(`Open feedback request #${w.pr.number}`, async () => { await request({ action: 'openFeedback', repositoryId: session().id }); }));
+        else if (!w.pr) body.append(button('Preview a draft pull request…', async () => renderShare('feedback')));
+        body.append(button('Back to GitHub project', async () => { guided = false; await load(); }));
+        focus();
+    }
     function renderVersion() {
         cancelPlan();
         heading('Save a version locally');
@@ -200,12 +222,12 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
             body.append(label);
         }
         authorFields();
-        body.append(field('Version message', versionMessage, v => versionMessage = v), button('Preview local version', async () => { const p = await prepare<GitHubVersion>({ action: 'previewVersion', repositoryId: s.id, paths: [...selected], identity: { ...identity }, message: versionMessage }); const box = previewBox(); box.append(files(p.files), node('p', `${p.identity.name} <${p.identity.email}> — ${p.message}`), button('Confirm local version…', () => finish(p.id, false))); }), button('Back to GitHub project', load));
+        body.append(field('Version message', versionMessage, v => versionMessage = v), button('Preview local version', async () => { const p = await prepare<GitHubVersion>({ action: 'previewVersion', repositoryId: s.id, paths: [...selected], identity: { ...identity }, message: versionMessage }); const box = previewBox(); box.append(files(p.files), node('p', `${p.identity.name} <${p.identity.email}> — ${p.message}`), button('Confirm local version…', () => finish(p.id, false))); }), button(guided ? 'Back to pull request steps' : 'Back to GitHub project', async () => { if (guided) renderGuide(); else await load(); }));
         focus();
     }
     function renderShare(kind: 'push' | 'feedback') { cancelPlan(); heading(kind === 'push' ? 'Send versions to GitHub' : 'Request feedback'); const s = session(); body.append(node('p', kind === 'push' ? 'Only saved local versions are sent. Unversioned writing stays here.' : 'A draft pull request asks for feedback on versions already sent. It does not merge or publish the story.')); if (kind === 'feedback')
         body.append(field('Feedback request title', feedbackTitle, v => feedbackTitle = v), field('Feedback request description', feedbackBody, v => feedbackBody = v, true)); body.append(button('Preview GitHub action', async () => { const p = await prepare<GitHubShare>({ action: 'previewShare', repositoryId: s.id, kind, title: feedbackTitle, body: feedbackBody }); const box = previewBox(); box.append(node('h4', `${p.repository.owner}/${p.repository.name} · ${p.repository.private ? 'Private' : 'Public'} · ${p.account.login}`), node('p', `Working branch: ${p.branch}. Base: ${p.base}. ${p.commits.length} versions.`), files(p.files), node('p', p.warning)); if (kind === 'feedback')
-        box.append(node('p', p.title), node('pre', p.body)); box.append(button(kind === 'push' ? 'Confirm sending versions…' : 'Confirm draft feedback request…', () => finish(p.id, false)), button('Cancel this preview', async () => { cancelPlan(); box.remove(); })); }), button('Back to GitHub project', load)); focus(); }
+        box.append(node('p', p.title), node('pre', p.body)); box.append(button(kind === 'push' ? 'Confirm sending versions…' : 'Confirm draft feedback request…', () => finish(p.id, false)), button('Cancel this preview', async () => { cancelPlan(); box.remove(); })); }), button(guided ? 'Back to pull request steps' : 'Back to GitHub project', async () => { if (guided) renderGuide(); else await load(); })); focus(); }
     async function incoming(target: 'feedback' | 'default') { const p = await prepare<GitHubIncoming>({ action: 'previewIncoming', repositoryId: session().id, target }); renderIncoming(p); }
     function renderIncoming(p: GitHubIncoming) {
         heading('Review incoming GitHub changes');
@@ -234,8 +256,8 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
     }
     async function finish(id: string, incoming: boolean) { if (plan !== id)
         throw new Error('Preview this action again.'); const s = session(); let receipt: GitHubReceipt | null = null; await options.authorAction(async () => { receipt = await request<GitHubReceipt | null>({ action: 'confirm', repositoryId: s.id, previewId: id, identity: incoming ? { ...identity } : null }); plan = null; if (receipt && incoming)
-        await options.incomingChanged(); }); await load(); message.textContent = receipt ? (receipt as GitHubReceipt).message : 'Action canceled. Prepare a new preview to continue.'; }
-    function close() { generation++; cancelPlan(); element.close(); opener?.focus(); }
+        await options.incomingChanged(); }); await load(); if (guided && project) renderGuide(); message.textContent = receipt ? (receipt as GitHubReceipt).message : 'Action canceled. Prepare a new preview to continue.'; }
+    function close() { generation++; guided = false; cancelPlan(); element.close(); opener?.focus(); }
     element.addEventListener('cancel', e => { e.preventDefault(); if (!busy)
         close(); });
     element.addEventListener('close', () => { generation++; cancelPlan(); });

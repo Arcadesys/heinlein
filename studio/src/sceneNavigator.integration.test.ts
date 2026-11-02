@@ -12,7 +12,9 @@ function core(): LocalCore {
 }
 const settle = async () => {await new Promise(resolve => setTimeout(resolve, 0));};
 const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
-const items = () => [...document.querySelectorAll<HTMLButtonElement>('.scene-break-list button')];
+const press = (key: string, init: KeyboardEventInit = {}) => document.body.dispatchEvent(new KeyboardEvent('keydown', {key, bubbles: true, cancelable: true, ...init}));
+/** Passages of the open document, listed after scenes in the ⌘K palette. */
+const passages = () => { press('k', {ctrlKey: true}); return [...document.querySelectorAll<HTMLElement>('.palette-item')].filter(row => row.querySelector('.palette-num')?.textContent === '§'); };
 async function start(bridge = core()) {
   app = mountStudio(document.body, bridge);
   [...document.querySelectorAll<HTMLButtonElement>('button')].find(node=>node.textContent === 'Open Folder…')!.click(); await settle();
@@ -20,40 +22,26 @@ async function start(bridge = core()) {
 }
 beforeEach(() => {localStorage.clear(); Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect(); document.body.replaceChildren();});
 afterEach(() => {app?.destroy();});
-describe('scene navigator drawer', () => {
-  it('renders scene passages as the third tab and jumps to exact source without saving', async () => {
+describe('scene breaks in the palette', () => {
+  it('lists passages after scenes and jumps to exact source without saving', async () => {
     const bridge = await start();
-    expect(document.querySelectorAll('.navigation-drawer > .panel')).toHaveLength(3);
-    document.querySelector<HTMLButtonElement>('#navigation-tab-scenes')!.click();
-    expect(document.querySelector<HTMLElement>('#navigation-panel-scenes')!.hidden).toBe(false);
-    expect(document.querySelector<HTMLElement>('#navigation-panel-files')!.hidden).toBe(true);
-    expect(items().map(item=>item.textContent)).toEqual(['First 🦊—passage.', 'Second passage.']);
-    items()[1].click();
+    expect(document.querySelectorAll('.navigation-drawer > .panel')).toHaveLength(1);
+    const rows = passages();
+    expect(rows.map(row => row.querySelector('.palette-label')!.textContent)).toEqual(['First 🦊—passage.', 'Second passage.']);
+    rows[1].click();
     const range = view().state.selection.main;
     expect(view().state.sliceDoc(range.from, range.to)).toBe('Second passage.');
-    expect(items()[1].getAttribute('aria-current')).toBe('location');
+    expect(document.querySelector('.palette')).toBeNull();
     expect(document.activeElement).toBe(view().contentDOM);
     expect(bridge.saveDocument).not.toHaveBeenCalled(); expect(bridge.stageRecovery).not.toHaveBeenCalled();
   });
-  it('updates first lines after unsaved edits without stealing editor focus', async () => {
-    await start(); view().focus(); const from = view().state.doc.toString().indexOf('Second passage.');
+  it('reflects unsaved edits the next time the palette opens', async () => {
+    await start(); const from = view().state.doc.toString().indexOf('Second passage.');
     view().dispatch({changes:{from, to: from + 'Second passage.'.length, insert:'Changed—still ours.'}});
-    await new Promise(resolve=>setTimeout(resolve, 150));
-    expect(items()[1].textContent).toBe('Changed—still ours.'); expect(document.activeElement).toBe(view().contentDOM);
+    expect(passages()[1].querySelector('.palette-label')!.textContent).toBe('Changed—still ours.');
   });
-  it('refuses an outdated entry during the debounce window', async () => {
-    await start(); const stale = items()[1];
-    view().dispatch({changes:{from: 0, insert:'Shifted\n'}});
-    const before = view().state.selection.main; stale.click();
-    expect(view().state.selection.main).toEqual(before); expect(document.querySelector('.scene-navigator-body')?.textContent).toContain('document changed');
-  });
-  it('clears entries on document changes and remembers the shared drawer state', async () => {
-    await start();
-    document.querySelector<HTMLButtonElement>('#navigation-tab-scenes')!.click();
-    const toggle = document.querySelector<HTMLButtonElement>('.navigation-toggle')!; toggle.click();
-    expect(toggle.getAttribute('aria-expanded')).toBe('false'); expect(JSON.parse(localStorage.getItem('heinlein-studio-navigation-v1')!)).toEqual({open: false, active: 'scenes'});
-    expect(document.querySelector('.workspace')?.classList.contains('navigation-open')).toBe(false);
-    await app.showDocument('empty.md'); expect(items()).toHaveLength(0); expect(document.querySelector('.scene-navigator-body')?.textContent).toContain('No --- scene breaks');
-    app.destroy(); app = mountStudio(document.body, core()); expect(document.querySelector('.navigation-toggle')?.getAttribute('aria-expanded')).toBe('false');
+  it('lists nothing for a document without breaks', async () => {
+    await start(); await app.showDocument('empty.md');
+    expect(passages()).toHaveLength(0);
   });
 });

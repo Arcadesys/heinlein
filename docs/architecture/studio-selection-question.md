@@ -9,7 +9,7 @@ requests. It does not claim to send a question or receive a provider response.
 
 ## Author workflow
 
-1. Highlight a nonempty passage in an editable scene and open **Ask about selection**.
+1. Highlight a nonempty passage in an editable scene and choose **Heinlein** → **Copy as prompt…**.
    The dialog explicitly identifies its manual copy/paste behavior and disconnected
    provider status. It shows the exact captured selection and its local bindings.
 2. Write a question. Optionally include nearby context, bounded to 600 UTF-16 units

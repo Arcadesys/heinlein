@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-load-first-story"
+description = "Enables the load_first_story command without any pre-configured scope."
+commands.allow = ["load_first_story"]
+
+[[permission]]
+identifier = "deny-load-first-story"
+description = "Denies the load_first_story command without any pre-configured scope."
+commands.deny = ["load_first_story"]

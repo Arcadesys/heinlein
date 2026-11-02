@@ -8,6 +8,7 @@ Publishing the same manuscript in print, ebook, and web formats can mean maintai
 
 - **One source, multiple artifacts:** [the publishing package](heinlein/) combines manuscript metadata, templates, and format-specific rendering.
 - **Repeatable project setup:** `heinlein.yaml` records formats, page settings, and output paths; the preview server rebuilds as source files change.
+- **Local agent access:** [the stdio MCP server](studio/crates/local-mcp/README.md) lets agents read a selected manuscript, with optional proposals that require explicit author review in Studio before application.
 - **Inspectable output:** [tests/](tests/) includes frontmatter, navigation, rendering, and pipeline checks. Full pipeline tests require pandoc and Chrome; see [Tests](#tests).
 
 **Collaborator starting point:** build an [example](examples/), inspect the resulting formats, then trace a rendering or navigation case through the package and its tests. Use sample manuscripts and preserve author-controlled source.

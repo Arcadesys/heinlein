@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-drafting-change"
+description = "Enables the apply_drafting_change command without any pre-configured scope."
+commands.allow = ["apply_drafting_change"]
+
+[[permission]]
+identifier = "deny-apply-drafting-change"
+description = "Denies the apply_drafting_change command without any pre-configured scope."
+commands.deny = ["apply_drafting_change"]

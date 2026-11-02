@@ -2,9 +2,17 @@
 
 This approved implementation slice is deliberately narrower than ADR-001 draft
 grants or the v0.2.1 editorial runtime. It adds only explicit project/scene
-selection, exact persisted-scene reads, and durable unapproved proposals over
+selection (individual paths or one explicit manuscript index), exact
+persisted-scene reads, and optional durable unapproved proposals over
 local stdio. It does not introduce draft-write grants, author-channel secrets,
 remote workers, release approval, or a canonical-write MCP route.
+
+Launches without a proposal-store argument are read-only: only project listing,
+ordered scene listing, and exact scene reads are registered. A manuscript index
+selects only its validated tracked members at launch, never untracked files or
+other books. The index bytes are pinned and rechecked on each call; index changes
+require restarting the explicit selection. Existing per-scene, path, content and
+proposal bounds still apply. No runtime tool can enable proposal storage.
 
 See the [server contract](../../studio/crates/local-mcp/README.md) for launch,
 tools, privacy bounds, and tests, and the

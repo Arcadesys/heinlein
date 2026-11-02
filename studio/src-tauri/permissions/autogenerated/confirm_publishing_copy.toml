@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-confirm-publishing-copy"
+description = "Enables the confirm_publishing_copy command without any pre-configured scope."
+commands.allow = ["confirm_publishing_copy"]
+
+[[permission]]
+identifier = "deny-confirm-publishing-copy"
+description = "Denies the confirm_publishing_copy command without any pre-configured scope."
+commands.deny = ["confirm_publishing_copy"]

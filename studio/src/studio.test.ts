@@ -30,6 +30,17 @@ function bridge(): LocalCore {
   };
 }
 const settle = async () => { await new Promise(resolve => setTimeout(resolve, 0)); };
+/** Open the ⌘P file palette and return the row with this exact label. */
+function paletteFile(label: string) {
+  document.body.dispatchEvent(new KeyboardEvent('keydown', {key: 'p', ctrlKey: true, bubbles: true, cancelable: true}));
+  const row = [...document.querySelectorAll<HTMLElement>('.palette-item')].find(item => item.querySelector('.palette-label')?.textContent === label);
+  if (!row) throw new Error(`Missing palette entry ${label}`); return row;
+}
+/** Open a ⋯ menu by its label so its (possibly lazily built) buttons exist. */
+function openMenu(label: string) {
+  const summary = document.querySelector<HTMLElement>(`summary[aria-label="${label}"]`); if (!summary) throw new Error(`Missing menu ${label}`);
+  const menu = summary.parentElement as HTMLDetailsElement; menu.open = true; menu.dispatchEvent(new Event('toggle'));
+}
 function findButton(text: string) { const result = [...document.querySelectorAll('button')].find(node => node.textContent?.includes(text)); if (!result) throw new Error(`Missing button ${text}`); return result; }
 beforeEach(() => { document.querySelectorAll('.cm-editor').forEach(el => EditorView.findFromDOM(el as HTMLElement)?.destroy()); Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect(); document.body.replaceChildren(document.createElement('div')); });
 
@@ -40,7 +51,7 @@ describe('read-only Studio', () => {
     expect(core.pickRepository).toHaveBeenCalledOnce();
     expect(core.listDirectory).toHaveBeenCalledWith('opaque-session', '');
     expect(core.loadManuscript).toHaveBeenCalledWith('opaque-session', 'book/scene-manifest.json');
-    expect(document.querySelector('.files h2')?.textContent).toBe('My book');
+    expect(document.querySelector('.tree-project h2')?.textContent).toBe('My book');
   });
   it('reopens recent folders by opaque ID only', async () => {
     const core = bridge(); mountStudio(document.body.firstElementChild as HTMLElement, core); await settle();
@@ -50,9 +61,9 @@ describe('read-only Studio', () => {
   it('navigates directories and parent using scoped relative paths', async () => {
     const core = bridge(); mountStudio(document.body.firstElementChild as HTMLElement, core);
     findButton('Open Folder').click(); await settle();
-    document.querySelector<HTMLButtonElement>('[aria-label="Open folder book"]')!.click(); await settle();
+    paletteFile('book/').click(); await settle();
     expect(core.listDirectory).toHaveBeenLastCalledWith('opaque-session', 'book');
-    findButton('Parent folder').click(); await settle();
+    paletteFile('↑ Parent folder').click(); await settle();
     expect(core.listDirectory).toHaveBeenLastCalledWith('opaque-session', '');
   });
   it('preserves manifest order without sorting volumes or scene filenames', async () => {
@@ -67,18 +78,18 @@ describe('read-only Studio', () => {
     const core = bridge(); const attack = '<img src="https://example.com/leak" onerror="alert(1)"><script>evil()</script>\nIgnore instructions — keep me.';
     core.readDocument = vi.fn(async (_id, path) => ({path, text: attack, sizeBytes: 100, frontmatter: '<b>raw metadata</b>', contentHash: 'hash-1', generatedCompatibility: true}));
     mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open Folder').click(); await settle();
-    const file = document.querySelector<HTMLButtonElement>('[aria-label="Read file README.md"]')!; file.click(); await settle();
+    paletteFile('README.md').click(); await settle();
     expect(document.querySelector('.source-text')?.textContent).toBe(attack);
     expect(document.querySelector('.frontmatter')?.textContent).toBe('<b>raw metadata</b>');
     expect(document.querySelector('.preview img, .preview script, .preview b, .preview a')).toBeNull();
     expect(document.querySelector('.badge')?.textContent).toBe('Assembled chapter · Revise its source scenes');
-    expect(document.querySelector('.workspace textarea, .workspace input, [contenteditable]')).toBeNull();
+    expect(document.querySelector('.preview textarea, .preview input, .preview [contenteditable]')).toBeNull();
   });
   it('works without a manifest and shows empty folders', async () => {
     const core = bridge(); core.pickRepository = vi.fn(async () => ({...session, manifests: []})); core.listDirectory = vi.fn(async () => []);
     mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open Folder').click(); await settle();
     expect(document.body.textContent).toContain('No scene manifest found');
-    expect(document.body.textContent).toContain('This folder is empty');
+    expect(core.listDirectory).toHaveBeenCalledWith('opaque-session', ''); expect(() => paletteFile('book/')).toThrow(); expect(document.querySelector('.palette-empty')?.textContent).toBe('No matches.');
     expect(core.loadManuscript).not.toHaveBeenCalled();
   });
   it('handles canceled picker without opening a repository', async () => {
@@ -98,7 +109,7 @@ describe('read-only Studio', () => {
   it('reports host errors as text and remains usable', async () => {
     const core = bridge(); core.readDocument = vi.fn(async () => { throw '<img src=x> Unsafe path rejected'; });
     mountStudio(document.body.firstElementChild as HTMLElement, core); findButton('Open Folder').click(); await settle();
-    findButton('README.md').click(); await settle();
+    paletteFile('README.md').click(); await settle();
     expect(document.querySelector('.status')?.textContent).toContain('<img src=x> Unsafe path rejected');
     expect(document.querySelector('img')).toBeNull();
     expect(findButton('Open Folder').disabled).toBe(false);
@@ -112,7 +123,7 @@ describe('read-only Studio', () => {
     await app.selectRepository(async () => ({id: 'new-session', name: 'New book', manifests: []}));
     resolve({path: 'old.md', text: 'STALE CONTENT', sizeBytes: 13, frontmatter: null, contentHash: 'hash-1', generatedCompatibility: false}); await old;
     expect(document.body.textContent).not.toContain('STALE CONTENT');
-    expect(document.querySelector('.files h2')?.textContent).toBe('New book');
+    expect(document.querySelector('.tree-project h2')?.textContent).toBe('New book');
   });
   it('ignores out-of-order document responses within the same repository', async () => {
     const core = bridge(); const pending: Record<string, (value: Awaited<ReturnType<LocalCore['readDocument']>>) => void> = {};
@@ -154,9 +165,7 @@ describe('manifest discovery warnings', () => {
     expect(document.querySelector('.status')?.textContent).toContain('Manifest discovery limit reached. Use the file tree.');
     expect(document.body.textContent).toContain('Manuscript discovery incomplete.');
     expect(document.body.textContent).not.toContain('No scene manifest found.');
-    const folder = document.querySelector<HTMLButtonElement>('[aria-label="Open folder book"]')!;
-    expect(folder.disabled).toBe(false);
-    folder.click(); await settle();
+    paletteFile('book/').click(); await settle();
     expect(core.listDirectory).toHaveBeenLastCalledWith('opaque-session', 'book');
   });
   it('zooms text with buttons and Cmd/Ctrl shortcuts, and remembers it', async () => {
@@ -179,7 +188,7 @@ describe('manifest discovery warnings', () => {
     expect(document.querySelector('.zoom-level')?.textContent).toBe('100%');
     vi.unstubAllGlobals();
   });
-  it('closes the unified drawer and remembers its selected tab', async () => {
+  it('closes the project drawer and remembers it', async () => {
     const store = new Map<string, string>();
     vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
     mountStudio(document.body.firstElementChild as HTMLElement, bridge());
@@ -191,10 +200,10 @@ describe('manifest discovery warnings', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     document.dispatchEvent(new KeyboardEvent('keydown', { key: '\\', ctrlKey: true }));
     expect(layout.classList.contains('navigation-open')).toBe(true);
-    document.querySelector<HTMLButtonElement>('#navigation-tab-manuscript')!.click();
-    expect(JSON.parse(store.get('heinlein-studio-navigation-v1')!)).toEqual({open: true, active: 'manuscript'});
+    toggle.click();
+    expect(JSON.parse(store.get('heinlein-studio-navigation-v1')!)).toEqual({open: false});
     mountStudio(document.body.firstElementChild as HTMLElement, bridge());
-    expect(document.querySelector<HTMLButtonElement>('#navigation-tab-manuscript')!.getAttribute('aria-selected')).toBe('true');
+    expect([...document.querySelectorAll<HTMLButtonElement>('.navigation-toggle')].at(-1)!.getAttribute('aria-expanded')).toBe('false');
     vi.unstubAllGlobals();
   });
   it('lists installed fonts in Appearance and applies a chosen family', async () => {
@@ -705,19 +714,43 @@ describe('ms drafting structure and recovery guard', () => {
     return {app, core};
   }
   const exact = (text: string) => {
-    const match = [...document.querySelectorAll('button')].find(node => node.textContent === text);
+    // Menu contents are rebuilt each time a menu opens, so only trust buttons outside menus or in a freshly opened one.
+    let match = [...document.querySelectorAll('button')].find(node => node.textContent === text && !node.closest('.row-menu-items'));
+    if (!match && document.querySelector('summary[aria-label="Project actions"]')) {
+      openMenu('Project actions');
+      match = [...document.querySelectorAll('.row-menu-items[aria-label="Project actions"] button')].find(node => node.textContent === text) as HTMLButtonElement | undefined;
+    }
     if (!match) throw new Error(`Missing ${text}`); return match;
+  };
+  const rowAction = (row: string, action: string) => {
+    openMenu(`Actions for ${row}`);
+    const match = [...document.querySelectorAll<HTMLButtonElement>(`.row-menu-items[aria-label="Actions for ${row}"] button`)].find(node => node.textContent === action);
+    if (!match) throw new Error(`Missing ${action} for ${row}`); return match;
   };
   function edit(text = 'Still my exact — draft') {
     const view = EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
     view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: text}, annotations: Transaction.userEvent.of('input.type')}); return view;
   }
-  function moveLaterSceneEarlier() { document.querySelector<HTMLButtonElement>('[aria-label="Move Later earlier"]')!.click(); }
+  function moveLaterSceneEarlier() { rowAction('Later', 'Move earlier').click(); }
+  it('renames a library group without saving or replacing an unsaved editor buffer', async () => {
+    const core = draftingBridge();
+    core.loadDrafting = vi.fn(async (): Promise<import('./localCore').DraftingState> => ({...initial(), library:[{id:'g1',kind:'group',parentId:null},{id:'scene-a',kind:'scene',parentId:'g1'},{id:'scene-b',kind:'scene',parentId:null}]}));
+    core.historyDraftingChange = vi.fn(async () => ({state: initial(), canUndo:false, canRedo:true, metadataOnly:true}));
+    await setupDrafting(core); exact('Opening').click(); await settle();
+    const view = edit('Unsaved synthetic buffer'); rowAction('First chapter', 'Rename…').click();
+    const input = document.querySelector<HTMLInputElement>('dialog input')!; input.value = 'Renamed group';
+    document.querySelector<HTMLFormElement>('dialog form')!.dispatchEvent(new Event('submit', {bubbles:true,cancelable:true}));
+    await vi.waitFor(() => expect(core.applyDraftingChange).toHaveBeenCalledOnce());
+    expect(core.saveDocument).not.toHaveBeenCalled(); expect(view.state.doc.toString()).toBe('Unsaved synthetic buffer');
+    expect(document.querySelector('.cm-editor')).toBe(view.dom);
+    exact('Undo library change').click(); await vi.waitFor(() => expect(core.historyDraftingChange).toHaveBeenCalledWith(session.id, 'undo', true));
+    expect(core.saveDocument).not.toHaveBeenCalled(); expect(view.state.doc.toString()).toBe('Unsaved synthetic buffer');
+  });
   it('requires explicit initialization and approval before creating an ms manuscript', async () => {
     const core = draftingBridge(); core.loadDrafting = vi.fn(async () => ({...initial(), revision: null, scenes: []}));
     await setupDrafting(core);
     expect(core.previewDraftingChange).not.toHaveBeenCalled(); expect(core.applyDraftingChange).not.toHaveBeenCalled();
-    exact('Create ms manuscript').click(); exact('Preview manuscript').click(); await settle();
+    exact('Set up library').click(); exact('Preview setup and import').click(); await settle();
     expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, null, {kind: 'initialize', project: session.name});
     expect(core.applyDraftingChange).not.toHaveBeenCalled();
     exact('Cancel').click(); await settle();
@@ -725,13 +758,13 @@ describe('ms drafting structure and recovery guard', () => {
   });
   it('shows explicit ID order and reorders without including a filename mutation', async () => {
     const {core} = await setupDrafting();
-    expect([...document.querySelectorAll('.scene-open')].map(node => node.textContent)).toEqual(['1. Opening', '2. Later']);
+    expect([...document.querySelectorAll('.scene-open')].map(node => node.textContent)).toEqual(['Opening', 'Later']);
     moveLaterSceneEarlier(); await settle();
     expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'reorderScene', sceneId: 'scene-a', beforeId: 'scene-b', groupId: 'g1'});
     expect(core.applyDraftingChange).not.toHaveBeenCalled();
     exact('Apply change').click(); await settle();
     expect(core.applyDraftingChange).toHaveBeenCalledWith(session.id, 'opaque-preview');
-    expect([...document.querySelectorAll('.scene-open')].map(node => node.textContent)).toEqual(['1. Later', '2. Opening']);
+    expect([...document.querySelectorAll('.scene-open')].map(node => node.textContent)).toEqual(['Later', 'Opening']);
     expect([...document.querySelectorAll('.scene-path')].map(node => node.textContent)).toEqual(['ms/nested/a-later.md', 'ms/z-opening.md']);
     expect(exact('Undo last change').disabled).toBe(false);
   });
@@ -812,7 +845,7 @@ describe('ms drafting structure and recovery guard', () => {
   });
   it('offers interrupted rollback before any other structure action', async () => {
     const core = draftingBridge(); core.loadDrafting = vi.fn(async () => ({...initial(), recoveryRequired: true})); await setupDrafting(core);
-    expect(document.querySelector('.drafting-actions')).toBeNull(); exact('Preview rollback of interrupted change').click(); await settle();
+    expect(document.querySelector('.library-tree')).toBeNull(); exact('Preview rollback of interrupted change').click(); await settle();
     expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'recoverInterrupted'});
     exact('Cancel').click(); await settle();
   });
@@ -823,27 +856,12 @@ describe('ms drafting structure and recovery guard', () => {
   function dragEvent(target: Element, type: string, dataTransfer: ReturnType<typeof transfer>) {
     const event = new Event(type, {bubbles: true, cancelable: true}); Object.defineProperty(event, 'dataTransfer', {value: dataTransfer}); target.dispatchEvent(event);
   }
-  it('moves repository drags using the scoped source and previews before mutation', async () => {
-    const {core} = await setupDrafting(); const data = transfer();
-    dragEvent(document.querySelector('[aria-label="Read file README.md"]')!, 'dragstart', data);
-    expect(data.getData('application/x-heinlein-repository-entry')).toBe(JSON.stringify({repositoryId: session.id, path: 'README.md'}));
-    dragEvent(document.querySelector('.drafting-drop')!, 'drop', data);
-    expect(document.body.textContent).toContain('Files referenced by a legacy manuscript cannot be moved');
-    exact('Preview import').click(); await settle();
-    expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'importRepository', paths: ['README.md'], destination: 'ms', mode: 'move', groupId: null, beforeId: null});
-    expect(core.applyDraftingChange).not.toHaveBeenCalled(); exact('Cancel').click(); await settle();
-  });
   it('reorders an outline drag by stable ID with no filename change', async () => {
     const {core} = await setupDrafting(); const data = transfer();
     dragEvent(document.querySelector('[data-scene-id="scene-a"] .scene-open')!, 'dragstart', data);
     dragEvent(document.querySelector('[data-scene-id="scene-b"]')!, 'drop', data); await settle();
     expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'reorderScene', sceneId: 'scene-a', beforeId: 'scene-b', groupId: 'g1'});
     exact('Cancel').click(); await settle();
-  });
-  it('ignores repository drags from another session', async () => {
-    const {core} = await setupDrafting(); const data = transfer(); data.setData('application/x-heinlein-repository-entry', JSON.stringify({repositoryId: 'other-session', path: 'README.md'}));
-    dragEvent(document.querySelector('.drafting-drop')!, 'drop', data); await settle();
-    expect(document.querySelector('.drafting-dialog')).toBeNull(); expect(core.previewDraftingChange).not.toHaveBeenCalled();
   });
   it('copies a trusted Finder drop using the native selection without opening another picker', async () => {
     const core = draftingBridge(); let drop!: (selection: import('./localCore').DraftingSelection) => void;
@@ -856,7 +874,7 @@ describe('ms drafting structure and recovery guard', () => {
   });
   it('never constructs an external import from a browser file path', async () => {
     const {core} = await setupDrafting(); const data = transfer(); data.files.push({name: 'browser-scene.md'});
-    dragEvent(document.querySelector('.drafting-drop')!, 'drop', data); await settle();
+    dragEvent(document.querySelector('.tree-footer')!, 'drop', data); await settle();
     expect(core.previewDraftingChange).not.toHaveBeenCalled(); expect(core.pickDraftingImport).not.toHaveBeenCalled();
     expect(document.querySelector('.status')?.textContent).toContain('native picker');
   });
@@ -890,14 +908,14 @@ describe('ms drafting structure and recovery guard', () => {
     expect(document.querySelector('.status')?.textContent).toContain('Recovery owned by another window');
     expect(document.querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('false');
   });
-  it('creates a scene only after preview, then opens its exact requested path', async () => {
+  it('creates a sheet with an internal collision-safe path and opens it', async () => {
     const {core} = await setupDrafting();
-    core.applyDraftingChange = vi.fn(async () => ({state: {...initial(), revision: 'manifest-2', scenes: [...initial().scenes, {id: 'new-scene-id', title: 'Untitled scene', path: 'ms/untitled-scene.md', groupId: null}]}, undoId: 'create-undo'}));
-    exact('New scene').click(); exact('Preview new scene').click(); await settle();
-    expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'createScene', title: 'Untitled scene', path: 'ms/untitled-scene.md', groupId: null, beforeId: null});
-    expect(core.applyDraftingChange).not.toHaveBeenCalled(); exact('Apply change').click(); await settle();
-    expect(core.readDocument).toHaveBeenLastCalledWith(session.id, 'ms/untitled-scene.md');
-    expect(document.querySelector('.preview .path')?.textContent).toBe('ms/untitled-scene.md');
+    let path = '';
+    core.previewDraftingChange = vi.fn(async (_repo, _revision, change) => { if (change.kind === 'createScene') path = change.path; return {id:'opaque-preview', summary:'New sheet', changes:[], warnings:[]}; });
+    core.applyDraftingChange = vi.fn(async () => ({state: {...initial(), revision: 'manifest-2', scenes: [...initial().scenes, {id: 'new-scene-id', title: 'Untitled scene', path, groupId: null}]}, undoId: 'create-undo'}));
+    exact('New scene').click(); expect(document.querySelector('dialog')!.textContent).not.toContain('file'); exact('Create scene').click();
+    await vi.waitFor(() => expect(core.applyDraftingChange).toHaveBeenCalledOnce());
+    expect(path).toMatch(/^ms\/sheet-[0-9a-f-]+\.md$/); await vi.waitFor(() => expect(core.readDocument).toHaveBeenCalledWith(session.id, path));
   });
   it('blocks native close throughout an approved structure operation', async () => {
     const core = draftingBridge(); let requestClose!: () => void;
@@ -930,7 +948,7 @@ describe('ms drafting structure and recovery guard', () => {
     const {core} = await setupDrafting(); moveLaterSceneEarlier(); await settle(); exact('Apply change').click(); await settle();
     expect(exact('Undo last change').disabled).toBe(false);
     core.loadDrafting = vi.fn(async () => ({...initial(), revision: 'interrupted-revision', recoveryRequired: true}));
-    exact('Refresh ms').click(); await settle();
+    exact('Refresh from disk').click(); await settle();
     core.previewDraftingChange = vi.fn(async () => ({id: 'rollback-preview', summary: 'Interrupted change rolled back', changes: [{kind: 'restore', source: 'ms/manuscript.json', destination: 'ms/manuscript.json'}], warnings: []}));
     core.applyDraftingChange = vi.fn(async () => ({state: initial(), undoId: null}));
     exact('Preview rollback of interrupted change').click(); await settle(); exact('Apply change').click(); await settle();

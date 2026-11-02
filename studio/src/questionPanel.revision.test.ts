@@ -44,11 +44,11 @@ describe('explicit revision requests', () => {
   });
   it('previews exact target separately and sends only bounded optional context with a saved UTF-8 binding', async () => {
     const bridge = await start(); button('Capture current scene').click(); mode('revision'); write();
-    expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe('');
+    expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe(state.source);
     expect(document.querySelector('[aria-label="Exact revision target"]')!.textContent).toBe('A 🐺 passage.');
     expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled(); button('Send to OpenAI').click(); await vi.waitFor(() => expect(bridge.suggestQuestionRevision).toHaveBeenCalledTimes(1));
     const [request, connection, target] = (bridge.suggestQuestionRevision.mock.calls[0] as unknown as [QuestionRequest, unknown, unknown]);
-    expect(request.context).toBe(''); expect(request.history).toEqual([]);
+    expect(request.context).toBe(state.source); expect(request.history).toEqual([]);
     expect(connection).toEqual({generation: 1, accountId: 'opaque', model: 'mock-model'});
     expect(target).toEqual({repositoryId: 'repo', path: 'scene.md', sourceHash: state.sourceHash, fromUtf8: 8, toUtf8: questionBytes(state.source.slice(0, state.to)), selectedText: 'A 🐺 passage.'});
     expect(prepare).toHaveBeenCalledTimes(1); expect(bridge.askQuestion).not.toHaveBeenCalled(); expect(review).not.toHaveBeenCalled();
@@ -127,7 +127,7 @@ describe('explicit revision requests', () => {
   it('bounds visible conversation text including original revision targets and replacements', async () => {
     state.source = 'x'.repeat(16000); state.from = 0; state.to = state.source.length;
     const digest = await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(state.source)); state.sourceHash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
-    const bridge = core(); bridge.suggestQuestionRevision.mockImplementation(async request => ({...answer(request), text: 'e'.repeat(10000), replacementText: 'r'.repeat(1000)})); await start(bridge); mode('revision');
+    const bridge = core(); bridge.suggestQuestionRevision.mockImplementation(async request => ({...answer(request), text: 'e'.repeat(10000), replacementText: 'r'.repeat(1000)})); await start(bridge); mode('revision'); button('Remove context').click();
     for (let index = 0; index < 3; index++) {write(`Revision ${index}`); button('Send to OpenAI').click(); await vi.waitFor(() => expect(bridge.suggestQuestionRevision).toHaveBeenCalledTimes(index + 1)); await vi.waitFor(() => expect(button('Cancel request').hidden).toBe(true));}
     expect(document.querySelectorAll('.question-turn')).toHaveLength(2); expect(panel.element.textContent).not.toContain('Revision 0');
   });

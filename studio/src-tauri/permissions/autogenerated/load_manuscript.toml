@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-load-manuscript"
+description = "Enables the load_manuscript command without any pre-configured scope."
+commands.allow = ["load_manuscript"]
+
+[[permission]]
+identifier = "deny-load-manuscript"
+description = "Denies the load_manuscript command without any pre-configured scope."
+commands.deny = ["load_manuscript"]

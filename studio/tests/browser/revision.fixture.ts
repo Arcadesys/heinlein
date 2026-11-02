@@ -57,4 +57,4 @@ const notice = document.createElement('p');
 notice.textContent = 'Synthetic revision acceptance: no real manuscripts, provider, native dialogs or credentials.';
 document.body.prepend(notice);
 Object.assign(window, { reviewFixture: { calls, get text() { return stored.text; }, baseline, get record() { return stored.record; } } });
-void app.selectRepository(async () => session).then(() => app.showDocument('scene.md')).then(() => { [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Heinlein Review')?.click(); });
+void app.selectRepository(async () => session).then(() => app.showDocument('scene.md')).then(() => { const pick = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === label); pick('Heinlein')?.click(); pick('Whole scene')?.click(); });

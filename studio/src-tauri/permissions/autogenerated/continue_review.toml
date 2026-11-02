@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-continue-review"
+description = "Enables the continue_review command without any pre-configured scope."
+commands.allow = ["continue_review"]
+
+[[permission]]
+identifier = "deny-continue-review"
+description = "Denies the continue_review command without any pre-configured scope."
+commands.deny = ["continue_review"]

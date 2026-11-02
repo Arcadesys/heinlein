@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-choose-review-edit"
+description = "Enables the choose_review_edit command without any pre-configured scope."
+commands.allow = ["choose_review_edit"]
+
+[[permission]]
+identifier = "deny-choose-review-edit"
+description = "Denies the choose_review_edit command without any pre-configured scope."
+commands.deny = ["choose_review_edit"]

@@ -18,23 +18,38 @@ struct Client {
 }
 impl Client {
     fn start() -> Self {
+        Self::start_mode(false, true)
+    }
+    fn start_mode(manuscript: bool, proposals: bool) -> Self {
         let t = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let root = t.path().join("repository");
         fs::create_dir(&root).unwrap();
         let source = root.join("scene.md");
         fs::write(&source, "Synthetic—before.\r\n").unwrap();
         fs::write(root.join("unselected.md"), "Never disclosed").unwrap();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_heinlein-local-mcp"))
-            .args([
-                "--repository",
-                root.to_str().unwrap(),
-                "--proposal-store",
-                t.path().join("proposals").to_str().unwrap(),
-                "--scene",
-                "scene.md",
-                "--client-label",
-                "wire-fixture",
-            ])
+        let mut command = Command::new(env!("CARGO_BIN_EXE_heinlein-local-mcp"));
+        command.arg("--repository").arg(&root);
+        if proposals {
+            command
+                .arg("--proposal-store")
+                .arg(t.path().join("proposals"));
+        }
+        if manuscript {
+            fs::create_dir(root.join("ms")).unwrap();
+            fs::write(root.join("ms/z.md"), "Synthetic—before.\r\n").unwrap();
+            fs::write(root.join("ms/a.md"), "Second scene").unwrap();
+            fs::write(root.join("ms/untracked.md"), "Not a manuscript member").unwrap();
+            let index = json!({"schemaVersion":2,"id":uuid::Uuid::new_v4().to_string(),"project":"Synthetic", "groups":[], "scenes":[
+                {"id":uuid::Uuid::new_v4().to_string(),"title":"First","path":"ms/z.md","groupId":null},
+                {"id":uuid::Uuid::new_v4().to_string(),"title":"Second","path":"ms/a.md","groupId":null}
+            ]});
+            fs::write(root.join("ms/manuscript.json"), index.to_string()).unwrap();
+            command.args(["--manuscript", "ms/manuscript.json"]);
+        } else {
+            command.args(["--scene", "scene.md"]);
+        }
+        let mut child = command
+            .args(["--client-label", "wire-fixture"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -225,4 +240,149 @@ fn missing_selection_help_and_unknown_flags_never_initialize() {
         .unwrap();
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn readonly_manuscript_over_stdio_has_no_proposal_routes_or_storage() {
+    let mut c = Client::start_mode(true, false);
+    c.initialize();
+    let list = c.request(2, "tools/list", json!({}));
+    let names: Vec<_> = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["list_projects", "list_scenes", "read_scene"]);
+    let projects = c.tool(3, "list_projects", json!({}))["result"]["structuredContent"].clone();
+    assert_eq!(projects["accessMode"], "readOnly");
+    let project = projects["projects"][0]["projectId"].clone();
+    let scenes = c.tool(4, "list_scenes", json!({"projectId":project}))["result"]
+        ["structuredContent"]["scenes"]
+        .clone();
+    assert_eq!(scenes.as_array().unwrap().len(), 2);
+    assert_eq!(scenes[0]["path"], "ms/z.md");
+    assert_eq!(scenes[1]["path"], "ms/a.md");
+    let read = c.tool(
+        5,
+        "read_scene",
+        json!({"projectId":project,"sceneId":scenes[0]["sceneId"]}),
+    );
+    assert_eq!(
+        read["result"]["structuredContent"]["text"],
+        "Synthetic—before.\r\n"
+    );
+    for (offset, name) in [
+        "propose_scene",
+        "list_proposals",
+        "get_proposal",
+        "save_scene",
+        "approve_patch",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let denied = c.tool(6 + offset as u64, name, json!({"approved":true}));
+        assert_eq!(denied["error"]["code"], -32601);
+    }
+    assert!(!c._temp.path().join("proposals").exists());
+    // A live index change cannot silently broaden the session's manuscript scope.
+    fs::write(c.source.parent().unwrap().join("ms/manuscript.json"), "{}").unwrap();
+    let changed = c.tool(20, "list_scenes", json!({"projectId":project}));
+    assert_eq!(
+        changed["result"]["structuredContent"]["error"]["code"],
+        "selectionChanged"
+    );
+    assert_eq!(
+        fs::read_to_string(c.source.parent().unwrap().join("ms/z.md")).unwrap(),
+        "Synthetic—before.\r\n"
+    );
+    c.exited();
+}
+
+#[test]
+fn scene_readonly_and_ambiguous_cli_selections() {
+    let mut c = Client::start_mode(false, false);
+    c.initialize();
+    assert_eq!(
+        c.request(2, "tools/list", json!({}))["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    c.exited();
+    for args in [
+        vec!["--scene", "scene.md", "--manuscript", "ms/manuscript.json"],
+        vec![
+            "--manuscript",
+            "ms/manuscript.json",
+            "--manuscript",
+            "ms/manuscript.json",
+        ],
+        vec!["--unknown", "value"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_heinlein-local-mcp"))
+            .args(["--repository", c.source.parent().unwrap().to_str().unwrap()])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+fn manuscript_proposals_require_explicit_storage_and_leave_source_untouched() {
+    let mut c = Client::start_mode(true, true);
+    c.initialize();
+    assert_eq!(
+        c.request(2, "tools/list", json!({}))["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .len(),
+        6
+    );
+    let projects = c.tool(3, "list_projects", json!({}))["result"]["structuredContent"].clone();
+    assert_eq!(projects["accessMode"], "readAndPropose");
+    let project = projects["projects"][0]["projectId"].clone();
+    let scenes = c.tool(4, "list_scenes", json!({"projectId":project}))["result"]
+        ["structuredContent"]["scenes"]
+        .clone();
+    let scene = scenes[0]["sceneId"].clone();
+    let read = c.tool(
+        5,
+        "read_scene",
+        json!({"projectId":project,"sceneId":scene}),
+    )["result"]["structuredContent"]
+        .clone();
+    let proposed = c.tool(6, "propose_scene", json!({"projectId":project,"sceneId":scene,"snapshotId":read["snapshotId"],"baseHash":read["baseHash"],"replacementText":"Unapproved—suggestion.\r\n"}));
+    assert_eq!(
+        proposed["result"]["structuredContent"]["requiresAuthorReview"],
+        true
+    );
+    assert_eq!(
+        proposed["result"]["structuredContent"]["manuscriptChanged"],
+        false
+    );
+    assert_eq!(
+        fs::read_to_string(c.source.parent().unwrap().join("ms/z.md")).unwrap(),
+        "Synthetic—before.\r\n"
+    );
+    c.exited();
+    // Startup validation fails before opening even the explicitly requested store.
+    let root = c.source.parent().unwrap();
+    fs::remove_file(root.join("ms/a.md")).unwrap();
+    let store = c._temp.path().join("not-created");
+    let output = Command::new(env!("CARGO_BIN_EXE_heinlein-local-mcp"))
+        .arg("--repository")
+        .arg(root)
+        .args(["--manuscript", "ms/manuscript.json"])
+        .arg("--proposal-store")
+        .arg(&store)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(!store.exists());
 }

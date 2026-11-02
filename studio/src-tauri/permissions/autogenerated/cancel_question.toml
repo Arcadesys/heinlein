@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cancel-question"
+description = "Enables the cancel_question command without any pre-configured scope."
+commands.allow = ["cancel_question"]
+
+[[permission]]
+identifier = "deny-cancel-question"
+description = "Denies the cancel_question command without any pre-configured scope."
+commands.deny = ["cancel_question"]

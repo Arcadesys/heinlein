@@ -6,8 +6,8 @@ gate, and no reviewer can save, publish, expand context or choose another accoun
 
 ## Author flow
 
-1. Open **Heinlein Review** in an editable source scene or mapped assembled
-   chapter. The captured text includes unsaved editor text; no implicit save or
+1. Open **Heinlein** → **Whole scene** in an editable source scene, or **Heinlein**
+   in a mapped assembled chapter. The captured text includes unsaved editor text; no implicit save or
    provider request occurs. Generated/unmapped exports cannot be edit targets.
 2. Choose editable source files; unchecked captured files are read-only context.
    Optional author notes are also read-only. Choose one to three reviewer

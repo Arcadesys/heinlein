@@ -25,6 +25,7 @@
     "allow-preview-drafting-change",
     "allow-apply-drafting-change",
     "allow-undo-drafting-change",
+    "allow-history-drafting-change",
     "allow-pick-drafting-import",
     "allow-list-proposals",
     "allow-review-proposal",

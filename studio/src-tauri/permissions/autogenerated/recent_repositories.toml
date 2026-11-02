@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recent-repositories"
+description = "Enables the recent_repositories command without any pre-configured scope."
+commands.allow = ["recent_repositories"]
+
+[[permission]]
+identifier = "deny-recent-repositories"
+description = "Denies the recent_repositories command without any pre-configured scope."
+commands.deny = ["recent_repositories"]

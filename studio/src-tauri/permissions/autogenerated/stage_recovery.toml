@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stage-recovery"
+description = "Enables the stage_recovery command without any pre-configured scope."
+commands.allow = ["stage_recovery"]
+
+[[permission]]
+identifier = "deny-stage-recovery"
+description = "Denies the stage_recovery command without any pre-configured scope."
+commands.deny = ["stage_recovery"]

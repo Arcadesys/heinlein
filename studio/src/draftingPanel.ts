@@ -1,9 +1,11 @@
-import type { DraftingChange, DraftingFileChange, DraftingPreview, DraftingScene, DraftingSelection, DraftingState, LocalCore, RepositorySession } from './localCore';
+import type { DraftingChange, DraftingFileChange, DraftingPreview, DraftingScene, DraftingSelection, DraftingState, LibraryEntry, LocalCore, RepositorySession } from './localCore';
+import { rowMenu } from './rowMenu';
 
-export const REPOSITORY_DRAG_TYPE = 'application/x-heinlein-repository-entry';
 export const SCENE_DRAG_TYPE = 'application/x-heinlein-scene';
+export const GROUP_DRAG_TYPE = 'application/x-heinlein-group';
 const basename = (path: string) => path.split('/').pop() || path;
 const parentPath = (path: string) => path.split('/').slice(0, -1).join('/');
+const friendlySummary = (summary: string) => /Create the manuscript index for ms\//.test(summary) ? 'Set up the library' : /(?:repository scenes|Markdown files) into ms\//i.test(summary) ? 'Import selected sheets' : summary;
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = ''): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag); node.textContent = text; node.className = className; return node;
 }
@@ -15,9 +17,10 @@ interface DraftingHooks {
   repository(): RepositorySession | null;
   verify?(): void;
   run(action: () => Promise<void>): Promise<void>;
+  runOrganization?(action: () => Promise<void>): Promise<void>;
   show(): void;
   open(path: string): void;
-  changed(state: DraftingState, previous: DraftingState | null, changes: DraftingFileChange[], focusPath?: string): Promise<void>;
+  changed(state: DraftingState, previous: DraftingState | null, changes: DraftingFileChange[], focusPath?: string, organizationOnly?: boolean): Promise<void>;
   report(message: string, error?: boolean): void;
 }
 export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
@@ -28,10 +31,20 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   let loadRequest = 0;
   let disposed = false;
   let picking = false;
+  let selectedGroup: string | null = null;
+  const collapsedGroups = new Set<string>();
+  let canUndo = false, canRedo = false;
+  let activeBuffer: {path: string; text: string} | null = null;
   let undo: {id: string; changes: DraftingFileChange[]; summary: string} | null = null;
   const dialogs = new Map<HTMLDialogElement, () => void>();
   function closeDialogs() { for (const cancel of [...dialogs.values()]) cancel(); }
-  function clear() { version++; closeDialogs(); state = null; undo = null; element.replaceChildren(); }
+  function clear() { version++; activeBuffer = null; selectedGroup = null; collapsedGroups.clear(); canUndo = false; canRedo = false; closeDialogs(); state = null; undo = null; element.replaceChildren(); }
+  function updateBuffer(path: string, text: string) {
+    activeBuffer = {path, text};
+    for (const node of element.querySelectorAll<HTMLElement>('.scene-open')) {
+      if (node.dataset.path === path) node.setAttribute('aria-current', 'page'); else node.removeAttribute('aria-current');
+    }
+  }
   async function load() {
     if (!supported || !hooks.repository()) return null;
     const current = version;
@@ -61,7 +74,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   }
   function groupField(node: HTMLElement, selected: string | null = null) {
     const row = el('label', '', 'drafting-field'); row.append(el('span', 'Group (optional)'));
-    const select = el('select'); const loose = el('option', 'Loose scene'); loose.value = ''; select.append(loose);
+    const select = el('select'); const loose = el('option', 'Library root'); loose.value = ''; select.append(loose);
     for (const group of state?.groups ?? []) { const option = el('option', group.title); option.value = group.id; select.append(option); }
     select.value = selected ?? ''; row.append(select); node.append(row); return select;
   }
@@ -88,7 +101,12 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   function confirmPreview(preview: DraftingPreview): Promise<boolean> {
     return new Promise(resolve => {
       const node = dialog('Review manuscript change');
-      node.append(el('p', preview.summary));
+      node.append(el('p', friendlySummary(preview.summary)));
+      const imported = preview.changes.filter(change => change.kind === 'index' && change.destination && change.destination !== state?.manifestPath);
+      if (imported.length) {
+        node.append(el('p', `${imported.length} existing ${imported.length === 1 ? 'sheet will' : 'sheets will'} be added to the library.`));
+        const titles = el('ul'); imported.forEach(change => titles.append(el('li', basename(change.destination!).replace(/\.(?:md|markdown)$/i, '')))); node.append(titles);
+      }
       const list = el('ul', '', 'change-preview');
       for (const change of preview.changes) {
         const description = change.source && change.destination && change.source !== change.destination
@@ -96,7 +114,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
           : `${change.kind}: ${change.destination ?? change.source ?? 'manuscript order'}`;
         list.append(el('li', description));
       }
-      node.append(list);
+      const details = el('details'); details.append(el('summary', 'Document details'), list); node.append(details);
       for (const warning of preview.warnings) node.append(el('p', warning, 'drafting-warning'));
       node.append(el('p', 'File collisions are blocked. Affected files are checked again before this change is applied.', 'muted'));
       let done = false;
@@ -105,26 +123,33 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       display(node, () => finish(false));
     });
   }
-  async function changeManuscript(change: DraftingChange, focusPath?: string, prepare?: () => DraftingChange) {
+  async function changeManuscript(change: DraftingChange, focusPath?: string, prepare?: () => DraftingChange, immediate = false, announcement?: string, focusItem?: LibraryEntry) {
     const before = state; const repositoryId = hooks.repository()?.id;
     if (!before || !repositoryId) return;
     loadRequest++;
-    await hooks.run(async () => {
+    const organizationOnly = change.kind === 'organizeLibrary';
+    await (organizationOnly ? hooks.runOrganization ?? hooks.run : hooks.run)(async () => {
       let applied = false;
       try {
         if (prepare) change = prepare();
-        hooks.verify?.();
+        if (!organizationOnly) hooks.verify?.();
         const preview = await core.previewDraftingChange!(repositoryId, before.revision, change);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
-        if (!await confirmPreview(preview)) { hooks.report('Change canceled.'); return; }
+        if (!immediate && change.kind !== 'organizeLibrary' && !await confirmPreview(preview)) { hooks.report('Change canceled.'); return; }
         if (disposed || repositoryId !== hooks.repository()?.id) return;
-        hooks.verify?.();
+        if (!organizationOnly) hooks.verify?.();
         if (prepare) prepare();
         const result = await core.applyDraftingChange!(repositoryId, preview.id);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
-        applied = true; state = result.state; undo = result.undoId ? {id: result.undoId, changes: preview.changes, summary: preview.summary} : null; render(); hooks.show();
-        await hooks.changed(state, before, preview.changes, focusPath);
-        hooks.report(`${preview.summary} · Saved locally.${undo ? ' Undo is available until the next structural change or app restart.' : ''}`);
+        applied = true; state = result.state; undo = result.undoId ? {id: result.undoId, changes: preview.changes, summary: preview.summary} : null; canUndo = Boolean(result.undoId); canRedo = false; render(); hooks.show();
+        await hooks.changed(state, before, preview.changes, focusPath, change.kind === 'organizeLibrary');
+        if (focusItem) {
+          const control = focusItem.kind === 'group'
+            ? [...element.querySelectorAll<HTMLButtonElement>('[data-group-id]')].find(node => node.dataset.groupId === focusItem.id)
+            : [...element.querySelectorAll<HTMLElement>('[data-scene-id]')].find(node => node.dataset.sceneId === focusItem.id)?.querySelector<HTMLButtonElement>('.scene-open');
+          (control ?? element.querySelector<HTMLElement>('.tree-add'))?.focus();
+        }
+        hooks.report(`${announcement ?? friendlySummary(preview.summary)} · Saved locally.${undo ? ' Undo is available during this session.' : ''}`);
       } catch (error) {
         const alternative = change.kind === 'importRepository' && change.mode === 'move' && /legacy|referenced/i.test(String(error)) ? ' Use Copy legacy scenes… to make an independent copy; the old manuscript stays unchanged and is not synchronized.' : '';
         hooks.report(`${applied ? 'Change saved locally, but the view could not refresh' : 'Manuscript change could not be completed'}: ${String(error)}${alternative}`, true);
@@ -132,21 +157,24 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     });
   }
   function initialize() {
-    form('Create an ms manuscript', (body, submit) => {
-      body.append(el('p', 'Create ms/manuscript.json for drafting. Markdown scenes live under ms/; filenames stay unchanged when you reorder. Existing legacy manifests are left intact.', 'muted'));
+    form('Set up library', (body, submit) => {
+      body.append(el('p', 'Set up a library and review any existing Markdown sheets found in the writing folder before importing them. Existing legacy manifests are left intact.', 'muted'));
       const title = field(body, 'Manuscript title', hooks.repository()?.name ?? 'Untitled manuscript');
-      submitButton(body, 'Preview manuscript', () => submit({kind: 'initialize', project: title.value.trim()}));
+      submitButton(body, 'Preview setup and import', () => submit({kind: 'initialize', project: title.value.trim()}));
     });
   }
   function newScene() {
-    form('New scene', (body, submit) => {
-      const title = field(body, 'Scene title', 'Untitled scene');
-      const path = field(body, 'Scene file', 'ms/untitled-scene.md', 'Use a Markdown path inside ms/. Folders are optional.');
-      let pathChanged = false; path.addEventListener('input', () => { pathChanged = true; });
-      title.addEventListener('input', () => { if (!pathChanged) path.value = `ms/${title.value.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'untitled-scene'}.md`; });
-      const group = groupField(body); const before = beforeField(body);
-      submitButton(body, 'Preview new scene', () => submit({kind: 'createScene', title: title.value.trim(), path: path.value.trim(), groupId: group.value || null, beforeId: before.value || null}, path.value.trim()));
+    newSheet();
+  }
+  function newSheet() {
+    const node = dialog('New scene'); const body = el('form'); const cancel = () => remove(node);
+    const name = field(body, 'Scene title', 'Untitled scene');
+    submitButton(body, 'Create scene', () => {
+      const path = `ms/sheet-${crypto.randomUUID()}.md`;
+      const title = name.value.trim(); cancel();
+      void changeManuscript({kind: 'createScene', title, path, groupId: selectedGroup, beforeId: null}, path, undefined, true);
     });
+    body.append(button('Cancel', cancel)); node.append(body); display(node, cancel);
   }
   function splitScene(sceneId: string, prepare: () => {expectedHash: string; byteOffset: number}) {
     if (dialogs.size || !state?.revision || state.recoveryRequired) return;
@@ -157,10 +185,9 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     const cancel = () => remove(node);
     body.append(el('p', 'The text before the cursor keeps this scene’s identity. The remaining text becomes a new scene immediately after it, in the same group. Existing text earns no daily growth credit; the original scene retains its earlier peak.', 'muted'));
     const title = field(body, 'New scene title', `${scene.title || 'Scene'} continued`);
-    const path = field(body, 'New scene file', scene.path.replace(/\.(md|markdown)$/i, '-continued.md'), 'Use a new Markdown path inside ms/.');
     submitButton(body, 'Preview split', () => {
       cancel();
-      const change = {kind: 'splitScene' as const, sceneId, title: title.value.trim(), path: path.value.trim(), expectedHash: '', byteOffset: 0};
+      const change = {kind: 'splitScene' as const, sceneId, title: title.value.trim(), path: `${parentPath(scene.path)}/sheet-${crypto.randomUUID()}.md`, expectedHash: '', byteOffset: 0};
       void changeManuscript(change, change.path, () => { if (state?.revision !== revision) throw new Error('The manuscript changed. Start a new split'); return {...change, ...prepare()}; });
     });
     body.append(button('Cancel', cancel)); node.append(body); display(node, cancel);
@@ -177,29 +204,119 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         : {kind: 'moveScene', sceneId: scene.id, path: path.value.trim(), groupId: group.value || null, beforeId: before.value || null}));
     });
   }
-  function newGroup() {
-    form('New scene group', (body, submit) => {
-      body.append(el('p', 'Groups are optional labels. They do not create or rename scene files.', 'muted'));
-      const title = field(body, 'Group title', 'Untitled chapter');
-      submitButton(body, 'Preview group', () => submit({kind: 'createGroup', title: title.value.trim()}));
+  function libraryEntries(): LibraryEntry[] {
+    return state?.library?.map(entry => ({...entry})) ?? [
+      ...(state?.groups ?? []).map(group => ({id: group.id, kind: 'group' as const, parentId: null})),
+      ...(state?.scenes ?? []).map(scene => ({id: scene.id, kind: 'scene' as const, parentId: scene.groupId})),
+    ];
+  }
+  /** Without a stored tree, show groups where their first scene falls so the tree reads in manuscript order. */
+  function manuscriptOrderEntries(): LibraryEntry[] {
+    const entries: LibraryEntry[] = []; const placed = new Set<string>();
+    for (const scene of state?.scenes ?? []) {
+      if (scene.groupId && !placed.has(scene.groupId) && state!.groups.some(group => group.id === scene.groupId)) { placed.add(scene.groupId); entries.push({id: scene.groupId, kind: 'group', parentId: null}); }
+      entries.push({id: scene.id, kind: 'scene', parentId: scene.groupId && placed.has(scene.groupId) ? scene.groupId : null});
+    }
+    for (const group of state?.groups ?? []) if (!placed.has(group.id)) entries.push({id: group.id, kind: 'group', parentId: null});
+    return entries;
+  }
+  function orderedSheets(parent: string | null, entries = libraryEntries()): DraftingScene[] {
+    return entries.filter(entry => entry.parentId === parent).flatMap(entry => entry.kind === 'group'
+      ? orderedSheets(entry.id, entries)
+      : state?.scenes.filter(scene => scene.id === entry.id) ?? []);
+  }
+  function organization(entries: LibraryEntry[], groups = state!.groups, scenes = state!.scenes): DraftingChange {
+    return {kind: 'organizeLibrary', groups, sceneTitles: scenes.map(({id, title}) => ({id, title})), entries};
+  }
+  function createLibraryGroup() {
+    form('New group', (body, submit) => {
+      const name = field(body, 'Group name', 'Untitled group');
+      submitButton(body, 'Create group', () => {
+        const id = crypto.randomUUID();
+        submit(organization([...libraryEntries(), {id, kind: 'group', parentId: selectedGroup}], [...state!.groups, {id, title: name.value.trim()}]));
+      });
     });
+  }
+  function renameLibraryItem(id: string, kind: 'group' | 'scene') {
+    const old = kind === 'group' ? state!.groups.find(item => item.id === id) : state!.scenes.find(item => item.id === id);
+    if (!old) return;
+    form(kind === 'group' ? 'Rename group' : 'Rename scene', (body, submit) => {
+      const name = field(body, kind === 'group' ? 'Group name' : 'Scene title', old.title);
+      submitButton(body, 'Rename', () => submit(organization(libraryEntries(),
+        state!.groups.map(group => group.id === id && kind === 'group' ? {...group, title: name.value.trim()} : group),
+        state!.scenes.map(scene => scene.id === id && kind === 'scene' ? {...scene, title: name.value.trim()} : scene))));
+    });
+  }
+  function moveLibraryItems(ids: string[], parentId: string | null, beforeId: string | null = null): Promise<void> {
+    const entries = libraryEntries(); const idSet = new Set(ids);
+    if (beforeId && idSet.has(beforeId)) return Promise.resolve();
+    const ordered = (state?.libraryLegacy ? state.scenes : orderedSheets(null, entries)).map(scene => scene.id);
+    const moving = entries.filter(entry => idSet.has(entry.id)).sort((a, b) => {
+      const ai = ordered.indexOf(a.id), bi = ordered.indexOf(b.id);
+      return ai < 0 || bi < 0 ? 0 : ai - bi;
+    }).map(entry => ({...entry, parentId}));
+    const rest = entries.filter(entry => !idSet.has(entry.id));
+    const at = beforeId ? rest.findIndex(entry => entry.id === beforeId && entry.parentId === parentId) : -1;
+    rest.splice(at < 0 ? rest.length : at, 0, ...moving);
+    const names = moving.map(entry => entry.kind === 'group' ? state!.groups.find(group => group.id === entry.id)?.title : state!.scenes.find(scene => scene.id === entry.id)?.title).filter(Boolean);
+    const destination = parentId ? state!.groups.find(group => group.id === parentId)?.title ?? 'group' : 'library root';
+    return changeManuscript(organization(rest), undefined, undefined, false, `Moved ${names.join(', ')} to ${destination}${beforeId ? ' in the chosen position' : ' at the end'}`, moving[0]);
+  }
+  function moveSheets(ids: string[], current: string | null = selectedGroup) {
+    if (!ids.length) return;
+    const node = dialog(ids.length === 1 ? 'Move scene' : 'Move scenes'); const body = el('form');
+    const cancel = () => remove(node);
+    const group = groupField(body, current);
+    submitButton(body, ids.length === 1 ? 'Move scene' : 'Move scenes', () => { cancel(); moveLibraryItems(ids, group.value || null); });
+    body.append(button('Cancel', cancel)); node.append(body); display(node, cancel);
+  }
+  function moveGroup(id: string) {
+    const node = dialog('Move group'); const body = el('form'); const cancel = () => remove(node);
+    const group = groupField(body, libraryEntries().find(entry => entry.id === id)?.parentId ?? null);
+    const self = [...group.options].find(option => option.value === id); if (self) self.disabled = true;
+    submitButton(body, 'Move group', () => { cancel(); moveLibraryItems([id], group.value || null); });
+    body.append(button('Cancel', cancel)); node.append(body); display(node, cancel);
+  }
+  function reorderLibraryItem(id: string, delta: -1 | 1): Promise<void> {
+    const entries = libraryEntries(); const item = entries.find(entry => entry.id === id); if (!item) return Promise.resolve();
+    const siblings = entries.filter(entry => entry.parentId === item.parentId); const at = siblings.findIndex(entry => entry.id === id);
+    const target = at + delta; if (target < 0 || target >= siblings.length) return Promise.resolve();
+    return moveLibraryItems([id], item.parentId, delta < 0 ? siblings[target].id : siblings[target + 1]?.id ?? null);
+  }
+  async function history(direction: 'undo' | 'redo') {
+    const before = state; const repositoryId = hooks.repository()?.id;
+    if (!before || !repositoryId || !core.historyDraftingChange) return;
+    let needsFileGuard = false;
+    async function perform(metadataOnly: boolean) {
+      try {
+        if (!metadataOnly) hooks.verify?.();
+        const result = await core.historyDraftingChange!(repositoryId!, direction, metadataOnly);
+        if (disposed || hooks.repository()?.id !== repositoryId) return;
+        state = result.state; canUndo = result.canUndo; canRedo = result.canRedo; undo = null; render(); hooks.show();
+        await hooks.changed(state, before, [], undefined, result.metadataOnly); hooks.report(`${direction === 'undo' ? 'Undid' : 'Redid'} library change locally.`);
+      } catch (error) {
+        if (metadataOnly && String(error).includes('HISTORY_REQUIRES_SAVED_EDITOR')) { needsFileGuard = true; return; }
+        hooks.report(`Could not ${direction}: ${String(error)}. Current files and recovery remain available.`, true);
+      }
+    }
+    if (hooks.runOrganization) { await hooks.runOrganization(() => perform(true)); if (needsFileGuard) await hooks.run(() => perform(false)); }
+    else await hooks.run(() => perform(false));
   }
   function importSettings(paths: string[] | DraftingSelection, beforeId: string | null = null, mode: 'move' | 'copy' = 'move') {
     const external = !Array.isArray(paths);
     form(external ? 'Copy files into manuscript' : mode === 'copy' ? 'Copy legacy scenes independently' : 'Move repository files into manuscript', (body, submit) => {
-      const names = external ? paths.files.map(file => file.name) : paths;
-      body.append(el('p', external ? 'Selected files will be copied into ms/. Their originals stay where they are.' : mode === 'copy' ? 'Create independent copies in ms/. The old manuscript stays unchanged; these copies are not synchronized with it.' : 'These repository files will be moved into ms/. Files referenced by a legacy manuscript cannot be moved; use Copy legacy scenes… for independent copies.', 'muted'));
+      const names = (external ? paths.files.map(file => file.name) : paths.map(basename)).map(name => name.replace(/\.(?:md|markdown)$/i, ''));
+      body.append(el('p', external ? 'Selected sheets will be copied into the library. Their originals stay where they are.' : mode === 'copy' ? 'Create independent copies in the library. The old manuscript stays unchanged; these copies are not synchronized with it.' : 'These sheets will be moved into the library. Sheets referenced by a legacy manuscript cannot be moved; use Copy legacy scenes… for independent copies.', 'muted'));
       const list = el('ul', '', 'change-preview'); names.forEach(name => list.append(el('li', name))); body.append(list);
-      const destination = field(body, 'Destination folder', 'ms', 'Use ms or a folder below it. Filename collisions stop the change.');
       const group = groupField(body); const before = beforeField(body, undefined, beforeId);
       submitButton(body, 'Preview import', () => submit(external
-        ? {kind: 'importExternal', selectionId: paths.id, destination: destination.value.trim(), groupId: group.value || null, beforeId: before.value || null}
-        : {kind: 'importRepository', paths, destination: destination.value.trim(), mode, groupId: group.value || null, beforeId: before.value || null}));
+        ? {kind: 'importExternal', selectionId: paths.id, destination: 'ms', groupId: group.value || null, beforeId: before.value || null}
+        : {kind: 'importRepository', paths, destination: 'ms', mode, groupId: group.value || null, beforeId: before.value || null}));
     });
   }
   async function importExternal(selection?: DraftingSelection) {
     if (picking) return;
-    if (!state?.revision || state.recoveryRequired || dialogs.size) { hooks.report('Open an initialized ms manuscript and finish any open dialog or interrupted change before importing.', true); return; }
+    if (!state?.revision || state.recoveryRequired || dialogs.size) { hooks.report('Set up the library and finish any open dialog or interrupted change before importing.', true); return; }
     if (!selection && !core.pickDraftingImport) return;
     const repositoryId = hooks.repository()!.id;
     picking = true;
@@ -212,8 +329,8 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   async function importRepository(mode: 'move' | 'copy' = 'move') {
     if (!state?.revision || dialogs.size) return;
     const node = dialog('Choose repository files');
-    node.append(el('p', mode === 'copy' ? 'Choose legacy Markdown scenes to copy into ms/. The originals remain unchanged; the new manuscript is independent and not synchronized.' : 'Choose Markdown files to move into ms/. Files used by legacy manifests must be copied instead. You can also drag an eligible file from the repository pane.', 'muted'));
-    const pathLabel = el('p', '/', 'path'); const list = el('div', '', 'repository-picker'); const selected = new Set<string>();
+    node.append(el('p', mode === 'copy' ? 'Choose legacy sheets to copy into the library. The originals remain unchanged; the new manuscript is independent and not synchronized.' : 'Choose sheets to move into the library. Files used by legacy manifests must be copied instead. You can also drag an eligible file from the repository pane.', 'muted'));
+    const pathLabel = el('p', 'Project', 'muted'); const list = el('div', '', 'repository-picker'); const selected = new Set<string>();
     const count = el('p', '0 files selected', 'muted');
     const cancel = () => remove(node); let request = 0;
     const repositoryId = hooks.repository()!.id;
@@ -222,14 +339,14 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       try {
         const entries = await core.listDirectory(repositoryId, path);
         if (disposed || current !== request || !dialogs.has(node)) return;
-        pathLabel.textContent = path || '/'; list.replaceChildren();
+        pathLabel.textContent = path ? `Folder: ${basename(path)}` : 'Project'; list.replaceChildren();
         if (path) list.append(button('↑ Parent folder', () => { void browse(parentPath(path)); }));
         for (const entry of entries) {
           if (entry.kind === 'directory') { list.append(button(`Open ${entry.name}/`, () => { void browse(entry.path); })); continue; }
           if (!/\.(md|markdown)$/i.test(entry.path)) continue;
           const row = el('label', '', 'repository-choice'); const check = el('input'); check.type = 'checkbox'; check.checked = selected.has(entry.path);
           check.addEventListener('change', () => { if (check.checked) selected.add(entry.path); else selected.delete(entry.path); count.textContent = `${selected.size} files selected`; next.disabled = !selected.size; });
-          row.append(check, el('span', entry.name)); list.append(row);
+          row.append(check, el('span', entry.name.replace(/\.(?:md|markdown)$/i, ''))); list.append(row);
         }
         if (!list.children.length) list.append(el('p', 'No Markdown files in this folder.', 'empty'));
       } catch (error) { if (dialogs.has(node)) { list.replaceChildren(el('p', String(error), 'drafting-warning')); } }
@@ -273,66 +390,138 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         if (source.repositoryId !== hooks.repository()?.id || !state.scenes.some(scene => scene.id === source.sceneId)) return;
         if (source.sceneId === beforeId) return;
         const scene = state.scenes.find(scene => scene.id === source.sceneId)!;
+        if (state.library) {
+          const destination = beforeId ? state.library.find(entry => entry.id === beforeId)?.parentId : null;
+          moveLibraryItems([scene.id], destination ?? null, beforeId); return;
+        }
         void changeManuscript({kind: 'reorderScene', sceneId: scene.id, beforeId, groupId: scene.groupId}); return;
       }
-      const rawPath = event.dataTransfer.getData(REPOSITORY_DRAG_TYPE);
-      if (rawPath) {
-        const source = JSON.parse(rawPath) as {repositoryId?: string; path?: string};
-        if (source.repositoryId !== hooks.repository()?.id || typeof source.path !== 'string') return;
-        importSettings([source.path], beforeId); return;
-      }
       if (event.dataTransfer.files.length) hooks.report('Use Import files… to authorize these files with the native picker. Browser-provided file paths are not used.', true);
-    } catch { hooks.report('This drag could not be read. Use Move… or Import repository files… instead.', true); }
+    } catch { hooks.report('This drag could not be read. Use the ⋯ menu to move it instead.', true); }
   }
   function dropTarget(target: HTMLElement, beforeId: string | null = null) {
     target.addEventListener('dragover', event => {
-      if (event.dataTransfer?.types.some(type => type === SCENE_DRAG_TYPE || type === REPOSITORY_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }
+      if (event.dataTransfer?.types.includes(SCENE_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }
     });
     target.addEventListener('drop', event => acceptDrop(event, beforeId));
   }
   function render() {
     element.replaceChildren(); if (!state) return;
-    element.append(el('h3', state.project || hooks.repository()?.name || 'Manuscript'), el('p', 'ms/ · Local scenes · Explicit reading order', 'muted'));
     if (state.recoveryRequired) {
       element.append(el('p', 'An interrupted manuscript change needs attention. Review its guarded rollback before making more structural changes.', 'drafting-warning'), button('Preview rollback of interrupted change', () => { void changeManuscript({kind: 'recoverInterrupted'}); }));
       return;
     }
     if (!state.revision) {
-      element.append(el('p', 'Start a drafting manuscript in ms/. Legacy scenes stay available in the file browser and their existing manifests.', 'empty'), button('Create ms manuscript', initialize, 'primary')); return;
+      element.append(el('p', 'Set up a library. Existing legacy sheets remain available in the file browser and their existing manuscripts.', 'empty'), button('Set up library', initialize, 'primary')); return;
     }
-    const controls = el('div', '', 'drafting-actions');
-    controls.append(button('New scene', newScene, 'primary'), button('Import files…', () => { void importExternal(); }), button('Import repository files…', () => { void importRepository(); }), button('Copy legacy scenes…', () => { void importRepository('copy'); }), button('New group', newGroup));
-    const undoButton = button('Undo last change', () => { void undoLastChange(); }); undoButton.disabled = !undo;
-    controls.append(undoButton, button('Refresh ms', () => { void hooks.run(async () => { try { const loaded = await load(); if (loaded) { await hooks.changed(loaded, null, []); hooks.report('Manuscript refreshed from disk.'); } } catch (error) { hooks.report(`Refresh failed: ${String(error)}`, true); } }); }));
-    element.append(controls);
+    const entries = state.library ? libraryEntries() : manuscriptOrderEntries();
+    const tree = el('ul', '', 'library-tree'); tree.setAttribute('aria-label', 'Groups and scenes');
+    const groupRow = (entry: LibraryEntry, depth: number) => {
+      const group = state!.groups.find(item => item.id === entry.id); if (!group) return null;
+      const expanded = !collapsedGroups.has(group.id);
+      const row = el('li', '', 'tree-group'); const line = el('div', '', 'tree-row'); line.style.setProperty('--depth', String(depth));
+      const toggle = button(group.title, () => {
+        if (expanded) collapsedGroups.add(group.id); else collapsedGroups.delete(group.id);
+        render(); [...element.querySelectorAll<HTMLButtonElement>('[data-group-id]')].find(node => node.dataset.groupId === group.id)?.focus();
+      }, 'tree-toggle');
+      toggle.dataset.groupId = group.id; toggle.setAttribute('aria-expanded', String(expanded)); toggle.draggable = true;
+      toggle.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(GROUP_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()?.id, groupId: group.id})); });
+      toggle.addEventListener('dragover', event => { if (event.dataTransfer?.types.some(type => type === SCENE_DRAG_TYPE || type === GROUP_DRAG_TYPE)) event.preventDefault(); });
+      toggle.addEventListener('drop', event => {
+        event.preventDefault();
+        try {
+          const rawGroup = event.dataTransfer?.getData(GROUP_DRAG_TYPE);
+          if (rawGroup) {
+            const source = JSON.parse(rawGroup) as {repositoryId?: string; groupId?: string};
+            if (source.repositoryId !== hooks.repository()?.id || !source.groupId || source.groupId === group.id || !state!.groups.some(item => item.id === source.groupId)) return;
+            const bounds = toggle.getBoundingClientRect(); const before = event.clientY < bounds.top + bounds.height / 3;
+            moveLibraryItems([source.groupId], before ? entry.parentId : group.id, before ? group.id : null); return;
+          }
+          const source = JSON.parse(event.dataTransfer?.getData(SCENE_DRAG_TYPE) ?? '{}') as {repositoryId?: string; sceneId?: string};
+          if (source.repositoryId === hooks.repository()?.id && source.sceneId && state!.scenes.some(scene => scene.id === source.sceneId)) moveLibraryItems([source.sceneId], group.id);
+        } catch { hooks.report('Could not read this drag. Use the ⋯ menu to move it instead.', true); }
+      });
+      const count = entries.filter(item => item.parentId === group.id && item.kind === 'scene').length;
+      const badge = el('span', String(count), 'tree-count'); badge.setAttribute('aria-hidden', 'true');
+      const siblings = entries.filter(item => item.parentId === entry.parentId); const at = siblings.findIndex(item => item.id === group.id);
+      const earlier = button('Move earlier', () => reorderLibraryItem(group.id, -1)); earlier.disabled = at <= 0;
+      const later = button('Move later', () => reorderLibraryItem(group.id, 1)); later.disabled = at === siblings.length - 1;
+      line.append(toggle, badge, rowMenu(`Actions for ${group.title}`, [
+        button('New scene here', () => { selectedGroup = group.id; newSheet(); }),
+        button('New group inside', () => { selectedGroup = group.id; createLibraryGroup(); }),
+        button('Rename…', () => renameLibraryItem(group.id, 'group')), button('Move to…', () => moveGroup(group.id)), earlier, later,
+      ]));
+      row.append(line);
+      if (expanded) { const children = el('ul'); draw(group.id, children, depth + 1); if (children.childElementCount) row.append(children); }
+      return row;
+    };
+    const sceneRow = (scene: DraftingScene, depth: number) => {
+      const index = state!.scenes.findIndex(item => item.id === scene.id);
+      const row = el('li', '', 'tree-scene'); row.dataset.sceneId = scene.id;
+      const line = el('div', '', 'tree-row'); line.style.setProperty('--depth', String(depth));
+      const open = button(scene.title || 'Untitled scene', () => hooks.open(scene.path), 'scene-open');
+      open.dataset.path = scene.path; open.title = scene.path; open.draggable = true;
+      if (activeBuffer?.path === scene.path) open.setAttribute('aria-current', 'page');
+      open.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(SCENE_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()!.id, sceneId: scene.id})); });
+      const siblings = entries.filter(entry => entry.parentId === scene.groupId); const siblingIndex = siblings.findIndex(entry => entry.id === scene.id);
+      const earlier = button('Move earlier', () => state?.library ? reorderLibraryItem(scene.id, -1) : reorder(scene, -1)); earlier.disabled = state!.library ? siblingIndex <= 0 : index === 0;
+      const later = button('Move later', () => state?.library ? reorderLibraryItem(scene.id, 1) : reorder(scene, 1)); later.disabled = state!.library ? siblingIndex === siblings.length - 1 : index === state!.scenes.length - 1;
+      line.append(open, rowMenu(`Actions for ${scene.title || basename(scene.path)}`, [
+        button('Rename…', () => renameLibraryItem(scene.id, 'scene')), button('Move to…', () => state?.library ? moveSheets([scene.id], scene.groupId) : moveScene(scene)),
+        earlier, later, el('p', scene.path, 'scene-path'),
+      ]));
+      row.append(line); dropTarget(row, scene.id);
+      return row;
+    };
+    function draw(parent: string | null, container: HTMLElement, depth: number) {
+      for (const entry of entries.filter(item => item.parentId === parent)) {
+        const scene = entry.kind === 'scene' ? state!.scenes.find(item => item.id === entry.id) : null;
+        const row = entry.kind === 'group' ? groupRow(entry, depth) : scene ? sceneRow(scene, depth) : null;
+        if (row) container.append(row);
+      }
+    }
+    draw(null, tree, 0);
+    if (tree.childElementCount) element.append(tree);
+    else element.append(el('p', 'No scenes yet. Create a scene or import Markdown files.', 'empty'));
+    const footer = el('div', '', 'tree-footer');
+    footer.append(button('New scene', () => { selectedGroup = null; newSheet(); }, 'tree-add'), button('New group', () => { selectedGroup = null; createLibraryGroup(); }, 'tree-add'));
+    // Dropping on the footer places scenes and groups at the end of the project, outside any group.
+    footer.addEventListener('dragover', event => { if (event.dataTransfer?.types.some(type => type === GROUP_DRAG_TYPE || type === SCENE_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer!.dropEffect = 'move'; } });
+    footer.addEventListener('drop', event => {
+      const raw = event.dataTransfer?.getData(GROUP_DRAG_TYPE);
+      if (!raw) { selectedGroup = null; acceptDrop(event); return; }
+      event.preventDefault();
+      try {
+        const source = JSON.parse(raw) as {repositoryId?: string; groupId?: string};
+        if (source.repositoryId === hooks.repository()?.id && source.groupId && state!.groups.some(item => item.id === source.groupId)) moveLibraryItems([source.groupId], null);
+      } catch { hooks.report('Could not read this drag. Use the ⋯ menu to move it instead.', true); }
+    });
+    element.append(footer);
     if (state.untrackedPaths.length || state.missingPaths.length) {
       const changes = el('details', '', 'drafting-warning');
       changes.append(el('summary', `${state.untrackedPaths.length} unlisted · ${state.missingPaths.length} missing scene files`));
       const list = el('ul'); state.untrackedPaths.forEach(path => list.append(el('li', `Unlisted: ${path}`))); state.missingPaths.forEach(path => list.append(el('li', `Missing: ${path}`)));
       changes.append(list, el('p', 'Discovery adds unlisted files and removes missing paths from the index. Existing scenes keep their order and IDs; source text is not rewritten.'), button('Preview ms discovery', () => { void changeManuscript({kind: 'reconcile'}); })); element.append(changes);
     }
-    element.append(el('p', 'Drag scenes to reorder, or use Move earlier / Move later. Reordering never renames files.', 'drafting-help'));
-    const list = el('ol', '', 'drafting-scenes'); list.setAttribute('aria-label', 'Drafting scenes in manuscript order');
-    state.scenes.forEach((scene, index) => {
-      const item = el('li', '', 'drafting-scene'); item.dataset.sceneId = scene.id;
-      const open = button(`${index + 1}. ${scene.title || basename(scene.path)}`, () => hooks.open(scene.path), 'scene-open'); open.title = scene.path;
-      open.draggable = true;
-      open.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(SCENE_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()!.id, sceneId: scene.id})); });
-      item.append(open, el('p', scene.path, 'scene-path'));
-      const group = state!.groups.find(group => group.id === scene.groupId); item.append(el('span', group?.title ?? 'Loose scene', 'scene-group'));
-      const actions = el('div', '', 'scene-actions');
-      const earlier = button('↑', () => reorder(scene, -1)); earlier.setAttribute('aria-label', `Move ${scene.title || basename(scene.path)} earlier`); earlier.title = 'Move earlier'; earlier.disabled = index === 0;
-      const later = button('↓', () => reorder(scene, 1)); later.setAttribute('aria-label', `Move ${scene.title || basename(scene.path)} later`); later.title = 'Move later'; later.disabled = index === state!.scenes.length - 1;
-      actions.append(earlier, later, button('Move…', () => moveScene(scene))); item.append(actions); dropTarget(item, scene.id); list.append(item);
-    });
-    element.append(list);
-    const dropEnd = el('div', state.scenes.length ? 'Drop here to place at the end' : 'No scenes yet. Create a scene or import Markdown files.', 'drafting-drop');
-    dropTarget(dropEnd); element.append(dropEnd);
-    if (state.groups.length) { const groups = el('p', `Groups: ${state.groups.map(group => group.title).join(' · ')}`, 'drafting-help'); element.append(groups); }
   }
-  return { element, supported, clear, load, initialize, importExternal, splitScene, get state() { return state; },
+  /** Project-level actions, built fresh each time the project ⋯ menu opens. */
+  function menuItems(): HTMLElement[] {
+    if (!state?.revision || state.recoveryRequired) return [];
+    const items: HTMLElement[] = [];
+    if (core.historyDraftingChange) {
+      const undoLibrary = button('Undo library change', () => { void history('undo'); }); undoLibrary.disabled = !canUndo;
+      const redoLibrary = button('Redo library change', () => { void history('redo'); }); redoLibrary.disabled = !canRedo;
+      items.push(undoLibrary, redoLibrary);
+    }
+    const undoButton = button('Undo last change', () => { void undoLastChange(); }); undoButton.disabled = !undo;
+    items.push(undoButton,
+      button('Import files…', () => { void importExternal(); }), button('Import repository files…', () => { void importRepository(); }), button('Copy legacy scenes…', () => { void importRepository('copy'); }),
+      button('Refresh from disk', () => { void hooks.run(async () => { try { const loaded = await load(); if (loaded) { await hooks.changed(loaded, null, []); hooks.report('Manuscript refreshed from disk.'); } } catch (error) { hooks.report(`Refresh failed: ${String(error)}`, true); } }); }));
+    return items;
+  }
+  return { element, supported, clear, load, menuItems, initialize, importExternal, splitScene, updateBuffer, get state() { return state; },
     /** The same previewed, confirmed reorder as the ↑/↓ buttons. Resolves once the change settles. */
-    async reorderScene(sceneId: string, delta: -1 | 1) { const scene = state?.scenes.find(item => item.id === sceneId); if (scene && state?.revision && !dialogs.size) await reorder(scene, delta); },
+    async reorderScene(sceneId: string, delta: -1 | 1) { const scene = state?.scenes.find(item => item.id === sceneId); if (scene && state?.revision && !dialogs.size) await (state.library ? reorderLibraryItem(sceneId, delta) : reorder(scene, delta)); },
     newScene() { if (state?.revision && !dialogs.size) newScene(); },
     importRepository(mode: 'move' | 'copy' = 'move') { void importRepository(mode); },
     undoLastChange() { void undoLastChange(); },

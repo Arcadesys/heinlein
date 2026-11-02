@@ -26,4 +26,5 @@ const core: LocalCore = {
 const app=mountStudio(document.querySelector<HTMLElement>('#app')!,core);
 const params=new URLSearchParams(location.search);
 const ready=params.has('draft')?app.selectRepository(async()=>session).then(()=>app.showDocument('ms/z.md')):Promise.resolve();
+if(params.has('standaloneLayout'))void ready.then(()=>document.querySelector<HTMLElement>('.studio')?.classList.add('standalone-writing'));
 if(params.has('guide'))void ready.then(()=>document.querySelector<HTMLButtonElement>('.first-story-entry')?.click());

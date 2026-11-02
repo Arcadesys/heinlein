@@ -37,7 +37,7 @@ it('connection_fuzz_renderer: bounded async sequences preserve authority, focus 
           const pending=deferred<QuestionAnswer>();core.askQuestion.mockReturnValueOnce(pending.promise);
           const marker=`Synthetic-${seed}-${step}`;write(marker);button('Send to OpenAI').click();
           const request=core.askQuestion.mock.calls.at(-1)![0];const before=core.askQuestion.mock.calls.length;
-          expect(request).toMatchObject({question:marker,context:'',history:[]});
+          expect(request).toMatchObject({question:marker,context:source,history:[]});
           expect(button('Send to OpenAI').disabled).toBe(true);
           const external=document.createElement('button');document.body.append(external);external.focus();
           const answer:QuestionAnswer={requestId:request.requestId,text:`${marker} <img src=x onerror=alert(1)> 🦊`,model:'synthetic-model',incomplete:false};

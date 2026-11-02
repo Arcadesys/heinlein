@@ -55,7 +55,8 @@ test('rejected findings disappear only from pending and stay dismissed after clo
     await activate(panel.locator('[data-finding-id="unrelated"]').getByRole('button', { name: 'Reject edit', exact: true }));
     await expect(panel.locator('[data-finding-id="unrelated"]')).toHaveCount(0);
     await activate(panel.getByRole('button', { name: 'Close review', exact: true }));
-    await page.getByRole('button', { name: 'Heinlein Review', exact: true }).click();
+    await page.getByRole('button', { name: 'Heinlein', exact: true }).click();
+    await page.getByRole('button', { name: 'Whole scene', exact: true }).click();
     await activate(panel.getByRole('button', { name: 'Reopen saved review synthetic-review-stable', exact: true }));
     await expect(panel.locator('.review-edit')).toHaveCount(2);
     await page.reload();

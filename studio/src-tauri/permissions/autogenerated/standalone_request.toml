@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-standalone-request"
+description = "Enables the standalone_request command without any pre-configured scope."
+commands.allow = ["standalone_request"]
+
+[[permission]]
+identifier = "deny-standalone-request"
+description = "Denies the standalone_request command without any pre-configured scope."
+commands.deny = ["standalone_request"]

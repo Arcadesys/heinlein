@@ -1,5 +1,5 @@
 #![cfg(unix)]
-use heinlein_local_mcp::{tool_definitions, LocalMcp};
+use heinlein_local_mcp::{tool_definitions, LocalMcp, Selection};
 use serde_json::{json, Value};
 use std::{fs, os::unix::fs::symlink, path::PathBuf};
 struct Fixture {
@@ -295,4 +295,52 @@ fn current_ignore_rule_blocks_mcp_historical_proposal_access() {
             .unwrap()["proposals"],
         json!([])
     );
+}
+
+#[test]
+fn legacy_manuscript_selection_is_ordered_bounded_and_readonly() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.root.join("book/vol/chapter")).unwrap();
+    fs::write(f.root.join("book/vol/chapter/z.md"), "First—exact.\r\n").unwrap();
+    fs::write(f.root.join("book/vol/chapter/a.md"), "Second").unwrap();
+    fs::write(f.root.join("book/vol/compat.md"), "Generated").unwrap();
+    let index = f.root.join("book/scene-manifest.json");
+    fs::write(&index, r#"{"schema_version":1,"project":"Test","volumes":[{"number":1,"title":"V","directory":"vol","chapters":[{"number":1,"title":"C","directory":"vol/chapter","source":"vol/compat.md","scenes":["vol/chapter/z.md","vol/chapter/a.md"]}]}]}"#).unwrap();
+    let select = || {
+        LocalMcp::open_selected(
+            &f.root,
+            Selection::Manuscript("book/scene-manifest.json".into()),
+            None,
+            "Reader".into(),
+        )
+    };
+    let server = select().unwrap();
+    let scenes = server
+        .execute("list_scenes", json!({"projectId":f.project}))
+        .unwrap();
+    assert_eq!(scenes["scenes"][0]["path"], "book/vol/chapter/z.md");
+    assert_eq!(scenes["scenes"][1]["path"], "book/vol/chapter/a.md");
+    for name in ["propose_scene", "list_proposals", "get_proposal"] {
+        assert_eq!(
+            server.execute(name, json!({})).unwrap_err().0,
+            "unknownTool"
+        );
+    }
+    fs::write(f.root.join(".gitignore"), "book/vol/chapter/z.md\n").unwrap();
+    assert!(select().is_err());
+    assert_eq!(
+        server
+            .execute(
+                "read_scene",
+                json!({"projectId":f.project,"sceneId":scenes["scenes"][0]["sceneId"]})
+            )
+            .unwrap_err()
+            .0,
+        "sourceUnavailable"
+    );
+    fs::remove_file(f.root.join(".gitignore")).unwrap();
+    fs::remove_file(&index).unwrap();
+    symlink(f.root.join("private.md"), &index).unwrap();
+    assert!(select().is_err());
+    assert!(server.execute("list_projects", json!({})).is_err());
 }

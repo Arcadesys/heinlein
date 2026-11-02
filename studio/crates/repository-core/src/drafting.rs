@@ -6,7 +6,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 #[cfg(unix)]
@@ -38,6 +38,27 @@ pub struct DraftingGroup {
     pub id: String,
     pub title: String,
 }
+/// Ordered entries in the author's library. `parent_id` identifies a group;
+/// `None` is the project root. Entry order is sibling order.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LibraryEntry {
+    pub id: String,
+    pub kind: LibraryEntryKind,
+    pub parent_id: Option<String>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LibraryEntryKind {
+    Group,
+    Scene,
+}
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LibrarySceneTitle {
+    pub id: String,
+    pub title: String,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manifest {
@@ -46,6 +67,10 @@ pub struct Manifest {
     pub project: String,
     pub groups: Vec<DraftingGroup>,
     pub scenes: Vec<DraftingScene>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<Vec<LibraryEntry>>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub preserve_flat_order: bool,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +80,8 @@ pub struct DraftingState {
     pub project: String,
     pub groups: Vec<DraftingGroup>,
     pub scenes: Vec<DraftingScene>,
+    pub library: Vec<LibraryEntry>,
+    pub library_legacy: bool,
     pub untracked_paths: Vec<String>,
     pub missing_paths: Vec<String>,
     pub recovery_required: bool,
@@ -67,6 +94,11 @@ pub struct DraftingState {
     deny_unknown_fields
 )]
 pub enum DraftingChange {
+    OrganizeLibrary {
+        groups: Vec<DraftingGroup>,
+        scene_titles: Vec<LibrarySceneTitle>,
+        entries: Vec<LibraryEntry>,
+    },
     Initialize {
         project: String,
     },
@@ -228,6 +260,20 @@ impl DraftingUndo {
     pub fn is_available(&self) -> bool {
         self.available
     }
+    pub fn is_metadata_only(&self) -> bool {
+        self.plan.is_metadata_only()
+    }
+}
+impl DraftingPlan {
+    pub fn is_metadata_only(&self) -> bool {
+        self.edits.len() == 1
+            && self.edits[0].path == MANIFEST
+            && self.edits[0].before.is_some()
+            && self.edits[0].after.is_some()
+            && self.recovery_paths.is_empty()
+            && self.read_guards.is_empty()
+            && self.external_guards.is_empty()
+    }
 }
 fn uuid() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -346,7 +392,81 @@ fn validate_manifest(value: &Manifest) -> Result<()> {
             return Err(Error::InvalidManifest);
         }
     }
+    if let Some(entries) = &value.library {
+        if entries.len() != ids.len() {
+            return Err(Error::InvalidManifest);
+        }
+        let mut seen = HashSet::new();
+        let scene_map: HashMap<_, _> = value
+            .scenes
+            .iter()
+            .map(|scene| (scene.id.as_str(), scene))
+            .collect();
+        let entry_map: HashMap<_, _> = entries
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry))
+            .collect();
+        for entry in entries {
+            if !seen.insert(entry.id.clone())
+                || entry
+                    .parent_id
+                    .as_ref()
+                    .is_some_and(|p| !groups.contains(p))
+            {
+                return Err(Error::InvalidManifest);
+            }
+            match entry.kind {
+                LibraryEntryKind::Group if !groups.contains(&entry.id) => {
+                    return Err(Error::InvalidManifest)
+                }
+                LibraryEntryKind::Scene => {
+                    let scene = scene_map
+                        .get(entry.id.as_str())
+                        .ok_or(Error::InvalidManifest)?;
+                    if scene.group_id != entry.parent_id {
+                        return Err(Error::InvalidManifest);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut complete = HashSet::new();
+        for group in &value.groups {
+            let mut cursor = Some(group.id.as_str());
+            let mut ancestors = HashSet::new();
+            while let Some(id) = cursor {
+                if complete.contains(id) {
+                    break;
+                }
+                if !ancestors.insert(id) {
+                    return Err(Error::InvalidManifest);
+                }
+                cursor = entry_map
+                    .get(id)
+                    .ok_or(Error::InvalidManifest)?
+                    .parent_id
+                    .as_deref();
+            }
+            complete.extend(ancestors);
+        }
+    }
     Ok(())
+}
+fn legacy_library(manifest: &Manifest) -> Vec<LibraryEntry> {
+    manifest
+        .groups
+        .iter()
+        .map(|g| LibraryEntry {
+            id: g.id.clone(),
+            kind: LibraryEntryKind::Group,
+            parent_id: None,
+        })
+        .chain(manifest.scenes.iter().map(|s| LibraryEntry {
+            id: s.id.clone(),
+            kind: LibraryEntryKind::Scene,
+            parent_id: s.group_id.clone(),
+        }))
+        .collect()
 }
 /// Validate a GitHub incoming schema-v2 candidate without writing any files.
 pub fn parse_workspace_manifest(text: &str) -> Result<Manifest> {
@@ -505,9 +625,15 @@ fn validate_split_journal(journal: &Journal) -> Result<()> {
     {
         return Err(invalid());
     }
+    let new_id = new.id.clone();
     after.scenes.remove(position + 1);
+    if let Some(entries) = after.library.as_mut() {
+        entries.retain(|entry| entry.id != new_id);
+    }
     if before.scenes != after.scenes
         || before.groups != after.groups
+        || before.library != after.library
+        || before.preserve_flat_order != after.preserve_flat_order
         || before.id != after.id
         || before.project != after.project
     {
@@ -650,6 +776,12 @@ impl Repository {
             groups: manifest
                 .as_ref()
                 .map_or_else(Vec::new, |m| m.groups.clone()),
+            library: manifest.as_ref().map_or_else(Vec::new, |m| {
+                m.library.clone().unwrap_or_else(|| legacy_library(m))
+            }),
+            library_legacy: manifest
+                .as_ref()
+                .is_some_and(|m| m.library.is_none() || m.preserve_flat_order),
             untracked_paths: members
                 .iter()
                 .filter(|p| !tracked.contains(p.as_str()))
@@ -722,6 +854,8 @@ impl Repository {
             project: self.name(),
             groups: vec![],
             scenes: vec![],
+            library: None,
+            preserve_flat_order: false,
         });
         if existing.is_none()
             && !matches!(
@@ -763,7 +897,71 @@ impl Repository {
             recovery_journal_hash: None,
             external_guards: vec![],
         };
+        let reordered = match &change {
+            DraftingChange::ReorderScene {
+                scene_id,
+                before_id,
+                ..
+            }
+            | DraftingChange::MoveScene {
+                scene_id,
+                before_id,
+                ..
+            } => Some((scene_id.clone(), before_id.clone())),
+            _ => None,
+        };
+        let organized = matches!(&change, DraftingChange::OrganizeLibrary { .. });
         match change {
+            DraftingChange::OrganizeLibrary {
+                groups,
+                scene_titles,
+                entries,
+            } => {
+                let was_flat = manifest.library.is_none() || manifest.preserve_flat_order;
+                let previous = manifest
+                    .library
+                    .clone()
+                    .unwrap_or_else(|| legacy_library(&manifest));
+                let previous_ids: HashSet<_> =
+                    previous.iter().map(|entry| entry.id.as_str()).collect();
+                let retained: Vec<_> = entries
+                    .iter()
+                    .filter(|entry| previous_ids.contains(entry.id.as_str()))
+                    .cloned()
+                    .collect();
+                manifest.preserve_flat_order = was_flat && retained == previous;
+                if manifest
+                    .groups
+                    .iter()
+                    .any(|old| !groups.iter().any(|g| g.id == old.id))
+                    || scene_titles.len() != manifest.scenes.len()
+                {
+                    return Err(Error::InvalidManifest);
+                }
+                let mut seen = HashSet::new();
+                for item in scene_titles {
+                    if !seen.insert(item.id.clone()) {
+                        return Err(Error::InvalidManifest);
+                    }
+                    let scene = manifest
+                        .scenes
+                        .iter_mut()
+                        .find(|s| s.id == item.id)
+                        .ok_or(Error::InvalidManifest)?;
+                    title(&item.title)?;
+                    scene.title = item.title;
+                    scene.group_id = entries
+                        .iter()
+                        .find(|e| e.kind == LibraryEntryKind::Scene && e.id == item.id)
+                        .ok_or(Error::InvalidManifest)?
+                        .parent_id
+                        .clone();
+                }
+                manifest.groups = groups;
+                manifest.library = Some(entries);
+                validate_manifest(&manifest)?;
+                plan.preview.summary = "Organize library".into();
+            }
             DraftingChange::Initialize { project } => {
                 title(&project)?;
                 manifest.project = project;
@@ -956,10 +1154,7 @@ impl Repository {
                         return Err(Error::DraftingCollision);
                     }
                     let name = parts(&path)?.pop().ok_or(Error::InvalidPath)?.to_owned();
-                    let target = join(&dir, &name)?;
-                    if path == target {
-                        return Err(Error::DraftingCollision);
-                    }
+                    let target = self.import_target(&plan, &dir, &name)?;
                     self.transfer(&mut plan, &path, &target, mode == "move")?;
                     let scene = if mode == "move" {
                         if let Some(index) = manifest.scenes.iter().position(|s| s.path == path) {
@@ -970,7 +1165,7 @@ impl Repository {
                         } else {
                             DraftingScene {
                                 id: uuid(),
-                                title: scene_title(&target),
+                                title: scene_title(&name),
                                 path: target,
                                 group_id: group_id.clone(),
                             }
@@ -978,7 +1173,7 @@ impl Repository {
                     } else {
                         DraftingScene {
                             id: uuid(),
-                            title: scene_title(&target),
+                            title: scene_title(&name),
                             path: target,
                             group_id: group_id.clone(),
                         }
@@ -1005,7 +1200,7 @@ impl Repository {
                         return Err(Error::AssetReferences);
                     }
                     plan.external_guards.push(source.clone());
-                    let target = join(&dir, &source.name)?;
+                    let target = self.import_target(&plan, &dir, &source.name)?;
                     self.add_new_file(
                         &mut plan,
                         &target,
@@ -1016,7 +1211,7 @@ impl Repository {
                         &mut manifest,
                         DraftingScene {
                             id: uuid(),
-                            title: scene_title(&target),
+                            title: scene_title(&source.name),
                             path: target,
                             group_id: group_id.clone(),
                         },
@@ -1068,6 +1263,41 @@ impl Repository {
                 plan.preview.warnings.push("Legacy scene-manifest.json, source scenes and generated compatibility documents stay unchanged.".into());
             }
             DraftingChange::RecoverInterrupted {} => unreachable!(),
+        }
+        if !organized && manifest.library.is_some() {
+            let mut entries = manifest.library.take().unwrap();
+            entries.retain(|e| match e.kind {
+                LibraryEntryKind::Group => manifest.groups.iter().any(|g| g.id == e.id),
+                LibraryEntryKind::Scene => manifest.scenes.iter().any(|s| s.id == e.id),
+            });
+            for scene in &manifest.scenes {
+                if let Some(entry) = entries
+                    .iter_mut()
+                    .find(|e| e.kind == LibraryEntryKind::Scene && e.id == scene.id)
+                {
+                    entry.parent_id = scene.group_id.clone();
+                }
+            }
+            for entry in legacy_library(&manifest) {
+                if !entries.iter().any(|e| e.id == entry.id) {
+                    entries.push(entry);
+                }
+            }
+            if let Some((id, before)) = reordered {
+                manifest.preserve_flat_order = false;
+                if let Some(index) = entries.iter().position(|e| e.id == id) {
+                    let item = entries.remove(index);
+                    let position = before
+                        .and_then(|id| {
+                            entries
+                                .iter()
+                                .position(|e| e.id == id && e.parent_id == item.parent_id)
+                        })
+                        .unwrap_or(entries.len());
+                    entries.insert(position, item);
+                }
+            }
+            manifest.library = Some(entries);
         }
         let after = manifest_text(&manifest)?;
         let before = self.snapshot(MANIFEST)?;
@@ -1170,6 +1400,34 @@ impl Repository {
             destination: Some(path.into()),
         });
         Ok(())
+    }
+    fn import_target(&self, plan: &DraftingPlan, dir: &str, name: &str) -> Result<String> {
+        let preferred = join(dir, name)?;
+        let existing = match self.list(dir) {
+            Ok(entries) => entries
+                .iter()
+                .any(|entry| entry.name.eq_ignore_ascii_case(name)),
+            Err(Error::NotFound) => false,
+            Err(error) => return Err(error),
+        };
+        let collides = existing
+            || plan
+                .edits
+                .iter()
+                .any(|edit| edit.path.eq_ignore_ascii_case(&preferred))
+            || plan
+                .before_members
+                .iter()
+                .any(|path| path.eq_ignore_ascii_case(&preferred));
+        if !collides {
+            match self.check_case_collision(&preferred) {
+                Ok(()) => return Ok(preferred),
+                Err(Error::DraftingCollision) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        // A generated name remains guarded by add_new_file and the atomic apply.
+        join(dir, &format!("sheet-{}.md", uuid()))
     }
     fn transfer(
         &self,
@@ -1362,6 +1620,18 @@ impl Repository {
         }
         self.apply_drafting(&undo.plan, recovery)?;
         self.load_drafting()
+    }
+    /// Apply a guarded history entry and return its inverse for redo/undo.
+    pub fn reverse_drafting(
+        &self,
+        undo: &DraftingUndo,
+        recovery: &RecoveryStore,
+    ) -> Result<(DraftingState, DraftingUndo)> {
+        if !undo.available {
+            return Err(Error::DraftingChanged);
+        }
+        let inverse = self.apply_drafting(&undo.plan, recovery)?;
+        Ok((self.load_drafting()?, inverse))
     }
     #[cfg(unix)]
     fn apply_drafting_locked(
@@ -1770,6 +2040,252 @@ mod tests {
             expected_hash: content_hash(text),
             byte_offset: offset,
         }
+    }
+
+    #[test]
+    fn library_nested_roundtrip_validation_and_history() {
+        let f = Fixture::new();
+        f.initialize();
+        f.create("ms/a.md");
+        f.create("ms/b.md");
+        let initial = f.repo.load_drafting().unwrap();
+        let parent = DraftingGroup {
+            id: uuid(),
+            title: "Parent".into(),
+        };
+        let child = DraftingGroup {
+            id: uuid(),
+            title: "Child".into(),
+        };
+        let entries = vec![
+            LibraryEntry {
+                id: parent.id.clone(),
+                kind: LibraryEntryKind::Group,
+                parent_id: None,
+            },
+            LibraryEntry {
+                id: child.id.clone(),
+                kind: LibraryEntryKind::Group,
+                parent_id: Some(parent.id.clone()),
+            },
+            LibraryEntry {
+                id: initial.scenes[1].id.clone(),
+                kind: LibraryEntryKind::Scene,
+                parent_id: Some(child.id.clone()),
+            },
+            LibraryEntry {
+                id: initial.scenes[0].id.clone(),
+                kind: LibraryEntryKind::Scene,
+                parent_id: Some(parent.id.clone()),
+            },
+        ];
+        let change = |entries: Vec<LibraryEntry>| DraftingChange::OrganizeLibrary {
+            groups: vec![parent.clone(), child.clone()],
+            scene_titles: initial
+                .scenes
+                .iter()
+                .map(|s| LibrarySceneTitle {
+                    id: s.id.clone(),
+                    title: s.title.clone(),
+                })
+                .collect(),
+            entries,
+        };
+        let mut cycle = entries.clone();
+        cycle[0].parent_id = Some(child.id.clone());
+        assert!(matches!(
+            f.preview(change(cycle)),
+            Err(Error::InvalidManifest)
+        ));
+        let mut duplicate = entries.clone();
+        duplicate[3] = duplicate[2].clone();
+        assert!(matches!(
+            f.preview(change(duplicate)),
+            Err(Error::InvalidManifest)
+        ));
+        let mut missing = entries.clone();
+        missing[2].parent_id = Some(uuid());
+        assert!(matches!(
+            f.preview(change(missing)),
+            Err(Error::InvalidManifest)
+        ));
+        let before_bytes = fs::read(f.repo.root().join(MANIFEST)).unwrap();
+        let failed_plan = f.preview(change(entries.clone())).unwrap();
+        FAIL_AFTER_EDIT.with(|slot| slot.set(Some(1)));
+        let failure = f.repo.apply_drafting(&failed_plan, &f.recovery);
+        FAIL_AFTER_EDIT.with(|slot| slot.set(None));
+        assert_eq!(failure.unwrap_err(), Error::Io);
+        assert_eq!(
+            fs::read(f.repo.root().join(MANIFEST)).unwrap(),
+            before_bytes
+        );
+        let undo = f.apply(change(entries.clone()));
+        let saved = f.repo.load_drafting().unwrap();
+        assert_eq!(saved.library, entries);
+        let reopened = Repository::open(f.repo.root()).unwrap();
+        assert_eq!(reopened.load_drafting().unwrap().library, entries);
+        assert_eq!(
+            saved.scenes.iter().map(|s| &s.path).collect::<Vec<_>>(),
+            initial.scenes.iter().map(|s| &s.path).collect::<Vec<_>>()
+        );
+        let mut second_entries = entries.clone();
+        second_entries[2].parent_id = Some(parent.id.clone());
+        let second_undo = f.apply(change(second_entries.clone()));
+        let (after_first_undo, second_redo) =
+            f.repo.reverse_drafting(&second_undo, &f.recovery).unwrap();
+        assert_eq!(after_first_undo.library, entries);
+        let (restored, redo) = f.repo.reverse_drafting(&undo, &f.recovery).unwrap();
+        assert_eq!(restored.library, initial.library);
+        let (redone, _) = f.repo.reverse_drafting(&redo, &f.recovery).unwrap();
+        assert_eq!(redone.library, entries);
+        let (redone_second, _) = f.repo.reverse_drafting(&second_redo, &f.recovery).unwrap();
+        assert_eq!(redone_second.library, second_entries);
+        f.put(MANIFEST, "external edit");
+        assert!(f.repo.reverse_drafting(&undo, &f.recovery).is_err());
+        assert_eq!(
+            fs::read_to_string(f.repo.root().join(MANIFEST)).unwrap(),
+            "external edit"
+        );
+    }
+
+    #[test]
+    fn legacy_flat_order_survives_a_rename_until_an_explicit_move() {
+        let f = Fixture::new();
+        f.initialize();
+        f.create("ms/a.md");
+        f.create("ms/b.md");
+        f.apply(DraftingChange::CreateGroup {
+            title: "Old name".into(),
+        });
+        let before = f.repo.load_drafting().unwrap();
+        f.apply(DraftingChange::ReorderScene {
+            scene_id: before.scenes[1].id.clone(),
+            before_id: None,
+            group_id: Some(before.groups[0].id.clone()),
+        });
+        let flat = f.repo.load_drafting().unwrap();
+        assert!(flat.library_legacy);
+        let mut groups = flat.groups.clone();
+        groups[0].title = "New name".into();
+        let titles = || {
+            flat.scenes
+                .iter()
+                .map(|scene| LibrarySceneTitle {
+                    id: scene.id.clone(),
+                    title: scene.title.clone(),
+                })
+                .collect()
+        };
+        f.apply(DraftingChange::OrganizeLibrary {
+            groups: groups.clone(),
+            scene_titles: titles(),
+            entries: flat.library.clone(),
+        });
+        let renamed = f.repo.load_drafting().unwrap();
+        assert!(renamed.library_legacy);
+        assert_eq!(renamed.scenes, flat.scenes);
+        let mut moved = renamed.library.clone();
+        moved
+            .iter_mut()
+            .find(|entry| entry.id == flat.scenes[0].id)
+            .unwrap()
+            .parent_id = Some(groups[0].id.clone());
+        f.apply(DraftingChange::OrganizeLibrary {
+            groups,
+            scene_titles: titles(),
+            entries: moved,
+        });
+        assert!(!f.repo.load_drafting().unwrap().library_legacy);
+    }
+
+    #[test]
+    fn import_name_collisions_allocate_new_paths_without_replacing_sources() {
+        let f = Fixture::new();
+        f.initialize();
+        f.create("ms/a.md");
+        f.put("ms/a.md", "Original");
+        f.put("draft/a.md", "Repository copy");
+        let before = f.repo.load_drafting().unwrap();
+        let undo = f.apply(DraftingChange::ImportRepository {
+            paths: vec!["draft/a.md".into()],
+            destination: "ms".into(),
+            mode: "copy".into(),
+            group_id: None,
+            before_id: None,
+        });
+        let after = f.repo.load_drafting().unwrap();
+        let imported = after
+            .scenes
+            .iter()
+            .find(|scene| !before.scenes.iter().any(|old| old.id == scene.id))
+            .unwrap();
+        assert!(imported.path.starts_with("ms/sheet-"));
+        assert_eq!(imported.title, "a");
+        assert_eq!(
+            fs::read_to_string(f.repo.root().join("ms/a.md")).unwrap(),
+            "Original"
+        );
+        assert_eq!(
+            fs::read_to_string(f.repo.root().join(&imported.path)).unwrap(),
+            "Repository copy"
+        );
+        f.repo.undo_drafting(&undo, &f.recovery).unwrap();
+        assert_eq!(
+            fs::read_to_string(f.repo.root().join("draft/a.md")).unwrap(),
+            "Repository copy"
+        );
+        let external_dir = f.temp.path().join("external");
+        fs::create_dir(&external_dir).unwrap();
+        fs::write(external_dir.join("a.md"), "External copy").unwrap();
+        let file = DraftingExternalFile::read_selected(&external_dir.join("a.md")).unwrap();
+        let state = f.repo.load_drafting().unwrap();
+        let plan = f
+            .repo
+            .preview_drafting(
+                state.revision.as_deref(),
+                DraftingChange::ImportExternal {
+                    selection_id: "selected".into(),
+                    destination: "ms".into(),
+                    group_id: None,
+                    before_id: None,
+                },
+                &[file],
+                &f.recovery,
+            )
+            .unwrap();
+        f.repo.apply_drafting(&plan, &f.recovery).unwrap();
+        let result = f.repo.load_drafting().unwrap();
+        let copied = result
+            .scenes
+            .iter()
+            .find(|scene| !state.scenes.iter().any(|old| old.id == scene.id))
+            .unwrap();
+        assert!(copied.path.starts_with("ms/sheet-"));
+        assert_eq!(copied.title, "a");
+        assert_eq!(
+            fs::read_to_string(f.repo.root().join("ms/a.md")).unwrap(),
+            "Original"
+        );
+        fs::create_dir(f.repo.root().join("ms/b.md")).unwrap();
+        fs::write(external_dir.join("b.md"), "Directory collision").unwrap();
+        let file = DraftingExternalFile::read_selected(&external_dir.join("b.md")).unwrap();
+        let state = f.repo.load_drafting().unwrap();
+        let plan = f
+            .repo
+            .preview_drafting(
+                state.revision.as_deref(),
+                DraftingChange::ImportExternal {
+                    selection_id: "selected".into(),
+                    destination: "ms".into(),
+                    group_id: None,
+                    before_id: None,
+                },
+                &[file],
+                &f.recovery,
+            )
+            .unwrap();
+        f.repo.apply_drafting(&plan, &f.recovery).unwrap();
+        assert!(f.repo.root().join("ms/b.md").is_dir());
     }
 
     #[test]

@@ -11,3 +11,7 @@ Heinlein turns author-controlled manuscripts into publication artifacts. Editori
 - Use the archive's canon and manuscript source for facts rather than inventing corrections.
 
 Use `python3 tools/unslop.py check FILE` for inexpensive advisory lint; use `python3 tools/voice_guardian.py review FILE` for an optional model-backed review (requires configured Claude or Codex CLI). All editorial results require author judgment.
+
+## UX invariant
+
+A UX change should not reflow the text unless the user explicitly asks for it.

@@ -29,7 +29,8 @@ const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') a
 const panel = () => document.querySelector<HTMLElement>('[aria-label="Drafting questions"]')!;
 function question(value: string) {const input = document.querySelector<HTMLTextAreaElement>('[aria-label="Your message"]')!; input.value = value; input.dispatchEvent(new Event('input', {bubbles: true}));}
 async function start(bridge: LocalCore) {app = mountStudio(document.body, bridge); await app.selectRepository(async () => session); await app.showDocument('scene.md');}
-async function open() {button('Questions').click(); await vi.waitFor(() => expect(button('Recheck OpenAI setup').disabled).toBe(false));}
+const toggle = () => document.querySelector<HTMLButtonElement>('.editor-toolbar button[aria-controls="drafting-questions"]')!;
+async function open() {toggle().click(); await vi.waitFor(() => {expect(panel().hidden).toBe(false); expect(panel().getAttribute('aria-busy')).toBe('false'); expect(button('Recheck OpenAI setup').disabled).toBe(false);});}
 async function highlight(from: number, to: number) {
   vi.spyOn(view().dom, 'getBoundingClientRect').mockReturnValue(new DOMRect(10, 20, 600, 500));
   vi.spyOn(view(), 'coordsAtPos').mockReturnValue({top: 200, bottom: 220, left: 200, right: 201});
@@ -59,9 +60,9 @@ describe('Studio in-app drafting questions', () => {
   });
   it('keeps editing, manual save, and autosave available during a pending request', async () => {
     const bridge = core(); const response = deferred<QuestionAnswer>(); bridge.askQuestion.mockReturnValueOnce(response.promise);
-    await start(bridge); await open(); button('Capture current scene').click(); question('What next?'); button('Send to OpenAI').click();
-    expect(document.querySelector('dialog[open]')).toBeNull(); expect(panel().tagName).toBe('ASIDE'); expect(view().state.readOnly).toBe(false);
-    button('Return to writing').click(); expect(document.activeElement).toBe(view().contentDOM);
+    await start(bridge); await open(); button('Capture current scene').click(); question('What next?'); button('Ask').click();
+    expect(document.querySelector('dialog[open]')).toBeNull(); expect(panel().tagName).toBe('DIV'); expect(view().state.readOnly).toBe(false);
+    view().focus(); expect(document.activeElement).toBe(view().contentDOM);
     view().dispatch({changes: {from: view().state.doc.length, insert: '\nAuthor keeps writing.'}});
     expect(button('Save').disabled).toBe(false); button('Save').click();
     await vi.waitFor(() => expect(bridge.saveDocument).toHaveBeenCalledTimes(1));
@@ -78,38 +79,38 @@ describe('Studio in-app drafting questions', () => {
   });
   it('maps the selected passage to exact raw CRLF/Unicode context', async () => {
     const bridge = core(); await start(bridge); const text = view().state.doc.toString(); const from = text.indexOf('🐺');
-    view().dispatch({selection: {anchor: from, head: text.length}}); await open(); button('Capture selected text').click(); question('About this passage'); button('Send to OpenAI').click();
+    view().dispatch({selection: {anchor: from, head: text.length}}); await open(); button('Capture selected text').click(); question('About this passage'); button('Ask').click();
     await vi.waitFor(() => expect(bridge.askQuestion).toHaveBeenCalledTimes(1));
     expect(bridge.askQuestion.mock.calls[0][0].context).toBe('🐺 passage.\r\nLast line');
     expect(bridge.readDocument).toHaveBeenCalledTimes(1); expect(bridge.saveDocument).not.toHaveBeenCalled();
   });
   it('cancels and clears private context/history on scene and repository navigation', async () => {
     const bridge = core(); const first = deferred<QuestionAnswer>(); bridge.askQuestion.mockReturnValueOnce(first.promise); await start(bridge); await open();
-    button('Capture current scene').click(); question('Private old scene question'); button('Send to OpenAI').click(); const request1 = bridge.askQuestion.mock.calls[0][0];
+    button('Capture current scene').click(); question('Private old scene question'); button('Ask').click(); const request1 = bridge.askQuestion.mock.calls[0][0];
     await app!.showDocument('other.md'); expect(panel().hidden).toBe(true); expect(panel().textContent).not.toContain('Private old scene question');
     expect(panel().textContent).not.toContain('A 🐺 passage.'); expect(bridge.cancelQuestion).toHaveBeenCalledWith(request1.requestId);
     first.resolve({requestId: request1.requestId, text: 'Late old scene answer', model: 'mock-model', incomplete: false}); await Promise.resolve();
     await open(); expect(panel().textContent).not.toContain('Late old scene answer');
-    const second = deferred<QuestionAnswer>(); bridge.askQuestion.mockReturnValueOnce(second.promise); question('Old repository question'); button('Send to OpenAI').click(); const request2 = bridge.askQuestion.mock.calls[1][0];
+    const second = deferred<QuestionAnswer>(); bridge.askQuestion.mockReturnValueOnce(second.promise); question('Old repository question'); button('Ask').click(); const request2 = bridge.askQuestion.mock.calls[1][0];
     await app!.selectRepository(async () => ({...session, id: 'different-session'})); expect(bridge.cancelQuestion).toHaveBeenCalledWith(request2.requestId);
     second.resolve({requestId: request2.requestId, text: 'Late other repository answer', model: 'mock-model', incomplete: false}); await Promise.resolve();
-    await app!.showDocument('next.md'); await open(); expect(panel().textContent).not.toContain('Late other repository answer'); expect(panel().textContent).toContain('No manuscript text will be sent');
+    await app!.showDocument('next.md'); await open(); expect(panel().textContent).not.toContain('Late other repository answer'); expect(panel().textContent).toContain('Active sheet · next.md');
   });
   it('keeps local drafting and save usable when OpenAI is unconfigured', async () => {
     const bridge = core(); bridge.questionStatus.mockResolvedValue({...await bridge.questionStatus(), configured: false, model: '', message: 'OpenAI is not configured.'}); await start(bridge); await open();
-    question('A question'); expect(button('Send to OpenAI').disabled).toBe(true); expect(panel().textContent).toContain('not configured');
+    question('A question'); expect(button('Ask').disabled).toBe(true); expect(panel().textContent).toContain('not configured');
     view().dispatch({changes: {from: view().state.doc.length, insert: '!'}}); await app!.saveCurrent();
     expect(bridge.saveDocument).toHaveBeenCalledTimes(1); expect(bridge.askQuestion).not.toHaveBeenCalled();
   });
   it('supports keyboard close/return without changing the selection or intercepting editor Escape', async () => {
     const bridge = core(); await start(bridge); const from = view().state.doc.toString().indexOf('🐺');
-    view().dispatch({selection: {anchor: from, head: from + 2}}); await open(); expect(button('Questions').getAttribute('aria-expanded')).toBe('true');
-    button('Return to writing').click(); expect(document.activeElement).toBe(view().contentDOM);
+    view().dispatch({selection: {anchor: from, head: from + 2}}); await open(); expect(toggle().getAttribute('aria-expanded')).toBe('true');
+    view().focus(); expect(document.activeElement).toBe(view().contentDOM);
     view().contentDOM.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); expect(panel().hidden).toBe(false);
     const selectionBeforeClose = view().state.selection.main;
     document.querySelector('textarea[aria-label="Your message"]')!.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
     expect(panel().hidden).toBe(true); expect(document.activeElement).toBe(view().contentDOM); expect(view().state.selection.main).toEqual(selectionBeforeClose);
-    expect(button('Questions').getAttribute('aria-expanded')).toBe('false'); expect(bridge.askQuestion).not.toHaveBeenCalled();
+    expect(toggle().getAttribute('aria-expanded')).toBe('false'); expect(bridge.askQuestion).not.toHaveBeenCalled();
   });
   it('offers contextual Ask Heinlein and captures exact highlighted bytes without sending', async () => {
     const bridge = core(); await start(bridge); const text = view().state.doc.toString(); const from = text.indexOf('🐺'); await highlight(from, text.length);
@@ -124,7 +125,7 @@ describe('Studio in-app drafting questions', () => {
   });
   it('provides a toolbar and keyboard fallback for asking about the selection', async () => {
     const bridge = core(); await start(bridge); await highlight(0, 3);
-    expect(button('Ask Heinlein about selection').disabled).toBe(false);
+    expect(toggle().disabled).toBe(false);
     const key = new KeyboardEvent('keydown', {key: 'Enter', ctrlKey: true, altKey: true, bubbles: true, cancelable: true}); view().contentDOM.dispatchEvent(key);
     expect(key.defaultPrevented).toBe(true); await vi.waitFor(() => expect(panel().hidden).toBe(false));
     expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe('---'); expect(bridge.askQuestion).not.toHaveBeenCalled();
@@ -133,18 +134,21 @@ describe('Studio in-app drafting questions', () => {
     const bridge = core(); await start(bridge); if (change === 'close' || change === 'clear') await open(); await highlight(0, 3);
     const digest = deferred<ArrayBuffer>(); vi.stubGlobal('crypto', {subtle: {digest: vi.fn(() => digest.promise)}, randomUUID: webcrypto.randomUUID.bind(webcrypto)});
     document.querySelector<HTMLButtonElement>('.selection-ask-action')!.click();
-    if (change === 'scene') await app!.showDocument('other.md'); else if (change === 'close') button('Close questions').click(); else if (change === 'clear') button('Clear conversation').click(); else view().dispatch({selection: {anchor: 4, head: 7}});
+    if (change === 'scene') await app!.showDocument('other.md'); else if (change === 'close') button('Collapse').click(); else if (change === 'clear') button('Clear conversation').click(); else view().dispatch({selection: {anchor: 4, head: 7}});
     digest.resolve(new ArrayBuffer(32)); await new Promise(resolve => setTimeout(resolve, 20));
     expect(panel().hidden).toBe(change !== 'clear'); expect(bridge.askQuestion).not.toHaveBeenCalled();
-    expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe('');
+    expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe(change === 'clear' || change === 'close' ? original : '');
     expect(document.querySelectorAll('.selection-ask-action')).toHaveLength(1);
   });
-  it('captures a new selection into an existing panel, cancels its old request, and ignores late text', async () => {
+  it('requires explicit cancellation before capturing another passage and ignores late text', async () => {
     const bridge = core(); const response = deferred<QuestionAnswer>(); bridge.askQuestion.mockReturnValueOnce(response.promise);
-    await start(bridge); await open(); question('Earlier question'); button('Send to OpenAI').click(); const request = bridge.askQuestion.mock.calls[0][0];
+    await start(bridge); await open(); question('Earlier question'); button('Ask').click(); const request = bridge.askQuestion.mock.calls[0][0];
+    await highlight(0, 3); document.querySelector<HTMLButtonElement>('.selection-ask-action')!.click();
+    await vi.waitFor(() => expect(panel().textContent).toContain('Wait for the current request'));
+    expect(bridge.cancelQuestion).not.toHaveBeenCalled(); button('Cancel request').click();
     await highlight(0, 3); document.querySelector<HTMLButtonElement>('.selection-ask-action')!.click();
     await vi.waitFor(() => expect(bridge.cancelQuestion).toHaveBeenCalledWith(request.requestId));
-    expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe('---'); expect(panel().textContent).toContain('may still count toward plan usage');
+    await vi.waitFor(() => expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe('---'));
     expect(document.activeElement).toBe(document.querySelector('[aria-label="Your message"]')); expect(bridge.askQuestion).toHaveBeenCalledTimes(1);
     response.resolve({requestId: request.requestId, text: 'Old request answer', model: 'mock-model', incomplete: false}); await Promise.resolve();
     expect(panel().textContent).not.toContain('Old request answer'); expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n'));
@@ -171,68 +175,73 @@ async function revisionCore() {
     reviewProposal: vi.fn(async () => review), reviewProposalRevert: vi.fn(async () => ({...review, kind: 'revert' as const})), applyProposalReview: vi.fn(async (): Promise<null> => null), cancelProposalReview: vi.fn(async () => {}),
   };
 }
-function responseMode(value: 'ask' | 'revision') {const mode = document.querySelector<HTMLSelectElement>('[aria-label="Response mode"]')!; mode.value = value; mode.dispatchEvent(new Event('change'));}
 async function beginRevision(bridge: LocalCore) {
   await start(bridge); const source = view().state.doc.toString(); const from = source.indexOf('🐺');
-  await highlight(from, source.indexOf('\nLast')); await open(); responseMode('revision'); question('Suggest a clearer passage');
+  await highlight(from, source.indexOf('\nLast')); await open(); question('Suggest a clearer passage');
 }
-async function suggested() {button('Send to OpenAI').click(); await vi.waitFor(() => expect([...document.querySelectorAll('button')].some(node => node.textContent === 'Review proposed revision')).toBe(true));}
+async function suggested() {button('Suggest rewrite').click(); await vi.waitFor(() => expect([...document.querySelectorAll('button')].some(node => node.textContent === 'Apply…')).toBe(true));}
 
 describe('Studio attributed revision workflow', () => {
-  it('uses only the exact saved selection and requires whole-scene review then native author confirmation', async () => {
+  it('uses only the exact saved selection and applies the shown change through native author confirmation', async () => {
     const bridge = await revisionCore(); await beginRevision(bridge); await suggested();
     expect(bridge.askQuestion).not.toHaveBeenCalled(); expect(bridge.reviewProposal).not.toHaveBeenCalled(); expect(bridge.applyProposalReview).not.toHaveBeenCalled(); expect(bridge.saveDocument).not.toHaveBeenCalled();
     const args = bridge.suggestQuestionRevision.mock.calls[0] as unknown as [QuestionRequest, unknown, {selectedText: string; fromUtf8: number; toUtf8: number}];
     expect(args[0].context).toBe(''); expect(args[0].history).toEqual([]); expect(args[2].selectedText).toBe('🐺 passage.');
     expect(args[2].fromUtf8).toBe(new TextEncoder().encode(original.slice(0, original.indexOf('🐺'))).length);
-    expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n')); button('Review proposed revision').click();
-    await vi.waitFor(() => expect(document.querySelector('[aria-label="Review whole-scene proposal"]')).not.toBeNull());
-    const dialog = document.querySelector('[aria-label="Review whole-scene proposal"]')!;
-    expect(dialog.textContent).toContain('Native OpenAI suggestion'); expect(dialog.textContent).not.toContain('Unverified local MCP client'); expect(dialog.textContent).toContain('not authenticated authorship');
-    expect([...dialog.querySelectorAll('pre')].map(node => node.textContent)).toEqual([original, original.replace('🐺 passage.', 'new passage.')]); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
-    button('Continue to native confirmation').click(); await vi.waitFor(() => expect(bridge.applyProposalReview).toHaveBeenCalledTimes(1));
+    expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n'));
+    // The authoritative whole-scene change equals the passage diff already shown, so Apply goes to native confirmation.
+    button('Apply…').click(); await vi.waitFor(() => expect(bridge.applyProposalReview).toHaveBeenCalledTimes(1));
+    expect(document.querySelector<HTMLElement>('[aria-label="Review whole-scene revision"]')?.hidden).toBe(true);
     expect(bridge.applyProposalReview).toHaveBeenCalledWith(session.id, {reviewId: 'review', proposalId: 'proposal', baseHash: args[2] && (await bridge.readDocument('', '')).contentHash, replacementHash: 'replacement', diffHash: 'diff'});
     expect(bridge.saveDocument).not.toHaveBeenCalled(); expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n'));
   });
   it('keeps typing and saving usable during a revision request and prevents reviewing the stale result', async () => {
     const bridge = await revisionCore(); const result = deferred<Awaited<ReturnType<typeof bridge.suggestQuestionRevision>>>(); bridge.suggestQuestionRevision.mockReturnValueOnce(result.promise);
-    await beginRevision(bridge); button('Send to OpenAI').click(); await vi.waitFor(() => expect(bridge.suggestQuestionRevision).toHaveBeenCalledTimes(1));
-    expect(view().state.readOnly).toBe(false); button('Return to writing').click(); view().dispatch({changes: {from: view().state.doc.length, insert: '!'}}); await app!.saveCurrent();
+    await beginRevision(bridge); button('Suggest rewrite').click(); await vi.waitFor(() => expect(bridge.suggestQuestionRevision).toHaveBeenCalledTimes(1));
+    expect(view().state.readOnly).toBe(false); view().focus(); view().dispatch({changes: {from: view().state.doc.length, insert: '!'}}); await app!.saveCurrent();
     expect(bridge.saveDocument).toHaveBeenCalledTimes(1); const request = bridge.suggestQuestionRevision.mock.calls[0][0];
     result.resolve({requestId: request.requestId, text: 'Stale explanation remains readable', model: 'mock-model', incomplete: false, proposalId: 'proposal', replacementText: 'new passage.'});
-    await vi.waitFor(() => expect(panel().textContent).toContain('Stale explanation')); expect(button('Review proposed revision').disabled).toBe(true); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
-    button('Reject proposed revision').click(); await vi.waitFor(() => expect(bridge.rejectProposal).toHaveBeenCalledWith(session.id, 'proposal'));
+    await vi.waitFor(() => expect(panel().textContent).toContain('Stale explanation')); expect(button('Apply…').disabled).toBe(true); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
+    button('Dismiss').click(); await vi.waitFor(() => expect(bridge.rejectProposal).toHaveBeenCalledWith(session.id, 'proposal'));
   });
   it('blocks dirty targets without saving and allows switching back to ordinary advice', async () => {
     const bridge = await revisionCore(); await beginRevision(bridge); view().dispatch({changes: {from: view().state.doc.length, insert: '!'}});
-    expect(button('Send to OpenAI').disabled).toBe(true); expect(panel().textContent).toContain('Save your scene'); expect(bridge.saveDocument).not.toHaveBeenCalled();
-    responseMode('ask'); button('Send to OpenAI').click(); expect(bridge.askQuestion).toHaveBeenCalledTimes(1); expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled();
+    expect(button('Suggest rewrite').disabled).toBe(true); expect(panel().textContent).toContain('This passage changed'); expect(bridge.saveDocument).not.toHaveBeenCalled();
+    button('Ask').click(); expect(bridge.askQuestion).toHaveBeenCalledTimes(1); expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled();
   });
   it('invalidates a suggested revision after edit then undo even when exact source is restored', async () => {
     const bridge = await revisionCore(); await beginRevision(bridge); await suggested(); const selected = view().state.selection;
     view().dispatch({changes: {from: view().state.doc.length, insert: '!'}}); button('Undo').click(); view().dispatch({selection: selected});
-    expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n')); expect(button('Review proposed revision').disabled).toBe(true);
-    button('Review proposed revision').click(); expect(bridge.reviewProposal).not.toHaveBeenCalled(); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
+    expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n')); expect(button('Apply…').disabled).toBe(true);
+    button('Apply…').click(); expect(bridge.reviewProposal).not.toHaveBeenCalled(); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
   });
   it('awaits native dirty synchronization and invalidates source changes during that wait', async () => {
     const bridge = await revisionCore(); await beginRevision(bridge); const waiting = deferred<void>();
     bridge.setUnsavedChanges.mockReturnValueOnce(waiting.promise); view().dispatch({changes: {from: view().state.doc.length, insert: '!'}}); button('Undo').click();
-    const text = view().state.doc.toString(); view().dispatch({selection: {anchor: text.indexOf('🐺'), head: text.indexOf('\nLast')}}); button('Capture revision selection').click();
-    question('Try this exact saved passage'); button('Send to OpenAI').click(); await new Promise(resolve => setTimeout(resolve, 20)); expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled();
+    const text = view().state.doc.toString(); view().dispatch({selection: {anchor: text.indexOf('🐺'), head: text.indexOf('\nLast')}});
+    question('Try this exact saved passage'); button('Suggest rewrite').click(); await new Promise(resolve => setTimeout(resolve, 20)); expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled();
     view().dispatch({selection: {anchor: 0, head: 3}}); waiting.resolve(); await vi.waitFor(() => expect(button('Cancel request').hidden).toBe(true)); expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled();
   });
   it('rechecks exact editor revision after loading native review and never promotes late programmatic changes', async () => {
     const bridge = await revisionCore(); await beginRevision(bridge); await suggested(); const waiting = deferred<Awaited<ReturnType<typeof bridge.reviewProposal>>>(); const review = await bridge.reviewProposal(); bridge.reviewProposal.mockClear(); bridge.reviewProposal.mockReturnValueOnce(waiting.promise);
-    button('Review proposed revision').click(); await vi.waitFor(() => expect(bridge.reviewProposal).toHaveBeenCalledTimes(1));
+    button('Apply…').click(); await vi.waitFor(() => expect(bridge.reviewProposal).toHaveBeenCalledTimes(1));
     view().dispatch({changes: {from: view().state.doc.length, insert: ' late edit'}}); waiting.resolve(review);
     await vi.waitFor(() => expect(bridge.cancelProposalReview).toHaveBeenCalledWith(session.id, 'review'));
-    expect(document.querySelector('[aria-label="Review whole-scene proposal"]')).toBeNull(); expect(bridge.applyProposalReview).not.toHaveBeenCalled(); expect(view().state.doc.toString()).toContain('late edit');
+    expect(document.querySelector<HTMLElement>('[aria-label="Review whole-scene revision"]')?.hidden).toBe(true); expect(bridge.applyProposalReview).not.toHaveBeenCalled(); expect(view().state.doc.toString()).toContain('late edit');
   });
-  it('rechecks the captured selection immediately before native confirmation', async () => {
-    const bridge = await revisionCore(); await beginRevision(bridge); await suggested(); button('Review proposed revision').click();
-    await vi.waitFor(() => expect(document.querySelector('[aria-label="Review whole-scene proposal"]')).not.toBeNull());
-    view().dispatch({selection: {anchor: 0, head: 3}}); button('Continue to native confirmation').click();
-    await vi.waitFor(() => expect(bridge.cancelProposalReview).toHaveBeenCalledWith(session.id, 'review')); expect(bridge.applyProposalReview).not.toHaveBeenCalled(); expect(bridge.saveDocument).not.toHaveBeenCalled();
+  it('shows the attributed full-scene comparison on request before native confirmation', async () => {
+    const bridge = await revisionCore(); await beginRevision(bridge); await suggested(); button('Show full scene comparison').click();
+    await vi.waitFor(() => expect(document.querySelector<HTMLElement>('[aria-label="Review whole-scene revision"]')?.hidden).toBe(false));
+    const dialog = document.querySelector('[aria-label="Review whole-scene revision"]')!;
+    expect(dialog.textContent).toContain('Native OpenAI suggestion'); expect(dialog.textContent).not.toContain('Unverified local MCP client'); expect(dialog.textContent).toContain('not authenticated authorship');
+    expect([...dialog.querySelectorAll('pre')].map(node => node.textContent)).toEqual([original, original.replace('🐺 passage.', 'new passage.')]); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
+    dialog.querySelector<HTMLButtonElement>('button.primary')!.click(); await vi.waitFor(() => expect(bridge.applyProposalReview).toHaveBeenCalledTimes(1));
+  });
+  it('retains the captured passage when the caret moves before native confirmation', async () => {
+    const bridge = await revisionCore(); await beginRevision(bridge); await suggested(); button('Show full scene comparison').click();
+    await vi.waitFor(() => expect(document.querySelector<HTMLElement>('[aria-label="Review whole-scene revision"]')?.hidden).toBe(false));
+    view().dispatch({selection: {anchor: 0, head: 3}}); document.querySelector<HTMLButtonElement>('[aria-label="Review whole-scene revision"] button.primary')!.click();
+    await vi.waitFor(() => expect(bridge.cancelProposalReview).toHaveBeenCalledWith(session.id, 'review')); expect(bridge.applyProposalReview).toHaveBeenCalledTimes(1); expect(bridge.saveDocument).not.toHaveBeenCalled();
   });
   it('shows native-origin proposal rejection and immutable decision receipts without changing the manuscript', async () => {
     const bridge = await revisionCore(); await start(bridge); button('Proposed revisions').click(); await vi.waitFor(() => expect(document.querySelector('[aria-label="Proposed revisions and receipts"]')).not.toBeNull());

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-quit-request-finished"
+description = "Enables the quit_request_finished command without any pre-configured scope."
+commands.allow = ["quit_request_finished"]
+
+[[permission]]
+identifier = "deny-quit-request-finished"
+description = "Denies the quit_request_finished command without any pre-configured scope."
+commands.deny = ["quit_request_finished"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apply-proposal-review"
+description = "Enables the apply_proposal_review command without any pre-configured scope."
+commands.allow = ["apply_proposal_review"]
+
+[[permission]]
+identifier = "deny-apply-proposal-review"
+description = "Denies the apply_proposal_review command without any pre-configured scope."
+commands.deny = ["apply_proposal_review"]

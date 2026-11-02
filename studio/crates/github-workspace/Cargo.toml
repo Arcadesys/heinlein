@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-git2 = { version = "0.21", default-features = false, features = ["https", "vendored-libgit2"] }
+git2 = { version = "0.21", default-features = false, features = ["https", "vendored-libgit2", "vendored-openssl"] }
 keyring = { version = "3.6", default-features = false, features = ["apple-native", "sync-secret-service", "crypto-rust"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "form", "query", "blocking"] }
 serde = { version = "1", features = ["derive"] }

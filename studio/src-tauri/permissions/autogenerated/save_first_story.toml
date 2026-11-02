@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-first-story"
+description = "Enables the save_first_story command without any pre-configured scope."
+commands.allow = ["save_first_story"]
+
+[[permission]]
+identifier = "deny-save-first-story"
+description = "Denies the save_first_story command without any pre-configured scope."
+commands.deny = ["save_first_story"]

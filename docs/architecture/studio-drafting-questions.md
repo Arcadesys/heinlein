@@ -13,12 +13,15 @@ selection or scene snapshot. The contextual Ask Heinlein action explicitly captu
 the highlighted passage and focuses the question field without sending.
 Later typing never silently changes an already captured context snapshot.
 
-Advice is displayed as text. An explicit Suggest revision request produces a
+Advice is displayed as text. An explicit Suggest rewrite request produces a
 pending, source-bound proposal. No provider response executes tools or changes a
 manuscript. Existing review/apply safeguards remain the route for proposed edits.
-Conversation state is session-local. Closing or clearing it invalidates pending
-results, and cancellation does not imply that already processed provider work was
-free or withdrawn.
+In the editable Source view, Collapse retains passage sessions and explicitly sent
+requests. Cancel request, Clear conversation, and document/project changes invalidate
+pending results. Cancellation does not imply that already processed provider work
+was free or withdrawn. Passage chips reopen questions and marked Original/Suggested
+comparisons; authoritative whole-scene review is presented in that same pane.
+See [the passage Questions checkpoint](../testing/studio-passage-questions.md).
 
 ## Native boundary
 
@@ -76,7 +79,7 @@ its issued client identity. Conversation history remains in memory only.
 
 ## Suggested revisions
 
-The author explicitly chooses Ask or Suggest revision. Revision requests require a
+The author explicitly chooses Ask or Suggest rewrite; each button is a separate explicit send. Revision requests require a
 clean saved source and an exact selected passage. The native host retains the source
 binding before inference; the complete local source is not implicitly sent to the
 provider. Only the previewed question, selection and opted-in context are shared.
@@ -87,7 +90,10 @@ cannot become an applicable proposal. The native host constructs the whole-scene
 candidate from the retained prefix, replacement and suffix and stores it through
 the existing proposal store. It never applies it automatically.
 
-Review shows the exact before/after source and recorded OpenAI/model/request
+Apply skips the in-pane whole-scene step only when the authoritative native review's
+base and replacement equal the displayed passage diff applied to the captured source;
+any difference shows the full comparison first, and Show full scene comparison always
+does. Review shows the exact before/after source and recorded OpenAI/model/request
 origin. Stored metadata does not authenticate an author or grant write authority.
 The existing separate native author confirmation binds application to the displayed
 patch and current source; dirty buffers/recovery conflicts block application.

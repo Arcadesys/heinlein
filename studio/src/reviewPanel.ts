@@ -1,9 +1,13 @@
 import type { LocalCore, QuestionStatus, ReviewResult, ReviewRequest, ReviewerDefinition, ReviewCoverage, ProposalOutcome } from './localCore';
+import type {CapturedLibraryScope} from './librarySnapshot';
 export interface ReviewScope {
     repositoryId: string;
     scope: 'scene' | 'chapter';
     snapshots: ReviewRequest['snapshots'];
     label: string;
+    targetPaths?: string[];
+    contextPaths?: string[];
+    selectedRange?: {path: string; fromUtf8: number; toUtf8: number};
 }
 interface Hooks {
     capture(): ReviewScope | null;
@@ -22,6 +26,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     element.hidden = true;
     element.setAttribute('aria-label', 'Heinlein Review');
     let scope: ReviewScope | null = null;
+    let recaptureLibrary: (() => Promise<CapturedLibraryScope>) | null = null;
     let result: ReviewResult | null = null;
     let config: QuestionStatus | null = null;
     let generation = 0;
@@ -66,7 +71,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     retry.hidden = true;
     const cancel = button('Cancel review', () => { cancelRequest(); status.textContent = 'Review canceled locally. Already-sent text cannot be recalled and usage may count. Your manuscript was not changed.'; update(); });
     const actions = el('div', '', 'question-actions');
-    actions.append(run, retry, cancel, connect, refresh, button('Return to writing', hooks.focusEditor), button('Close review', clear));
+    actions.append(run, retry, cancel, connect, refresh, button('Close review', clear));
     const refreshReview = button('Refresh review', () => { void refreshResult(); });
     refreshReview.hidden = true;
     actions.append(refreshReview);
@@ -84,7 +89,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         clear();
         hooks.focusEditor();
     } });
-    function live(token: number) { return !disposed && !element.hidden && token === generation; }
+    // Hiding behind another Heinlein tab keeps the review; clear() still invalidates it.
+    function live(token: number) { return !disposed && token === generation; }
     function scopeProblem() {
         if (!scope)
             return 'Open an editable source scene or a mapped assembled chapter.';
@@ -92,6 +98,12 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             const total = scope.snapshots.reduce((n, s) => n + bytes(s.source), 0) + bytes(contextNote);
             if (!selectedPaths.size)
                 return 'Choose at least one editable source. Unchecked sources are read-only context.';
+            if (scope.contextPaths) {
+                const contextBytes = scope.snapshots.filter(s => scope!.contextPaths!.includes(s.path)).reduce((n, s) => n + bytes(s.source), 0);
+                const largestTarget = Math.max(0, ...scope.snapshots.filter(s => selectedPaths.has(s.path)).map(s => bytes(s.source)));
+                if (contextBytes + largestTarget + bytes(contextNote) + 1000 > 16000)
+                    return 'The complete context and target are too large for one request. Choose fewer or shorter sheets.';
+            }
             if (total > 1024 * 1024 || scope.snapshots.length > 128 || bytes(contextNote) > 4000)
                 return 'Choose at most 1 MiB of source and read-only context, plus at most 4,000 UTF-8 bytes of author notes within that scope. Nothing is truncated.';
             return null;
@@ -105,6 +117,14 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     function ready() { const c = config; if (!c)
         return false; const account = c.accounts.find(a => a.id === c.activeAccountId); return Boolean(c.configured && !c.usageLimited && !c.signInPending && account?.signedIn && account.planEnabled && c.model && c.model === c.selectedModel && c.models.some(m => m.slug === c.model) && Number.isSafeInteger(c.generation)); }
     function update() {
+        if (scope?.contextPaths) {
+            const included = scope.snapshots.filter(s => selectedPaths.has(s.path) || scope!.contextPaths!.includes(s.path));
+            sources.replaceChildren();
+            for (const snapshot of included) {
+                const roles = [scope.contextPaths.includes(snapshot.path) ? 'context' : '', selectedPaths.has(snapshot.path) ? 'revision target' : ''].filter(Boolean).join(' and ');
+                sources.append(el('h3', `${snapshot.path} · ${roles}`), el('pre', snapshot.source, 'question-text'));
+            }
+        }
         const problem = scopeProblem();
         approvalStatus.textContent = result ? (hooks.unavailable(false) ?? (pending ? 'Wait for the active reviewer batch to settle before approval.' : 'Approve… opens the final native confirmation for this exact patch.')) : '';
         summary.textContent = scope ? `${scope.scope === 'chapter' ? 'Mapped chapter' : 'Source scene'} · ${scope.label} · ${scope.snapshots.length} source snapshot(s) · ${scope.snapshots.reduce((n, s) => n + bytes(s.source), 0).toLocaleString()} UTF-8 bytes. Includes unsaved text captured when opened; later typing is never added to this request.` : problem;
@@ -145,7 +165,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         void core.cancelQuestion?.(id).catch(() => { });
         retry.hidden = false;
     } }
-    function clear() { cancelRequest(); element.hidden = true; scope = null; result = null; config = null; edits.replaceChildren(); sources.replaceChildren(); blob.textContent = ''; json.hidden = true; refreshReview.hidden = true; }
+    function clear() { cancelRequest(); element.hidden = true; scope = null; recaptureLibrary = null; result = null; config = null; edits.replaceChildren(); sources.replaceChildren(); blob.textContent = ''; json.hidden = true; refreshReview.hidden = true; }
     function validate(value: ReviewResult, requestId?: string) {
         if (value?.schemaVersion === 2) {
             if (!value.reviewId || !value.workflow || !Array.isArray(value.edits) || value.edits.length > 1024 || !Array.isArray(value.workflow.coverage) || value.workflow.coverage.length > 384 || (requestId && value.requestId !== requestId) || new Set(value.edits.map(e => e.id)).size !== value.edits.length)
@@ -255,6 +275,18 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             return;
         }
         const token = generation;
+        if (!continuing && recaptureLibrary) {
+            busy = true; update();
+            try {
+                const current = await recaptureLibrary();
+                if (!live(token)) return;
+                if (JSON.stringify(current.ordered) !== JSON.stringify(scope.snapshots)) {
+                    status.textContent = 'A selected source changed. Close this review and prepare it again before sending.';
+                    preparedRequest = null; return;
+                }
+            } catch (error) { if (live(token)) status.textContent = message(error); return; }
+            finally { if (live(token)) { busy = false; update(); } }
+        }
         const requestId = crypto.randomUUID();
         const oldResult = result;
         const request: ReviewRequest = workflowMode ? { ...preparedRequest!, requestId } : { requestId, repositoryId: scope.repositoryId, scope: scope.scope, snapshots: scope.snapshots.map(s => ({ ...s })) };
@@ -408,11 +440,12 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             const check = el('input');
             check.type = 'checkbox';
             check.checked = selectedPaths.has(snapshot.path);
-            check.onchange = () => { if (check.checked)
+            check.onchange = () => { if (scope?.targetPaths) scope.selectedRange = undefined; if (check.checked)
                 selectedPaths.add(snapshot.path);
             else
                 selectedPaths.delete(snapshot.path); invalidatePreview(); };
-            label.append(check, document.createTextNode(`Allow prepared edits in ${snapshot.path} (unchecked = read-only context)`));
+            const unchecked = scope?.contextPaths && !scope.contextPaths.includes(snapshot.path) ? 'excluded' : 'read-only context';
+            label.append(check, document.createTextNode(`Allow prepared edits in ${snapshot.path} (unchecked = ${unchecked})`));
             setup.append(label);
         }
         const label = el('label', 'Additional read-only author context');
@@ -444,7 +477,12 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (busy || pending || scopeProblem() || !scope || !core.previewReview)
             return;
         const token = generation, inputs = editGeneration;
-        const request: ReviewRequest = { requestId: crypto.randomUUID(), repositoryId: scope.repositoryId, scope: scope.scope, snapshots: scope.snapshots.filter(s => selectedPaths.has(s.path)).map(s => ({ ...s })), workflow: { reviewers: [...reviewerIds], context: scope.snapshots.filter(s => !selectedPaths.has(s.path)).map(s => ({ ...s })), contextNote, ranges: [] } };
+        const ranges = scope.selectedRange && selectedPaths.size === 1 && selectedPaths.has(scope.selectedRange.path) ? [scope.selectedRange] : [];
+        const contextPaths = scope.contextPaths;
+        const context = scope.snapshots.filter(s => !selectedPaths.has(s.path) && (!contextPaths || contextPaths.includes(s.path))).map(s => ({ ...s }));
+        const included = new Set([...selectedPaths, ...context.map(s => s.path)]);
+        const fullContextOrder = scope.contextPaths?.filter(path => included.has(path));
+        const request: ReviewRequest = { requestId: crypto.randomUUID(), repositoryId: scope.repositoryId, scope: scope.scope, snapshots: scope.snapshots.filter(s => selectedPaths.has(s.path)).map(s => ({ ...s })), workflow: { reviewers: [...reviewerIds], context, contextNote, ranges, ...(fullContextOrder ? {fullContextOrder} : {}) } };
         busy = true;
         update();
         try {
@@ -453,7 +491,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 return;
             preparedRequest = request;
             coverage = next;
-            batchPreview.replaceChildren(el('h3', 'Exact batch preview'), el('p', `${reviewerIds.length} reviewer(s), ${new Set(next.map(c => `${c.sourceIndex}:${c.fromUtf8}:${c.toUtf8}`)).size} editable chunks, ${next.length} selected calls. This batch sends at most ${Math.min(8, next.length)} calls. Remaining calls need Continue.`), el('p', 'Each call has bounded neighboring context and the selected read-only context, not the whole work at once.'));
+            batchPreview.replaceChildren(el('h3', 'Exact batch preview'), el('p', `${reviewerIds.length} reviewer(s), ${new Set(next.map(c => `${c.sourceIndex}:${c.fromUtf8}:${c.toUtf8}`)).size} editable chunks, ${next.length} selected calls. This batch sends at most ${Math.min(8, next.length)} calls. Remaining calls need Continue.`), el('p', fullContextOrder ? 'Each target call includes the complete selected context in library order.' : 'Each call has bounded neighboring context and the selected read-only context, not the whole work at once.'));
+            if (fullContextOrder) for (const path of fullContextOrder) { const snapshot = scope.snapshots.find(item => item.path === path)!; batchPreview.append(el('p', `Context: ${path} · ${bytes(snapshot.source).toLocaleString()} UTF-8 bytes`)); }
             const details = el('details');
             details.append(el('summary', 'Reviewer definitions and chunk coverage'));
             for (const id of reviewerIds) {
@@ -533,16 +572,17 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             edits.querySelector<HTMLElement>(`[data-finding-id="${id}"] button`)?.focus();
         }
     } }
-    return { element, open() {
+    function openScope(override?: ReviewScope, recapture?: () => Promise<CapturedLibraryScope>) {
             if (disposed)
                 return;
             if (!element.hidden) {
                 title.focus();
                 return;
             }
-            const captured = hooks.capture();
+            const captured = override ?? hooks.capture();
             scope = captured ? { ...captured, snapshots: captured.snapshots.map(s => ({ ...s })) } : null;
-            selectedPaths = new Set(scope?.snapshots.map(s => s.path) ?? []);
+            recaptureLibrary = recapture ?? null;
+            selectedPaths = new Set(scope?.targetPaths ?? scope?.snapshots.map(s => s.path) ?? []);
             preparedRequest = null;
             reviewerIds = ['contextual'];
             contextNote = '';
@@ -564,5 +604,6 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             update();
             void configure();
             title.focus({ preventScroll: true });
-        }, clear, stateChanged: update, destroy() { clear(); disposed = true; element.remove(); } };
+        }
+    return { element, librarySupported: workflowMode, open: () => openScope(), show: () => { if (scope && element.hidden && !disposed) { element.hidden = false; update(); title.focus(); } else openScope(); }, hide: () => { element.hidden = true; }, visible: () => !element.hidden, openLibrary: (captured: ReviewScope, recapture: () => Promise<CapturedLibraryScope>) => { if (workflowMode) { clear(); openScope(captured, recapture); } }, clear, stateChanged: update, destroy() { clear(); disposed = true; element.remove(); } };
 }

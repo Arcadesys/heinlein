@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-review-proposal-revert"
+description = "Enables the review_proposal_revert command without any pre-configured scope."
+commands.allow = ["review_proposal_revert"]
+
+[[permission]]
+identifier = "deny-review-proposal-revert"
+description = "Denies the review_proposal_revert command without any pre-configured scope."
+commands.deny = ["review_proposal_revert"]

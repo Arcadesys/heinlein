@@ -1,5 +1,33 @@
 import { test, expect, type Locator } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+test('guided draft pull request keeps each action explicit and accessible', async ({ page }) => {
+    await page.goto('/tests/browser/github.html');
+    await page.getByRole('button', { name: 'GitHub projects…', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'GitHub projects', exact: true });
+    for (const name of ['Connect GitHub…', 'Check sign-in', 'Use this GitHub account…', 'Load repositories', 'Preview example/synthetic-story…', 'Open separate local copy…']) await dialog.getByRole('button', { name, exact: true }).click();
+    await page.getByRole('button', { name: 'GitHub projects…', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Create or update a draft pull request…' }).click();
+    await expect(dialog.getByRole('heading', { name: 'Create or update a draft pull request', level: 3 })).toBeFocused();
+    expect((await new AxeBuilder({ page }).include('.github-panel').analyze()).violations).toEqual([]);
+    await dialog.getByRole('button', { name: 'Choose files and save a local version…' }).click();
+    await dialog.getByRole('checkbox', { name: 'edit: story.md' }).check();
+    await dialog.getByLabel('Version author name').fill('Synthetic Writer');
+    await dialog.getByLabel('Version author email').fill('synthetic@example.test');
+    await dialog.getByLabel('Version message').fill('Draft version');
+    await dialog.getByRole('button', { name: 'Preview local version' }).click();
+    await dialog.getByRole('button', { name: 'Confirm local version…' }).click();
+    await expect(dialog).toContainText('No unversioned file changes');
+    await dialog.getByRole('button', { name: 'Preview sending local versions…' }).click();
+    await dialog.getByRole('button', { name: 'Preview GitHub action' }).click();
+    await dialog.getByRole('button', { name: 'Confirm sending versions…' }).click();
+    await expect(dialog).toContainText('current local version has been sent');
+    await dialog.getByRole('button', { name: 'Preview a draft pull request…' }).click();
+    await dialog.getByLabel('Feedback request title').fill('Draft for review');
+    await dialog.getByRole('button', { name: 'Preview GitHub action' }).click();
+    await dialog.getByRole('button', { name: 'Confirm draft feedback request…' }).click();
+    await expect(dialog).toContainText('Pull request #1 is already open as a draft');
+    expect((await page.evaluate(() => ((window as any).githubFixture.calls as {action:string}[]).filter(c => c.action === 'confirm')))).toHaveLength(3);
+});
 test('GitHub synthetic account, exact-file version, send, draft feedback and explicit conflict journey with keyboard only', async ({ page }) => {
     async function tabTo(target:Locator){await expect(target).toBeVisible();await expect(target).toBeEnabled();for(let i=0;i<100;i++){if(await target.evaluate(el=>el===document.activeElement))return;await page.keyboard.press('Tab');}throw new Error('Keyboard could not reach target: '+await target.textContent());}
     async function activate(target:Locator){await tabTo(target);await page.keyboard.press('Enter');}

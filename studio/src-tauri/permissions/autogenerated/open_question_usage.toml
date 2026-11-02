@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-question-usage"
+description = "Enables the open_question_usage command without any pre-configured scope."
+commands.allow = ["open_question_usage"]
+
+[[permission]]
+identifier = "deny-open-question-usage"
+description = "Denies the open_question_usage command without any pre-configured scope."
+commands.deny = ["open_question_usage"]

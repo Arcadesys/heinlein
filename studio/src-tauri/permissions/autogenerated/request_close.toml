@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-request-close"
+description = "Enables the request_close command without any pre-configured scope."
+commands.allow = ["request_close"]
+
+[[permission]]
+identifier = "deny-request-close"
+description = "Denies the request_close command without any pre-configured scope."
+commands.deny = ["request_close"]

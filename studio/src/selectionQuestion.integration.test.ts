@@ -51,7 +51,7 @@ describe('Studio selection question integration', () => {
     expect(bridge.stageRecovery).toHaveBeenLastCalledWith('session', 'scene.md', 'a'.repeat(64), source.replace('Exact', 'Changed') + '!?');
   });
   it('reviews a passage and saves exact untouched source through existing recovery', async () => {
-    const bridge = core(); await start(bridge); button('Ask about selection').click(); await dialog();
+    const bridge = core(); await start(bridge); button('Heinlein').click(); button('Copy as prompt…').click(); await dialog();
     expect(document.body.textContent).toContain('No provider is connected');
     replacement('brighter passage'); button('Review replacement').click();
     expect(bridge.saveDocument).not.toHaveBeenCalled(); button('Apply reviewed replacement').click();
@@ -61,16 +61,16 @@ describe('Studio selection question integration', () => {
     expect(bridge.saveDocument).toHaveBeenCalledWith('session', 'scene.md', 'a'.repeat(64), expected);
   });
   it('rejects a reviewed response after a late buffer edit', async () => {
-    const bridge = core(); await start(bridge); button('Ask about selection').click(); await dialog();
+    const bridge = core(); await start(bridge); button('Heinlein').click(); button('Copy as prompt…').click(); await dialog();
     replacement('replacement'); button('Review replacement').click();
     view().dispatch({changes: {from: view().state.doc.length, insert: '!'}}); button('Apply reviewed replacement').click();
     expect(view().state.doc.toString()).toContain('🐺 passage'); expect(view().state.doc.toString()).toMatch(/!$/);
     expect(bridge.saveDocument).not.toHaveBeenCalled();
   });
   it('clears discussion on navigation and refuses empty selections', async () => {
-    const bridge = core(); await start(bridge); button('Ask about selection').click(); await dialog();
+    const bridge = core(); await start(bridge); button('Heinlein').click(); button('Copy as prompt…').click(); await dialog();
     await app!.showDocument('other.md'); expect(document.querySelector('[aria-label="Ask ChatGPT about selection"]')).toBeNull();
-    button('Ask about selection').click(); await vi.waitFor(() => expect(document.body.textContent).toContain('Highlight one nonempty passage first'));
+    button('Heinlein').click(); button('Copy as prompt…').click(); await vi.waitFor(() => expect(document.body.textContent).toContain('Highlight one nonempty passage first'));
     expect(bridge.saveDocument).not.toHaveBeenCalled();
   });
 });

@@ -20,7 +20,7 @@ const button = (label: string) => {const found = [...document.querySelectorAll<H
 const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
 const panel = () => document.querySelector<HTMLElement>('[aria-label="Heinlein Review"]')!;
 async function start(core: LocalCore) {app = mountStudio(document.body, core); await app.selectRepository(async () => session); await app.showDocument('scene.md');}
-async function open() {button('Heinlein Review').click(); await vi.waitFor(() => expect(button('Refresh connection').disabled).toBe(false));}
+async function open() {button('Heinlein').click(); button('Whole scene').click(); await vi.waitFor(() => expect(button('Refresh connection').disabled).toBe(false));}
 beforeEach(() => {vi.stubGlobal('crypto', webcrypto); localStorage.clear(); document.body.replaceChildren(); Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect();});
 afterEach(() => {app?.destroy(); app = undefined; vi.unstubAllGlobals();});
 describe('Studio Heinlein Review integration', () => {

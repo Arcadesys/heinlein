@@ -11,7 +11,7 @@ function fixture() {
     let record: ReviewResult | null = null;
     const coverage = [{ id: 'chunk', sourceIndex: 0, fromUtf8: 0, toUtf8: new TextEncoder().encode(source).length, windowFrom: 0, windowTo: new TextEncoder().encode(source).length, reviewer: 0, status: 'queued', requestId: null, error: null }];
     const make = (request: ReviewRequest): ReviewResult => ({ schemaVersion: 2, reviewId: 'review-stable', requestId: request.requestId, model: 'chosen-model', scope: 'scene', revision: 1, projectKey: 'b'.repeat(64), workflow: { definitions: request.workflow!.reviewers.map((id, i) => ({ instanceId: `reviewer-${i + 1}`, definition: structuredClone(defs.find(d => d.id === id)!), hash: 'c'.repeat(64) })), sources: [{ id: 'source', path: 'scene.md', sourceHash: 'a'.repeat(64), readOnly: false, order: 0 }], coverage: coverage.map(c => ({ ...c, status: 'completed', requestId: 'call-1' })), decisions: [], accountId: 'selected-account', accountGeneration: 3, contextNotice: 'This call sees bounded context, not the whole work at once.' }, edits: [['first', 5, 8, 'good', 'group'], ['alternative', 5, 8, 'fine', 'group'], ['unrelated', 11, 14, 'great', null]].map(([id, from, to, replacement, group]) => ({ id: String(id), path: 'scene.md', fromUtf8: Number(from), toUtf8: Number(to), original: 'bad', replacement: String(replacement), reason: `Comment ${id}`, role: 'editor', status: 'pending', proposalId: null, conflictGroup: group as string | null, selected: false, patch: JSON.stringify({ path: 'scene.md', fromUtf8: from, toUtf8: to, before: 'bad', replacement }), patchHash: 'd'.repeat(64), comments: [`Comment ${id}`], provenance: [{ instanceId: 'reviewer-1', definitionId: 'contextual', definitionVersion: 1, displayName: 'Story and clarity review', requestId: 'call-1', model: 'chosen-model', accountId: 'selected-account', accountGeneration: 3 }] })) });
-    const core = { available: () => true, questionStatus: vi.fn(async () => ({ configured: true, model: 'chosen-model', selectedModel: 'chosen-model', models: [{ slug: 'chosen-model', displayName: 'Chosen model' }], accounts: [{ id: 'selected-account', label: 'Writer', signedIn: true, planEnabled: true }], activeAccountId: 'selected-account', generation: 3, usageLimited: false, signInPending: false, message: 'Ready' })), reviewDefinitions: vi.fn(async () => structuredClone(defs)), previewReview: vi.fn(async () => structuredClone(coverage)), listReviews: vi.fn(async () => record ? [structuredClone(record)] : []), requestReview: vi.fn(async (r: ReviewRequest) => { record = make(r); return structuredClone(record); }), getReview: vi.fn(async () => structuredClone(record!)), chooseReviewEdit: vi.fn(async (_repo: string, _review: string, id: string) => { record!.edits.forEach(e => e.selected = e.id === id); return structuredClone(record!); }), rejectReviewEdit: vi.fn(async (_repo: string, _review: string, id: string) => { record!.edits.find(e => e.id === id)!.status = 'rejected'; return structuredClone(record!); }), approveReviewEdit: vi.fn(async (_repo: string, _review: string, id: string) => { const winner = record!.edits.find(e => e.id === id)!; winner.status = 'accepted'; record!.edits.filter(e => e.conflictGroup && e.conflictGroup === winner.conflictGroup && e.id !== id).forEach(e => e.status = 'supersededByAuthorChoice'); return null as ProposalOutcome | null; }), cancelQuestion: vi.fn(async () => true) };
+    const core = { available: () => true, questionStatus: vi.fn(async () => ({ configured: true, model: 'chosen-model', selectedModel: 'chosen-model', models: [{ slug: 'chosen-model', displayName: 'Chosen model' }], accounts: [{ id: 'selected-account', label: 'Writer', signedIn: true, planEnabled: true }], activeAccountId: 'selected-account', generation: 3, usageLimited: false, signInPending: false, message: 'Ready' })), reviewDefinitions: vi.fn(async () => structuredClone(defs)), previewReview: vi.fn(async (_request: ReviewRequest) => structuredClone(coverage)), listReviews: vi.fn(async () => record ? [structuredClone(record)] : []), requestReview: vi.fn(async (r: ReviewRequest) => { record = make(r); return structuredClone(record); }), getReview: vi.fn(async () => structuredClone(record!)), chooseReviewEdit: vi.fn(async (_repo: string, _review: string, id: string) => { record!.edits.forEach(e => e.selected = e.id === id); return structuredClone(record!); }), rejectReviewEdit: vi.fn(async (_repo: string, _review: string, id: string) => { record!.edits.find(e => e.id === id)!.status = 'rejected'; return structuredClone(record!); }), approveReviewEdit: vi.fn(async (_repo: string, _review: string, id: string) => { const winner = record!.edits.find(e => e.id === id)!; winner.status = 'accepted'; record!.edits.filter(e => e.conflictGroup && e.conflictGroup === winner.conflictGroup && e.id !== id).forEach(e => e.status = 'supersededByAuthorChoice'); return null as ProposalOutcome | null; }), cancelQuestion: vi.fn(async () => true) };
     const hooks = { capture: () => scope, unavailable: () => null, reviewProposal: vi.fn(async () => { }), openConnection: vi.fn(), focusEditor: vi.fn() };
     panel = createReviewPanel(core as unknown as LocalCore, hooks);
     document.body.append(panel.element);
@@ -52,3 +52,41 @@ it('waits for durable rejection before hiding, keeps errors visible, then reopen
     expect(panel!.element.textContent).toContain('Storage did not confirm rejection');
 });
 it('discards a preview returned after panel closes without submitting inference', async () => { const f = fixture(); let resolve!: (v: ReturnType<typeof f.core.previewReview> extends Promise<infer T> ? T : never) => void; f.core.previewReview.mockImplementationOnce(() => new Promise(r => resolve = r)); panel!.open(); await vi.waitFor(() => expect(panel!.element.querySelector('[aria-label="Number of reviewers"]')).toBeTruthy()); f.button('Preview reviewer batch').click(); await tick(); panel!.clear(); resolve([]); await tick(); expect(panel!.element.hidden).toBe(true); expect(f.core.requestReview).not.toHaveBeenCalled(); });
+it('keeps library context separate from targets and refuses a changed snapshot before sending', async () => {
+    const f = fixture();
+    const context = {path:'context.md',source:'Synthetic context',sourceHash:'b'.repeat(64),sceneId:'context'};
+    const target = {...scope.snapshots[0],sceneId:'target'};
+    let current = {ordered:[context,target],context:[context],targets:[target],bytes:100};
+    panel!.openLibrary({...scope,label:'Library sheets',snapshots:[context,target],targetPaths:['scene.md'],contextPaths:['context.md','scene.md']}, async () => structuredClone(current));
+    await vi.waitFor(() => expect(panel!.element.querySelector('[aria-label="Number of reviewers"]')).toBeTruthy());
+    await f.click('Preview reviewer batch');
+    expect(f.core.previewReview.mock.calls[0][0].snapshots.map(s=>s.path)).toEqual(['scene.md']);
+    expect(f.core.previewReview.mock.calls[0][0].workflow!.context.map(s=>s.path)).toEqual(['context.md']);
+    expect(f.core.previewReview.mock.calls[0][0].workflow!.fullContextOrder).toEqual(['context.md','scene.md']);
+    current = {...current,ordered:[{...context,source:'Changed'},target]};
+    await f.click('Run Heinlein Review');
+    expect(f.core.requestReview).not.toHaveBeenCalled();
+    expect(panel!.element.textContent).toContain('selected source changed');
+});
+it('submits the ordered reviewed library snapshot with explicit target and complete context', async () => {
+    const f = fixture();
+    const context = {path:'context.md',source:'Synthetic context',sourceHash:'b'.repeat(64),sceneId:'context'};
+    const target = {...scope.snapshots[0],sceneId:'target'};
+    const capture = {ordered:[context,target],context:[context,target],targets:[target],bytes:100};
+    panel!.openLibrary({...scope,label:'Library sheets',snapshots:capture.ordered,targetPaths:['scene.md'],contextPaths:['context.md','scene.md']}, async () => structuredClone(capture));
+    await vi.waitFor(() => expect(panel!.element.querySelector('[aria-label="Number of reviewers"]')).toBeTruthy());
+    await f.click('Preview reviewer batch'); await vi.waitFor(()=>expect(f.button('Run Heinlein Review').disabled).toBe(false));
+    await f.click('Run Heinlein Review'); await vi.waitFor(()=>expect(f.core.requestReview).toHaveBeenCalledOnce());
+    const request=f.core.requestReview.mock.calls[0][0];
+    expect(request.snapshots.map(item=>item.path)).toEqual(['scene.md']);
+    expect(request.workflow!.context.map(item=>item.path)).toEqual(['context.md']);
+    expect(request.workflow!.fullContextOrder).toEqual(['context.md','scene.md']);
+});
+it('uses the selected passage by default and a full sheet for an explicit target choice',async()=>{
+ const f=fixture(); const target={...scope.snapshots[0],sceneId:'target'}; const capture={ordered:[target],context:[target],targets:[target],bytes:source.length};
+ panel!.openLibrary({...scope,snapshots:[target],targetPaths:['scene.md'],contextPaths:['scene.md'],selectedRange:{path:'scene.md',fromUtf8:5,toUtf8:8}},async()=>structuredClone(capture));
+ await vi.waitFor(()=>expect(panel!.element.querySelector('[aria-label="Number of reviewers"]')).toBeTruthy());
+ await f.click('Preview reviewer batch'); expect(f.core.previewReview.mock.calls[0][0].workflow!.ranges).toEqual([{path:'scene.md',fromUtf8:5,toUtf8:8}]);
+ const check=panel!.element.querySelector<HTMLInputElement>('.review-setup input[type=checkbox]')!; check.click(); check.click();
+ await f.click('Preview reviewer batch'); expect(f.core.previewReview.mock.calls[1][0].workflow!.ranges).toEqual([]);
+});

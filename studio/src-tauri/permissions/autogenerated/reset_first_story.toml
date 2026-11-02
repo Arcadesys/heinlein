@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reset-first-story"
+description = "Enables the reset_first_story command without any pre-configured scope."
+commands.allow = ["reset_first_story"]
+
+[[permission]]
+identifier = "deny-reset-first-story"
+description = "Denies the reset_first_story command without any pre-configured scope."
+commands.deny = ["reset_first_story"]

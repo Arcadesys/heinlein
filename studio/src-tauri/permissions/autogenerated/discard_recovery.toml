@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-discard-recovery"
+description = "Enables the discard_recovery command without any pre-configured scope."
+commands.allow = ["discard_recovery"]
+
+[[permission]]
+identifier = "deny-discard-recovery"
+description = "Denies the discard_recovery command without any pre-configured scope."
+commands.deny = ["discard_recovery"]

@@ -35,9 +35,9 @@ describe('assembled chapter to proposed revision', () => {
     view().dispatch({selection: {anchor: from, head: source.length}});
     button('Revise source passage').click(); await settle(); await settle();
     expect(view().state.readOnly).toBe(false);
-    expect(document.querySelector('.page-meta .path')?.textContent).toBe('two.md');
+    expect(document.querySelector('.preview .path')?.textContent).toBe('two.md');
     expect(view().state.sliceDoc(view().state.selection.main.from, view().state.selection.main.to)).toBe('Repeated 🦊—passage.');
-    expect((document.querySelector('[aria-label="Response mode"]') as HTMLSelectElement).value).toBe('revision');
+    expect([...document.querySelectorAll('.question-panel button')].some(node => node.textContent === 'Suggest rewrite')).toBe(true);
     expect(document.querySelector('[aria-label="Exact revision target"]')?.textContent).toBe('Repeated 🦊—passage.');
     expect(core.saveDocument).not.toHaveBeenCalled(); expect(core.stageRecovery).not.toHaveBeenCalled(); expect(core.askQuestion).not.toHaveBeenCalled();
     view().dispatch({changes: {from: 0, to: 8, insert: 'Revised'}});
@@ -66,19 +66,20 @@ describe('assembled chapter to proposed revision', () => {
     button('Read assembled chapter').click(); await settle();
     expect(view().state.readOnly).toBe(true); expect(view().state.doc.toString()).not.toContain('title: First');
     expect(view().state.doc.toString().match(/Repeated/g)).toHaveLength(2);
-    button('Open source scene 1 · one.md').click(); await settle();
-    expect(view().state.readOnly).toBe(false); expect(document.querySelector('.page-meta .path')?.textContent).toBe('one.md');
+    button('Open source scene 1 · one').click(); await settle();
+    expect(view().state.readOnly).toBe(false); expect(document.querySelector('.preview .path')?.textContent).toBe('one.md');
   });
   it('navigates breaks in an assembled chapter by exact position', async () => {
     const {core, files} = bridge(); files.set('one.md', 'Opening.\n---\nRepeated line.\n---\nRepeated line.');
     await start(core);
-    const entries = [...document.querySelectorAll<HTMLButtonElement>('.scene-break-list button')];
+    document.body.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', ctrlKey: true, bubbles: true, cancelable: true}));
+    const entries = [...document.querySelectorAll<HTMLElement>('.palette-item')].filter(row => row.querySelector('.palette-num')?.textContent === '§');
     expect(entries).toHaveLength(2); entries[1].click();
     expect(view().state.selection.main.from).toBe(view().state.doc.toString().lastIndexOf('Repeated line.'));
     expect(view().state.readOnly).toBe(true); expect(core.saveDocument).not.toHaveBeenCalled();
   });
   it('opens source scenes directly for ordinary editing', async () => {
-    const {core} = bridge(); await start(core); button('Open source scene 1 · one.md').click(); await settle();
+    const {core} = bridge(); await start(core); button('Open source scene 1 · one').click(); await settle();
     expect(view().state.readOnly).toBe(false); expect(view().state.doc.toString()).toContain('title: First');
     expect(document.body.textContent).toContain('Source scene · Editable Markdown');
   });
