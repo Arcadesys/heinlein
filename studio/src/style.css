@@ -1269,3 +1269,9 @@ body:has(.question-panel-integrated[data-presentation="docked"]:not([hidden])) .
 @media (max-width:700px) {
   .cm-editor .cm-gutters .question-gutter, .cm-editor .cm-gutters-after:has(> .question-gutter:only-child) { display:none; }
 }
+/* Enlarged controls retain their own scroll area so the manuscript stays readable. */
+@media (max-width:600px) {
+  .document-workspace .document-command-bar { max-block-size:max(4rem,12vh); overflow:auto; }
+  .document-workspace:has(.reference-pane:not([hidden])):has(.active-document-pane:focus-within) > .split-reading-offer,
+  .document-workspace:has(.reference-pane:focus-within) > .split-reading-offer { display:none; }
+}
