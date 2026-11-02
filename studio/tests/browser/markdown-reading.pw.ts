@@ -160,7 +160,7 @@ test('Selecting in Reading cannot ask, split, undo or find through the hidden ed
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(status).toContainText('Switch to Source');
   expect(await source(page)).toBe(before);
-  await expect(page.getByRole('button', { name: 'Heinlein Review', exact: true })).toBeVisible();
+  await page.getByRole('button',{name:/^(Editing|Reading).* actions$/}).click();await expect(page.getByRole('button', { name: 'Heinlein Review', exact: true })).toBeVisible();
 });
 test('Toggling keeps one writer: unsaved text shows in Reading, caret and bytes survive, and marks stop after an edit', async ({ page }) => {
   await start(page);
@@ -207,7 +207,8 @@ test('Approving from Reading stays in Reading and removes only resolved marks, w
 test('A saved reference reads as formatted text with no marks, and stays exact in Source', async ({ page }) => {
   await start(page);
   await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
-  await page.getByRole('button', { name: 'Read beside active document: opening.md', exact: true }).click();
+  const documents=page.getByRole('button',{name:'Documents',exact:true});if(await documents.isVisible())await documents.click();
+  await page.getByRole('button',{name:'Read beside…',exact:true}).click();await page.getByRole('button', { name: 'Read beside active document: opening.md', exact: true }).click();
   const pane = page.getByRole('region', { name: 'Saved source reference', exact: true });
   const raw = await baseline(page);
   expect(await pane.locator('.reference-source').evaluate(n => n.textContent)).toBe(raw);
@@ -240,11 +241,11 @@ test('An assembled chapter reads part by part, and each mark opens the card for 
   await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Source', exact: true }).click();
   await expect(hint).toContainText('Select a passage, then choose Revise source passage.');
-  await expect(revise).toBeVisible();
+  await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).click(); await expect(revise).toBeVisible();
 });
 test('The role label follows the view, and the preview entry opens ready in Reading', async ({ page }) => {
   await start(page, `${url}?view=reading`);
-  const role = page.locator('.active-document-pane .page-meta p').first();
+  const role = page.locator('.document-command-bar .document-role');
   await expect(role).toHaveText('Reading');
   await expect(reader(page)).not.toHaveAttribute('hidden', '');
   await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
@@ -278,7 +279,7 @@ test('This fixture keeps to its own storage key', async ({ page }) => {
   expect(keys).toContain('heinlein-markdown-reading-synthetic-v1');
 });
 
-test('breadcrumb passage jump reveals Source and focuses the exact passage with keyboard access', async ({ page }, info) => {
+test('scene navigation reveals Source and focuses the exact passage with keyboard access', async ({ page }, info) => {
   await start(page, `${url}?sceneNavigation`);
   await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
   const before = await source(page);
@@ -288,14 +289,9 @@ test('breadcrumb passage jump reveals Source and focuses the exact passage with 
   await page.keyboard.insertText('\n\n---\n\nSynthetic breadcrumb passage.\n');
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Reading', exact: true }).click();
   await expect(reader(page)).toBeVisible();
-  const breadcrumb = page.locator('.pill-scene');
-  await breadcrumb.focus();
-  await page.keyboard.press('ArrowDown');
-  const passage = page.getByRole('menuitem', { name: /Synthetic breadcrumb passage.*Passage 1/ });
-  await expect(passage).toBeVisible();
-  await page.keyboard.press('End');
-  await expect(passage).toBeFocused();
-  await page.keyboard.press('Enter');
+  const toggle=page.getByRole('button',{name:'Navigation',exact:true});if(await toggle.isVisible())await toggle.click();await page.getByRole('tab',{name:'Scenes',exact:true}).click();
+  const passage = page.getByRole('button',{name:'Passage 1: Synthetic breadcrumb passage.',exact:true});
+  await expect(passage).toBeVisible(); await passage.focus(); await expect(passage).toBeFocused(); await page.keyboard.press('Enter');
   await expect(reader(page)).toBeHidden();
   await expect(page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Source', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(editor).toBeVisible();

@@ -625,7 +625,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const binderTree = createBinderTree({state: () => (standalone?.active ? null : drafting.state), currentPath: () => opened?.path ?? null, open: path => { void showDocument(path); }, bindMoveSource: (node, source) => drafting.bindMoveSource(node, source), bindMoveTarget: (node, resolve, label) => drafting.bindMoveTarget(node, resolve, label)});
   manuscriptBody.append(libraryProjects, draftingEntry, searchManuscript, manifests, outline);
   manuscriptPane.append(manuscriptBody);
-  const sceneNavigator = createSceneNavigator(() => editor?.view ?? chapterEditor?.view ?? null, () => showSourceView());
+  const sceneNavigator = createSceneNavigator(() => editor?.view ?? chapterEditor?.view ?? null, () => { if (window.matchMedia?.('(max-width: 760px)').matches) navigation.close(); showSourceView(); });
   const scenePane = el('section', '', 'panel scene-navigator');
   scenePane.setAttribute('aria-label', 'Scene navigator');
   scenePane.append(sceneNavigator.element);
@@ -1093,6 +1093,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
 
   let zoom = loadZoom();
   async function newWriting() {
+    if (root.querySelector('.navigation-modal[open]')) navigation.close();
     if (disposed || newScenePending || root.inert || selecting || structuralBusy || guardPending ||
         dialog.open || helpLayer || palette.isOpen() || document.querySelector('dialog[open]')) return;
     if (!repository || standalone?.active) { newDraftButton?.click(); return; }
@@ -1502,8 +1503,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (disposed || event.isComposing) return;
     const action = shortcutAction(event);
     if (action) { event.preventDefault(); setZoom(action); return; }
-    const otherModal = [...document.querySelectorAll('dialog[open]')].some(node => node !== dialog);
     const newShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n' && !event.shiftKey && !event.altKey;
+    const otherModal = [...document.querySelectorAll('dialog[open]')].some(node => node !== dialog && !(newShortcut && node.classList.contains('navigation-modal')));
     if (root.inert || otherModal) { if (newShortcut) event.preventDefault(); return; }
     const mod = event.metaKey || event.ctrlKey;
     if (!mod) {
