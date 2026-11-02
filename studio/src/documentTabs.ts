@@ -48,6 +48,7 @@ export function createDocumentTabs(hooks:{open(tab:DocumentTab):Promise<unknown>
   register(target:TabTarget){const tab=ensure(target);render();return tab;},
   mount(target:TabTarget){const tab=ensure(target);activeId=tab.id;render();return tab;},
   remove(tab:DocumentTab){entries=entries.filter(t=>t!==tab);if(activeId===tab.id)activeId=undefined;render();},
+  renamePath(source:string,destination:string){const tab=entries.find(t=>t.kind==='source'&&t.path===source);if(tab){const duplicate=entries.find(t=>t!==tab&&t.kind==='source'&&t.path===destination);if(duplicate){entries=entries.filter(t=>t!==duplicate);if(activeId===duplicate.id)activeId=tab.id;}tab.path=destination;tab.position=undefined;tab.unavailable=false;render();}},
   invalidate(path:string,unavailable=false){for(const tab of entries){if(tab.path===path){tab.position=undefined;if(unavailable)tab.unavailable=true;}}render();},
   unmount(){activeId=undefined;render();},
   focus(){element.querySelector<HTMLButtonElement>('[aria-selected=true]')?.focus({preventScroll:true});},

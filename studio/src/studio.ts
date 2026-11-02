@@ -540,13 +540,14 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const repositoryHome=createRepositoryHome(core,{openGitHub:()=>{void github.open(true);},select:run=>selectRepository(run)});
   const localFolders=el('details');localFolders.className='local-folders';localFolders.open=true;localFolders.append(el('summary','Local folders'),open,recent);
   const listing = el('div', '', 'file-list');
+  const undoFileRename=button('Undo last rename',()=>drafting.undoLastChange());undoFileRename.hidden=true;
   const sourceFileGuide = el('p', 'Browse writing files to edit or review. No manuscript setup is required.', 'source-file-guide');
   sourceFileGuide.hidden = true;
   const projectInfo = el('details', '', 'source-project-info');
   projectInfo.hidden = true;
   projectInfo.append(el('summary', 'Project & GitHub'), projectSettings, originStatus, originSend, sourceFileGuide);
   const filesBody = el('div', '', 'panel-body');
-  filesBody.append(projectInfo,repositoryHome.element,localFolders,directoryPath,listing);
+  filesBody.append(projectInfo,repositoryHome.element,localFolders,directoryPath,undoFileRename,listing);
   if(projectLibrary.supported){repositoryHome.element.hidden=true;localFolders.hidden=true;root.classList.add('project-first');}
   files.append(repoName, filesBody);
   const manuscriptPane = el('section', '', 'panel manuscript');
@@ -980,10 +981,14 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     verifyStructuralBuffer(); github.sourceChanged(); firstStory.sourceChanged();
     currentBook = null; searchScopeRevision++; manuscriptSearch.invalidate();
     const oldPath=opened?.path,oldText=opened?.text;
+    const renamingActive=changes.some(change=>(change.kind==='renameFile'||change.kind==='Undo renameFile')&&change.source===oldPath);
+    const renamePosition=renamingActive&&editor?{anchor:editor.view.state.selection.main.anchor,head:editor.view.state.selection.main.head,scrollTop:writerScrollTop()}:null;
+    rememberTabPosition();
     const oldScene=previous?.scenes.find(scene=>scene.path===oldPath);
     const sameScene=oldScene?state.scenes.find(scene=>scene.id===oldScene.id):undefined;
     documentTabs.reconcile(state.scenes);reference.reconcile(state.scenes);
     for(const change of changes){
+      if((change.kind==='renameFile'||change.kind==='Undo renameFile')&&change.source&&change.destination){documentTabs.renamePath(change.source,change.destination);reference.renamePath(change.source,change.destination);}
       if(change.source){reference.markChanged(change.source);documentTabs.invalidate(change.source);}
       if(change.destination){reference.markChanged(change.destination);documentTabs.invalidate(change.destination);}
       if(change.source&&(change.kind==='Undo splitFile'||(change.kind==='rollback'&&!change.destination))){documentTabs.invalidate(change.source,true);reference.markUnavailable(change.source);}
@@ -1017,6 +1022,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if(oldText!==undefined&&prefix.text+suffix.text!==oldText){documentTabs.invalidate(pair.source,true);documentTabs.invalidate(pair.destination,true);throw Error('The saved split changed before it could be refreshed. Reopen both source files to inspect them.');}
     }
     if(nextPath&&!await showDocument(nextPath,true))throw Error(`The change is saved. ${status.textContent??'The scene could not be reopened.'} Resolve recovery or use the file browser to retry.`);
+    if(renamePosition&&editor&&opened&&opened.text===oldText&&!recoveryPending){showSourceView();restorePosition(renamePosition);structuralFocusPath=opened.path;}
     if(pair){
       // A split is an editing action. Reused paths may retain an old Reading
       // preference; reveal Source before returning focus to the new section.
@@ -1634,7 +1640,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       proposalsEntry.hidden = !proposals.supported;
       draftingEntry.hidden = !drafting.supported;
       resetPreview();
-      listing.replaceChildren();
+      listing.replaceChildren();undoFileRename.hidden=true;
       outline.replaceChildren();
       manifests.replaceChildren();
       renderOrigin(); currentBook = null; directoryEntries = []; renderPill();
@@ -1678,7 +1684,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       directoryPath.textContent = path || '/';
       directoryEntries = entries.map(({path, name, kind}) => ({path, name, kind}));
       if (palette.scope() === 'files') palette.refresh();
-      listing.replaceChildren();
+      listing.replaceChildren();undoFileRename.hidden=!drafting.canUndoRename;
       if (path) listing.append(button('↑ Parent folder', () => { void showDirectory(parentPath(path)); }, 'file-entry parent'));
       for (const entry of entries) {
         const folder = entry.kind === 'directory';
@@ -1688,7 +1694,12 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
           item.draggable = true; item.title = 'Drag into the manuscript to move this file, or use Import repository files…';
           item.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(REPOSITORY_DRAG_TYPE, JSON.stringify({repositoryId: repository!.id, path: entry.path})); });
         }
-        listing.append(item);
+        if(!folder&&/\.(md|markdown)$/i.test(entry.path)&&drafting.supported){
+          const row=el('div','','file-entry-row');
+          const rename=button('Rename…',()=>drafting.renameFile(entry.path),'file-rename');rename.setAttribute('aria-label',`Rename ${entry.name}`);rename.setAttribute('aria-haspopup','dialog');
+          item.addEventListener('keydown',event=>{if(event.key==='F2'){event.preventDefault();drafting.renameFile(entry.path);}});item.title+=' · F2 to rename';
+          row.append(item,rename);listing.append(row);
+        }else listing.append(item);
       }
       if (!entries.length) listing.append(el('p', 'This folder is empty.', 'empty'));
     } catch (error) { if (!disposed && current === generation && request === directoryRequest) reportError(error); }

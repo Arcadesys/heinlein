@@ -98,6 +98,10 @@ pub enum DraftingChange {
         group_id: Option<String>,
         before_id: Option<String>,
     },
+    RenameFile {
+        source_path: String,
+        path: String,
+    },
     SplitFile {
         source_path: String,
         path: String,
@@ -915,8 +919,12 @@ impl Repository {
         if state.recovery_required {
             return Err(Error::DraftingPending);
         }
-        let file_only = matches!(change, DraftingChange::SplitFile { .. });
         let (existing, before_manifest) = self.drafting_manifest()?;
+        let rename_member = match &change {
+            DraftingChange::RenameFile {source_path, ..} => existing.as_ref().and_then(|m|m.scenes.iter().position(|s|s.path.eq_ignore_ascii_case(source_path))),
+            _ => None,
+        };
+        let file_only = matches!(change, DraftingChange::SplitFile { .. }) || (matches!(change, DraftingChange::RenameFile { .. }) && rename_member.is_none());
         let members = self.drafting_members()?;
         let mut manifest = existing.clone().unwrap_or(Manifest {
             schema_version: 2,
@@ -1025,6 +1033,18 @@ impl Repository {
                     &before_id,
                 )?;
                 plan.preview.summary = "Create an empty Markdown scene".into();
+            }
+            DraftingChange::RenameFile {source_path, path} => {
+                validate_markdown(&source_path)?;
+                validate_markdown(&path)?;
+                if parent(&source_path) != parent(&path) { return Err(Error::InvalidPath); }
+                if source_path == path { plan.preview.summary="Filename unchanged".into(); return Ok(plan); }
+                if manifest.scenes.iter().any(|s|s.path.eq_ignore_ascii_case(&path)) { return Err(Error::DraftingCollision); }
+                self.transfer_to(&mut plan, &source_path, &path, true, true)?;
+                if let Some(index)=rename_member { manifest.scenes[index].path=path.clone(); }
+                if let Some(view)=plan.preview.changes.last_mut(){view.kind="renameFile".into();}
+                plan.preview.summary="Rename a Markdown file, preserving its exact contents".into();
+                plan.preview.warnings.push("Links elsewhere that use the old filename are not rewritten. Review those links after renaming.".into());
             }
             DraftingChange::SplitFile {
                 source_path,
@@ -1670,6 +1690,9 @@ impl Repository {
         target: &str,
         moving: bool,
     ) -> Result<()> {
+        self.transfer_to(plan, source, target, moving, false)
+    }
+    fn transfer_to(&self, plan: &mut DraftingPlan, source: &str, target: &str, moving: bool, any_markdown: bool) -> Result<()> {
         validate_markdown(source)?;
         self.allowed(source, false)?;
         self.check_write_manifests(source)?;
@@ -1680,7 +1703,8 @@ impl Repository {
         if parent(source) != parent(target) && reference_bearing(&before.text) {
             return Err(Error::AssetReferences);
         }
-        self.add_new_file(plan, target, before.text.clone(), Some(source.into()))?;
+        if any_markdown { self.add_markdown_file(plan, target, before.text.clone(), Some(source.into()))?; }
+        else { self.add_new_file(plan, target, before.text.clone(), Some(source.into()))?; }
         plan.read_guards
             .push((source.into(), content_hash(&before.text)));
         plan.recovery_paths.push(source.into());

@@ -168,6 +168,28 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     const scene=state?.scenes.find(item=>item.id===sceneId);if(!scene||!state?.revision)return;
     splitSource(scene.path,prepare,scene);
   }
+  function renameFile(sourcePath:string) {
+    if(dialogs.size||!state||state.recoveryRequired)return;
+    const revision=state.revision,opener=document.activeElement as HTMLElement|null;
+    const node=dialog('Rename Markdown file'),body=el('form');
+    body.append(el('p',sourcePath,'path'),el('p','Rename this file in its current folder. Its text stays exact. Unsaved writing is saved before preview.','muted'));
+    const path=field(body,'New filename',basename(sourcePath),'Keep the .md or .markdown extension. If omitted, the current extension is kept.');
+    path.addEventListener('input',()=>path.setCustomValidity(''));
+    const cancel=()=>{remove(node);if(opener?.isConnected)opener.focus({preventScroll:true});};
+    submitButton(body,'Preview rename',()=>{
+      let name=path.value.trim();
+      if(/[\/\\]/.test(name)||name==='.'||name==='..'){path.setCustomValidity('Use a filename without folders.');path.reportValidity();return;}
+      if(!name.includes('.'))name+=sourcePath.match(/\.(md|markdown)$/i)?.[0]??'.md';
+      if(!/\.(md|markdown)$/i.test(name)){path.setCustomValidity('Keep a Markdown extension: .md or .markdown.');path.reportValidity();return;}
+      const destination=sourcePath.slice(0,sourcePath.lastIndexOf('/')+1)+name;
+      cancel();void changeManuscript({kind:'renameFile',sourcePath,path:destination},hooks.selectedPath?.()===sourcePath?destination:undefined,()=>{
+        if(state?.revision!==revision)throw Error('The manuscript changed. Start the rename again.');
+        return {kind:'renameFile',sourcePath,path:destination};
+      }).then(applied=>{if(!applied&&opener?.isConnected&&!document.querySelector('dialog[open]'))opener.focus({preventScroll:true});});
+    });
+    body.append(button('Cancel',cancel));node.append(body);display(node,cancel);
+    path.setSelectionRange(0,path.value.lastIndexOf('.'));
+  }
   function splitFile(sourcePath:string,prepare:()=>{expectedHash:string;byteOffset:number}) {splitSource(sourcePath,prepare);}
   function splitSource(sourcePath:string,prepare:()=>{expectedHash:string;byteOffset:number},scene?:DraftingScene) {
     if(dialogs.size||!state||state.recoveryRequired)return;
@@ -409,11 +431,12 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     const ungrouped=el('div','Move to end of manuscript, without a group','manuscript-boundary-target');moveDrop(ungrouped,source=>source.kind==='scene'?{kind:'ungroupedEnd'}:null,'Drop a scene here to place it at the document end with No chapter');chapters.append(ungrouped);element.append(chapters);
 
   }
-  return { element, supported, clear, load, initialize, importExternal, splitScene, splitFile, bindMoveSource, bindMoveTarget: moveDrop, get state() { return state; },
+  return { element, supported, clear, load, initialize, importExternal, splitScene, splitFile, renameFile, bindMoveSource, bindMoveTarget: moveDrop, get state() { return state; },
     /** The same previewed, confirmed reorder as the ↑/↓ buttons. Resolves once the change settles. */
     async reorderScene(sceneId: string, delta: -1 | 1) { const scene = state?.scenes.find(item => item.id === sceneId); if (scene && state?.revision && !dialogs.size) await reorder(scene, delta); },
     newScene() { if (state?.revision && !dialogs.size) newScene(); },
     importRepository(mode: 'move' | 'copy' = 'move') { void importRepository(mode); },
     undoLastChange() { void undoLastChange(); },
+    get canUndoRename() { return Boolean(undo?.changes.some(change=>change.kind==='renameFile')); },
     get canUndo() { return Boolean(undo); }, destroy() { disposed = true; clear(); } };
 }
