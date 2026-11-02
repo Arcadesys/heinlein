@@ -1075,7 +1075,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if(split.kind==='split'&&retained&&suffix)pair={source:retained.path,destination:suffix.path,sourceId:retained.id,suffixId:suffix.id};
       else if(split.kind==='splitFile'&&split.source===oldPath&&split.destination&&split.source!==split.destination&&split.source!.slice(0,split.source!.lastIndexOf('/')+1)===split.destination.slice(0,split.destination.lastIndexOf('/')+1)&&[split.source!,split.destination].every(path=>/\.(md|markdown)$/i.test(path)))pair={source:split.source!,destination:split.destination};
     }
-    if(pair){documentTabs.register({path:pair.source,sceneId:pair.sourceId,kind:'source'});documentTabs.register({path:pair.destination,sceneId:pair.suffixId,kind:'source'});}
+    if(pair){documentTabs.register({path:pair.source,sceneId:pair.sourceId,title:state.scenes.find(scene=>scene.id===pair.sourceId)?.title,kind:'source'});documentTabs.register({path:pair.destination,sceneId:pair.suffixId,title:state.scenes.find(scene=>scene.id===pair.suffixId)?.title,kind:'source'});}
     const moved=changes.find(change=>!['split','splitFile'].includes(change.kind)&&change.source===oldPath&&change.destination)?.destination;
     const nextPath=focusPath??sameScene?.path??moved??(oldScene?null:oldPath);
     // The operation has already committed. Never leave its old whole-file writer
@@ -1893,7 +1893,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const meta = el('div', '', 'page-meta'); meta.append(documentRole, source, badge);
     const page = el('div', '', 'page');
     page.append(el('p', assembled ? 'Assembled chapter' : sceneIndex >= 0 ? `Scene ${sceneIndex + 1} of ${drafting.state!.scenes.length}` : sourceKind, 'eyebrow'), title, meta, metadata, text);
-    const mountedTab=documentTabs.mount({path:doc.path,kind:doc.generatedCompatibility?'assembled':'source',sceneId:sceneInfo?.id,chapter:assembled?structuredClone(assembled.chapter):undefined});
+    const mountedTab=documentTabs.mount({path:doc.path,title:assembled?.chapter.title || sceneInfo?.title,kind:doc.generatedCompatibility?'assembled':'source',sceneId:sceneInfo?.id,chapter:assembled?structuredClone(assembled.chapter):undefined});
     if(mountedTab)activeDocumentPane.setAttribute('aria-labelledby',mountedTab.id);
     reference.activateWriter();mountActive(page);
     currentChapter = assembled;
