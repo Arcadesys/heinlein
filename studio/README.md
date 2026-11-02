@@ -6,7 +6,7 @@ The existing Python publisher and its CLI remain unchanged.
 
 ## 1.6 release packaging
 
-Heinlein Studio is version **1.6.0**, tagged **v1.6.0**. The independent Python
+Heinlein Studio is version **1.6.1**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:

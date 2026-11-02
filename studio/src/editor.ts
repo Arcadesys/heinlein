@@ -42,9 +42,16 @@ class PassageMarker extends GutterMarker {
   eq(other: PassageMarker) {return this.passages.length === other.passages.length && this.passages.every((p, i) => p.id === other.passages[i].id && p.label === other.passages[i].label && p.active === other.passages[i].active);}
   toDOM() {
     const node = document.createElement('div'); node.className = 'question-passage-chips';
-    for (const passage of [this.passages.find(p => p.active) ?? this.passages[0]]) {
-      const chip = document.createElement('button'); chip.type = 'button'; chip.tabIndex = -1; chip.textContent = this.passages.length > 1 ? `${this.passages.length} passages` : passage.label; chip.className = 'question-passage-chip';
-      chip.setAttribute('aria-label', `${passage.label} at this passage`); chip.setAttribute('aria-pressed', String(passage.active));
+    const passage = this.passages.find(p => p.active) ?? this.passages[0];
+    if (passage) {
+      const chip = document.createElement('button'); chip.type = 'button'; chip.tabIndex = -1; chip.className = 'question-passage-chip';
+      const label = `${this.passages.length > 1 ? `${this.passages.length} passages · ` : ''}${passage.label} at this passage`;
+      chip.setAttribute('aria-label', label); chip.title = label; chip.setAttribute('aria-pressed', String(passage.active));
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('aria-hidden', 'true'); icon.setAttribute('focusable', 'false');
+      const sparkle = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      sparkle.setAttribute('d', 'M12 2 15 9 22 12 15 15 12 22 9 15 2 12 9 9Z');
+      icon.append(sparkle); chip.append(icon);
       chip.addEventListener('mousedown', event => event.preventDefault()); chip.addEventListener('click', passage.open); node.append(chip);
     }
     return node;
@@ -119,7 +126,8 @@ export function createEditor(parent: HTMLElement, source: string, changed: (raw:
   const view = new EditorView({ parent, state: EditorState.create({
     doc: normalize(source),
     extensions: [editable.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), rawSource, passageField,
-      gutter({class: 'question-gutter', side: 'after', markers: view => view.state.field(passageField).markers}),
+      // Reserve the compact icon width even before the first passage is marked.
+      gutter({class: 'question-gutter', side: 'after', initialSpacer: () => new PassageMarker([]), markers: view => view.state.field(passageField).markers}),
       invertedEffects.of(transaction => transaction.docChanged ? [rawHistory.of(historyEndings(transaction.startState.field(rawSource)))] : []),
       history(), drawSelection(), markdown(), search({top: true}), EditorView.lineWrapping,
       EditorView.contentAttributes.of({'aria-label': 'Markdown editor', 'spellcheck': 'true'}),
