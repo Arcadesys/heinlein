@@ -919,7 +919,7 @@ dialog { color: var(--fg); }
 .reference-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
 .reference-actions button,.split-reading-offer button { min-block-size: 48px; white-space: normal; word-break: normal; }
 .reference-source { max-block-size:60vh;min-block-size:30vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;padding:.5rem;margin-block:.5rem;font:var(--type-body)/var(--leading-body) var(--font-text,var(--text-fallback));border:1px solid currentColor;tab-size:2; }
-.split-reading-offer { padding: 1rem; border-block-end: 1px solid currentColor; }
+.split-reading-offer { padding: 4px 8px; border-block-end: 1px solid currentColor; }
 @media (max-width: 1100px) {
  .document-reading-panes:has(.reference-pane:not([hidden])) { grid-template-columns: minmax(0,1fr); }
  .reference-pane { border-inline-start: 0; border-block-start: 2px solid currentColor; }
@@ -1165,6 +1165,6 @@ dialog { color: var(--fg); }
 /* At enlarged narrow widths, focus gives the saved reference room to read. */
 @media (max-width: 600px) {
   :root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"]) .document-workspace .document-reading-panes:has(.reference-pane:focus-within) { grid-template-rows: 0 minmax(0, 1fr); }
-  :root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"]) .document-workspace .document-reading-panes:has(.reference-pane:focus-within) .active-document-pane { visibility: hidden; }
+  :root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"]) .document-workspace .document-reading-panes:has(.reference-pane:not([hidden])):has(.active-document-pane:focus-within) { grid-template-rows: minmax(0, 1fr) 0; }
   :root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"]) .document-workspace:has(.reference-pane:not([hidden])) .back-to-sheets { display: none; }
 }

@@ -1067,16 +1067,17 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       // preference; reveal Source before returning focus to the new section.
       showSourceView();
       const savedPair=pair,session=repository?.id,current=generation;
+      const splitActions=el('details');splitActions.open=true;const splitSummary=el('summary','Split saved · actions');splitActions.append(splitSummary);
       const readBoth=button('Read both sections',()=>{void(async()=>{
         if(repository?.id!==session||generation!==current||repositoryDetached)return;
         const first=savedPair.sourceId?drafting.state?.scenes.find(scene=>scene.id===savedPair.sourceId):{path:savedPair.source};
         const second=savedPair.suffixId?drafting.state?.scenes.find(scene=>scene.id===savedPair.suffixId):{path:savedPair.destination};
         if(!first||!second)return;
         if(opened?.path!==second.path)await showDocument(second.path);
-        if(opened?.path===second.path&&repository?.id===session&&generation===current)await reference.read({path:first.path,sceneId:savedPair.sourceId});
+        if(opened?.path===second.path&&repository?.id===session&&generation===current&&await reference.read({path:first.path,sceneId:savedPair.sourceId})){splitActions.open=false;splitSummary.focus();}
       })();});
-      splitReadingOffer.append(el('p','Split saved as two source files. Read both sections loads the original saved source beside the suffix; choose it to replace any existing reference.'),readBoth);
-      if(drafting.canUndo)splitReadingOffer.append(button('Undo last split',()=>drafting.undoLastChange()));
+      splitActions.append(el('p','Read both sections replaces the current reference.'),readBoth);
+      if(drafting.canUndo)splitActions.append(button('Undo last split',()=>drafting.undoLastChange()));splitReadingOffer.append(splitActions);
       splitReadingOffer.hidden=false;
     }
     if(focusPath)structuralFocusPath=focusPath;
