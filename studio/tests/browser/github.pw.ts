@@ -1,5 +1,27 @@
 import { test, expect, type Locator } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+test('guided draft pull request sends selected changes and returns to the steps', async ({ page }) => {
+    await page.goto('/tests/browser/github.html?repo-first&writing');
+    await page.getByRole('button', { name: 'More actions' }).click();
+    await page.getByRole('button', { name: 'GitHub actions…', exact: true }).click();
+    const dialog = page.locator('dialog.github-panel:not(.project-library)');
+    await dialog.getByRole('button', { name: 'Create or update a draft pull request…' }).click();
+    await expect(dialog.getByRole('heading', { name: 'Create or update a draft pull request', level: 3 })).toBeFocused();
+    expect((await new AxeBuilder({ page }).include('.github-panel').analyze()).violations).toEqual([]);
+    await dialog.getByRole('button', { name: 'Choose changes to send…' }).click();
+    await dialog.getByRole('checkbox', { name: 'edit: story.md' }).check();
+    await dialog.getByText('Name and email included with new changes', { exact: true }).click();
+    await dialog.getByLabel('Name recorded with these changes').fill('Synthetic Writer');
+    await dialog.getByLabel('Email recorded with these changes').fill('synthetic@example.test');
+    await dialog.getByRole('button', { name: 'Send to GitHub…', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Continue to pull request steps' }).click();
+    await dialog.getByRole('button', { name: 'Preview a draft pull request…' }).click();
+    await dialog.getByLabel('Feedback request title').fill('Draft for review');
+    await dialog.getByRole('button', { name: 'Preview GitHub action' }).click();
+    await dialog.getByRole('button', { name: 'Confirm draft feedback request…' }).click();
+    await expect(dialog).toContainText('Pull request #1 is already open as a draft');
+    expect((await page.evaluate(() => ((window as any).githubFixture.calls as { action: string }[]).filter(c => c.action === 'confirm')))).toHaveLength(2);
+});
 test('GitHub synthetic account, exact-file version, send, draft feedback and explicit conflict journey with keyboard only', async ({ page }) => {
     async function tabTo(target:Locator){await expect(target).toBeVisible();await expect(target).toBeEnabled();for(let i=0;i<100;i++){if(await target.evaluate(el=>el===document.activeElement))return;await page.keyboard.press('Tab');}throw new Error('Keyboard could not reach target: '+await target.textContent());}
     async function activate(target:Locator){await tabTo(target);await page.keyboard.press('Enter');}
