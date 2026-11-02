@@ -20,6 +20,31 @@ u=importlib.util.module_from_spec(spec);spec.loader.exec_module(u)
 A='a'*40;B='b'*40;TREE='c'*40
 class Crash(BaseException):pass
 
+class BundleBytecodeTests(unittest.TestCase):
+    def test_imports_do_not_change_bundle_without_python_b_flag(self):
+        with tempfile.TemporaryDirectory() as temp:
+            resources=Path(temp)/'Contents/Resources';resources.mkdir(parents=True)
+            for name in ('update.py','install.py'):
+                shutil.copy2(ROOT/'studio/macos'/name,resources/name)
+            # Keep the real installer import path; substitute only the expensive
+            # bundle-building operation so this test touches no installed app.
+            with (resources/'install.py').open('a') as file:
+                file.write('\ndef stage_bundle(*args): pass\n')
+            before={p.name:p.read_bytes() for p in resources.iterdir()}
+            script='''import pathlib, runpy, sys, types
+p=pathlib.Path(sys.argv[1])
+runpy.run_path(str(p / "install.py"), run_name="fixture_installer")
+u=runpy.run_path(str(p / "update.py"), run_name="fixture_updater")
+mac=u["Mac"](types.SimpleNamespace(cache=p))
+mac.run=lambda *args, **kwargs: None
+mac.tool=lambda name: name
+assert not sys.dont_write_bytecode
+mac.build(p, p / "unused", {}, 1)
+assert not sys.dont_write_bytecode
+'''
+            subprocess.run([sys.executable,'-I','-S','-c',script,str(resources)],check=True)
+            self.assertEqual({p.name:p.read_bytes() for p in resources.iterdir()},before)
+
 def bundle(path,commit,generation=1):
     (path/'Contents/MacOS').mkdir(parents=True,mode=0o700)
     (path/'Contents/Resources').mkdir()

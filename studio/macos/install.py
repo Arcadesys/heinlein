@@ -13,8 +13,13 @@ import plistlib
 import shutil
 import sys
 
-spec=importlib.util.spec_from_file_location('heinlein_update',Path(__file__).with_name('update.py'))
-update=importlib.util.module_from_spec(spec);spec.loader.exec_module(update)
+previous_bytecode_setting=sys.dont_write_bytecode
+try:
+    sys.dont_write_bytecode=True
+    spec=importlib.util.spec_from_file_location('heinlein_update',Path(__file__).with_name('update.py'))
+    update=importlib.util.module_from_spec(spec);spec.loader.exec_module(update)
+finally:
+    sys.dont_write_bytecode=previous_bytecode_setting
 
 def stage_bundle(root, destination, source, generation, platform):
     root,destination=Path(root),Path(destination)

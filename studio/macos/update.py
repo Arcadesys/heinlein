@@ -289,9 +289,16 @@ class Mac:
     def build(self, root, destination, source, generation):
         self.run([self.tool('npm'),'ci','--cache',str(self.paths.cache/'npm')], 'build', cwd=root/'studio')
         self.run([self.tool('npm'),'run','tauri','build','--','--no-bundle','--runner',self.tool('cargo'),'--','--locked'], 'build',cwd=root/'studio')
-        spec=importlib.util.spec_from_file_location('heinlein_bundle_builder',Path(__file__).with_name('install.py'))
-        module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-        module.stage_bundle(root,destination,source,generation,self)
+        # These modules live inside the signed installed bundle. Never let
+        # importlib create __pycache__ there, even when invoked without -B.
+        previous_bytecode_setting=sys.dont_write_bytecode
+        try:
+            sys.dont_write_bytecode=True
+            spec=importlib.util.spec_from_file_location('heinlein_bundle_builder',Path(__file__).with_name('install.py'))
+            module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            module.stage_bundle(root,destination,source,generation,self)
+        finally:
+            sys.dont_write_bytecode=previous_bytecode_setting
     def sign(self, app):
         for relative, identifier in [('Contents/MacOS/heinlein-native',IDENTIFIER+'.native'),
                                       ('Contents/MacOS/heinlein-launcher',IDENTIFIER),('',IDENTIFIER)]:
