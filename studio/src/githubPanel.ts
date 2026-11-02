@@ -32,6 +32,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
     let feedbackTitle = '';
     let feedbackBody = '';
     let url = '';
+    let guided = false;
     async function request<T>(r: GitHubRequest) { if (!core.githubRequest)
         throw new Error('GitHub projects are available in the native Heinlein app.'); return await requestGitHub<T>(core,r); }
     function cancelPlan() { if (plan) {
@@ -151,8 +152,10 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         }
         if (!snapshot)
             return;
+        if (!project) body.append(node('p', 'To create a draft pull request, open a GitHub project copy below. Local folders are separate and are not automatically sent.'));
         if (project) {
             const w = project.workspace;
+            body.append(button('Create or update a draft pull request…', async () => { guided = true; renderGuide(); }));
             body.append(node('p', `${w.repo.owner}/${w.repo.name} · ${w.repo.private ? 'Private' : 'Public'}`), node('p', `Working branch: ${w.branch}. Pull request target: ${w.baseBranch ?? w.repo.defaultBranch}.`), node('p', 'Writing is kept on this Mac separately. Send to GitHub records the saved changes you select as a version if needed, then uploads after your confirmation. It does not merge them.'), node('p', `Local version: ${w.headOid.slice(0, 12)}. ${project.receipts.some(r=>r.kind==='push'&&r.status==='succeeded'&&r.head===w.headOid) ? 'A successful Send is recorded for this version. This is not a fresh GitHub or whole-folder check.' : 'Send status is not checked. Review your saved versions before choosing Send.'} ${w.pr ? `Feedback request #${w.pr.number}: ${w.pr.state}${w.pr.draft ? ' (draft)' : ''}.` : ''}`), button('Choose or create a working branch…', renderBranches), button('Save a local version without sending…', async () => renderVersion()), button('Send to GitHub…', renderSend), button('Request feedback with a draft pull request…', async () => renderShare('feedback')), button('Create a pull request ready for review…', async () => renderShare('pullRequest')), button('Review changes on the feedback branch…', () => incoming('feedback')), button(`Review changes on target branch ${w.baseBranch ?? w.repo.defaultBranch}…`, () => incoming('default')), node('p', 'After feedback is closed or merged, first review the selected target branch, then start a fresh feedback branch. Your local versions are retained.'), button('Start a fresh feedback branch…', async () => { await options.authorAction(async () => { await request({ action: 'freshBranch', repositoryId: session().id }); }); await load(); }));
             if(w.pr)body.append(button('Pull request status and actions…', renderPull), button(`Open feedback request #${w.pr.number}`,async()=>{await request({action:'openFeedback',repositoryId:session().id});}));
             for (const r of project.receipts) {
@@ -185,6 +188,20 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         focus();
     }
     function previewBox() { body.querySelector('[data-github-preview]')?.remove(); const box = node('section'); box.dataset.githubPreview = ''; box.setAttribute('aria-label', 'GitHub action preview'); body.append(box); return box; }
+    function renderGuide() {
+        cancelPlan(); heading('Create or update a draft pull request');
+        const w = project!.workspace;
+        body.append(node('p', `${w.repo.owner}/${w.repo.name} · ${w.repo.private ? 'Private' : 'Public'} · target ${w.baseBranch ?? w.repo.defaultBranch}`),
+            node('p', 'Choose the files to send, then create a draft pull request. Each action requires your confirmation. GitHub repository automation may run when changes are sent.'),
+            node('h4', '1. Send changes to GitHub'),
+            node('p', `${project!.changes.length} changed files are available to select. Earlier saved versions waiting to send are also included and listed before confirmation.`),
+            button('Choose changes to send…', renderSend),
+            node('h4', '2. Create a draft pull request'),
+            node('p', w.pr?.state === 'open' ? `Pull request #${w.pr.number} is already open${w.pr.draft ? ' as a draft' : ''}. Sending more versions updates its branch.` : w.pr ? 'The previous pull request is closed. Review the target branch and start a fresh feedback branch from the GitHub project first.' : 'After sending, add a title and description and preview the draft pull request. Creating it does not merge your writing.'));
+        if (w.pr?.state === 'open') body.append(button(`Open feedback request #${w.pr.number}`, async () => { await request({ action: 'openFeedback', repositoryId: session().id }); }));
+        else if (!w.pr) body.append(button('Preview a draft pull request…', async () => renderShare('feedback')));
+        body.append(button('Back to GitHub project', async () => { guided = false; await load(); })); focus();
+    }
     async function renderSend() {
         const s=session(), view=generation;
         cancelPlan();
@@ -244,6 +261,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
             status.append(node('h3',receipt?.status==='succeeded'?'Sent to GitHub':receipt?.status==='failed'?'Saved on this Mac. Not sent.':'Saved on this Mac. Send not confirmed.'),node('p',result.message));body.append(status);
             if(receipt?.status==='failed')body.append(button('Try sending again…',renderSend));
             else if(receipt?.status!=='succeeded')body.append(button('Check sending status',load));
+            if(guided && receipt?.status==='succeeded')body.append(button('Continue to pull request steps',async()=>{await load();if(project)renderGuide();}));
             body.append(button('Back to writing',async()=>close()));status.focus();status.scrollIntoView?.({block:'start'});
         });send.className='send-primary';
         const actions=node('div');actions.className='send-actions';actions.append(send,button('Not now',async()=>{cancelPlan();close();}));body.append(actions,node('p','You’ll confirm the repository, branch and complete file list before anything is uploaded.'));
@@ -272,7 +290,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
     }
     function renderShare(kind: 'push' | 'feedback' | 'pullRequest') { cancelPlan(); heading(kind === 'push' ? 'Send versions to GitHub' : kind === 'feedback' ? 'Request feedback' : 'Create a pull request'); const s = session(); body.append(node('p', kind === 'push' ? 'Only saved local versions are sent. Unversioned writing stays here.' : kind === 'feedback' ? 'A draft pull request asks for feedback on versions already sent. It does not merge or publish the story.' : 'A pull request ready for review shares the versions already sent. Creating it does not merge the story.')); if (kind !== 'push')
         body.append(field('Feedback request title', feedbackTitle, v => feedbackTitle = v), field('Feedback request description', feedbackBody, v => feedbackBody = v, true)); body.append(button('Preview GitHub action', async () => { const p = await prepare<GitHubShare>({ action: 'previewShare', repositoryId: s.id, kind, title: feedbackTitle, body: feedbackBody }); const box = previewBox(); box.append(node('h4', `${p.repository.owner}/${p.repository.name} · ${p.repository.private ? 'Private' : 'Public'} · ${p.account.login}`), node('p', `Working branch: ${p.branch}. Base: ${p.base}. ${p.commits.length} versions.`), files(p.files), node('p', p.warning)); if (kind !== 'push')
-        box.append(node('p', p.title), node('pre', p.body)); box.append(button(kind === 'push' ? 'Confirm sending versions…' : kind === 'feedback' ? 'Confirm draft feedback request…' : 'Confirm ready pull request…', () => finish(p.id, false)), button('Cancel this preview', async () => { cancelPlan(); box.remove(); })); }), button('Back to GitHub project', load)); focus(); }
+        box.append(node('p', p.title), node('pre', p.body)); box.append(button(kind === 'push' ? 'Confirm sending versions…' : kind === 'feedback' ? 'Confirm draft feedback request…' : 'Confirm ready pull request…', () => finish(p.id, false)), button('Cancel this preview', async () => { cancelPlan(); box.remove(); })); }), button(guided ? 'Back to pull request steps' : 'Back to GitHub project', async () => { if(guided)renderGuide();else await load(); })); focus(); }
     function selectField(labelText:string, values:{value:string;label:string}[], change:(value:string)=>void) {
         const label=node('label',labelText), select=node('select');select.setAttribute('aria-label',labelText);
         for(const value of values){const option=node('option',value.label);option.value=value.value;select.append(option);}
@@ -342,8 +360,8 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
     }
     async function finish(id: string, incoming: boolean) { if (plan !== id)
         throw new Error('Preview this action again.'); const s = session(); let receipt: GitHubReceipt | null = null; await options.authorAction(async () => { receipt = await request<GitHubReceipt | null>({ action: 'confirm', repositoryId: s.id, previewId: id, identity: incoming ? { ...identity } : null }); plan = null; if (receipt && incoming)
-        await options.incomingChanged(); }); await load(); message.textContent = receipt ? (receipt as GitHubReceipt).message : 'Action canceled. Prepare a new preview to continue.'; }
-    function close() { generation++; cancelPlan(); element.close(); opener?.focus(); }
+        await options.incomingChanged(); }); await load(); if(guided && project)renderGuide(); message.textContent = receipt ? (receipt as GitHubReceipt).message : 'Action canceled. Prepare a new preview to continue.'; }
+    function close() { generation++; guided = false; cancelPlan(); element.close(); opener?.focus(); }
     element.addEventListener('cancel', e => { e.preventDefault(); if (!busy)
         close(); });
     element.addEventListener('close', () => { generation++; cancelPlan(); });
