@@ -1161,3 +1161,10 @@ dialog { color: var(--fg); }
 @media (min-width: 1001px) {
   .library-groups > h3, .library-sheets > h3 { display: inline-block; margin: 0 0 0 .35rem; vertical-align: middle; }
 }
+
+/* At enlarged narrow widths, focus gives the saved reference room to read. */
+@media (max-width: 600px) {
+  :root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"]) .document-workspace .document-reading-panes:has(.reference-pane:focus-within) { grid-template-rows: 0 minmax(0, 1fr); }
+  :root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"]) .document-workspace .document-reading-panes:has(.reference-pane:focus-within) .active-document-pane { visibility: hidden; }
+  :root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"]) .document-workspace:has(.reference-pane:not([hidden])) .back-to-sheets { display: none; }
+}
