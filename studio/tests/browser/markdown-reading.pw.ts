@@ -282,11 +282,12 @@ test('This fixture keeps to its own storage key', async ({ page }) => {
 test('scene navigation reveals Source and focuses the exact passage with keyboard access', async ({ page }, info) => {
   await start(page, `${url}?sceneNavigation`);
   await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
-  const before = await source(page);
   const editor = page.locator('.active-document-pane .cm-content');
   await editor.click();
   await page.keyboard.press(`${modifier}+End`);
   await page.keyboard.insertText('\n\n---\n\nSynthetic breadcrumb passage.\n');
+  await expect.poll(() => source(page)).toContain('Synthetic breadcrumb passage.');
+  const before = await source(page);
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Reading', exact: true }).click();
   await expect(reader(page)).toBeVisible();
   const toggle=page.getByRole('button',{name:'Navigation',exact:true});if(await toggle.isVisible())await toggle.click();await page.getByRole('tab',{name:'Scenes',exact:true}).click();
