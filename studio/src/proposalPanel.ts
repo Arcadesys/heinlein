@@ -52,7 +52,7 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
       display(node, () => finish(false));
     });
   }
-  async function change(id: string, kind: 'apply' | 'revert', guard?: () => string | null) {
+  async function change(id: string, kind: 'apply' | 'revert', guard?: () => string | null, presenter?: (view: ProposalReview) => Promise<boolean>) {
     const repositoryId = hooks.repository()?.id; const current = version;
     if (!repositoryId || disposed) return;
     await hooks.run(async () => {
@@ -63,7 +63,7 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
         view = kind === 'apply' ? await core.reviewProposal!(repositoryId, id) : await core.reviewProposalRevert!(repositoryId, id);
         if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
         const loaded = guard?.(); if (loaded) throw new Error(loaded);
-        if (!await review(view)) { hooks.report('Review canceled. The manuscript was not changed.'); return; }
+        if (!await (presenter ?? review)(view)) { hooks.report('Review canceled. The manuscript was not changed.'); return; }
         if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
         const reviewed = guard?.(); if (reviewed) throw new Error(reviewed);
         submitted = true;
@@ -128,5 +128,5 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
       hooks.report(`Rejection could not be confirmed: ${String(error)}. Refresh the local receipts before trying again.`, true);
     }
   }
-  return {supported, open, reviewProposal: (id: string, guard?: () => string | null) => change(id, 'apply', guard), clear, destroy() { disposed = true; clear(); }};
+  return {supported, open, reviewProposal: (id: string, guard?: () => string | null, presenter?: (view: ProposalReview) => Promise<boolean>) => change(id, 'apply', guard, presenter), clear, destroy() { disposed = true; clear(); }};
 }

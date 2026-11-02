@@ -16,9 +16,11 @@ Later typing never silently changes an already captured context snapshot.
 Advice is displayed as text. An explicit Suggest revision request produces a
 pending, source-bound proposal. No provider response executes tools or changes a
 manuscript. Existing review/apply safeguards remain the route for proposed edits.
-Conversation state is session-local. Closing or clearing it invalidates pending
-results, and cancellation does not imply that already processed provider work was
-free or withdrawn.
+Passage sessions are local to the active document; Collapse retains them and
+explicitly sent requests. Cancel request, Clear conversation, and document/project
+changes invalidate pending requests. Existing saved project chat history retains
+its project/account/model scope. Cancellation does not imply that already processed
+provider work was free or withdrawn.
 
 ## Native boundary
 
@@ -101,3 +103,20 @@ Accepted proposals retain operation receipts and the existing guarded revert pat
 This is a pending-revision and local-receipt workflow. The broader authenticated
 revision ledger in ADR-001 remains future work. Current guarded revert is available
 for confirmed applies in the same Studio session and refuses intervening edits.
+
+
+## Passage-linked Source review
+
+The editable Source view offers passage chips and a stable Questions toolbar entry.
+Collapse retains the passage session and an explicitly sent request; Cancel request
+and document/project changes invalidate pending requests. Selecting or opening a
+chip never sends manuscript text. Source edits, including edit-and-undo, invalidate
+a suggestion's apply eligibility.
+
+Original/Suggested comparisons mark changed words without transforming either
+string. Apply prepares the authoritative whole-scene comparison in the same pane,
+then continues through the existing native author confirmation and exact bindings.
+Dismiss uses the existing immutable rejection receipt. Reading, document tabs, and
+the existing project/account/model-scoped saved chat format are retained.
+
+See [verification and limitations](../testing/studio-passage-questions.md).

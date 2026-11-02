@@ -1,5 +1,5 @@
-import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction } from '@codemirror/state';
-import { EditorView, keymap, drawSelection } from '@codemirror/view';
+import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, RangeSet } from '@codemirror/state';
+import { EditorView, keymap, drawSelection, gutter, GutterMarker, Decoration, type DecorationSet } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, invertedEffects, undo, redo } from '@codemirror/commands';
 import { search, searchKeymap, openSearchPanel } from '@codemirror/search';
 import { markdown } from '@codemirror/lang-markdown';
@@ -35,6 +35,41 @@ export function applyRawChanges(text: string, changes: {from: number; to: number
   return result;
 }
 export type EditorChangeOrigin = 'user' | 'history' | 'programmatic' | 'recovery';
+export interface EditorPassage {id: string; from: number; to: number; label: string; active: boolean; open(): void}
+const passageEffect = StateEffect.define<EditorPassage[]>();
+class PassageMarker extends GutterMarker {
+  constructor(readonly passages: EditorPassage[]) {super();}
+  eq(other: PassageMarker) {return this.passages.length === other.passages.length && this.passages.every((p, i) => p.id === other.passages[i].id && p.label === other.passages[i].label && p.active === other.passages[i].active);}
+  toDOM() {
+    const node = document.createElement('div'); node.className = 'question-passage-chips';
+    for (const passage of [this.passages.find(p => p.active) ?? this.passages[0]]) {
+      const chip = document.createElement('button'); chip.type = 'button'; chip.tabIndex = -1; chip.textContent = this.passages.length > 1 ? `${this.passages.length} passages` : passage.label; chip.className = 'question-passage-chip';
+      chip.setAttribute('aria-label', `${passage.label} at this passage`); chip.setAttribute('aria-pressed', String(passage.active));
+      chip.addEventListener('mousedown', event => event.preventDefault()); chip.addEventListener('click', passage.open); node.append(chip);
+    }
+    return node;
+  }
+}
+const passageField = StateField.define<{markers: RangeSet<GutterMarker>; decorations: DecorationSet}>({
+  create: () => ({markers: RangeSet.empty, decorations: Decoration.none}),
+  update(value, transaction) {
+    if (transaction.docChanged) value = {markers: RangeSet.empty, decorations: Decoration.none};
+    for (const effect of transaction.effects) if (effect.is(passageEffect)) {
+      const lines = new Map<number, EditorPassage[]>(); const ranges = [];
+      for (const passage of effect.value) {
+        if (passage.from < 0 || passage.to > transaction.newDoc.length || passage.to <= passage.from) continue;
+        const position = transaction.newDoc.lineAt(passage.from).from; const group = lines.get(position) ?? []; group.push(passage); lines.set(position, group);
+        if (passage.active) ranges.push(Decoration.mark({class: 'question-passage-highlight'}).range(passage.from, passage.to));
+      }
+      // Nearby anchors share one chip so generous targets cannot overlap on adjacent lines.
+      const clusters: [number, EditorPassage[]][] = []; let previousLine = -2;
+      for (const [position, passages] of [...lines].sort((a,b) => a[0]-b[0])) {const line = transaction.newDoc.lineAt(position).number; if (clusters.length && line <= previousLine + 1) clusters.at(-1)![1].push(...passages); else clusters.push([position, [...passages]]); previousLine = line;}
+      value = {markers: RangeSet.of(clusters.map(([pos, passages]) => new PassageMarker(passages).range(pos))), decorations: Decoration.set(ranges, true)};
+    }
+    return value;
+  },
+  provide: field => EditorView.decorations.from(field, value => value.decorations),
+});
 const replacement = Annotation.define<{text: string; origin: EditorChangeOrigin}>();
 type RawHistory = {length: number; breaks: number; endings: {position: number; text: string}[]};
 // Only newline metadata belongs in history, not a full manuscript copy per
@@ -83,7 +118,8 @@ export function createEditor(parent: HTMLElement, source: string, changed: (raw:
   });
   const view = new EditorView({ parent, state: EditorState.create({
     doc: normalize(source),
-    extensions: [editable.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), rawSource,
+    extensions: [editable.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), rawSource, passageField,
+      gutter({class: 'question-gutter', side: 'after', markers: view => view.state.field(passageField).markers}),
       invertedEffects.of(transaction => transaction.docChanged ? [rawHistory.of(historyEndings(transaction.startState.field(rawSource)))] : []),
       history(), drawSelection(), markdown(), search({top: true}), EditorView.lineWrapping,
       EditorView.contentAttributes.of({'aria-label': 'Markdown editor', 'spellcheck': 'true'}),
@@ -125,6 +161,11 @@ export function createEditor(parent: HTMLElement, source: string, changed: (raw:
     ],
   }) });
   return { view,
+    setPassages: (passages: EditorPassage[]) => {
+      const converted = passages.map(p => ({...p, from: normalize(raw.slice(0, p.from)).length, to: normalize(raw.slice(0, p.to)).length}));
+      view.dispatch({effects: passageEffect.of(converted)});
+    },
+    selectPassage: (from: number, to: number) => view.dispatch({selection: {anchor: normalize(raw.slice(0, from)).length, head: normalize(raw.slice(0, to)).length}, scrollIntoView: true}),
     replaceText: (text: string, origin: EditorChangeOrigin = 'programmatic') => {
       view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: text.replace(/\r\n|\r/g, '\n')}, annotations: replacement.of({text, origin})});
     },
