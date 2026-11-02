@@ -77,7 +77,8 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const revisionActions: (() => void)[] = [];
   let turns: Turn[] = []; let forgotten = 0; let pending: QuestionRequest | null = null; let pendingRevision = false;
   const header = el('div', '', 'question-heading');
-  header.append(el('h3', 'Questions'), button('Close questions', () => close(true)));
+  const heading = el('div'); heading.append(el('h3', 'Writing conversation'), el('p', 'Clears when closed or when you change scenes.', 'muted'));
+  header.append(heading, button('Close questions', () => close(true)));
   const connection = el('p', '', 'question-connection'); connection.setAttribute('role', 'status');
   const refresh = button('Recheck OpenAI setup', () => { void checkStatus(true); });
   const auth = el('details', '', 'question-auth'); auth.setAttribute('aria-label', 'ChatGPT connection'); auth.open = true;
@@ -134,11 +135,12 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const targetSection = el('section', '', 'question-revision-target'); targetSection.setAttribute('aria-label', 'Revision target'); targetSection.hidden = true;
   const targetText = preview('', 'Exact revision target'); const targetNote = el('p', '', 'muted');
   targetSection.append(el('h4', 'Selected passage to revise'), targetText, targetNote);
-  const questionLabel = el('label', 'Your drafting question');
-  const question = el('textarea'); question.rows = 4; question.setAttribute('aria-label', 'Your drafting question');
+  const questionLabel = el('label', 'Message');
+  const question = el('textarea'); question.rows = 2; question.setAttribute('aria-label', 'Your drafting question');
   question.placeholder = 'Ask about an idea, a detail, or where to go next…'; questionLabel.append(question);
   const count = el('p', '', 'muted'); const requestNote = el('p', '', 'question-request-note'); requestNote.setAttribute('role', 'status');
-  const contextHeading = el('h4', 'Context to send');
+  const contextHeading = el('summary', 'Add writing context');
+  const contextDetails = el('details', '', 'question-context');
   const contextSource = el('p', contextLabel, 'muted');
   const contextText = preview('', 'Exact context to send'); contextText.hidden = true;
   const captureSelection = button('Capture selected text', () => capture('selection'));
@@ -164,10 +166,30 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     if (wasRevision) status.textContent += ' A pending suggestion may already have been recorded; check Proposed revisions.';
     update(); question.focus({preventScroll: true});
   });
-  const actions = el('div', '', 'question-actions'); actions.append(send, cancel, button('Return to writing', () => hooks.focusEditor()), reset);
+  const latestReply = button('Read latest reply', () => transcript.lastElementChild?.scrollIntoView({block: 'start'})); latestReply.hidden = true;
+  const actions = el('div', '', 'question-actions question-send-actions'); actions.append(send, cancel, button('Return to writing', () => hooks.focusEditor()), latestReply);
   const transcript = el('section', '', 'question-transcript'); transcript.setAttribute('aria-label', 'Question conversation');
   const lifetime = el('p', 'Conversation text stays only in this window, up to four turns and 64,000 UTF-8 bytes. Closing questions or changing scenes/folders clears it. Earlier context snapshots and revision replacements are not added to conversation history. Revision source snapshots stay local until this panel is cleared; saved proposal records remain available in Proposed revisions. Stopping a request may leave an already-recorded pending suggestion.', 'muted');
-  element.append(header, connection, auth, guidance, modeLabel, targetSection, questionLabel, count, requestNote, contextHeading, contextSource, contextText, contextActions, historyDetails, disclosure, actions, status, transcript, lifetime);
+  const settings = el('details', '', 'question-settings'); settings.append(el('summary', 'Connection & conversation details'), connection, auth, guidance, count, historyDetails, disclosure, lifetime, reset);
+  const welcome = el('section', '', 'question-welcome'); welcome.append(el('h4', 'A second pair of eyes'), el('p', 'Explore an idea, work through a scene, or ask what a reader might notice.'));
+  const starters = el('div', '', 'question-starters');
+  for (const [label, prompt] of [['Explore an idea', 'Help me think through this idea: '], ['Find the tension', 'Where could the tension be stronger in this passage?'], ['Talk through a scene', 'Help me work out what should happen next in this scene.']]) {
+    starters.append(button(label, () => { question.value = prompt; update(); question.focus({preventScroll: true}); }));
+  }
+  welcome.append(starters, el('p', 'Add context below when you want to discuss your writing. Nothing is sent until you choose Send.', 'muted'));
+  const waiting = el('div', '', 'question-waiting'); waiting.hidden = true; waiting.setAttribute('role', 'status');
+  const conversation = el('div', '', 'question-conversation'); conversation.tabIndex = 0; conversation.setAttribute('aria-label', 'Conversation'); conversation.append(welcome, transcript, waiting);
+  contextDetails.append(contextHeading, contextSource, contextActions, contextText);
+  const composer = el('section', '', 'question-composer'); composer.setAttribute('aria-label', 'Write a message');
+  const composerTop = el('div', '', 'question-composer-top'); composerTop.append(modeLabel);
+  const contextSummary = el('p', '', 'question-context-summary');
+  composer.append(contextDetails, targetSection, questionLabel, composerTop, requestNote, contextSummary, actions, status);
+  element.append(header, settings, conversation, composer);
+  question.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && !event.isComposing) {event.preventDefault(); if (!send.disabled) void submit();}
+  });
+  send.setAttribute('aria-keyshortcuts', 'Meta+Enter Control+Enter');
+  send.title = 'Send (Cmd/Ctrl+Enter)';
   question.addEventListener('input', update);
   mode.addEventListener('change', () => {
     if (!live() || pending || preparing || authBusy) return;
@@ -208,6 +230,13 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   function outgoingProblem() {return questionProblem(question.value, context) ?? (mode.value === 'revision' ? revisionProblem() : null) ?? (questionBytes(question.value) + questionBytes(context) + targetBytes() > QUESTION_LIMITS.input ? 'The question, target, and context exceed 32,000 UTF-8 bytes. Remove context or shorten the selection.' : null);}
   function update() {
     const history = pending?.history ?? outgoingHistory();
+    latestReply.hidden = turns.length === 0;
+    welcome.hidden = turns.length > 0 || Boolean(pending) || preparing;
+    waiting.hidden = !pending && !preparing;
+    waiting.textContent = waiting.hidden ? '' : preparing ? 'Preparing your revision…' : `${pending?.question ?? ''}\n\nThinking… You can keep writing.`;
+    contextSummary.textContent = context ? `${contextLabel.split(' snapshot')[0]} attached.` : 'No manuscript text attached.';
+    contextHeading.textContent = context ? 'Writing context attached · inspect or change' : 'Add writing context';
+    settings.open = Boolean(configuration && !connectionReady()) || Boolean(authBusy) || Boolean(configuration?.signInPending) ? true : settings.open;
     const revising = mode.value === 'revision';
     targetSection.hidden = !revising; targetText.textContent = revising && target ? target.source.slice(target.from, target.to) : '';
     targetNote.textContent = revising ? (revisionProblem() ?? `${target!.path} · ${targetBytes().toLocaleString()} UTF-8 bytes. Only this target is replaced; saved source is rechecked before review.`) : '';
@@ -243,7 +272,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   function updateRevisionState() {
     const problem = outgoingProblem();
     send.disabled = !live() || checking || Boolean(authBusy) || Boolean(configuration?.signInPending) || !connectionReady() || !core.askQuestion || Boolean(pending) || preparing || Boolean(problem);
-    send.title = problem ?? ''; requestNote.textContent = question.value.trim() ? send.title : ''; requestNote.hidden = !requestNote.textContent;
+    send.title = problem ?? 'Send (Cmd/Ctrl+Enter)'; requestNote.textContent = question.value.trim() ? send.title : ''; requestNote.hidden = !requestNote.textContent;
     if (mode.value === 'revision') targetNote.textContent = revisionProblem() ?? `${target!.path} · ${targetBytes().toLocaleString()} UTF-8 bytes. Only this target is replaced; saved source is rechecked before review.`;
     for (const refreshAction of revisionActions) refreshAction();
   }
@@ -283,8 +312,8 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const modelPlaceholder = el('option', 'Choose a model'); modelPlaceholder.value = ''; modelPlaceholder.disabled = true; models.append(modelPlaceholder);
     next.models.forEach(value => {const option = el('option', value.displayName || value.slug); option.value = value.slug; models.append(option);});
     models.value = next.selectedModel ?? '';
-    if (!connectionReady()) auth.open = true;
-    else if (first || authBusy === 'connect') auth.open = false;
+    if (!connectionReady()) { auth.open = true; settings.open = true; }
+    else if (first || authBusy === 'connect') { auth.open = false; settings.open = false; }
   }
   async function checkStatus(remote = false) {
     if (!live() || authBusy) return;
@@ -342,7 +371,8 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     }
   }
   function resetContents() {
-    contextVersion++; cancelPending(); mode.value = 'ask'; target = null; targetText.textContent = ''; targetNote.textContent = ''; targetSection.hidden = true; revisionActions.length = 0; turns = []; forgotten = 0; context = ''; contextLabel = 'None. No manuscript text will be sent.'; question.value = ''; transcript.replaceChildren();
+    contextVersion++; cancelPending(); mode.value = 'ask'; target = null; targetText.textContent = ''; targetNote.textContent = ''; targetSection.hidden = true; revisionActions.length = 0; turns = []; forgotten = 0; context = ''; contextLabel = 'None. No manuscript text will be sent.'; question.value = ''; question.placeholder = 'Ask about an idea, a detail, or where to go next…'; transcript.replaceChildren(); contextDetails.open = false;
+    waiting.textContent = ''; waiting.hidden = true; contextSummary.textContent = '';
     // Closing also removes private snapshots from hidden DOM, not just state.
     contextText.textContent = ''; contextText.hidden = true; contextSource.textContent = contextLabel;
     historyText.replaceChildren(); historyNote.textContent = ''; historySummary.textContent = 'Conversation history to send · 0 messages';
@@ -383,8 +413,10 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       }
       turns.push({question: request.question, answer, contextBytes: questionBytes(request.context), revision});
       while (turns.length > 4 || turns.reduce((sum, turn) => sum + questionBytes(turn.question) + questionBytes(turn.answer.text) + questionBytes(turn.revision?.replacementText ?? '') + questionBytes(turn.revision?.snapshot.selectedText ?? ''), 0) > QUESTION_LIMITS.memory) {turns.shift(); forgotten++;}
-      question.value = '';
+      question.value = ''; question.placeholder = 'Ask a follow-up…';
       renderTranscript();
+      const latest = transcript.lastElementChild as HTMLElement | null;
+      if (latest) conversation.scrollTop += latest.getBoundingClientRect().top - conversation.getBoundingClientRect().top - 20;
       status.textContent = revision ? 'Suggested revision recorded. Review it or reject it below. Your manuscript has not been changed.' : answer.incomplete ? 'OpenAI returned an incomplete answer. It is marked below; nothing was retried automatically.' : 'Answer ready. Your manuscript has not been changed.';
     } catch (error) { if (live() && version === epoch) {status.textContent = errorMessage(error); void checkStatus();} }
     finally { if (live() && version === epoch) {preparing = false; pending = null; pendingRevision = false; update();} }
@@ -398,8 +430,10 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     turns.forEach((turn, index) => {
       const section = el('section', '', 'question-turn');
       const usage = [turn.answer.inputTokens == null ? null : `${turn.answer.inputTokens.toLocaleString()} input tokens`, turn.answer.outputTokens == null ? null : `${turn.answer.outputTokens.toLocaleString()} output tokens`].filter(Boolean).join(' · ');
-      section.append(el('h4', 'You'), preview(turn.question, `Question ${index + 1}`), el('p', `${turn.contextBytes.toLocaleString()} UTF-8 bytes of context sent`, 'muted'), el('h4', `OpenAI · ${turn.answer.model}${turn.answer.incomplete ? ' · Incomplete answer' : ''}`), renderMarkdown(turn.answer.text, `Answer ${index + 1}`), el('p', usage || 'Token usage was not returned.', 'muted'));
-      const origin = el('p', `Recorded origin: native OpenAI · Model: ${turn.answer.model} · Request: ${turn.answer.requestId}. Provider metadata is not authenticated authorship.`, 'muted'); section.append(origin);
+      const message = preview(turn.question, `Question ${index + 1}`); message.classList.add('question-user-message');
+      section.append(el('h4', 'You'), message, el('h4', turn.answer.incomplete ? 'Heinlein · Incomplete answer' : 'Heinlein'), renderMarkdown(turn.answer.text, `Answer ${index + 1}`));
+      const details = el('details', '', 'question-response-details'); details.append(el('summary', 'Response details'), el('p', `${turn.contextBytes.toLocaleString()} UTF-8 bytes of context sent`, 'muted'), el('p', usage || 'Token usage was not returned.', 'muted'));
+      const origin = el('p', `Recorded origin: native OpenAI · Model: ${turn.answer.model} · Request: ${turn.answer.requestId}. Provider metadata is not authenticated authorship.`, 'muted'); details.append(origin); section.append(details);
       const revision = turn.revision;
       if (revision) {
         const note = el('p', '', 'question-revision-status'); note.setAttribute('role', 'status');
