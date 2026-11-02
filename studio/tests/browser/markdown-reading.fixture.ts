@@ -135,5 +135,5 @@ void app.selectRepository(async () => session).then(() => app.showDocument(param
   const panel = document.querySelector<HTMLElement>('.heinlein-review-panel')!;
   await new Promise<void>(resolve => { const look = () => { if (panel.querySelector('.review-saved button')) resolve(); else setTimeout(look, 20); }; look(); });
   panel.querySelector<HTMLButtonElement>('.review-saved button')!.click();
-  if (params.get('view') === 'reading') [...document.querySelectorAll<HTMLButtonElement>('.active-document-pane .md-view-toggle button')].find(b => b.textContent === 'Reading')?.click();
+  if (params.get('view') === 'reading') [...document.querySelectorAll<HTMLButtonElement>('.document-command-bar .md-view-toggle button')].find(b => b.textContent === 'Reading')?.click();
 });

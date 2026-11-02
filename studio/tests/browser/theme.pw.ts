@@ -2,7 +2,8 @@ import {test, expect} from '@playwright/test';
 test('normal renderer opens Appearance without native access', async ({page}) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
-  await page.getByRole('button', {name: 'Appearance', exact: false}).click();
+  if(await page.getByRole('dialog',{name:'Navigation'}).isVisible())await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'More actions'}).click();await page.getByRole('button', {name: 'Appearance', exact: false}).click();
   await expect(page.getByRole('dialog', {name: 'Appearance'}), JSON.stringify(errors)).toBeVisible();
   await page.getByRole('button', {name: 'Vibecode theme', exact: true}).click();
   await expect(page.getByRole('heading', {name: 'Vibecode your theme'})).toBeVisible();
@@ -17,7 +18,8 @@ const rgbHex = (rgb: string) => '#' + rgb.match(/\d+/g)!.slice(0, 3).map(n => Nu
 const storageKey = 'heinlein-studio-custom-theme-v1';
 const rootBg = (page: import('@playwright/test').Page) => page.locator('html').evaluate(el => getComputedStyle(el).getPropertyValue('--bg').trim());
 async function openThemes(page: import('@playwright/test').Page) {
-  await page.getByRole('button', {name: 'Appearance', exact: false}).click();
+  if(await page.getByRole('dialog',{name:'Navigation'}).isVisible())await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'More actions'}).click();await page.getByRole('button', {name: 'Appearance', exact: false}).click();
   await page.getByRole('button', {name: 'Vibecode theme', exact: true}).click();
 }
 async function generate(page: import('@playwright/test').Page, aesthetic = 'Warm library') {
@@ -69,7 +71,7 @@ test('synthetic provider: review, keyboard, contrast, persistence, reset and ref
     const sampleSize = await page.getByLabel('Theme sample text', {exact: true}).evaluate(el => parseFloat(getComputedStyle(el).fontSize)); expect(sampleSize).toBeGreaterThanOrEqual(16);
   }
   await page.keyboard.press('Escape'); await expect(page.getByRole('dialog', {name: 'Appearance'})).not.toBeVisible();
-  await expect(page.getByRole('button', {name: 'Appearance', exact: false})).toBeFocused();
+  await expect(page.getByRole('button', {name: 'More actions'})).toBeFocused();
   await page.reload(); expect(await rootBg(page)).toBe(light.bg);
   expect(await page.locator('.cm-content').textContent()).toBe(source);
   await openThemes(page); await page.getByRole('button', {name: 'Revert accepted theme'}).click(); expect(await rootBg(page)).toBe(dark.bg);

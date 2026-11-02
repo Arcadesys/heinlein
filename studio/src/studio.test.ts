@@ -72,7 +72,7 @@ describe('read-only Studio', () => {
     expect(document.querySelector('.frontmatter')?.textContent).toBe('<b>raw metadata</b>');
     expect(document.querySelector('.preview img, .preview script, .preview b, .preview a')).toBeNull();
     expect(document.querySelector('.badge')?.textContent).toBe('Assembled chapter · Revise its source scenes');
-    expect(document.querySelector('.workspace textarea, .workspace input, [contenteditable]')).toBeNull();
+    expect(document.querySelector('.preview textarea, .preview input, .preview [contenteditable]')).toBeNull();
   });
   it('works without a manifest and shows empty folders', async () => {
     const core = bridge(); core.pickRepository = vi.fn(async () => ({...session, manifests: []})); core.listDirectory = vi.fn(async () => []);
@@ -325,8 +325,8 @@ describe('editing and loss protection', () => {
   });
   it('supports undo redo find and accessible editor label', async () => {
     const {app, view, change} = await setup(); const initial = view.state.doc.toString(); change();
-    findButton('Undo').click(); expect(view.state.doc.toString()).toBe(initial);
-    findButton('Redo').click(); expect(view.state.doc.toString()).toBe('New words');
+    [...document.querySelectorAll<HTMLButtonElement>('.source-only')].find(b=>b.textContent==='Undo')!.click(); expect(view.state.doc.toString()).toBe(initial);
+    [...document.querySelectorAll<HTMLButtonElement>('.source-only')].find(b=>b.textContent==='Redo')!.click(); expect(view.state.doc.toString()).toBe('New words');
     [...document.querySelectorAll('button')].find(button => button.textContent === 'Find')!.click(); expect(document.querySelector('[name="search"]')).not.toBeNull();
     expect(document.querySelector('[aria-label="Markdown editor"]')).not.toBeNull(); app.destroy();
   });
@@ -713,12 +713,25 @@ describe('ms drafting structure and recovery guard', () => {
     view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: text}, annotations: Transaction.userEvent.of('input.type')}); return view;
   }
   function moveLaterSceneEarlier() { document.querySelector<HTMLButtonElement>('[aria-label="Move Later earlier"]')!.click(); }
+  it('renames a library group without saving or replacing an unsaved editor buffer', async () => {
+    const core = draftingBridge();
+    core.loadDrafting = vi.fn(async (): Promise<import('./localCore').DraftingState> => ({...initial(), library:[{id:'g1',kind:'group',parentId:null},{id:'scene-a',kind:'scene',parentId:'g1'},{id:'scene-b',kind:'scene',parentId:null}]}));
+    core.historyDraftingChange = vi.fn(async () => ({state: initial(), canUndo:false, canRedo:true, metadataOnly:true}));
+    await setupDrafting(core); exact('2. Opening').click(); await settle();
+    const view = edit('Unsaved synthetic buffer'); exact('Rename First chapter').click();
+    const input = document.querySelector<HTMLInputElement>('dialog input')!; input.value = 'Renamed group';
+    document.querySelector<HTMLFormElement>('dialog form')!.dispatchEvent(new Event('submit', {bubbles:true,cancelable:true}));
+    await vi.waitFor(() => expect(core.applyDraftingChange).toHaveBeenCalledOnce());
+    expect(core.saveDocument).not.toHaveBeenCalled(); expect(view.state.doc.toString()).toBe('Unsaved synthetic buffer');
+    expect(document.querySelector('.cm-editor')).toBe(view.dom);
+    exact('Undo library change').click(); await vi.waitFor(() => expect(core.historyDraftingChange).toHaveBeenCalledWith(session.id, 'undo', true));
+    expect(core.saveDocument).not.toHaveBeenCalled(); expect(view.state.doc.toString()).toBe('Unsaved synthetic buffer');
+  });
   it('requires explicit initialization and approval before creating an ms manuscript', async () => {
     const core = draftingBridge(); core.loadDrafting = vi.fn(async () => ({...initial(), revision: null, scenes: []}));
     await setupDrafting(core);
     expect(core.previewDraftingChange).not.toHaveBeenCalled(); expect(core.applyDraftingChange).not.toHaveBeenCalled();
-    exact('Binder').click(); await settle();
-    exact('Create ms manuscript').click(); exact('Preview manuscript').click(); await settle();
+    exact('Open library').click(); await settle(); exact('Set up library').click(); exact('Preview setup and import').click(); await settle();
     expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, null, {kind: 'initialize', project: session.name});
     expect(core.applyDraftingChange).not.toHaveBeenCalled();
     exact('Cancel').click(); await settle();
@@ -826,19 +839,21 @@ describe('ms drafting structure and recovery guard', () => {
   }
   it('moves repository drags using the scoped source and previews before mutation', async () => {
     const {core} = await setupDrafting(); const data = transfer();
+    const showAll = [...document.querySelectorAll('label')].find(label => label.textContent?.includes('Show support files and paths'))!.querySelector('input')!;
+    showAll.click(); await settle();
     dragEvent(document.querySelector('[aria-label="Open file README.md"]')!, 'dragstart', data);
     expect(data.getData('application/x-heinlein-repository-entry')).toBe(JSON.stringify({repositoryId: session.id, path: 'README.md'}));
     dragEvent(document.querySelector('.drafting-drop')!, 'drop', data);
-    expect(document.body.textContent).toContain('Files referenced by a legacy manuscript cannot be moved');
+    expect(document.body.textContent).toContain('Sheets referenced by a legacy manuscript cannot be moved');
     exact('Preview import').click(); await settle();
     expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'importRepository', paths: ['README.md'], destination: 'ms', mode: 'move', groupId: null, beforeId: null});
     expect(core.applyDraftingChange).not.toHaveBeenCalled(); exact('Cancel').click(); await settle();
   });
   it('reorders an outline drag by stable ID with no filename change', async () => {
     const {core} = await setupDrafting(); const data = transfer();
-    dragEvent(document.querySelector('[data-scene-id="scene-a"] .manuscript-move-grip')!, 'dragstart', data);
+    dragEvent(document.querySelector('[data-scene-id="scene-a"] .scene-open')!, 'dragstart', data);
     dragEvent(document.querySelector('[data-scene-id="scene-b"]')!, 'drop', data); await settle();
-    expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'placeScene', sceneId: 'scene-a', destination:{kind:'after',sceneId:'scene-b',groupId:null}});
+    expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'reorderScene', sceneId: 'scene-a', beforeId:'scene-b', groupId:'g1'});
     exact('Cancel').click(); await settle();
   });
   it('ignores repository drags from another session', async () => {
@@ -891,14 +906,14 @@ describe('ms drafting structure and recovery guard', () => {
     expect(document.querySelector('.status')?.textContent).toContain('Recovery owned by another window');
     expect(document.querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('false');
   });
-  it('creates a scene only after preview, then opens its exact requested path', async () => {
+  it('creates a sheet with an internal collision-safe path and opens it', async () => {
     const {core} = await setupDrafting();
-    core.applyDraftingChange = vi.fn(async () => ({state: {...initial(), revision: 'manifest-2', scenes: [...initial().scenes, {id: 'new-scene-id', title: 'Untitled scene', path: 'ms/untitled-scene.md', groupId: null}]}, undoId: 'create-undo'}));
-    exact('Add scene').click(); exact('Preview new scene').click(); await settle();
-    expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'createScene', title: 'Untitled scene', path: 'ms/untitled-scene.md', groupId: null, beforeId: null});
-    expect(core.applyDraftingChange).not.toHaveBeenCalled(); exact('Apply change').click(); await settle();
-    expect(core.readDocument).toHaveBeenLastCalledWith(session.id, 'ms/untitled-scene.md');
-    expect(document.querySelector('.preview .path')?.textContent).toBe('ms/untitled-scene.md');
+    let path = '';
+    core.previewDraftingChange = vi.fn(async (_repo, _revision, change) => { if (change.kind === 'createScene') path = change.path; return {id:'opaque-preview', summary:'New sheet', changes:[], warnings:[]}; });
+    core.applyDraftingChange = vi.fn(async () => ({state: {...initial(), revision: 'manifest-2', scenes: [...initial().scenes, {id: 'new-scene-id', title: 'Untitled sheet', path, groupId: null}]}, undoId: 'create-undo'}));
+    exact('New sheet').click(); expect(document.querySelector('dialog')!.textContent).not.toContain('file'); exact('Create sheet').click();
+    await vi.waitFor(() => expect(core.applyDraftingChange).toHaveBeenCalledOnce());
+    expect(path).toMatch(/^ms\/sheet-[0-9a-f-]+\.md$/); await vi.waitFor(() => expect(core.readDocument).toHaveBeenCalledWith(session.id, path));
   });
   it('blocks native close throughout an approved structure operation', async () => {
     const core = draftingBridge(); let requestClose!: () => void;

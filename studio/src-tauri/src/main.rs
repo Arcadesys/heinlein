@@ -824,6 +824,7 @@ fn production_main() {
             drafting::preview_drafting_change,
             drafting::apply_drafting_change,
             drafting::undo_drafting_change,
+            drafting::history_drafting_change,
             drafting::pick_drafting_import,
             pick_repository,
             recent_repositories,

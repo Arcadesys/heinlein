@@ -70,7 +70,7 @@ describe('manuscript-wide search integration', () => {
     const {core} = bridge(); await start(core); await app!.showManuscript('legacy.json'); await search('needle');
     expect(results()).toHaveLength(1); expect(results()[0].textContent).toContain('legacy.md');
     document.querySelector<HTMLButtonElement>('[aria-label="Close manuscript search"]')!.click();
-    [...document.querySelectorAll('button')].find(button => button.textContent === 'ms drafting')!.click();
+    [...document.querySelectorAll('button')].find(button => button.textContent === 'Open library')!.click();
     await vi.waitFor(() => expect(document.querySelector('.drafting-panel')).not.toBeNull());
     await search('passage'); expect(results()).toHaveLength(2);
   });

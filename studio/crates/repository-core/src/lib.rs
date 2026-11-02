@@ -181,8 +181,8 @@ struct RawManifest {
     schema_version: u32,
     project: String,
     volumes: Vec<RawVolume>,
-    #[serde(default)]
-    sources: Vec<RawSource>,
+    #[serde(default, rename = "sources")]
+    _sources: Vec<RawSource>,
 }
 #[derive(Deserialize)]
 struct RawVolume {
@@ -204,10 +204,31 @@ struct RawSource {
     path: String,
 }
 
+// Write authority needs output declarations, not chapter numbering or an
+// assembled output for every chapter. Some legacy manifests describe loose
+// sections with scenes but no `number` or `source`.
+#[derive(Deserialize)]
+struct GuardManifest {
+    schema_version: u32,
+    project: String,
+    volumes: Vec<GuardVolume>,
+    #[serde(default)]
+    sources: Vec<RawSource>,
+}
+#[derive(Deserialize)]
+struct GuardVolume {
+    chapters: Vec<GuardChapter>,
+}
+#[derive(Deserialize)]
+struct GuardChapter {
+    source: Option<String>,
+    scenes: Vec<String>,
+}
+
 // Some manifests use `source` as a chapter's entry scene, not an export.
 // Explicit output declarations always win; otherwise an in-chapter scene is
 // author-controlled source, and a distinct chapter source is assembled output.
-fn declares_assembled_path(raw: &RawManifest, base: &str, path: &str) -> bool {
+fn declares_assembled_path(raw: &GuardManifest, base: &str, path: &str) -> bool {
     raw.sources
         .iter()
         .any(|source| join(base, &source.path).as_deref() == Ok(path))
@@ -216,7 +237,10 @@ fn declares_assembled_path(raw: &RawManifest, base: &str, path: &str) -> bool {
             .iter()
             .flat_map(|volume| &volume.chapters)
             .any(|chapter| {
-                join(base, &chapter.source).as_deref() == Ok(path)
+                chapter
+                    .source
+                    .as_ref()
+                    .is_some_and(|source| join(base, source).as_deref() == Ok(path))
                     && !chapter
                         .scenes
                         .iter()
@@ -646,9 +670,9 @@ impl Repository {
             // Ignore rules cannot hide authority metadata from the write boundary.
             match self.raw(&manifest, MAX_MANIFEST_BYTES, true) {
                 Ok(text) => {
-                    let raw: RawManifest =
+                    let raw: GuardManifest =
                         serde_json::from_str(&text).map_err(|_| Error::InvalidManifest)?;
-                    if raw.schema_version != 1 {
+                    if raw.schema_version != 1 || raw.project.len() > 4096 {
                         return Err(Error::InvalidManifest);
                     }
                     if declares_assembled_path(&raw, base, path) {
@@ -752,7 +776,7 @@ impl Repository {
             // Authority metadata remains relevant even when hidden from browsing.
             match self.raw(&manifest, MAX_MANIFEST_BYTES, true) {
                 Ok(text) => {
-                    if let Ok(raw) = serde_json::from_str::<RawManifest>(&text) {
+                    if let Ok(raw) = serde_json::from_str::<GuardManifest>(&text) {
                         if raw.schema_version == 1 && declares_assembled_path(&raw, base, path) {
                             return Ok(true);
                         }

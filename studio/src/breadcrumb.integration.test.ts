@@ -21,12 +21,12 @@ it('opens on the Binder and shows the chapter between project and scene',async()
  expect(document.querySelector('.pill-chapter')!.textContent).toBe('Opening');
  expect(document.querySelector('.pill-scene')!.textContent).toBe('Meeting');
 });
-it('the Binder tree marks the current scene in text and opens another scene',async()=>{
+it('the Library identifies the current sheet and opens another sheet',async()=>{
  await begin();
- const here=document.querySelector<HTMLButtonElement>('.binder-scene[aria-current="true"]')!;
- expect(here.textContent).toContain('Meeting');expect(here.textContent).toContain('You are here');
- document.querySelector<HTMLButtonElement>('.binder-scene:not([aria-current])')!.click();await tick();
- expect(document.querySelector('.pill-scene')!.textContent).toBe('Arrival');
+ const here=document.querySelector<HTMLButtonElement>('.scene-open[aria-current="true"]')!;
+ expect(here.textContent).toContain('Meeting');expect(here.closest('.drafting-scene')?.querySelector<HTMLElement>('.current-sheet')?.hidden).toBe(false);
+ document.querySelector<HTMLButtonElement>('.scene-open:not([aria-current])')!.click();await tick();
+ expect(document.querySelector('.pill-scene')!.textContent).toBe('Prelude');
 });
 it('the Scene menu lists the chapter, moves between scenes and keeps the buffer',async()=>{
  await begin();

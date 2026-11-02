@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-const activate = async (l: import('@playwright/test').Locator) => { await l.focus(); await l.page().keyboard.press('Enter'); };
+const activate = async (l: import('@playwright/test').Locator) => { if(!await l.isVisible()){const nav=l.page().getByRole('dialog',{name:'Navigation'});if(await nav.isVisible())await l.page().keyboard.press('Escape');await l.page().getByRole('button',{name:'More actions'}).click();} await l.focus(); await l.page().keyboard.press('Enter'); };
 const writing = (p: import('@playwright/test').Page) => p.locator('.standalone-editor .cm-content');
 test('start without setup, local keep/restart/find/resume/discard/restore by keyboard', async ({ page }) => {
     await page.goto('/tests/browser/standalone.html');
@@ -55,7 +55,8 @@ test('200 percent narrow writing, labelled placement, exact preview/cancel/copy 
     if (test.info().project.name === 'narrow')
         await page.screenshot({ path: '/tmp/heinlein-standalone-320-200.png', fullPage: true });
     const keep=page.getByRole('button',{name:'Keep on this Mac',exact:true});
-    await keep.focus();
+    if(await page.locator('.navigation-toggle').getAttribute('aria-expanded')==='true')await page.keyboard.press('ControlOrMeta+\\');
+    await keep.focus();await keep.scrollIntoViewIfNeeded();
     expect(await keep.evaluate(e=>{const r=e.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('button')===e;})).toBe(true);
     const editorBox = await writing(page).boundingBox();
     expect(editorBox!.height).toBeGreaterThan(100);
@@ -132,16 +133,16 @@ test('Cmd+N keeps writing and opens a focused blank Markdown draft with discover
   await activate(appearance);await activate(page.getByRole('button',{name:'High contrast',exact:true}));await page.keyboard.press('Escape');
   // The native dialog close event restores focus asynchronously. Finish that
   // transition before beginning a separate keyboard action in the editor.
-  await expect(appearance).toBeFocused();
+  await expect(page.getByRole('button',{name:'More actions'})).toBeFocused();
   for(let i=0;i<5;i++)await page.keyboard.press('Meta+=');
   await expect(page.locator('html')).toHaveAttribute('data-zoom','200');
   await writing(page).focus();await page.keyboard.insertText('Keyboard draft — café 🦊');
   await page.keyboard.press('Meta+n');await expect(writing(page)).toHaveText('');await expect(writing(page)).toBeFocused();
   expect(await page.evaluate(()=>[...(window as any).draftFixture.records.values()].map((d:any)=>d.text))).toEqual(['Keyboard draft — café 🦊']);
   expect(await page.evaluate(()=>(window as any).draftFixture.externalCalls)).toEqual([]);
-  const newDraft=page.locator('button[aria-keyshortcuts="Meta+N Control+N"]');await expect(newDraft).toHaveAccessibleName('New draft');
+  await page.getByRole('button',{name:'More actions'}).click();const newDraft=page.locator('button[aria-keyshortcuts="Meta+N Control+N"]');await expect(newDraft).toHaveAccessibleName('New draft');await page.keyboard.press('Escape');await writing(page).focus();
   await page.keyboard.insertText('Second draft');await page.keyboard.press('Control+n');await expect(writing(page)).toHaveText('');await expect(writing(page)).toBeFocused();
-  await page.keyboard.press('Meta+/');const help=page.getByRole('dialog',{name:'Keyboard shortcuts'});await expect(help).toContainText('New Markdown draft');
+  await page.keyboard.press('Meta+/');const help=page.getByRole('dialog',{name:'Keyboard shortcuts'});await expect(help).toContainText('New scene in project / new standalone draft');
   const layout=await help.evaluate(e=>({client:e.clientWidth,scroll:e.scrollWidth,overflow:[...e.querySelectorAll('*')].filter(n=>n.getBoundingClientRect().right>e.getBoundingClientRect().right+1).map(n=>({tag:n.tagName,text:n.textContent?.slice(0,40),width:n.getBoundingClientRect().width}))}));
   expect(layout.scroll,JSON.stringify(layout)).toBeLessThanOrEqual(layout.client+1);
   expect((await new AxeBuilder({page}).include('.help-sheet').analyze()).violations).toEqual([]);

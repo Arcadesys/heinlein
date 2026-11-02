@@ -57,6 +57,7 @@ fn main() {
             "preview_drafting_change",
             "apply_drafting_change",
             "undo_drafting_change",
+            "history_drafting_change",
             "pick_drafting_import",
             "pick_repository",
             "recent_repositories",

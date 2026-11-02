@@ -33,7 +33,7 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
   const tabs = new Map<NavigationTab, HTMLButtonElement>();
   for (const key of TAB_ORDER) {
     const tab = document.createElement('button'); tab.type = 'button'; tab.id = `navigation-tab-${key}`;
-    tab.textContent = key === 'files' ? writingLabel : key === 'manuscript' ? 'Binder' : 'In this scene';
+    tab.textContent = key === 'files' ? writingLabel : key === 'manuscript' ? 'Library' : 'Scenes';
     tab.setAttribute('role', 'tab'); tab.setAttribute('aria-controls', `navigation-panel-${key}`);
     tab.addEventListener('click', () => select(key));
     // Keep existing drag/import targets reachable without accepting or applying a drop here.
@@ -62,10 +62,17 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
       event.preventDefault(); event.stopPropagation(); setOpen(false, true);
     }
   });
+  const closeFromPage = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || !open || !element.isConnected || element.contains(event.target as Node) || document.querySelector('dialog[open]')) return;
+    event.preventDefault(); setOpen(false, true);
+  };
+  document.addEventListener('keydown', closeFromPage);
   function render() {
     if(small?.matches&&open){modal.append(drawer);drawer.hidden=false;if(modal.isConnected&&!modal.open&&modal.showModal)modal.showModal();}
     else{if(modal.open&&modal.close)modal.close();element.append(drawer);drawer.hidden=!open;}
      element.classList.toggle('navigation-closed', !open);
+    drawer.inert = !open;
+    drawer.setAttribute('aria-hidden', String(!open));
     toggle.textContent = open ? 'Close navigation' : 'Navigation';
     toggle.setAttribute('aria-expanded', String(open));
     toggle.title = `${open ? 'Close' : 'Open'} navigation (Cmd/Ctrl+\\)`;
@@ -88,5 +95,6 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
   }
   const resize=()=>render();small?.addEventListener?.('change',resize);
   render();queueMicrotask(()=>{if(element.isConnected)render();});
-  return {element, close:()=>setOpen(false), destroy:()=>{small?.removeEventListener?.('change',resize);if(modal.open&&modal.close)modal.close();modal.remove();}, select, toggle: () => setOpen(!open, true), visible: (key: NavigationTab) => open && key === active};
+  return {element, close:()=>setOpen(false), destroy:()=>{document.removeEventListener('keydown', closeFromPage);small?.removeEventListener?.('change',resize);if(modal.open&&modal.close)modal.close();modal.remove();}, select, toggle: () => setOpen(!open, true), visible: (key: NavigationTab) => open && key === active};
+
 }

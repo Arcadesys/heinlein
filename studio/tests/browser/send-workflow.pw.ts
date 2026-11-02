@@ -5,11 +5,11 @@ for(const contrast of [false,true])test(`focused Send: Not now, native cancel, k
 
  async function activate(target:Locator){await expect(target).toBeVisible();await expect(target).toBeEnabled();for(let n=0;n<120;n++){if(await target.evaluate(el=>el===document.activeElement)){await expect(target).toBeFocused();await target.press('Enter');return;}await page.keyboard.press('Tab');}throw Error('Keyboard target unreachable');}
  await page.goto('/tests/browser/github.html?repo-first&writing&send-cancel');await expect(page.locator('.cm-content')).toBeVisible();
- if(contrast){await page.getByRole('button',{name:'Appearance',exact:false}).click();await page.getByRole('button',{name:'High contrast',exact:true}).click();await page.keyboard.press('Escape');}
+ if(contrast){if(await page.getByRole('dialog',{name:'Navigation'}).isVisible())await page.keyboard.press('Escape');await page.getByRole('button',{name:'More actions'}).click();await page.getByRole('button',{name:'Appearance',exact:false}).click();await page.getByRole('button',{name:'High contrast',exact:true}).click();await page.keyboard.press('Escape');}
  for(let n=0;n<8&&await page.locator('html').getAttribute('data-zoom')!=='200';n++)await page.keyboard.press('Control+=');
  await expect(page.locator('html')).toHaveAttribute('data-zoom','200');
  if(await page.getByRole('button',{name:'Navigation',exact:true}).count())await activate(page.getByRole('button',{name:'Navigation',exact:true}));
- await activate(page.getByRole('tab',{name:'Source files',exact:true}));await activate(page.locator('.repository-send'));
+ await activate(page.getByRole('tab',{name:'Source files',exact:true}));await activate(page.locator('.source-project-info > summary'));await activate(page.locator('.repository-send'));
  const dialog=page.locator('dialog.github-panel:not(.project-library)');await expect(dialog.getByRole('heading',{name:'Send your changes',exact:true})).toBeVisible();await expect(dialog).not.toHaveAttribute('aria-busy','');
  await expect(dialog).not.toContainText('Sign out of GitHub');
  await activate(dialog.getByRole('button',{name:'Not now',exact:true}));await expect(dialog).not.toBeVisible();

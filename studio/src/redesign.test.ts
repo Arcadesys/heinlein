@@ -141,7 +141,8 @@ describe('Studio chrome', () => {
     document.querySelector<HTMLButtonElement>('#navigation-tab-manuscript')!.click();
     expect(repository.hidden).toBe(true); expect(manuscript.hidden).toBe(false);
     press('\\', {ctrlKey: true});
-    expect(document.querySelector<HTMLElement>('#navigation-drawer')!.hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>('#navigation-drawer')!.getAttribute('aria-hidden')).toBe('true');
+    expect(document.querySelector<HTMLElement>('#navigation-drawer')!.inert).toBe(true);
     expect(document.querySelector('.workspace')!.classList.contains('navigation-open')).toBe(false);
     press('\\', {ctrlKey: true});
     expect(document.activeElement?.id).toBe('navigation-tab-manuscript');

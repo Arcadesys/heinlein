@@ -88,18 +88,30 @@ pub(super) fn file_create(path: &Path, value: &serde_json::Value) -> Result<(), 
 fn fail(app: &tauri::AppHandle, reason: &str) {
     FIXTURE.get().unwrap().abort.store(true, Ordering::SeqCst);
     stage(reason);
-    if !picker_manual() && FIXTURE
-        .get()
-        .is_some_and(|fixture| fixture.phase.starts_with("picker"))
+    if !picker_manual()
+        && FIXTURE
+            .get()
+            .is_some_and(|fixture| fixture.phase.starts_with("picker"))
     {
         super::standalone_picker_acceptance::abort_action_waiters();
     }
-    if picker_manual() { let _=app.emit("native47-manual-failed",serde_json::json!({"failed":true})); }
-    if !picker_manual() || matches!(reason,"operator-cooperative-abort"|"manual-stop-incomplete") { app.exit(73); }
+    if picker_manual() {
+        let _ = app.emit("native47-manual-failed", serde_json::json!({"failed":true}));
+    }
+    if !picker_manual()
+        || matches!(
+            reason,
+            "operator-cooperative-abort" | "manual-stop-incomplete"
+        )
+    {
+        app.exit(73);
+    }
 }
 // Own AppKit action, always queued outside any Tauri callback. No AX/IPC/input injection.
 fn native_quit() {
-    if picker_manual() && !super::standalone_picker_acceptance::manual_finished() { return; }
+    if picker_manual() && !super::standalone_picker_acceptance::manual_finished() {
+        return;
+    }
     use std::ffi::{c_char, c_void};
     #[link(name = "objc")]
     extern "C" {
@@ -113,7 +125,9 @@ fn native_quit() {
         fn dispatch_async_f(q: *mut c_void, c: *mut c_void, f: extern "C" fn(*mut c_void));
     }
     extern "C" fn perform(_: *mut c_void) {
-        if picker_manual() && !super::standalone_picker_acceptance::manual_finished() { return; }
+        if picker_manual() && !super::standalone_picker_acceptance::manual_finished() {
+            return;
+        }
         unsafe {
             let get: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
                 std::mem::transmute(objc_msgSend as *const ());
@@ -207,11 +221,20 @@ pub(super) fn picker_guard_home(app: &tauri::AppHandle) -> Result<PathBuf, Strin
 pub(super) fn picker_phase() -> Option<&'static str> {
     FIXTURE.get().map(|fixture| fixture.phase.as_str())
 }
-pub(super) fn manual_session_failed() -> bool { FIXTURE.get().map_or(true, |f| f.abort.load(Ordering::SeqCst)) }
-pub(super) fn picker_manual() -> bool { picker_phase()==Some("picker-manual-preview") }
+pub(super) fn manual_session_failed() -> bool {
+    FIXTURE
+        .get()
+        .map_or(true, |f| f.abort.load(Ordering::SeqCst))
+}
+pub(super) fn picker_manual() -> bool {
+    picker_phase() == Some("picker-manual-preview")
+}
 pub(super) fn picker_preview_only() -> bool {
     FIXTURE.get().is_some_and(|fixture| {
-        matches!(fixture.phase.as_str(), "picker-preview-only" | "picker-d1" | "picker-manual-preview")
+        matches!(
+            fixture.phase.as_str(),
+            "picker-preview-only" | "picker-d1" | "picker-manual-preview"
+        )
     })
 }
 pub(super) fn picker_d1() -> bool {
@@ -236,7 +259,9 @@ pub(super) fn run() {
     }
 }
 fn require_supported_fixture_mode(mode: &str) -> Result<(), String> {
-    if mode=="picker-manual-preview" && cfg!(feature="standalone-ok-diagnostic") { return Err("Manual mode excludes diagnostic features".into()); }
+    if mode == "picker-manual-preview" && cfg!(feature = "standalone-ok-diagnostic") {
+        return Err("Manual mode excludes diagnostic features".into());
+    }
     if mode.starts_with("picker") && mode != "picker-manual-preview" {
         return Err("unsupported_automation; acceptance=false: macOS10.15+ prohibits programmatic NSSavePanel.ok: https://developer.apple.com/documentation/appkit/nssavepanel/ok(_:)".into());
     }
@@ -258,7 +283,10 @@ mod picker_contract_tests {
         for mode in ["first", "reopen"] {
             assert!(super::require_supported_fixture_mode(mode).is_ok());
         }
-        assert_eq!(super::require_supported_fixture_mode("picker-manual-preview").is_ok(), !cfg!(feature="standalone-ok-diagnostic"));
+        assert_eq!(
+            super::require_supported_fixture_mode("picker-manual-preview").is_ok(),
+            !cfg!(feature = "standalone-ok-diagnostic")
+        );
     }
 }
 fn run_fixture() -> Result<(), String> {
@@ -298,7 +326,15 @@ fn run_fixture() -> Result<(), String> {
         return Err("TMPDIR must equal fixture root before startup".into());
     }
     let sentinel = root.join("fixture-sentinel.json");
-    if ["first", "picker", "picker-preview-only", "picker-d1", "picker-manual-preview"].contains(&args[3].as_str()) {
+    if [
+        "first",
+        "picker",
+        "picker-preview-only",
+        "picker-d1",
+        "picker-manual-preview",
+    ]
+    .contains(&args[3].as_str())
+    {
         if std::fs::read_dir(&root)
             .map_err(|_| "Fixture root unavailable")?
             .next()
@@ -325,7 +361,14 @@ fn run_fixture() -> Result<(), String> {
         }
         private(p)?;
     }
-    if ["picker", "picker-preview-only", "picker-d1", "picker-manual-preview"].contains(&args[3].as_str()) {
+    if [
+        "picker",
+        "picker-preview-only",
+        "picker-d1",
+        "picker-manual-preview",
+    ]
+    .contains(&args[3].as_str())
+    {
         let target = root.join("copy-targets");
         std::fs::DirBuilder::new()
             .mode(0o700)
@@ -725,7 +768,9 @@ fn run_fixture() -> Result<(), String> {
     let h = app.handle().clone();
     let f = fixture.clone();
     std::thread::spawn(move || {
-        if picker_manual() { return; } // No human-step deadline or automatic exit.
+        if picker_manual() {
+            return;
+        } // No human-step deadline or automatic exit.
         for _ in 0..600 {
             std::thread::sleep(Duration::from_millis(100));
             if f.ended.load(Ordering::SeqCst) {
@@ -744,32 +789,56 @@ fn run_fixture() -> Result<(), String> {
     std::thread::spawn(move || {
         if !picker_manual() {
             for line in std::io::stdin().lock().lines().map_while(Result::ok) {
-                if line.trim()=="abort" { fail(&h,"operator-cooperative-abort");break; }
+                if line.trim() == "abort" {
+                    fail(&h, "operator-cooperative-abort");
+                    break;
+                }
             }
             return; // Preserve existing nonmanual control behavior.
         }
         // Bounded owned control channel; no watcher, timer or UI action.
-        let mut input=std::io::stdin().lock();
+        let mut input = std::io::stdin().lock();
         loop {
-            let mut bytes=Vec::new();
-            match std::io::BufRead::read_until(&mut std::io::Read::take(std::io::Read::by_ref(&mut input),128), b'\n', &mut bytes) {
+            let mut bytes = Vec::new();
+            match std::io::BufRead::read_until(
+                &mut std::io::Read::take(std::io::Read::by_ref(&mut input), 128),
+                b'\n',
+                &mut bytes,
+            ) {
                 Ok(0) | Err(_) => break,
-                Ok(_) => {},
+                Ok(_) => {}
             }
-            if bytes.len()>=128 || bytes.last()!=Some(&b'\n') { fail(&h,"invalid-operator-control-incomplete"); break; }
+            if bytes.len() >= 128 || bytes.last() != Some(&b'\n') {
+                fail(&h, "invalid-operator-control-incomplete");
+                break;
+            }
             bytes.pop();
-            let Ok(line)=std::str::from_utf8(&bytes) else { fail(&h,"invalid-operator-control-incomplete");break; };
-            if line=="abort" { fail(&h,"operator-cooperative-abort");break; }
+            let Ok(line) = std::str::from_utf8(&bytes) else {
+                fail(&h, "invalid-operator-control-incomplete");
+                break;
+            };
+            if line == "abort" {
+                fail(&h, "operator-cooperative-abort");
+                break;
+            }
             if picker_manual() {
-                let ready=super::standalone_picker_acceptance::manual_observe(line, |nonce| {
-                    println!("{}",serde_json::json!({"kind":"native-observation-ready","startupNonce":nonce}));
-                    let _=std::io::stdout().flush();
-                    let _=h.emit("native47-observation-ready",());
+                let ready = super::standalone_picker_acceptance::manual_observe(line, |nonce| {
+                    println!(
+                        "{}",
+                        serde_json::json!({"kind":"native-observation-ready","startupNonce":nonce})
+                    );
+                    let _ = std::io::stdout().flush();
+                    let _ = h.emit("native47-observation-ready", ());
                 });
-                if ready.is_err() { fail(&h,"invalid-observation-order-incomplete");break; }
+                if ready.is_err() {
+                    fail(&h, "invalid-observation-order-incomplete");
+                    break;
+                }
             }
         }
-        if picker_manual() { fail(&h,"collector-disconnected-incomplete"); }
+        if picker_manual() {
+            fail(&h, "collector-disconnected-incomplete");
+        }
     });
     let mut approved = 0;
     let code=app.run_return(move|app,event|{

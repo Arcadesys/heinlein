@@ -55,7 +55,7 @@ test('rejected findings disappear only from pending and stay dismissed after clo
     await activate(panel.locator('[data-finding-id="unrelated"]').getByRole('button', { name: 'Reject this change', exact: true }));
     await expect(panel.locator('[data-finding-id="unrelated"]')).toHaveCount(0);
     await activate(panel.getByRole('button', { name: 'Close review', exact: true }));
-    await page.getByRole('button', { name: 'Heinlein Review', exact: true }).click();
+    await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).click();await page.getByRole('button', { name: 'Heinlein Review', exact: true }).click();
     await activate(panel.getByRole('button', { name: 'Reopen saved review synthetic-review-stable', exact: true }));
     await expect(panel.locator('.review-edit')).toHaveCount(2);
     await page.reload();
@@ -234,7 +234,7 @@ test('demo marks: caret, drag selection, typing and layout stay ordinary editing
     await expect(page.locator('.cm-review-mark')).toHaveCount(0);
     await page.keyboard.press('Backspace');
     await expect(page.locator('.cm-review-mark')).toHaveCount(0);
-    await page.getByRole('button', { name: 'Heinlein Review', exact: true }).click();
+    await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).click();await page.getByRole('button', { name: 'Heinlein Review', exact: true }).click();
     await expect(panel.locator('.review-mark-status')).toContainText('Highlights are off because the open text changed');
 });
 test('demo marks: resolving one removes only that mark and later ranges still land exactly after a shift', async ({ page }) => {
@@ -321,7 +321,7 @@ test('demo marks: closing the review removes every mark and they never changed t
     const baseline = await source(page);
     await panel.getByRole('button', { name: 'Return to writing', exact: true }).click();
     const marked = await geometry(page);
-    await page.getByRole('button', { name: 'Heinlein Review', exact: true }).click();
+    await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).click();await page.getByRole('button', { name: 'Heinlein Review', exact: true }).click();
     await activate(panel.getByRole('button', { name: 'Close review', exact: true }));
     await expect(page.locator('.cm-content [data-review-id]')).toHaveCount(0);
     expect(await geometry(page)).toEqual(marked);
@@ -330,7 +330,7 @@ test('demo marks: closing the review removes every mark and they never changed t
 test('demo marks: a saved reference copy stays plain text with no marks', async ({ page }) => {
     const panel = await openDemo(page);
     await panel.getByRole('button', { name: 'Return to writing', exact: true }).click();
-    await page.getByRole('button', { name: 'Read beside active document: lantern-street.md', exact: true }).click();
+    const documents=page.getByRole('button',{name:'Documents',exact:true});if(await documents.isVisible())await documents.click();await page.getByRole('button',{name:'Read beside…'}).click();await page.getByRole('button', { name: 'Read beside active document: lantern-street.md', exact: true }).click();
     const reference = page.getByRole('region', { name: 'Saved source reference', exact: true });
     await expect(reference.locator('.reference-source')).toContainText('The manifest were wrong');
     await expect(reference.locator('[data-review-id], .cm-review-mark')).toHaveCount(0);
