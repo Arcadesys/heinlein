@@ -178,11 +178,14 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     body.append(el('p','Unsaved writing is saved before preview. Cancel does not undo that save. Frontmatter stays here. Text and line endings stay exact.','drafting-warning'));
     const title=scene?field(body,'New scene title',`${scene.title||'Scene'} continued`):null;
     const suggested=sourcePath.replace(/\.(md|markdown)$/i,'-continued$&');
-    const path=field(body,scene?'New scene file':'New file name',scene?suggested:basename(suggested),scene?'Use a new Markdown path inside ms/.':'Use a new sibling Markdown filename. Existing files are never replaced.');
+    const path=field(body,scene?'New scene file':'New file name',scene?suggested:basename(suggested),scene?'Use a new Markdown path inside ms/.':'Use a new sibling Markdown filename. We add .md if you omit the extension. Existing files are never replaced.');
     path.addEventListener('input',()=>path.setCustomValidity(''));
     submitButton(body,'Preview split',()=>{
-      const name=path.value.trim();
+      let name=path.value.trim();
       if(!scene&&(/[\/\\]/.test(name)||name==='.'||name==='..')){path.setCustomValidity('Use a sibling filename without folders.');path.reportValidity();return;}
+      const filename=basename(name);
+      if(filename&&!filename.includes('.'))name+='.md';
+      if(!/\.(md|markdown)$/i.test(name)){path.setCustomValidity('Use a Markdown filename ending in .md or .markdown.');path.reportValidity();return;}
       const destination=scene?name:sourcePath.slice(0,sourcePath.lastIndexOf('/')+1)+name;
       const change:DraftingChange=scene?{kind:'splitScene',sceneId:scene.id,title:title!.value.trim(),path:destination,expectedHash:'',byteOffset:0}:{kind:'splitFile',sourcePath,path:destination,expectedHash:'',byteOffset:0};
       cancel();void changeManuscript(change,destination,()=>{if(state?.revision!==revision)throw Error('The manuscript changed. Start a new split');return {...change,...prepare()};}).then(applied=>{if(!applied&&opener?.isConnected&&!document.querySelector('dialog[open]'))opener.focus({preventScroll:true});});

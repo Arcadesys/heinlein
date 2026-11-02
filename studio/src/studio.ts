@@ -1010,11 +1010,17 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if(pair&&split?.kind==='splitFile'){
       const session=repository!.id,current=generation;
       const read=async(path:string)=>{try{const doc=await core.readDocument(session,path);if(disposed||generation!==current||repository?.id!==session)throw Error('The project changed while refreshing the split');if(doc.path!==path||doc.generatedCompatibility)throw Error('The split source is no longer an editable file');return doc;}catch(error){if(!disposed&&generation===current&&repository?.id===session){documentTabs.invalidate(path,true);reference.markUnavailable(path);}throw error;}};
-      const [prefix,suffix]=await Promise.all([read(pair.source),read(pair.destination)]);
+      // Managed-workspace reads hold an exclusive native lease. Parallel reads
+      // here compete with this app itself after the split has already committed.
+      const prefix=await read(pair.source);
+      const suffix=await read(pair.destination);
       if(oldText!==undefined&&prefix.text+suffix.text!==oldText){documentTabs.invalidate(pair.source,true);documentTabs.invalidate(pair.destination,true);throw Error('The saved split changed before it could be refreshed. Reopen both source files to inspect them.');}
     }
     if(nextPath&&!await showDocument(nextPath,true))throw Error(`The change is saved. ${status.textContent??'The scene could not be reopened.'} Resolve recovery or use the file browser to retry.`);
     if(pair){
+      // A split is an editing action. Reused paths may retain an old Reading
+      // preference; reveal Source before returning focus to the new section.
+      showSourceView();
       const savedPair=pair,session=repository?.id,current=generation;
       const readBoth=button('Read both sections',()=>{void(async()=>{
         if(repository?.id!==session||generation!==current||repositoryDetached)return;

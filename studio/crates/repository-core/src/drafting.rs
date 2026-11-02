@@ -291,6 +291,11 @@ fn validate_markdown(path: &str) -> Result<()> {
     }
     Ok(())
 }
+fn validate_split_destination(path: &str) -> Result<()> {
+    parts(path)?;
+    if !markdown(path) { return Err(Error::InvalidMarkdownDestination); }
+    Ok(())
+}
 fn scene_path(path: &str) -> Result<()> {
     validate_markdown(path)?;
     if !path.starts_with("ms/") {
@@ -1028,7 +1033,7 @@ impl Repository {
                 byte_offset,
             } => {
                 validate_markdown(&source_path)?;
-                validate_markdown(&path)?;
+                validate_split_destination(&path)?;
                 if parent(&source_path) != parent(&path) {
                     return Err(Error::InvalidPath);
                 }
@@ -1090,6 +1095,7 @@ impl Repository {
                 byte_offset,
             } => {
                 title(&name)?;
+                validate_split_destination(&path)?;
                 scene_path(&path)?;
                 let index = manifest
                     .scenes

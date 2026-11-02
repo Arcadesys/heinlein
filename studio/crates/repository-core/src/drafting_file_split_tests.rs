@@ -457,3 +457,16 @@ fn file_split_legacy_and_generated_guards_recheck_at_apply() {
         );
     }
 }
+
+#[test]
+fn split_destination_extension_error_is_specific_and_never_changes_source() {
+    let f = Fixture::new();
+    f.put("story.md", "first second");
+    for destination in ["second section", "second.txt"] {
+        let error = f.preview(file_split_change("story.md", destination, "first second", 6)).unwrap_err();
+        assert_eq!(error, Error::InvalidMarkdownDestination);
+        assert!(error.to_string().contains(".md or .markdown"));
+        assert_eq!(fs::read_to_string(f.repo.root().join("story.md")).unwrap(), "first second");
+        assert!(!f.repo.root().join(destination).exists());
+    }
+}
