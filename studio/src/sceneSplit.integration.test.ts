@@ -121,30 +121,29 @@ describe('Studio split scene at cursor', () => {
     const core=bridge();await start(core);const original=document.querySelector<HTMLButtonElement>('.document-tabs [role="tab"][aria-selected="true"]')!.id;
     for(let i=0;i<13;i++)await app!.showDocument(`other-${i}.md`);
     await app!.showDocument('ms/scene.md');
-    button('Read beside active document: ms/scene.md').click();
+    button('Read beside active document: Opening').click();
     await vi.waitFor(()=>expect(document.querySelector('.reference-source')?.textContent).toBe(source));
     view().dispatch({selection:{anchor:view().state.doc.toString().indexOf('Last')}});await preview();button('Apply change').click();
-    await vi.waitFor(()=>expect(document.querySelector('.document-tabs [role="tab"][aria-selected="true"]')?.getAttribute('aria-label')).toMatch(/^ms\/sheet-[0-9a-f-]+\.md$/));
-    const suffixPath=document.querySelector('.document-tabs [role="tab"][aria-selected="true"]')!.getAttribute('aria-label')!;
-    expect(document.getElementById(original)?.getAttribute('aria-label')).toBe('ms/scene.md');
+    await vi.waitFor(()=>expect(document.querySelector('.document-tabs [role="tab"][aria-selected="true"]')?.getAttribute('aria-label')).toBe('Opening continued'));
+    expect(document.getElementById(original)?.getAttribute('aria-label')).toBe('Opening');
     expect(document.querySelectorAll('.document-tabs [role="tab"]')).toHaveLength(15);
     expect(document.querySelector('.reference-source')?.textContent).toBe(source);
     expect(document.querySelector('.reference-state')?.textContent).toContain('Changed');
     button('Read both sections').click();await vi.waitFor(()=>expect(document.querySelector('.reference-source')?.textContent).toBe(source.slice(0,source.indexOf('Last'))));
     expect(view().state.doc.toString()).toBe('Last line');expect(core.saveDocument).not.toHaveBeenCalled();
     button('Undo last change').click();await vi.waitFor(()=>expect(document.querySelector('[aria-label="Review manuscript change"]')).not.toBeNull());button('Apply change').click();
-    await vi.waitFor(()=>expect([...document.querySelectorAll('.document-tabs [role="tab"]')].some(t=>t.getAttribute('aria-label')===`${suffixPath} · Unavailable`)).toBe(true));
-    expect(document.getElementById(original)?.getAttribute('aria-label')).toBe('ms/scene.md');
+    await vi.waitFor(()=>expect([...document.querySelectorAll('.document-tabs [role="tab"]')].some(t=>t.getAttribute('aria-label')==='Opening continued · Unavailable')).toBe(true));
+    expect(document.getElementById(original)?.getAttribute('aria-label')).toBe('Opening');
     await new Promise(resolve=>setTimeout(resolve,0));await app!.showDocument('ms/scene.md');
     for(let i=0;i<13;i++)button(`Close document other-${i}.md`).click();
-    core.readDocument.mockClear();button('Close document ms/scene.md').click();
+    core.readDocument.mockClear();button('Close document Opening').click();
     await vi.waitFor(()=>expect(document.querySelector('.markdown-editor')).toBeNull());expect(core.readDocument).not.toHaveBeenCalled();
     expect(document.querySelectorAll('.document-tabs [role="tab"]')).toHaveLength(1);
   });
   it('registers both verified split identities when the saved suffix cannot initially reopen',async()=>{
     const core=bridge();const read=core.readDocument.getMockImplementation()!;core.readDocument.mockImplementation(async(id,path)=>{if(/^ms\/sheet-[0-9a-f-]+\.md$/.test(path))throw Error('Synthetic suffix read unavailable');return read(id,path);});
     await start(core);await preview();button('Apply change').click();await vi.waitFor(()=>expect(document.body.textContent).toContain('view could not refresh'));
-    expect([...document.querySelectorAll('.document-tabs [role="tab"]')].map(t=>t.getAttribute('aria-label'))).toEqual(['ms/scene.md',expect.stringMatching(/^ms\/sheet-[0-9a-f-]+\.md$/)]);expect(document.querySelector('.document-tabs [aria-selected="true"]')).toBeNull();expect(document.querySelector('.markdown-editor')).toBeNull();expect(core.saveDocument).not.toHaveBeenCalled();
+    expect([...document.querySelectorAll('.document-tabs [role="tab"]')].map(t=>t.getAttribute('aria-label'))).toEqual(['Opening','Opening continued']);expect(document.querySelector('.document-tabs [aria-selected="true"]')).toBeNull();expect(document.querySelector('.markdown-editor')).toBeNull();expect(core.saveDocument).not.toHaveBeenCalled();
   });
   it('adds no successful suffix tab on canceled or failed split',async()=>{
     const core=bridge();await start(core);await preview();button('Cancel').click();expect(document.querySelectorAll('.document-tabs [role="tab"]')).toHaveLength(1);

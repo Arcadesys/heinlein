@@ -2,6 +2,28 @@
 import {describe,it,expect,vi} from 'vitest';
 import {createDocumentTabs} from './documentTabs';
 describe('document navigation metadata',()=>{
+ it('uses sheet titles for tabs and actions while keeping generated paths in Details',()=>{
+  const read=vi.fn(),close=vi.fn(async()=>{}),tabs=createDocumentTabs({open:async()=>{},close,read});document.body.replaceChildren(tabs.element);
+  const path='ms/sheet-e639a476-5de0-4c85-90f8-9b9638baf869.md';const tab=tabs.mount({path,kind:'source',sceneId:'sheet',title:'Harvest Moon'});
+  const control=tabs.element.querySelector<HTMLButtonElement>('[role=tab]')!;expect(control.textContent).toBe('Harvest Moon');expect(control.getAttribute('aria-label')).toBe('Harvest Moon');
+  tabs.element.querySelector<HTMLButtonElement>('[aria-label="Read beside…"]')!.click();tabs.element.querySelector<HTMLButtonElement>('[aria-label="Read beside active document: Harvest Moon"]')!.click();expect(read).toHaveBeenCalledWith(tab);
+  tabs.element.querySelector<HTMLButtonElement>('[aria-label="Document details"]')!.click();expect(tabs.element.querySelector('summary')?.textContent).toBe('Harvest Moon');expect(tabs.element.querySelector('.document-full-path')?.textContent).toBe(path);
+  tabs.element.querySelector<HTMLButtonElement>('[aria-label="Close document Harvest Moon"]')!.click();expect(close).toHaveBeenCalledWith(tab);expect(tab.path).toBe(path);
+ });
+ it('distinguishes duplicate titles and updates a renamed title without changing identity or focus',()=>{
+  const tabs=createDocumentTabs({open:async()=>{},close:async()=>{},read:()=>{}});document.body.replaceChildren(tabs.element);
+  const first=tabs.mount({path:'ms/sheet-one.md',kind:'source',sceneId:'one',title:'Opening'});tabs.mount({path:'ms/sheet-two.md',kind:'source',sceneId:'two',title:'Opening'});
+  expect([...tabs.element.querySelectorAll('[role=tab]')].map(b=>b.textContent)).toEqual(['Opening · 1','Opening · 2']);
+  tabs.element.querySelector<HTMLButtonElement>('[aria-label="Opening · 1"]')!.focus();
+  tabs.reconcile([{id:'one',path:first.path,title:'A new opening'},{id:'two',path:'ms/sheet-two.md',title:'Opening'}]);
+  expect(document.activeElement?.textContent).toBe('A new opening');expect(tabs.items()[0]).toBe(first);expect(tabs.items()[0].path).toBe('ms/sheet-one.md');
+  expect([...tabs.element.querySelectorAll('[role=tab]')].map(b=>b.textContent)).toEqual(['A new opening','Opening']);
+ });
+ it('labels assembled chapters by title and retains filename fallback for ordinary files',()=>{
+  const tabs=createDocumentTabs({open:async()=>{},close:async()=>{},read:()=>{}});
+  tabs.mount({path:'chapters/01.md',kind:'assembled',title:'The arrival'});tabs.mount({path:'notes.md',kind:'source'});
+  expect([...tabs.element.querySelectorAll('[role=tab]')].map(b=>b.textContent)).toEqual(['The arrival · Assembled','notes.md']);
+ });
  it('deduplicates mounts, keeps failed activation uncommitted, and retains metadata identities without eviction',async()=>{
   const open=vi.fn(async()=>{});const tabs=createDocumentTabs({open,close:async()=>{},read:()=>{}});
   tabs.mount({path:'a.md',kind:'source',sceneId:'a'});tabs.mount({path:'a.md',kind:'source',sceneId:'a'});
