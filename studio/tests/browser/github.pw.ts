@@ -23,11 +23,11 @@ test('guided draft pull request sends selected changes and returns to the steps'
     expect((await page.evaluate(() => ((window as any).githubFixture.calls as { action: string }[]).filter(c => c.action === 'confirm')))).toHaveLength(2);
 });
 test('GitHub synthetic account, exact-file version, send, draft feedback and explicit conflict journey with keyboard only', async ({ page }) => {
-    async function tabTo(target:Locator){await expect(target).toBeVisible();await expect(target).toBeEnabled();for(let i=0;i<100;i++){if(await target.evaluate(el=>el===document.activeElement))return;await page.keyboard.press('Tab');}throw new Error('Keyboard could not reach target: '+await target.textContent());}
+    async function tabTo(target:Locator){if(await target.textContent()==='More actions' && await page.getByRole('dialog',{name:'Navigation',exact:true}).isVisible()) await page.keyboard.press('Escape');await expect(target).toBeVisible();await expect(target).toBeEnabled();for(let i=0;i<100;i++){if(await target.evaluate(el=>el===document.activeElement))return;await page.keyboard.press('Tab');}throw new Error('Keyboard could not reach target: '+await target.textContent());}
     async function activate(target:Locator){await tabTo(target);await page.keyboard.press('Enter');}
     async function type(target:Locator,text:string){await tabTo(target);await page.keyboard.press('ControlOrMeta+A');await page.keyboard.insertText(text);}
     await page.goto('/tests/browser/github.html');
-    await activate(page.getByRole('button', { name: 'GitHub actions…', exact: true }));
+    await activate(page.getByRole('button', { name: 'More actions' })); await activate(page.getByRole('button', { name: 'GitHub actions…', exact: true }));
     const dialog = page.locator('dialog.github-panel:not(.project-library)');
     await expect(dialog).toBeVisible();
     await activate(dialog.getByRole('button', { name: 'Connect GitHub…', exact: true }));
@@ -39,7 +39,7 @@ test('GitHub synthetic account, exact-file version, send, draft feedback and exp
     await expect(dialog).toContainText('Private');
     await activate(dialog.getByRole('button', { name: 'Open repository…', exact: true }));
     await expect(dialog).not.toBeVisible();
-    await activate(page.getByRole('button', { name: 'GitHub actions…', exact: true }));
+    await activate(page.getByRole('button', { name: 'More actions' })); await activate(page.getByRole('button', { name: 'GitHub actions…', exact: true }));
     await activate(dialog.getByRole('button', { name: 'Send to GitHub…', exact: true }));
     await tabTo(dialog.getByRole('checkbox', { name: 'edit: story.md', exact: true })); await page.keyboard.press('Space');
     await activate(dialog.getByText('Name and email included with new changes',{exact:true}));
@@ -49,7 +49,7 @@ test('GitHub synthetic account, exact-file version, send, draft feedback and exp
     await activate(dialog.getByRole('button', { name: 'Send to GitHub…', exact: true }));
     await expect(dialog).toContainText('upload simulated, not live');
     await activate(dialog.getByRole('button',{name:'Back to writing',exact:true}));
-    await activate(page.getByRole('button',{name:'GitHub actions…',exact:true}));
+    await activate(page.getByRole('button',{name:'More actions'})); await activate(page.getByRole('button',{name:'GitHub actions…',exact:true}));
     await activate(dialog.getByRole('button', { name: 'Request feedback with a draft pull request…', exact: true }));
     await type(dialog.getByLabel('Feedback request title', { exact: true }),'Synthetic feedback');
     await type(dialog.getByLabel('Feedback request description', { exact: true }),'Please review this synthetic scene.');
@@ -70,7 +70,7 @@ test('GitHub synthetic account, exact-file version, send, draft feedback and exp
     const axe = await new AxeBuilder({ page }).include('.github-panel').analyze();
     expect(axe.violations).toEqual([]);
     await activate(dialog.getByRole('button', { name: 'Close GitHub projects', exact: true }));
-    await expect(page.getByRole('button', { name: 'GitHub actions…', exact: true })).toBeFocused();
+    await expect(page.getByRole('button', { name: 'More actions' })).toBeFocused();
 });
 test('GitHub panel keyboard entry, Escape focus and high contrast reflow at 200 percent', async ({ page }) => {
     await page.goto('/tests/browser/github.html');
@@ -80,8 +80,8 @@ test('GitHub panel keyboard entry, Escape focus and high contrast reflow at 200 
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+=' : 'Control+=');
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+=' : 'Control+=');
     await expect(page.locator('html')).toHaveAttribute('data-zoom', '200');
-    const entry = page.getByRole('button', { name: 'GitHub actions…', exact: true });
-    await entry.click();
+    const entry = page.getByRole('button', { name: 'More actions' });
+    await entry.click(); await page.getByRole('button', { name: 'GitHub actions…', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'GitHub projects', exact: true });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole('heading', { name: 'GitHub projects', level: 2 })).toBeFocused();
@@ -90,6 +90,7 @@ test('GitHub panel keyboard entry, Escape focus and high contrast reflow at 200 
     await page.keyboard.press('Escape');
     await expect(entry).toBeFocused();
     await page.keyboard.press('Enter');
+    await page.getByRole('button', { name: 'GitHub actions…', exact: true }).click();
     await expect(dialog).toBeVisible();
     const bounds = await dialog.evaluate(el => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, width: window.innerWidth, scroll: el.scrollWidth, client: el.clientWidth }; });
     expect(bounds.left).toBeGreaterThanOrEqual(0);
@@ -117,7 +118,7 @@ for(const kind of ['incoming','version','metadata'] as const)test(`selected ${ki
 for(const mode of ['empty','error'] as const)test(`repository picker ${mode} state has accessible refresh and URL fallback at 200 percent`,async({page})=>{
     await page.goto(`/tests/browser/github.html?repository-list=${mode}`);
     for(let i=0;i<5;i++)await page.keyboard.press(process.platform==='darwin'?'Meta+=':'Control+=');
-    await page.getByRole('button',{name:'GitHub actions…',exact:true}).click();
+    await page.getByRole('button',{name:'More actions'}).click(); await page.getByRole('button',{name:'GitHub actions…',exact:true}).click();
     const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});
     for(const name of ['Connect GitHub…','Check sign-in','Use this GitHub account…'])await dialog.getByRole('button',{name,exact:true}).click();
     const load=dialog.getByRole('button',{name:'Load repositories',exact:true});
@@ -140,7 +141,7 @@ test('working branch and PR ready flow remain keyboard accessible with explicit 
  const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});await expect(dialog).toBeVisible();
  for(let i=0;i<5;i++)await page.keyboard.press(process.platform==='darwin'?'Meta+=':'Control+=');
  await expect(page.locator('html')).toHaveAttribute('data-zoom','200');
- const activate=async(target:import('@playwright/test').Locator)=>{await target.focus();await page.keyboard.press('Enter');};
+ const activate=async(target:import('@playwright/test').Locator)=>{if(await target.textContent()==='More actions' && await page.getByRole('dialog',{name:'Navigation',exact:true}).isVisible())await page.keyboard.press('Escape');await target.focus();await page.keyboard.press('Enter');};
  await activate(dialog.getByRole('button',{name:'Choose or create a working branch…',exact:true}));
  await expect(dialog.getByRole('heading',{name:'Choose a working branch',exact:true})).toBeFocused();
  await dialog.getByLabel('Starting branch',{exact:true}).focus();await page.keyboard.press('Home');
@@ -149,7 +150,7 @@ test('working branch and PR ready flow remain keyboard accessible with explicit 
  await expect(dialog).toContainText('Retain all local commits');
  await activate(dialog.getByRole('button',{name:'Confirm local branch change…',exact:true}));
  await expect(dialog).not.toBeVisible();
- await activate(page.getByRole('button',{name:'GitHub actions…',exact:true}));
+ await activate(page.getByRole('button',{name:'More actions'})); await activate(page.getByRole('button',{name:'GitHub actions…',exact:true}));
  await activate(dialog.getByRole('button',{name:'Pull request status and actions…',exact:true}));
  await expect(dialog).toContainText('Check details are unknown, not passing.');
  const merge=dialog.getByRole('button',{name:'Preview single pull request merge…',exact:true});await expect(merge).toBeDisabled();
@@ -174,7 +175,7 @@ test('nondefault selected target is named and keyboard reachable for incoming re
 test('pending renewed connection cause and retry stay readable and keyboard reachable at 200 percent',async({page})=>{
  await page.goto('/tests/browser/github.html?rotation-error',{waitUntil:'domcontentloaded'});
  for(let i=0;i<5;i++)await page.keyboard.press(process.platform==='darwin'?'Meta+=':'Control+=');
- const entry=page.getByRole('button',{name:'GitHub actions…',exact:true});await entry.focus();await page.keyboard.press('Enter');
+ const entry=page.getByRole('button',{name:'More actions'});await entry.focus();await page.keyboard.press('Enter');await page.getByRole('button',{name:'GitHub actions…',exact:true}).click();
  const dialog=page.getByRole('dialog',{name:'GitHub projects',exact:true});await expect(dialog).toContainText('store is locked');await expect(dialog).toContainText('Keep Heinlein open');
  const retry=dialog.getByRole('button',{name:'Retry saved GitHub connection',exact:true});
  for(let i=0;i<40&&!await retry.evaluate(el=>el===document.activeElement);i++)await page.keyboard.press('Tab');
