@@ -37,9 +37,9 @@ test('chapter revision reveals a scene left in Reading and keeps its exact selec
   await expect(page.getByRole('textbox', {name: 'Your drafting question', exact: true})).toBeFocused();
   const selection = await page.evaluate(() => {const v = (window as any).readingFixture.view();return v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to);});
   expect(selection).toBe('twice');
-  await page.getByRole('complementary', {name: 'Drafting questions', exact: true}).getByRole('button', {name: 'Close questions', exact: true}).click();
+  await page.locator('.question-panel').getByRole('button', {name: 'Collapse', exact: true}).click();
   await expect(content).toBeFocused();
-  const visible = await page.evaluate(() => {
+  const visible = () => page.evaluate(() => {
     const v = (window as any).readingFixture.view(), range = v.state.selection.main;
     const from = v.coordsAtPos(range.from), to = v.coordsAtPos(range.to), box = v.scrollDOM.getBoundingClientRect();
     const rect = from && to && {left:Math.min(from.left,to.left),right:Math.max(from.right,to.right),top:Math.min(from.top,to.top),bottom:Math.max(from.bottom,to.bottom)};
@@ -47,7 +47,7 @@ test('chapter revision reveals a scene left in Reading and keeps its exact selec
       hit:!!rect && v.contentDOM.contains(document.elementFromPoint((rect.left+rect.right)/2,(rect.top+rect.bottom)/2)),
       exact:v.state.doc.toString()===(window as any).readingFixture.baseline['harbor.md'].replace(/\r\n|\r/g,'\n')};
   });
-  expect(visible).toEqual({text:'twice',visible:true,hit:true,exact:true});
+  await expect.poll(visible).toEqual({text:'twice',visible:true,hit:true,exact:true});
   const prose = await content.evaluate(element => {
     const bounds = element.closest('.cm-scroller')!.getBoundingClientRect(), words = new Set<string>();
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);

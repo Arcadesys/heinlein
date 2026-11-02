@@ -798,6 +798,23 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     },
     report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
   });
+  function returnFromQuestions() {
+    focusWriterView();
+    const view = (editor ?? chapterEditor)?.view;
+    if (!view || readingActive()) return;
+    requestAnimationFrame(() => {
+      if (disposed || (editor ?? chapterEditor)?.view !== view || draftingQuestions?.visible()) return;
+      // Only the owning pane should scroll; CodeMirror's ancestor scrolling can pan the hidden workspace.
+      layout.scrollTop = 0; layout.scrollLeft = 0; preview.scrollTop = 0; preview.scrollLeft = 0;
+      const scroller = primaryScroller(); if (!scroller) return;
+      const range = view.state.selection.main, from = view.coordsAtPos(range.from), to = view.coordsAtPos(range.to), bounds = scroller.getBoundingClientRect();
+      if (from && to && bounds.height > 0) {
+        const top = Math.max(bounds.top, documentCommandBar.getBoundingClientRect().bottom), bottom = Math.min(bounds.bottom, window.innerHeight);
+        if (from.top < top || to.bottom > bottom) scroller.scrollTop += (from.top + to.bottom - top - bottom) / 2;
+      }
+      view.requestMeasure();
+    });
+  }
   let questionMarkerSignature = '';
   draftingQuestions = createQuestionPanel(core, {
     passages: {
@@ -825,7 +842,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         from: single ? rawOffset(source, range.from) : -1, to: single ? rawOffset(source, range.to) : -1,
         canCapture: !editor.view.state.readOnly && !opened.generatedCompatibility && !recoveryPending && !repositoryDetached && !selecting && !structuralBusy && !proposalBusy};
     },
-    focusEditor: () => focusWriterView(),
+    focusEditor: returnFromQuestions,
     selectionState: reviewing => {
       const current = selectionQuestionState();
       return reviewing && current && proposalBusy ? {...current, readOnly: Boolean(opened?.generatedCompatibility), busy: false} : current;
@@ -836,7 +853,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       const problem = revisionUnavailable(false) ?? selectionQuestionProblem(snapshot, selectionQuestionState());
       if (problem) throw new Error(problem);
     },
-    reviewRevision: (id, _snapshot, guard, presenter) => proposals.reviewProposal(id, guard, presenter),
+    reviewRevision: async (id, _snapshot, guard, presenter) => {try {await proposals.reviewProposal(id, guard, presenter);} finally {if (!draftingQuestions?.visible()) returnFromQuestions();}},
     visibilityChanged: visible => {navigation.suspend(visible); layout.classList.toggle('questions-open', visible); questionButton?.setAttribute('aria-expanded', String(visible)); if (!visible) {selectionCaptureVersion++; selectionCapturePending = false;}},
   });
   draftingQuestions.element.id = 'drafting-questions';

@@ -1258,3 +1258,6 @@ body:has(.question-panel-integrated[data-presentation="dedicated"]:not([hidden])
 .question-panel-integrated[data-presentation="dedicated"] { inset:0; width:auto; }
 .workspace.questions-open .navigator { display:none; }
 body:has(.question-panel-integrated[data-presentation="docked"]:not([hidden])) .studio > .workspace.questions-open { padding-right:min(42vw,34rem); }
+@media (max-width:700px) {
+  .cm-editor .cm-gutters .question-gutter, .cm-editor .cm-gutters-after:has(> .question-gutter:only-child) { display:none; }
+}

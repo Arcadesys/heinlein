@@ -8,7 +8,7 @@ The pane uses the existing proposal authority and native author confirmation. It
 
 Passage sessions are transient and bounded to four turns/64,000 bytes of retained question/context/answer text. Existing project chat persistence keeps its original project/account/model key and format; saved history does not reconstruct author approval or range capabilities. The current scene context limits, Reading view, document tabs, typewriter input, and existing recovery behavior remain intact. No native API or storage-schema changes are introduced.
 
-The navigation drawer temporarily yields to Questions without changing its saved preference. At narrow widths it remains closed on return to writing, avoiding a modal reopening over the editor. Wide layout reserves space for the docked pane. Dedicated layout is based on both window width and actual rendered text size, rather than media-query rem units alone.
+The navigation drawer temporarily yields to Questions without changing its saved preference. At narrow widths it remains closed on return to writing, avoiding a modal reopening over the editor. Collapsing reveals the retained source selection using only its owning scroll pane; it does not pan the overflow-hidden workspace. At narrow widths the entire passage gutter yields its space to the manuscript. Wide layout reserves space for the docked pane. Dedicated layout is based on both window width and actual rendered text size, rather than media-query rem units alone.
 
 ## Reproduction
 
@@ -27,7 +27,7 @@ On hosts whose experimental Node Web Storage globals override jsdom storage, run
 
 The isolated PR checkout is based on current main and excludes the separate Library implementation. Renderer tests and browser fixtures use synthetic text and mocked transport, not real manuscripts, credentials, sign-in, or provider calls.
 
-Final validation results are recorded in the pull request. Browser coverage includes 1600 × 1000, 1200, 700, and 320 pixel widths; 200% and 400% text; wide-window text zoom forcing dedicated layout; keyboard focus trapping/return; axe checks; no outbound requests; no framework overlay or runtime exceptions; and a geometric check that the passage chip remains outside the docked pane.
+Final local validation: 945 renderer tests across 71 files, 16 browser checks, the TypeScript/Vite production build, and diff whitespace checks passed. The browser checks include both the new passage flow and existing project-chat, Markdown-answer, and chapter-to-source journeys. Hosted CI is reported separately on the pull request. Browser coverage includes 1600 × 1000, 1200, 700, and 320 pixel widths; 200% and 400% text; wide-window text zoom forcing dedicated layout; keyboard focus trapping/return; axe checks; no outbound requests; no framework overlay or runtime exceptions; and a geometric check that the passage chip remains outside the docked pane.
 
 Visual comparison covers chip placement, stacked comparison labels, dotted removals/solid additions, primary Apply versus secondary Dismiss, inherited typography/contrast, and responsive reflow. The approved adaptations are Collapse, the existing gutter without added line numbers, the current Studio chrome, explicit response mode, and grouped adjacent anchors. Browser inspection uses Playwright because the Browser plugin is unavailable.
 
