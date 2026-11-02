@@ -21,6 +21,7 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
     }
   } catch { /* Invalid or unavailable storage must not prevent navigation. */ }
   const small=window.matchMedia?.('(max-width:760px)');
+  let suspended = false; let narrowSuppressed = false;
   const element = document.createElement('nav');
   element.className = 'navigator'; element.setAttribute('aria-label', 'Binder, scene breaks, and source files');
   const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'navigation-toggle';
@@ -68,26 +69,26 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
   };
   document.addEventListener('keydown', closeFromPage);
   function render() {
-    if(small?.matches&&open){modal.append(drawer);drawer.hidden=false;if(modal.isConnected&&!modal.open&&modal.showModal)modal.showModal();}
-    else{if(modal.open&&modal.close)modal.close();element.append(drawer);drawer.hidden=!open;}
-     element.classList.toggle('navigation-closed', !open);
-    drawer.inert = !open;
-    drawer.setAttribute('aria-hidden', String(!open));
-    toggle.textContent = open ? 'Close navigation' : 'Navigation';
-    toggle.setAttribute('aria-expanded', String(open));
-    toggle.title = `${open ? 'Close' : 'Open'} navigation (Cmd/Ctrl+\\)`;
+    const showing = open && !suspended && !(narrowSuppressed && small?.matches);
+    if(small?.matches&&showing){modal.append(drawer);drawer.hidden=false;if(modal.isConnected&&!modal.open&&modal.showModal)modal.showModal();}
+    else{if(modal.open&&modal.close)modal.close();element.append(drawer);drawer.hidden=!showing;}
+     element.classList.toggle('navigation-closed', !showing);
+    drawer.inert = !showing; drawer.setAttribute('aria-hidden', String(!showing));
+    toggle.textContent = showing ? 'Close navigation' : 'Navigation';
+    toggle.setAttribute('aria-expanded', String(showing));
+    toggle.title = `${showing ? 'Close' : 'Open'} navigation (Cmd/Ctrl+\\)`;
     for (const [key, tab] of tabs) {
       tab.setAttribute('aria-selected', String(key === active)); tab.tabIndex = key === active ? 0 : -1;
       panels[key].hidden = key !== active;
     }
-    changed(open);
+    changed(showing);
   }
   function save() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify({open, active})); } catch { /* Convenience only. */ }
   }
   function setOpen(value: boolean, focus = false) {
     const containedFocus = drawer.contains(document.activeElement);
-    open = value; render(); save();
+    narrowSuppressed = false; open = value; render(); save();
     if (focus || containedFocus) (open ? tabs.get(active)! : toggle).focus();
   }
   function select(key: NavigationTab, focus = true) {
@@ -95,6 +96,5 @@ export function createNavigationDrawer(files: HTMLElement, manuscript: HTMLEleme
   }
   const resize=()=>render();small?.addEventListener?.('change',resize);
   render();queueMicrotask(()=>{if(element.isConnected)render();});
-  return {element, close:()=>setOpen(false), destroy:()=>{document.removeEventListener('keydown', closeFromPage);small?.removeEventListener?.('change',resize);if(modal.open&&modal.close)modal.close();modal.remove();}, select, toggle: () => setOpen(!open, true), visible: (key: NavigationTab) => open && key === active};
-
+  return {element, suspend(value: boolean) {if (suspended && !value && small?.matches) narrowSuppressed = true; suspended = value; render();}, close:()=>setOpen(false), destroy:()=>{document.removeEventListener('keydown', closeFromPage);small?.removeEventListener?.('change',resize);if(modal.open&&modal.close)modal.close();modal.remove();}, select, toggle: () => setOpen(!open, true), visible: (key: NavigationTab) => open && !suspended && !(narrowSuppressed && small?.matches) && key === active};
 }

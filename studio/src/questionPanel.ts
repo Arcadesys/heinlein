@@ -1,4 +1,6 @@
 import {conversationKey,loadConversation,saveConversation} from './questionHistoryStore';
+import {createQuestionComparison} from './questionDiff';
+import type {ProposalReview} from './localCore';
 import {renderMarkdown} from './markdown';
 import {captureSelectionQuestion, selectionQuestionAvailability, selectionQuestionProblem, type SelectionQuestionSnapshot, type SelectionQuestionState} from './selectionQuestion';
 import type {LocalCore, QuestionRevisionAnswer, QuestionAnswer, QuestionConnection, QuestionMessage, QuestionRequest, QuestionStatus} from './localCore';
@@ -10,13 +12,15 @@ export interface QuestionScene {
   repositoryId: string; projectKey?: string; path: string; source: string; from: number; to: number;
   canCapture: boolean;
 }
+export interface PassageItem {id: string; from: number; to: number; label: string; active: boolean; stale: boolean}
 export interface QuestionPanelHooks {
+  passages?: {select(from: number, to: number): void; changed(items: PassageItem[]): void};
   current(): QuestionScene | null;
   focusEditor(): void;
   selectionState?(reviewing?: boolean): SelectionQuestionState | null;
   revisionUnavailable?(reviewing?: boolean): string | null;
   prepareRevision?(snapshot: SelectionQuestionSnapshot): Promise<void>;
-  reviewRevision?(proposalId: string, snapshot: SelectionQuestionSnapshot, guard: () => string | null): Promise<void>;
+  reviewRevision?(proposalId: string, snapshot: SelectionQuestionSnapshot, guard: () => string | null, presenter?: (view: ProposalReview) => Promise<boolean>): Promise<void>;
   visibilityChanged?(open: boolean): void;
 }
 interface Revision {snapshot: SelectionQuestionSnapshot; contextVersion: number; proposalId: string; replacementText: string; rejected: boolean; busy: boolean}
@@ -65,8 +69,10 @@ function errorMessage(error: unknown): string {
   return 'The request failed. Check your OpenAI connection and try again. Nothing was retried automatically.';
 }
 export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) {
-  const element = el('aside', '', 'question-panel'); element.hidden = true;
+  const integrated = Boolean(hooks.passages);
+  const element: HTMLElement = el(integrated ? 'div' : 'aside', '', 'question-panel'); element.hidden = true;
   element.setAttribute('aria-label', 'Drafting questions');
+  if (integrated) element.classList.add('question-panel-integrated');
   let disposed = false; let session: string | null = null; let version = 0; let statusVersion = 0;
   let configuration: QuestionStatus | null = null; let checking = false;
   let authBusy: 'connect' | 'account' | 'model' | 'signout' | null = null;
@@ -79,13 +85,22 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   let target: SelectionQuestionState | null = null;
   const revisionActions: (() => void)[] = [];
   let turns: Turn[] = []; let forgotten = 0; let pending: QuestionRequest | null = null; let pendingRevision = false;
+  interface Passage {id: string; scene: QuestionScene; binding: SelectionQuestionState | null; turns: Turn[]; context: string; contextLabel: string; contextVersion: number; contextMode: 'scene' | 'snapshot' | 'none'; target: SelectionQuestionState | null; mode: string; draft: string; title: string; status: string; stale: boolean}
+  const passages: Passage[] = []; let passageId = 0; let activePassage: Passage | null = null; let sessionPath: string | null = null;
+  let notifying = false; let fullReviewCancel: (() => void) | null = null;
+  const passagePicker = el('details', '', 'question-passage-picker'); passagePicker.hidden = !integrated;
+  const passageSummary = el('summary', 'Passages'); const passageButtons = el('div', '', 'question-passage-list'); passagePicker.append(passageSummary, passageButtons);
+  const fullReview = el('section', '', 'question-full-review'); fullReview.hidden = true; fullReview.setAttribute('aria-label', 'Review whole-scene revision');
+  let projectTurns: Turn[] = [];
+  const currentTitle = el('p', 'Selected passage', 'question-current-title');
   const header = el('div', '', 'question-heading');
   const heading = el('div'); heading.append(el('h3', 'Writing conversation'), el('p', 'Project conversation · shared across scenes.', 'muted'));
-  header.append(heading, button('Close questions', () => close(true)));
+  const closeButton = button(integrated ? 'Collapse' : 'Close questions', () => integrated ? collapse() : close(true));
+  if (integrated) header.append(el('h3', 'Questions'), closeButton); else header.append(heading, closeButton);
   const connection = el('p', '', 'question-connection'); connection.setAttribute('role', 'status');
   const refresh = button('Recheck OpenAI setup', () => { void checkStatus(true); });
   const auth = el('details', '', 'question-auth'); auth.setAttribute('aria-label', 'ChatGPT connection'); auth.open = true;
-  auth.append(el('summary', 'ChatGPT account & model'));
+  auth.append(el('summary', integrated ? 'Connection settings' : 'ChatGPT account & model'));
   const consentLabel = el('label', '', 'question-consent'); const consent = el('input'); consent.type = 'checkbox';
   consent.setAttribute('aria-label', 'Allow Heinlein to use my ChatGPT plan');
   consentLabel.append(consent, document.createTextNode(' Allow Heinlein to use my ChatGPT plan allowance for questions.'));
@@ -166,13 +181,14 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   }); cancel.hidden = true;
   const reset = button('Clear conversation', () => {
     if (storedKey) {try {localStorage.removeItem(storedKey);storageFailed=false;persistence.textContent='Saved conversation cleared.';} catch {storageFailed=true;persistence.textContent='Saved conversation could not be cleared. Try again before closing.';return;}}
+    fullReviewCancel?.();
     const wasPending = Boolean(pending); const wasRevision = pendingRevision; resetContents();
     update();
     status.textContent = wasPending ? 'Conversation cleared and request canceled locally. Previously sent text cannot be recalled from OpenAI.' : 'Conversation cleared from this project’s saved chat. Previously sent text cannot be recalled from OpenAI.';
     if (wasRevision) status.textContent += ' A pending suggestion may already have been recorded; check Proposed revisions.';
     update(); question.focus({preventScroll: true});
   });
-  const latestReply = button('Read latest reply', () => transcript.lastElementChild?.scrollIntoView({block: 'start'})); latestReply.hidden = true;
+  const latestReply = button('Read latest reply', () => (integrated ? transcript.firstElementChild : transcript.lastElementChild)?.scrollIntoView({block: 'start'})); latestReply.hidden = true;
   const actions = el('div', '', 'question-actions question-send-actions'); actions.append(send, cancel, button('Return to writing', () => hooks.focusEditor()), latestReply);
   const transcript = el('section', '', 'question-transcript'); transcript.setAttribute('aria-label', 'Question conversation');
   const lifetime = el('p', 'Questions and answers are saved on this Mac for this project, account and model, including across scene changes and app restarts. The latest 100 turns are retained within 512 KB. Only recent messages that fit the request limit are sent. Exact scene snapshots and revision targets are not stored in chat history; saved revision proposals remain in Proposed revisions. Clear conversation removes this saved chat.', 'muted');
@@ -192,7 +208,37 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   composer.append(contextDetails, targetSection, questionLabel, composerTop, requestNote, contextSummary, actions, status);
   const persistence = el('p', '', 'question-persistence'); persistence.setAttribute('role', 'status');
   composer.append(persistence);
-  element.append(header, settings, conversation, composer);
+  if (integrated) {
+    welcome.hidden = true; contextHeading.textContent = 'What will be sent';
+    contextDetails.classList.add('question-send-preview'); contextDetails.append(targetSection, historyDetails, disclosure);
+    const connectionArea = el('section', '', 'question-connection-area'); connectionArea.setAttribute('aria-label', 'Account and storage'); connectionArea.append(connection, auth, settings);
+    settings.querySelector('summary')!.textContent = 'Storage and revision safety'; settings.append(persistence);
+    composer.replaceChildren(modeLabel, questionLabel, requestNote, actions, contextSummary, contextDetails, status);
+    element.append(header, currentTitle, fullReview, passagePicker, transcript, waiting, composer, connectionArea);
+  } else element.append(header, settings, conversation, composer);
+
+  const layoutQuery = window.matchMedia?.('(max-width: 1399px)');
+  let dedicated = false;
+  function presentation() {
+    // Media-query rem units use the browser's initial font size, not app text zoom.
+    const textSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    dedicated = integrated && (Boolean(layoutQuery?.matches) || window.innerWidth < 64 * textSize);
+    element.dataset.presentation = dedicated ? 'dedicated' : 'docked';
+    element.setAttribute('role', dedicated ? 'dialog' : 'complementary');
+    if (dedicated) element.setAttribute('aria-modal', 'true'); else element.removeAttribute('aria-modal');
+    if (dedicated && !element.hidden && !element.contains(document.activeElement)) closeButton.focus({preventScroll: true});
+  }
+  layoutQuery?.addEventListener?.('change', presentation); window.addEventListener('resize', presentation); presentation();
+  const textObserver = new MutationObserver(presentation);
+  textObserver.observe(document.documentElement, {attributes: true, attributeFilter: ['style', 'data-zoom']});
+  const headerObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => { element.style.setProperty('--question-header-height', `${header.offsetHeight + 16}px`); }); headerObserver?.observe(header);
+  element.addEventListener('keydown', event => {
+    if (event.key !== 'Tab' || !dedicated) return;
+    const focusable = [...element.querySelectorAll<HTMLElement>('button, select, textarea, input, summary, [tabindex="0"]')].filter(node => !node.closest('[hidden]') && !node.matches(':disabled') && node.getClientRects().length && !node.closest('details:not([open]) :not(summary)'));
+    const first = focusable[0]; const last = focusable.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  });
   question.addEventListener('keydown', event => {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && !event.isComposing) {event.preventDefault(); if (!send.disabled) void submit();}
   });
@@ -201,19 +247,20 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   question.addEventListener('input', () => {update(); persist();});
   mode.addEventListener('change', () => {
     if (!live() || pending || preparing || authBusy) return;
-    contextMode = mode.value === 'revision' ? 'none' : 'scene'; contextVersion++; target = null; context = ''; contextLabel = 'None. No additional manuscript context will be sent.';
+    if (integrated && !activePassage) {const scene = hooks.current(); const requested = mode.value; if (scene && !selectionQuestionAvailability(hooks.selectionState?.() ?? null)) activateSelection(scene); mode.value = requested;}
+    contextMode = mode.value === 'revision' ? 'none' : integrated && activePassage ? 'snapshot' : 'scene'; contextVersion++; target = null; context = ''; contextLabel = 'None. No additional manuscript context will be sent.';
     if (mode.value === 'revision') {
       const selected = hooks.selectionState?.();
       if (selected && !selectionQuestionAvailability(selected)) target = {...selected};
       status.textContent = 'Revision mode uses only the exact selected target below, plus any context you explicitly capture. Save first, inspect the preview, then Send.';
-    } else status.textContent = 'Ask mode returns advice only. No revision proposal will be created.';
+    } else {if (integrated && activePassage) {context = activePassage.scene.source.slice(activePassage.scene.from, activePassage.scene.to); contextLabel = 'Selected passage only';} status.textContent = 'Ask mode returns advice only. No revision proposal will be created.';}
     update();
   });
   // Escape is scoped to this panel; the editor keeps all its own shortcuts.
   element.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && !event.isComposing) {event.preventDefault(); event.stopPropagation(); close(true);}
+    if (event.key === 'Escape' && !event.isComposing) {event.preventDefault(); event.stopPropagation(); (integrated ? collapse() : close(true));}
   });
-  function live() { return !disposed && !element.hidden && hooks.current()?.repositoryId === session; }
+  function live() { return !disposed && (integrated || !element.hidden) && hooks.current()?.repositoryId === session && (!integrated || hooks.current()?.path === sessionPath); }
   function activeAccount() { return configuration?.accounts.find(account => account.id === configuration?.activeAccountId); }
   function connectionReady() {
     const account = activeAccount(); const current = configuration;
@@ -228,7 +275,9 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   function revisionProblem(snapshot?: SelectionQuestionSnapshot, reviewing = false) {
     if (!core.suggestQuestionRevision || !hooks.reviewRevision || !core.rejectProposal) return 'Revision review is unavailable in this native host.';
     const unavailable = hooks.revisionUnavailable?.(reviewing); if (unavailable) return unavailable;
-    const current = hooks.selectionState?.(reviewing) ?? null;
+    let current = hooks.selectionState?.(reviewing) ?? null;
+    if (integrated && current && (snapshot || target)) {const bound = snapshot ?? target!; current = {...current, from: bound.from, to: bound.to};}
+    if (integrated && activePassage && passageStale(activePassage)) return 'Source changed. Select the passage again to request a revision.';
     if (snapshot) return selectionQuestionProblem(snapshot, current) ?? (snapshot.sourceHash !== current?.sourceHash ? 'The saved source changed. Capture the selection again.' : null);
     const captured = target; const problem = selectionQuestionAvailability(captured); if (problem) return problem;
     if (!captured || !current || ['repositoryId', 'path', 'sceneId', 'documentEpoch', 'revision', 'source', 'sourceHash', 'from', 'to'].some(key => captured[key as keyof SelectionQuestionState] !== current[key as keyof SelectionQuestionState])) return 'The scene or selection changed. Capture the selected passage again before requesting a revision.';
@@ -243,11 +292,12 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     contextLabel = current?.canCapture ? `Current scene · ${current.path} · refreshed for each message` : 'Current scene unavailable. Open an editable scene to include it.';
   }
   function persist() {
+    if (integrated) projectTurns = activePassage ? [...projectTurns, ...turns.filter(turn => !projectTurns.includes(turn))] : turns;
     if (!storedKey || storageFailed) return;
     try {
-      const saved=saveConversation(storedKey,{draft:question.value,forgotten,turns:turns.map(t=>({question:t.question,answer:{requestId:t.answer.requestId,text:t.answer.text,model:t.answer.model,incomplete:t.answer.incomplete,inputTokens:t.answer.inputTokens,outputTokens:t.answer.outputTokens},contextBytes:t.contextBytes,scenePath:t.scenePath,proposalId:t.revision?.proposalId??t.proposalId}))});
+      const saved=saveConversation(storedKey,{draft:question.value,forgotten,turns:(integrated ? projectTurns : turns).map(t=>({question:t.question,answer:{requestId:t.answer.requestId,text:t.answer.text,model:t.answer.model,incomplete:t.answer.incomplete,inputTokens:t.answer.inputTokens,outputTokens:t.answer.outputTokens},contextBytes:t.contextBytes,scenePath:t.scenePath,proposalId:t.revision?.proposalId??t.proposalId}))});
       forgotten=saved.forgotten;
-      if(saved.turns.length<turns.length){turns=turns.slice(-saved.turns.length);renderTranscript();}
+      if(integrated) {projectTurns=projectTurns.slice(-saved.turns.length); if(!activePassage)turns=projectTurns;} else if(saved.turns.length<turns.length){turns=turns.slice(-saved.turns.length);renderTranscript();}
       persistence.textContent='Saved on this Mac.';
     } catch {storageFailed=true;persistence.textContent='Chat could not be saved on this Mac. Keep this panel open and copy any replies you need.';}
   }
@@ -257,14 +307,14 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const key=conversationKey(current.projectKey??current.repositoryId,next.activeAccountId,next.selectedModel);
     if(storedKey===key)return;
     storedKey=key;storageFailed=false;
-    try {const saved=loadConversation(key);turns=saved.turns;forgotten=saved.forgotten;if(!question.value)question.value=saved.draft;renderTranscript();persistence.textContent='Saved on this Mac.';}
+    try {const saved=loadConversation(key);projectTurns=saved.turns;if(!integrated||!activePassage)turns=projectTurns;forgotten=saved.forgotten;if(!question.value && (!integrated||!activePassage))question.value=saved.draft;renderTranscript();persistence.textContent='Saved on this Mac.';}
     catch {storageFailed=true;persistence.textContent='Saved chat could not be read. It has not been overwritten. Clear conversation to start again.';}
   }
   function update() {
     refreshSceneContext();
     const history = pending?.history ?? outgoingHistory();
     latestReply.hidden = turns.length === 0;
-    welcome.hidden = turns.length > 0 || Boolean(pending) || preparing;
+    welcome.hidden = integrated || turns.length > 0 || Boolean(pending) || preparing;
     waiting.hidden = !pending && !preparing;
     waiting.textContent = waiting.hidden ? '' : preparing ? 'Preparing your revision…' : `${pending?.question ?? ''}\n\nThinking… You can keep writing.`;
     contextSummary.textContent = context ? contextMode === 'scene' ? contextLabel : `${contextLabel.split(' snapshot')[0]} attached.` : 'No manuscript text attached.';
@@ -301,6 +351,8 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     updateRevisionState();
     cancel.hidden = !pending && !preparing;
     element.setAttribute('aria-busy', String(Boolean(pending) || preparing || checking || authPending));
+    if (integrated) contextHeading.textContent = 'What will be sent';
+    notifyPassages();
   }
   function updateRevisionState() {
     const problem = outgoingProblem();
@@ -308,6 +360,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     send.title = problem ?? 'Send (Cmd/Ctrl+Enter)'; requestNote.textContent = question.value.trim() ? send.title : ''; requestNote.hidden = !requestNote.textContent;
     if (mode.value === 'revision') targetNote.textContent = revisionProblem() ?? `${target!.path} · ${targetBytes().toLocaleString()} UTF-8 bytes. Only this target is replaced; saved source is rechecked before review.`;
     for (const refreshAction of revisionActions) refreshAction();
+    notifyPassages();
   }
   function capture(kind: 'selection' | 'scene') {
     if (!live() || pending || preparing) return;
@@ -406,6 +459,8 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     }
   }
   function resetContents() {
+    if (integrated) {passages.length = 0; activePassage = null; projectTurns = [];}
+
     contextMode='scene'; contextVersion++; cancelPending(); mode.value = 'ask'; target = null; targetText.textContent = ''; targetNote.textContent = ''; targetSection.hidden = true; revisionActions.length = 0; turns = []; forgotten = 0; context = ''; contextLabel = 'None. No manuscript text will be sent.'; question.value = ''; question.placeholder = 'Ask about an idea, a detail, or where to go next…'; transcript.replaceChildren(); contextDetails.open = false;
     waiting.textContent = ''; waiting.hidden = true; contextSummary.textContent = '';
     // Closing also removes private snapshots from hidden DOM, not just state.
@@ -422,7 +477,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const request: QuestionRequest = {requestId: crypto.randomUUID(), question: question.value, context, history: outgoingHistory()};
     const binding: QuestionConnection = {generation: configuration.generation, accountId: configuration.activeAccountId!, model: configuration.model!};
     const epoch = ++version; let snapshot: SelectionQuestionSnapshot | undefined;
-    preparing = revising;
+    preparing = true;
     status.textContent = revising ? 'Checking the exact saved revision target… You can keep writing.' : 'Asking OpenAI… You can keep writing and saving your draft.'; update();
     try {
       if (revising) {
@@ -450,10 +505,10 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       turns.push({question: request.question, answer, contextBytes: questionBytes(request.context), scenePath: hooks.current()?.path, revision});
 
       while(turns.reduce((n,t)=>n+(t.revision?questionBytes(t.revision.snapshot.selectedText)+questionBytes(t.revision.replacementText)+questionBytes(t.answer.text):0),0)>QUESTION_LIMITS.memory){const old=turns.find(t=>t.revision);if(!old)break;old.proposalId=old.revision!.proposalId;delete old.revision;}
-      question.value = ''; question.placeholder = 'Ask a follow-up…';
+      question.value = ''; if (integrated) questionLabel.firstChild!.textContent = 'Ask a follow-up'; question.placeholder = 'Ask a follow-up…';
       persist(); renderTranscript();
       const latest = transcript.lastElementChild as HTMLElement | null;
-      if (latest) conversation.scrollTop += latest.getBoundingClientRect().top - conversation.getBoundingClientRect().top - 20;
+      if (latest && !integrated && !element.hidden) conversation.scrollTop += latest.getBoundingClientRect().top - conversation.getBoundingClientRect().top - 20;
       status.textContent = revision ? 'Suggested revision recorded. Review it or reject it below. Your manuscript has not been changed.' : answer.incomplete ? 'OpenAI returned an incomplete answer. It is marked below; nothing was retried automatically.' : 'Answer ready. Your manuscript has not been changed.';
     } catch (error) { if (live() && version === epoch) {status.textContent = errorMessage(error); void checkStatus();} }
     finally { if (live() && version === epoch) {preparing = false; pending = null; pendingRevision = false; update();} }
@@ -464,11 +519,12 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   }
   function renderTranscript() {
     transcript.replaceChildren(); revisionActions.length = 0;
-    turns.forEach((turn, index) => {
+    (integrated ? [...turns].reverse() : turns).forEach((turn, index) => {
       const section = el('section', '', 'question-turn');
       const usage = [turn.answer.inputTokens == null ? null : `${turn.answer.inputTokens.toLocaleString()} input tokens`, turn.answer.outputTokens == null ? null : `${turn.answer.outputTokens.toLocaleString()} output tokens`].filter(Boolean).join(' · ');
       const message = preview(turn.question, `Question ${index + 1}`); message.classList.add('question-user-message');
-      section.append(el('h4', 'You'), message, el('h4', turn.answer.incomplete ? 'Heinlein · Incomplete answer' : 'Heinlein'), renderMarkdown(turn.answer.text, `Answer ${index + 1}`));
+      if (integrated) {section.append(message, renderMarkdown(turn.answer.text, `Answer ${index + 1}`)); if (turn.answer.incomplete) section.append(el('p', 'Incomplete answer', 'drafting-warning'));}
+      else section.append(el('h4', 'You'), message, el('h4', turn.answer.incomplete ? 'Heinlein · Incomplete answer' : 'Heinlein'), renderMarkdown(turn.answer.text, `Answer ${index + 1}`));
       const details = el('details', '', 'question-response-details'); details.append(el('summary', 'Response details'), el('p', `${turn.contextBytes.toLocaleString()} UTF-8 bytes of context sent`, 'muted'), el('p', usage || 'Token usage was not returned.', 'muted'));
       const origin = el('p', `Recorded origin: native OpenAI · Model: ${turn.answer.model} · Request: ${turn.answer.requestId}. Provider metadata is not authenticated authorship.`, 'muted'); details.append(origin); section.append(details);
       if(turn.scenePath)section.append(el('p', `Scene: ${turn.scenePath}`, 'muted'));
@@ -476,15 +532,16 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       const revision = turn.revision;
       if (revision) {
         const note = el('p', '', 'question-revision-status'); note.setAttribute('role', 'status');
-        const review = button('Review proposed revision', () => {
+        const review = button(integrated ? 'Apply…' : 'Review proposed revision', () => {
           if (revision.busy || revision.rejected) return;
           const stale = revisionGuard(revision); if (stale) {note.textContent = stale; review.disabled = true; return;}
           revision.busy = true; refreshAction();
-          void hooks.reviewRevision!(revision.proposalId, revision.snapshot, () => revisionGuard(revision, true)).catch(() => {
+          void hooks.reviewRevision!(revision.proposalId, revision.snapshot, () => revisionGuard(revision, true), integrated ? presentReview : undefined).catch(() => {
             if (live() && turns.includes(turn)) status.textContent = 'Revision review could not be opened. Check the local proposals and receipts.';
-          }).finally(() => {revision.busy = false; if (live() && turns.includes(turn)) refreshAction();});
+          }).finally(() => {revision.busy = false; if (live() && turns.includes(turn)) {refreshAction(); notifyPassages();}});
         });
-        const reject = button('Reject proposed revision', () => {
+        if (integrated) review.classList.add('primary');
+        const reject = button(integrated ? 'Dismiss' : 'Reject proposed revision', () => {
           if (!live() || revision.busy || revision.rejected || !core.rejectProposal) return;
           revision.busy = true; refreshAction(); const epoch = version;
           void core.rejectProposal(revision.snapshot.repositoryId, revision.proposalId).then(receipt => {
@@ -493,40 +550,115 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
             revision.rejected = true; status.textContent = `Suggestion rejected. Local immutable rejection receipt: ${receipt.id}. The manuscript was not changed.`;
           }).catch(() => {
             if (live() && version === epoch && turns.includes(turn)) status.textContent = 'Rejection could not be confirmed. Check the local receipts before retrying.';
-          }).finally(() => {revision.busy = false; if (live() && turns.includes(turn)) refreshAction();});
+          }).finally(() => {revision.busy = false; if (live() && turns.includes(turn)) {refreshAction(); notifyPassages();}});
         });
         function refreshAction() {
           const stale = revisionGuard(revision!);
           review.disabled = revision!.busy || revision!.rejected || Boolean(stale); reject.disabled = revision!.busy || revision!.rejected;
-          note.textContent = revision!.rejected ? 'Rejected. The local decision receipt is retained.' : revision!.busy ? 'Opening the requested revision action…' : stale ?? 'Review opens the exact whole-scene before/after comparison, then a separate native author confirmation.';
+          note.textContent = revision!.rejected ? 'Rejected. The local decision receipt is retained.' : revision!.busy ? 'Opening the requested revision action…' : stale ?? (integrated ? '' : 'Review opens the exact whole-scene before/after comparison, then a separate native author confirmation.');
         }
-        section.append(el('h4', 'Original selected passage'), preview(revision.snapshot.selectedText, `Original target ${index + 1}`), el('h4', 'Proposed selected-passage replacement'), preview(revision.replacementText, `Suggested replacement ${index + 1}`), el('p', `Proposal: ${revision.proposalId}`, 'muted'), note, review, reject);
+        if (integrated) {
+          section.append(createQuestionComparison(revision.snapshot.selectedText, revision.replacementText));
+          const full = button('Show full scene comparison', () => review.click(), 'question-full-comparison');
+          revisionActions.push(() => {full.disabled = review.disabled;}); section.append(full, note, review, reject, el('p', 'Requires author confirmation', 'muted'));
+        } else section.append(el('h4', 'Original selected passage'), preview(revision.snapshot.selectedText, `Original target ${index + 1}`), el('h4', 'Proposed selected-passage replacement'), preview(revision.replacementText, `Suggested replacement ${index + 1}`), el('p', `Proposal: ${revision.proposalId}`, 'muted'), note, review, reject);
         if (!revision.replacementText) section.append(el('p', 'The replacement is empty. Accepting after review will delete the selected passage.', 'drafting-warning'));
         revisionActions.push(refreshAction); refreshAction();
       }
+      if (integrated) section.append(details);
       transcript.append(section);
+    });
+  }
+  function passageStale(passage: Passage) {
+    const current = hooks.current(); const binding = hooks.selectionState?.();
+    return passage.stale ||= !current || current.repositoryId !== passage.scene.repositoryId || current.path !== passage.scene.path || current.source !== passage.scene.source || Boolean(passage.binding && (!binding || binding.documentEpoch !== passage.binding.documentEpoch || binding.revision !== passage.binding.revision));
+  }
+  function stashPassage() {
+    if (!activePassage) return;
+    Object.assign(activePassage, {turns, context, contextLabel, contextVersion, target, mode: mode.value, draft: question.value, contextMode, title: currentTitle.textContent ?? '', status: status.textContent ?? ''});
+  }
+  function passageItems(): PassageItem[] {
+    return passages.map(p => ({id: p.id, from: p.scene.from, to: p.scene.to, active: p === activePassage && !element.hidden, stale: passageStale(p), label: passageStale(p) ? 'Source changed' : p === activePassage && (pending || preparing) ? 'Asking…' : p.turns.some(t => t.revision && !t.revision.rejected) ? `${p.turns.filter(t => t.revision && !t.revision.rejected).length} suggestion${p.turns.filter(t => t.revision && !t.revision.rejected).length === 1 ? '' : 's'}` : p.turns.length ? 'Answer ready' : 'Ask about passage'}));
+  }
+  function notifyPassages() {
+    if (!integrated || notifying) return; notifying = true;
+    queueMicrotask(() => {
+      notifying = false; if (disposed) return; stashPassage();
+      // One shared session budget, including inactive drafts, context, and replacements.
+      const size = (p: Passage) => questionBytes(p.context) + questionBytes(p.draft) + questionBytes(p.scene.source.slice(p.scene.from, p.scene.to)) + p.turns.reduce((n,t) => n + questionBytes(t.question) + questionBytes(t.answer.text) + questionBytes(t.revision?.replacementText ?? '') + questionBytes(t.revision?.snapshot.selectedText ?? ''), 0);
+      while (passages.length > 1 && (passages.reduce((n,p) => n + size(p), 0) > QUESTION_LIMITS.memory || passages.reduce((n,p) => n + p.turns.length, 0) > 4 || passages.length > 4)) {const index = passages.findIndex(p => p !== activePassage); if (index < 0) break; passages.splice(index, 1);}
+      let trimmed = false;
+      while (activePassage && size(activePassage) > QUESTION_LIMITS.memory && turns.length) {turns.shift(); forgotten++; trimmed = true;}
+      if (trimmed) {renderTranscript(); status.textContent = 'Earlier passage responses were released to keep this window within its memory limit. Saved proposals remain in Proposed revisions.';}
+      const items = passageItems(); passagePicker.hidden = items.length < 2 && !items.some(item => item.stale); passageSummary.textContent = `Passages · ${items.length}`;
+      passageButtons.replaceChildren();
+      items.forEach((item, index) => {const pick = button(`Passage ${index + 1} · ${item.label}`, () => activatePassage(item.id)); pick.setAttribute('aria-pressed', String(item.active)); passageButtons.append(pick);});
+      hooks.passages?.changed(items);
+    });
+  }
+  function activatePassage(id: string) {
+    const passage = passages.find(p => p.id === id); if (!passage || disposed || fullReviewCancel) return;
+    if ((pending || preparing || authBusy || turns.some(t => t.revision?.busy)) && passage !== activePassage) {open(); status.textContent = 'Wait for the current request or choose Cancel request before opening another passage.'; return;}
+    stashPassage();
+    activePassage = passage;
+    ({turns, context, contextLabel, contextVersion, target, contextMode} = passage); mode.value = passage.mode; question.value = passage.draft; questionLabel.firstChild!.textContent = turns.length ? 'Ask a follow-up' : 'Your message'; currentTitle.textContent = passage.title; status.textContent = passage.status;
+    contextMode = passage.contextMode;
+    if (!passageStale(passage)) hooks.passages?.select(passage.scene.from, passage.scene.to);
+    renderTranscript(); open(); passagePicker.open = passages.length > 1; update();
+  }
+  function activateSelection(scene: QuestionScene) {
+    if (fullReviewCancel) return false;
+    const existing = passages.find(p => !passageStale(p) && p.scene.from === scene.from && p.scene.to === scene.to);
+    if (existing) {activatePassage(existing.id); return true;}
+    if (pending || preparing || authBusy || turns.some(t => t.revision?.busy)) {open(); status.textContent = 'Wait for the current request or choose Cancel request before starting another passage.'; return false;}
+    stashPassage(); open();
+    const passage: Passage = {id: `passage-${++passageId}`, scene: {...scene}, binding: hooks.selectionState?.() ?? null, turns: [], context: scene.source.slice(scene.from, scene.to), contextLabel: 'Selected passage only', contextVersion: contextVersion + 1, target: null, mode: 'ask', draft: '', contextMode: 'snapshot', title: 'Selected passage', status: '', stale: false};
+    passages.push(passage); activatePassage(passage.id); contextDetails.open = false; return true;
+  }
+  function collapse() {
+    if (disposed) return;
+    fullReviewCancel?.(); stashPassage(); element.hidden = true; hooks.visibilityChanged?.(false); notifyPassages(); hooks.focusEditor();
+  }
+  function presentReview(view: ProposalReview): Promise<boolean> {
+    fullReviewCancel?.();
+    return new Promise(resolve => {
+      const prior = [...element.children].filter(child => child !== header && child !== fullReview).map(child => [child as HTMLElement, (child as HTMLElement).hidden] as const);
+      prior.forEach(([child]) => {child.hidden = true;}); fullReview.hidden = false;
+      const title = el('h3', 'Review whole-scene revision'); title.tabIndex = -1;
+      fullReview.replaceChildren(title, el('p', view.path), createQuestionComparison(view.baseText, view.replacementText, true), el('p', 'Review expires after five minutes. Continue to native author confirmation to apply this exact replacement.', 'muted'));
+      let done = false;
+      const finish = (accepted: boolean) => {if (done) return; done = true; fullReviewCancel = null; fullReview.hidden = true; fullReview.replaceChildren(); prior.forEach(([child, hidden]) => {child.hidden = hidden;}); resolve(accepted); if (!element.hidden) question.focus({preventScroll: true});};
+      const bindings = el('details', '', 'question-review-bindings');
+      const attribution = view.origin.kind === 'nativeOpenAi' ? `Native OpenAI suggestion · ${view.origin.model} · ${view.origin.requestId}. Provider metadata is not authenticated authorship.` : `Unverified local MCP client: ${view.origin.clientLabel} · ${view.origin.sessionId}`;
+      bindings.append(el('summary', 'Review details'), el('p', attribution), el('p', `Proposal: ${view.proposalId} · Base: ${view.baseHash} · Replacement: ${view.replacementHash} · Diff: ${view.diffHash}`, 'path')); fullReview.append(bindings);
+      fullReviewCancel = () => finish(false);
+      fullReview.append(button('Cancel review', () => finish(false)), button('Continue to native confirmation', () => finish(true), 'primary'));
+      title.focus({preventScroll: true}); element.scrollTop = 0;
     });
   }
   function close(returnFocus = false) {
     if ((authBusy === 'connect' || configuration?.signInPending) && core.cancelQuestionSignIn) {
       try {void core.cancelQuestionSignIn().catch(() => {});} catch { /* UI invalidation still wins */ }
     }
-    const wasOpen = !element.hidden; persist(); storedKey=null; resetContents(); statusVersion++; checking = false; configuration = null;
+    fullReviewCancel?.(); persist(); passages.length = 0; activePassage = null;
+    const wasOpen = !element.hidden; storedKey=null; resetContents(); statusVersion++; checking = false; configuration = null;
     authBusy = null; seenConnection = null; selectedAccountId = null; reauthorizing = false; addingAccount = false; consent.checked = false; accounts.replaceChildren(); models.replaceChildren(); connection.textContent = '';
-    element.hidden = true; session = null; status.textContent = ''; hooks.visibilityChanged?.(false);
+    element.hidden = true; session = null; sessionPath = null; status.textContent = ''; hooks.visibilityChanged?.(false); notifyPassages();
     if (wasOpen && returnFocus) hooks.focusEditor();
   }
   function open() {
     if (disposed) return;
     if (!element.hidden) {question.focus({preventScroll: true}); return;}
     const current = hooks.current(); if (!current) return;
-    session = current.repositoryId; element.hidden = false; hooks.visibilityChanged?.(true); update();
+    if (integrated && session === current.repositoryId && sessionPath === current.path) {element.hidden = false; hooks.visibilityChanged?.(true); presentation(); update(); if (!fullReviewCancel) question.focus({preventScroll: true}); return;}
+    if (integrated && session) close();
+    session = current.repositoryId; sessionPath = current.path; element.hidden = false; hooks.visibilityChanged?.(true); update();
     question.focus({preventScroll: true}); void checkStatus();
   }
   return {element,
     open,
     selectionVersion: () => contextVersion,
-    stateChanged() {if(live()&&!pending&&!preparing) update(); if (live() && (mode.value === 'revision' || revisionActions.length)) updateRevisionState();},
+    stateChanged() {notifyPassages(); if (integrated && session && !live()) {close(); return;} if(live()&&!pending&&!preparing) update(); if (live() && (mode.value === 'revision' || revisionActions.length)) updateRevisionState();},
     /** The caller captures and rechecks editor revision/selection before this synchronous boundary. */
     openSelection(expected: QuestionScene, expectedContextVersion = contextVersion) {
       const current = hooks.current();
@@ -536,6 +668,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       if (!Number.isSafeInteger(current.from) || !Number.isSafeInteger(current.to) || current.from < 0 || current.to > current.source.length || current.to <= current.from || !plainUnicode(text) || questionBytes(text) > QUESTION_LIMITS.context) {
         status.textContent = `Select a nonempty passage of complete characters, up to ${QUESTION_LIMITS.context.toLocaleString()} UTF-8 bytes. Nothing was sent.`; return false;
       }
+      if (integrated) return activateSelection(expected);
       open();
       if (authBusy || configuration?.signInPending) {status.textContent = 'Finish or cancel the account connection before capturing a selection.'; return false;}
       const canceled = Boolean(pending) || preparing; const wasRevision = pendingRevision; if (canceled) cancelPending(true);
@@ -544,9 +677,11 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       return true;
     },
     visible: () => !element.hidden,
-    close: () => close(true),
+    close: () => integrated ? collapse() : close(true),
+    activatePassage, passageItems, presentReview,
+    activity: () => pending || preparing ? 'Asking…' : turns.length ? 'Answer ready' : '',
     /** Switches Ask / Suggest revision exactly as choosing it from the Response mode menu. */
     setMode(value: 'ask' | 'revision') { if (mode.value !== value && !mode.disabled) { mode.value = value; mode.dispatchEvent(new Event('change')); } },
-    clear: () => close(), destroy: () => {close(); disposed = true; element.remove();},
+    clear: () => close(), destroy: () => {close(); headerObserver?.disconnect(); textObserver.disconnect(); window.removeEventListener('resize', presentation); layoutQuery?.removeEventListener?.('change', presentation); disposed = true; element.remove();},
   };
 }

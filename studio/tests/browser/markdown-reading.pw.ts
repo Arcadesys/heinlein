@@ -168,7 +168,7 @@ test('Toggling keeps one writer: unsaved text shows in Reading, caret and bytes 
   const group = page.getByRole('group', { name: 'Document view' });
   const editor = page.locator('.cm-content');
   await editor.click();
-  await page.keyboard.press(`${modifier}+ArrowDown`);
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End');
   await page.keyboard.type('Unsaved 🦊 line.');
   await group.getByRole('button', { name: 'Reading', exact: true }).click();
   await expect(reader(page)).toContainText('Unsaved 🦊 line.');
@@ -178,7 +178,7 @@ test('Toggling keeps one writer: unsaved text shows in Reading, caret and bytes 
   await expect(reader(page)).toBeHidden();
   await expect(page.locator('.cm-editor')).toBeVisible();
   await editor.click();
-  await page.keyboard.press(`${modifier}+ArrowDown`);
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End');
   await page.keyboard.type(' More.');
   await page.keyboard.press(`${modifier}+s`);
   await expect.poll(() => source(page)).toContain('Unsaved 🦊 line. More.');

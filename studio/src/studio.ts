@@ -685,7 +685,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const source=button('Source',()=>{setDocumentView('source');focusWriterView();}),reading=button('Reading',()=>setDocumentView('reading'));
     source.setAttribute('aria-pressed','true');reading.setAttribute('aria-pressed','false');
     group.append(source,reading);toolbar.prepend(group);
-    const secondary=[...toolbar.children].filter(node=>node!==group && !node.classList.contains('back-to-sheets')) as HTMLElement[];const metadata=host.closest('.page')?.querySelector<HTMLElement>('.metadata');if(metadata)secondary.push(metadata);const badge=host.closest('.page')?.querySelector<HTMLElement>('.page-meta .badge');if(badge)secondary.push(badge);
+    const secondary=[...toolbar.children].filter(node=>node!==group && node!==questionButton && !node.classList.contains('back-to-sheets')) as HTMLElement[];const metadata=host.closest('.page')?.querySelector<HTMLElement>('.metadata');if(metadata)secondary.push(metadata);const badge=host.closest('.page')?.querySelector<HTMLElement>('.page-meta .badge');if(badge)secondary.push(badge);
     editorCommands?.destroy();const commands=actionMenu('Editor actions',secondary,root);editorCommands=commands;const role=host.closest('.page')?.querySelector<HTMLElement>('.document-role');if(role){commands.button.replaceChildren(role,document.createTextNode(' actions'));commands.button.setAttribute('aria-description','Editor actions for this document');}toolbar.append(commands.button,commands.storage);documentCommandBar.replaceChildren(toolbar);
     documentReader=reader;documentView={host,toolbar,source,reading,editor:target,modeChanged};
     target.dispatch({effects:StateEffect.appendConfig.of(EditorView.updateListener.of(update=>{if(documentReader===reader&&readingActive()&&(update.docChanged||reviewMarksIn(update.state)!==reviewMarksIn(update.startState)))reader.update();}))});
@@ -798,7 +798,40 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     },
     report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
   });
+  function returnFromQuestions() {
+    focusWriterView();
+    const view = (editor ?? chapterEditor)?.view;
+    if (!view || readingActive()) return;
+    requestAnimationFrame(() => {
+      if (disposed || (editor ?? chapterEditor)?.view !== view || draftingQuestions?.visible()) return;
+      // Only the owning pane should scroll; CodeMirror's ancestor scrolling can pan the hidden workspace.
+      layout.scrollTop = 0; layout.scrollLeft = 0; preview.scrollTop = 0; preview.scrollLeft = 0;
+      const scroller = primaryScroller(); if (!scroller) return;
+      const range = view.state.selection.main, from = view.coordsAtPos(range.from), to = view.coordsAtPos(range.to), bounds = scroller.getBoundingClientRect();
+      if (from && to && bounds.height > 0) {
+        const top = Math.max(bounds.top, documentCommandBar.getBoundingClientRect().bottom), bottom = Math.min(bounds.bottom, window.innerHeight);
+        if (from.top < top || to.bottom > bottom) scroller.scrollTop += (from.top + to.bottom - top - bottom) / 2;
+      }
+      view.requestMeasure();
+    });
+  }
+  let questionMarkerSignature = '';
   draftingQuestions = createQuestionPanel(core, {
+    passages: {
+      select: (from, to) => {if (readingActive()) setDocumentView('source'); editor?.selectPassage(from, to);},
+      changed: items => {
+        if (!editor || !draftingQuestions || disposed) return;
+        const available = items.filter(item => !item.stale);
+        const selected = draftingSelectionState();
+        const fresh = selected && !selectionQuestionAvailability(selected) && !available.some(item => item.from === selected.from && item.to === selected.to);
+        const markers = available.map(item => ({...item, open: () => draftingQuestions?.activatePassage(item.id)}));
+        if (fresh && selected) markers.push({id: 'new-selection', from: selected.from, to: selected.to, label: 'Ask about passage', active: false, stale: false, open: () => {void askDraftingSelection();}});
+        const signature = JSON.stringify(markers.map(({id, from, to, label, active}) => [id, from, to, label, active]));
+        if (signature !== questionMarkerSignature) {questionMarkerSignature = signature; editor.setPassages(markers);}
+        const asking = draftingQuestions.activity() === 'Asking…'; const suggestions = items.filter(item => /suggestion/.test(item.label)).length;
+        if (questionButton) questionButton.textContent = `Questions${asking ? ' · Asking…' : suggestions ? ` · ${suggestions}` : items.length ? ` · ${items.length}` : draftingQuestions.activity() ? ` · ${draftingQuestions.activity()}` : ''}`;
+      },
+    },
     current: () => {
       if (reference.fromReference() || disposed || !opened || !repository) return null;
       if (!editor) return {repositoryId: repository.id, projectKey: repository.projectKey, path: opened.path, source: '', from: 0, to: 0, canCapture: false};
@@ -809,7 +842,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         from: single ? rawOffset(source, range.from) : -1, to: single ? rawOffset(source, range.to) : -1,
         canCapture: !editor.view.state.readOnly && !opened.generatedCompatibility && !recoveryPending && !repositoryDetached && !selecting && !structuralBusy && !proposalBusy};
     },
-    focusEditor: () => focusWriterView(),
+    focusEditor: returnFromQuestions,
     selectionState: reviewing => {
       const current = selectionQuestionState();
       return reviewing && current && proposalBusy ? {...current, readOnly: Boolean(opened?.generatedCompatibility), busy: false} : current;
@@ -820,8 +853,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       const problem = revisionUnavailable(false) ?? selectionQuestionProblem(snapshot, selectionQuestionState());
       if (problem) throw new Error(problem);
     },
-    reviewRevision: (id, _snapshot, guard) => proposals.reviewProposal(id, guard),
-    visibilityChanged: visible => {questionButton?.setAttribute('aria-expanded', String(visible)); if (!visible) {selectionCaptureVersion++; selectionCapturePending = false;}},
+    reviewRevision: async (id, _snapshot, guard, presenter) => {try {await proposals.reviewProposal(id, guard, presenter);} finally {if (!draftingQuestions?.visible()) returnFromQuestions();}},
+    visibilityChanged: visible => {navigation.suspend(visible); layout.classList.toggle('questions-open', visible); questionButton?.setAttribute('aria-expanded', String(visible)); if (!visible) {selectionCaptureVersion++; selectionCapturePending = false;}},
   });
   draftingQuestions.element.id = 'drafting-questions';
   reviewPanel = createReviewPanel(core, {
@@ -1507,6 +1540,13 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const newShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n' && !event.shiftKey && !event.altKey;
     const otherModal = [...document.querySelectorAll('dialog[open]')].some(node => node !== dialog && !(newShortcut && node.classList.contains('navigation-modal')));
     if (root.inert || otherModal) { if (newShortcut) event.preventDefault(); return; }
+    const dedicatedQuestions = draftingQuestions?.visible() && draftingQuestions.element.getAttribute('aria-modal') === 'true';
+    if (dedicatedQuestions) {
+      const mod = event.metaKey || event.ctrlKey; const key = event.key.toLowerCase();
+      if (mod && key === 'j' && !event.shiftKey && !event.altKey) { event.preventDefault(); event.stopPropagation(); askShortcut(); }
+      else if (mod && ['k', 'p', 'o', '\\', ',', '/', 'f', 's'].includes(key)) { event.preventDefault(); event.stopPropagation(); }
+      return;
+    }
     const mod = event.metaKey || event.ctrlKey;
     if (!mod) {
       if (event.key === '?' && !event.altKey && !typingTarget(event.target) && !dialog.open && !palette.isOpen()) { event.preventDefault(); toggleHelp(true); }
@@ -1868,7 +1908,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       askSelection.setAttribute('aria-haspopup', 'dialog');
       askSelection.title = 'Prepare a question for manual copy/paste into ChatGPT or another assistant';
       questionButton = button('Questions', () => writerAction(()=>{reviewPanel?.clear(); draftingQuestions?.open();}));
-      questionButton.setAttribute('aria-controls', 'drafting-questions'); questionButton.setAttribute('aria-expanded', 'false');
+      questionButton.setAttribute('aria-live', 'polite'); questionButton.setAttribute('aria-controls', 'drafting-questions'); questionButton.setAttribute('aria-expanded', 'false');
       questionButton.title = 'Ask OpenAI while drafting, with only the context you choose';
       const askDrafting = button('Ask Heinlein about selection', () => {void askDraftingSelection();}, 'source-only'); askDrafting.disabled = true;
       askDrafting.setAttribute('aria-keyshortcuts', 'Control+Alt+Enter Meta+Alt+Enter');
@@ -1890,9 +1930,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       }, true);
       const draftingArea = el('div', '', 'drafting-editor-area');
       const editorColumn = el('div', '', 'drafting-editor-column'); editorColumn.append(toolbar, host);
-      draftingArea.append(editorColumn); if (draftingQuestions) draftingArea.append(draftingQuestions.element);
+      draftingArea.append(editorColumn); if (draftingQuestions) root.append(draftingQuestions.element);
       text.replaceWith(draftingArea);
       let previousText = doc.text;
+      questionMarkerSignature = '';
       editor = createEditor(host, doc.text, (raw, origin) => {
         drafting.updateBuffer(doc.path, raw);
         noteEditing();
@@ -1906,9 +1947,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       editor.view.dispatch({effects: StateEffect.appendConfig.of(reviewMarks())});
       if(core.projectRequest){editor.view.dispatch({effects:StateEffect.appendConfig.of(EditorView.updateListener.of(update=>{if(update.selectionSet)scheduleProjectPosition();}))});editor.view.scrollDOM.addEventListener('scroll',scheduleProjectPosition);}
       createDocumentDetails(metadata, editor);
-      editor.view.dispatch({effects: StateEffect.appendConfig.of(EditorView.updateListener.of(update => {if (update.docChanged || update.selectionSet) draftingQuestions?.stateChanged();}))});
+      editor.view.dispatch({effects: StateEffect.appendConfig.of(EditorView.updateListener.of(update => {if (update.docChanged) questionMarkerSignature = ''; if (update.docChanged || update.selectionSet) draftingQuestions?.stateChanged();}))});
       selectionAsk = createSelectionAskAction(editor.view, {current: draftingSelectionState, fallback: askDrafting, keys: formatKeys('⌘J'),
-        revise: () => { if (!draftingQuestions) return; draftingQuestions.open(); draftingQuestions.setMode('revision'); },
+        revise: snapshot => { void askDraftingSelection(snapshot).then(() => draftingQuestions?.setMode('revision')); },
         ask: snapshot => {void askDraftingSelection(snapshot);}, stale: () => {status.textContent = 'The selection changed. Highlight the passage again before asking.';}});
       if (recoveryPending && draft) showRecoveryChoice(doc, draft, host);
       if (/\.(md|markdown)$/i.test(doc.path)) {
@@ -1966,8 +2007,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         }
         showSourceView();
         editor.view.dispatch({selection: {anchor: target.from, head: target.to}, scrollIntoView: true});
-        draftingQuestions?.open(); draftingQuestions?.setMode('revision');
         await askDraftingSelection();
+        draftingQuestions?.setMode('revision');
         status.textContent = 'Source passage selected for a proposed revision. Describe the change, then explicitly send it. You can also edit this source scene directly.';
       } catch (error) { if (current()) {status.textContent = error instanceof Error ? error.message : String(error); status.classList.add('error');} }
     }
