@@ -704,7 +704,7 @@ dialog { color: var(--fg); }
    Two lines fit at the current text size; longer notices scroll by keyboard. */
 .studio:not(.standalone-writing) > .status { box-sizing:border-box; flex:none; height:4rem; overflow-y:auto; }
 .studio:not(.standalone-writing) > .status:empty { display:block; visibility:hidden; }
-.studio:not(.standalone-writing) > .status.quiet:focus { opacity:1; pointer-events:auto; }
+.studio:not(.standalone-writing) .notice-slot > .status.quiet:focus { opacity:1; pointer-events:auto; }
 .studio:not(.standalone-writing) .navigator { top:calc(4.5rem + var(--notice-space,0px)); }
 .studio:not(.standalone-writing) .preview { top:calc(4.5rem + var(--notice-space,0px)); padding-top:3.75rem; scroll-padding-top:0; }
 /* At narrow widths, storage/status/actions must not float over repository navigation. */
