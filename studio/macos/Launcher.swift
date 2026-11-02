@@ -22,7 +22,7 @@ guard let python = pythonPaths.first(where: { FileManager.default.isExecutableFi
 }
 let process = Process()
 process.executableURL = URL(fileURLWithPath: python)
-process.arguments = ["-I", "-S", bundle.appendingPathComponent("Contents/Resources/update.py").path,
+process.arguments = ["-I", "-S", "-B", bundle.appendingPathComponent("Contents/Resources/update.py").path,
                      "--app", bundle.path, "launch"]
 process.environment = ["PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
                        "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
