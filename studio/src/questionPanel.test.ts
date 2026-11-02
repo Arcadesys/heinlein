@@ -51,7 +51,7 @@ describe('nonmodal drafting questions', () => {
     const fetch = vi.fn(); vi.stubGlobal('fetch', fetch); const core = await start();
     expect(document.querySelector('dialog')).toBeNull(); expect(input()).toBe(document.activeElement);
     expect(core.askQuestion).not.toHaveBeenCalled(); write('  A precise question?  ');
-    input().dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', ctrlKey: true, bubbles: true}));
+    input().dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
     expect(core.askQuestion).not.toHaveBeenCalled(); expect(document.body.textContent).toContain('No manuscript text will be sent');
     button('Send to OpenAI').click(); await vi.waitFor(() => expect(status()).toContain('Answer ready'));
     expect(core.askQuestion.mock.calls[0][0]).toEqual({requestId: expect.any(String), question: '  A precise question?  ', context: '', history: []});

@@ -1,0 +1,18 @@
+import {test,expect} from '@playwright/test';import AxeBuilder from '@axe-core/playwright';
+for(const zoom of [100,200])test(`writing conversation at ${zoom}%`,async({page},info)=>{
+ const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));const external:string[]=[];page.on('request',r=>{if(!r.url().startsWith('http://127.0.0.1'))external.push(r.url());});
+ await page.goto('/tests/browser/chat-experience.html');await page.evaluate(zoom=>document.documentElement.dataset.zoom=String(zoom),zoom);
+ const panel=page.getByRole('complementary',{name:'Drafting questions'}),input=page.getByRole('textbox',{name:'Your drafting question'});
+ await expect(panel.getByRole('heading',{name:'Writing conversation'})).toBeVisible();await expect(input).toBeFocused();await expect(page.locator('.question-settings')).not.toHaveAttribute('open','');
+ await panel.getByRole('button',{name:'Find the tension',exact:true}).click();expect(await page.evaluate(()=>(window as any).chatPreview.requests.length)).toBe(0);
+ await input.press('Meta+Enter');await expect(page.locator('.question-waiting')).toBeVisible();await expect(page.getByRole('region',{name:'Answer 1'})).toContainText('strongest tension');
+ expect(await page.evaluate(()=>(window as any).chatPreview.requests[0].context)).toBe('');
+ await input.fill('What if she leaves?');await input.press('Meta+Enter');await expect(page.getByRole('region',{name:'Answer 2'})).toContainText('strongest tension');
+ expect(await page.evaluate(()=>(window as any).chatPreview.requests[1].history.length)).toBe(2);
+ await panel.getByText('Add writing context',{exact:true}).click();await panel.getByRole('button',{name:'Capture selected text',exact:true}).click();await expect(page.getByLabel('Exact context to send',{exact:true})).toHaveText('The lantern');
+ await panel.getByText('Writing context attached · inspect or change',{exact:true}).click();
+ expect(await panel.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+ const axe=await new AxeBuilder({page}).include('.question-panel').analyze();expect(axe.violations.filter(v=>['critical','serious'].includes(v.impact??''))).toEqual([]);
+ await input.scrollIntoViewIfNeeded();await expect(input).toBeInViewport();await panel.getByRole('button',{name:'Send to OpenAI',exact:true}).scrollIntoViewIfNeeded();await expect(panel.getByRole('button',{name:'Send to OpenAI',exact:true})).toBeInViewport();await page.screenshot({path:info.outputPath(`chat-${zoom}.png`)});expect(errors).toEqual([]);expect(external).toEqual([]);
+ await input.press('Escape');await expect(panel).toBeHidden();await page.getByRole('button',{name:'Open conversation'}).click();await expect(page.getByRole('region',{name:'Answer 1'})).toHaveCount(0);
+});
