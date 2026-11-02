@@ -1,4 +1,25 @@
 import {test,expect} from '@playwright/test'; import AxeBuilder from '@axe-core/playwright';
+test('library and writing area stay within their workspace at enlarged text sizes',async({page},info)=>{
+ test.skip(info.project.name==='narrow');
+ await page.goto('/tests/browser/library-app.html');
+ await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});
+ const toggle=page.getByRole('button',{name:'Navigation',exact:true}); if(await toggle.isVisible()) await toggle.click();
+ await page.getByRole('tab',{name:'Library'}).click();
+ await page.getByRole('button',{name:'Group',exact:true}).click();
+ await page.getByRole('button',{name:'1. First sheet'}).click();
+ const geometry=await page.evaluate(()=>{
+  const rect=(selector:string)=>document.querySelector(selector)!.getBoundingClientRect();
+  const workspace=rect('.workspace'),nav=rect('.navigator'),preview=rect('.preview'),library=rect('.library-groups'),sheets=rect('.library-sheets');
+  return {workspace:workspace.toJSON(),nav:nav.toJSON(),preview:preview.toJSON(),library:library.toJSON(),sheets:sheets.toJSON()};
+ });
+ expect(geometry.nav.right).toBeLessThanOrEqual(geometry.preview.left+1);
+ expect(geometry.preview.right).toBeLessThanOrEqual(geometry.workspace.right+1);
+ expect(geometry.preview.width).toBeGreaterThan(geometry.workspace.width/2);
+ expect(geometry.library.right).toBeLessThanOrEqual(geometry.nav.right+1);
+ expect(geometry.sheets.right).toBeLessThanOrEqual(geometry.nav.right+1);
+ expect(geometry.sheets.top).toBeGreaterThanOrEqual(geometry.library.bottom-1);
+ await page.screenshot({path:info.outputPath('library-workspace-200.png')});
+});
 test('full app navigates library, sheets and editor',async({page})=>{
  await page.goto('/tests/browser/library-app.html');
  const toggle=page.getByRole('button',{name:'Navigation',exact:true}); if(await toggle.isVisible()) await toggle.click();

@@ -342,6 +342,8 @@ dialog { color: var(--fg); }
 .scene-open[draggable="true"] { cursor: grab; }
 .scene-path { color: var(--fg-muted); font-family: var(--font-mono); font-size: .75rem; overflow-wrap: anywhere; margin: .2rem .4rem; }
 .sheet-preview { margin: .35rem .4rem; overflow-wrap: anywhere; white-space: normal; }
+.manuscript-move-status { grid-column: 1 / -1; }
+.manuscript-move-status:empty { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .library-groups ul { list-style: none; padding-inline-start: 1rem; }
 .library-groups > ul { padding-inline-start: 0; }
 .library-groups button, .library-groups summary { min-height: 2.75rem; }
@@ -1004,6 +1006,12 @@ dialog { color: var(--fg); }
 .studio:not(.standalone-writing):has(.document-workspace) .navigator.navigation-closed { position:absolute; width:auto; z-index:8; top:4px; left:4px; overflow:visible; }
 .studio:not(.standalone-writing):has(.document-workspace) .navigator button { min-block-size:48px; }
 .studio:not(.standalone-writing):has(.document-workspace) .preview { grid-column:2; position:relative; inset:auto; min-block-size:0; min-inline-size:0; overflow:hidden; padding:0; scroll-padding:0; }
+/* The workspace grid owns pane positions. Legacy floating navigation rules must
+   not widen the sidebar or offset the editor inside this grid. */
+.studio:not(.standalone-writing):has(.document-workspace) .navigator:has(#navigation-panel-manuscript:not([hidden]) .drafting-panel) { width:100%; box-sizing:border-box; }
+.studio:not(.standalone-writing):has(.document-workspace) .workspace:has(.navigator:not(.navigation-closed) #navigation-panel-manuscript:not([hidden]) .drafting-panel) .preview { left:auto; }
+.studio:not(.standalone-writing):has(.document-workspace) .drafting-panel:has(.library-sheets) { display:block; }
+.studio:not(.standalone-writing):has(.document-workspace) .library-groups { border-right:0; padding-right:0; }
 .studio:not(.standalone-writing):has(.document-workspace) .document-workspace { height:100%; min-block-size:0; display:flex; flex-direction:column; padding:0; }
 .document-workspace .document-tabs { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:4px; min-inline-size:0; container-type:normal; }
 .document-workspace .document-tab-area { display:block; flex:1 1 10ch; max-block-size:none; min-inline-size:0; overflow-x:auto; overflow-y:hidden; padding:3px; }
