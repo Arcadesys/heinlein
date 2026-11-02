@@ -1,4 +1,11 @@
 import {test,expect} from '@playwright/test';import AxeBuilder from '@axe-core/playwright';
+test('Command Shift B previews a Markdown split',async({page})=>{
+ await page.goto('/tests/browser/file-split.html');await page.waitForFunction(()=>document.documentElement.dataset.fileSplitReady==='true');
+ await page.evaluate(()=>(window as any).fileSplitFixture.cursor());await page.locator('.cm-content').focus();await page.keyboard.press('Meta+Shift+B');
+ const dialog=page.getByRole('dialog',{name:'Split Markdown file at cursor',exact:true});await expect(dialog).toBeVisible();
+ await dialog.getByRole('button',{name:'Preview split',exact:true}).click();await expect(page.getByRole('dialog',{name:'Review manuscript change',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Cancel',exact:true}).click();expect(await page.evaluate(()=>(window as any).fileSplitFixture.calls.apply)).toBe(0);
+});
 for(const high of [false,true])test(`generic Markdown split ${high?'high contrast':'default'}`,async({page},info)=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/tests/browser/file-split.html');await page.waitForFunction(()=>document.documentElement.dataset.fileSplitReady==='true');const narrow=page.viewportSize()!.width===320,zoom=narrow?200:100;
  await page.evaluate(async({high,zoom})=>{document.documentElement.dataset.zoom=String(zoom);(window as any).fileSplitFixture.theme(high);await document.fonts.ready;(window as any).fileSplitFixture.cursor();},{high,zoom});

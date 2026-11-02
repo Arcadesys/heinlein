@@ -1363,7 +1363,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       Boolean(newDraftButton) && {key: 'new-draft', label: 'New Markdown draft', right: !repository || standalone?.active ? formatKeys('⌘N') : undefined, run: () => newDraftButton?.click()},
       Boolean(searchScope()) && {key: 'find-manuscript', label: 'Find in manuscript', sub: 'Search scene text locally, including the open buffer', right: formatKeys('⌘⇧F'), run: openManuscriptSearch},
       Boolean(editor) && {key: 'ask', label: 'Ask Heinlein about selection', sub: 'Opens Questions with the highlighted passage', right: formatKeys('⌘J'), run: () => askShortcut()},
-      Boolean(editor) && {key: 'split', label: 'Split scene at cursor', sub: 'Previews before anything moves', right: formatKeys('⌘⇧↵'), run: splitAtCursor},
+      Boolean(editor) && {key: 'split', label: 'Split scene at cursor', sub: 'Previews before anything moves', right: formatKeys('⌘⇧B'), run: splitAtCursor},
       Boolean(repository && !standalone?.active) && {key: 'new-scene', label: 'New scene', sub: 'Opens Add scene or manuscript setup', right: formatKeys('⌘N'), run: () => { void newWriting(); }},
       proposals.supported && Boolean(repository) && {key: 'proposals', label: 'Proposed revisions', sub: 'Review pending MCP proposals and receipts', run: () => { void proposals.open(); }},
       {key: 'appearance', label: 'Appearance', sub: 'Theme, accent, fonts, size, spacing', right: formatKeys('⌘,'), run: () => { void openAppearance(); }},
@@ -1801,8 +1801,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       askDrafting.setAttribute('aria-keyshortcuts', 'Control+Alt+Enter Meta+Alt+Enter');
       askDrafting.title = 'Capture the selected passage into Questions (Cmd/Ctrl+Alt+Enter). Nothing is sent automatically.';
       const split = button('Split scene at cursor', splitAtCursor, 'source-only');
-      split.setAttribute('aria-haspopup', 'dialog'); split.setAttribute('aria-keyshortcuts', 'Control+Shift+Enter Meta+Shift+Enter');
-      split.title = 'Split scene at cursor (Cmd/Ctrl+Shift+Enter)';
+      split.setAttribute('aria-haspopup', 'dialog'); split.setAttribute('aria-keyshortcuts', 'Control+Shift+B Meta+Shift+B Control+Shift+Enter Meta+Shift+Enter');
+      split.title = 'Split scene at cursor (Cmd/Ctrl+Shift+B)';
       split.disabled = !drafting.supported||!drafting.state||!!drafting.state.recoveryRequired||!(/\.(md|markdown)$/i.test(doc.path));
       toolbar.append(button('Heinlein Review', () => writerAction(()=>{draftingQuestions?.close(); reviewPanel?.open();})), questionButton, askDrafting, askSelection, split, saveButton, button('Undo', () => sourceAction(()=>editor?.undo()), 'source-only'), button('Redo', () => sourceAction(()=>editor?.redo()), 'source-only'), button('Find', () => sourceAction(()=>editor?.find()), 'source-only'), dirtyBadge);
       const host = el('div', '', 'markdown-editor');
@@ -1810,7 +1810,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       host.addEventListener('compositionend', () => { composing = false; lastEditAt = Date.now(); scheduleSaveNotice(); });
       host.addEventListener('keydown', event => {
         if ((event.ctrlKey || event.metaKey) && event.altKey && !event.shiftKey && event.key === 'Enter') {event.preventDefault(); event.stopPropagation(); void askDraftingSelection(); return;}
-        if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); splitAtCursor(); }
+        if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && (event.key === 'Enter' || event.key.toLowerCase() === 'b')) { event.preventDefault(); event.stopPropagation(); if (!event.repeat) splitAtCursor(); }
       }, true);
       const draftingArea = el('div', '', 'drafting-editor-area');
       const editorColumn = el('div', '', 'drafting-editor-column'); editorColumn.append(toolbar, host);
