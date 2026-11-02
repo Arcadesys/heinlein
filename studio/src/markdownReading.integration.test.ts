@@ -20,6 +20,8 @@ async function start(core: LocalCore, path = 'a.md') {app = mountStudio(document
 beforeEach(() => {localStorage.clear(); document.body.replaceChildren(); Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect();});
 afterEach(() => app?.destroy());
 
+/** Passages of the open document, listed after scenes in the ⌘K palette. */
+const passages = () => { document.body.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', ctrlKey: true, bubbles: true, cancelable: true})); return [...document.querySelectorAll<HTMLElement>('.palette-item')].filter(row => row.querySelector('.palette-num')?.textContent === '§'); };
 describe('Source and Reading in one writer', () => {
   it('defaults to Source for each document and keeps the choice for this session as tabs change', async () => {
     await start(bridge());
@@ -100,7 +102,7 @@ describe('Source and Reading in one writer', () => {
     (core.readDocument as ReturnType<typeof vi.fn>).mockImplementation(async (_id: string, path: string) => doc(path, 'One.\n\n---\n\nTwo words here.\n'));
     await start(core);
     toggle('Reading').click();
-    const passage = await vi.waitFor(() => {const found = [...document.querySelectorAll<HTMLButtonElement>('button')].find(node => node.getAttribute('aria-label')?.startsWith('Passage 1')); expect(found).toBeTruthy(); return found!;});
+    const passage = await vi.waitFor(() => {const found = passages()[0]; expect(found).toBeTruthy(); return found!;});
     passage.click();
     expect(reader()!.hidden).toBe(true);
     expect(toggle('Source').getAttribute('aria-pressed')).toBe('true');

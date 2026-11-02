@@ -1,4 +1,3 @@
-import type {EditorView} from '@codemirror/view';
 
 export interface SceneBreak {from: number; to: number; label: string}
 export const SCENE_NAVIGATOR_LIMIT = 500;
@@ -27,38 +26,4 @@ export function sceneBreaks(source: string): SceneBreak[] {
     if (entries.length === SCENE_NAVIGATOR_LIMIT) break;
   }
   return entries;
-}
-
-/** Local navigation only: no filesystem, model, or persistence operations. */
-export function createSceneNavigator(current: () => EditorView | null, beforeJump: () => void = () => {}) {
-  const element = document.createElement('div'); element.className = 'panel-body scene-navigator-body'; element.id = 'scene-navigator-body';
-  const summary = document.createElement('p'); summary.className = 'muted'; summary.setAttribute('role', 'status');
-  const list = document.createElement('ol'); list.className = 'scene-break-list';
-  element.append(summary, list);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let disposed = false;
-  function refresh() {
-    clearTimeout(timer); timer = undefined;
-    if (disposed) return;
-    const view = current(); const snapshot = view?.state.doc;
-    const entries = snapshot ? sceneBreaks(snapshot.toString()) : [];
-    list.replaceChildren();
-    summary.textContent = !snapshot ? 'Open a source scene or assembled chapter.' : !entries.length ? 'No --- scene breaks in this document.' : `${entries.length}${entries.length === SCENE_NAVIGATOR_LIMIT ? '+' : ''} scene breaks · Select a first line to jump there.`;
-    for (const [index, entry] of entries.entries()) {
-      const item = document.createElement('li'); const button = document.createElement('button'); button.type = 'button';
-      button.textContent = entry.label; button.setAttribute('aria-label', `Passage ${index + 1}: ${entry.label}`);
-      button.addEventListener('click', () => {
-        if (!view || current() !== view || view.state.doc !== snapshot) {refresh(); summary.textContent = 'The document changed. Choose the passage again.'; return;}
-        list.querySelectorAll('button').forEach(node => node.removeAttribute('aria-current'));
-        button.setAttribute('aria-current', 'location');
-        beforeJump();
-        view.dispatch({selection: {anchor: entry.from, head: entry.to}, scrollIntoView: true}); view.focus();
-      });
-      item.append(button); list.append(item);
-    }
-  }
-  return {element, refresh,
-    schedule() {clearTimeout(timer); timer = setTimeout(refresh, 120);},
-    destroy() {disposed = true; clearTimeout(timer); element.remove();},
-  };
 }

@@ -26,6 +26,8 @@ const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') a
 async function start(core: LocalCore) {app = mountStudio(document.body, core); button('Open local folder…').click(); await settle(); await app.showDocument('chapter.md');}
 beforeEach(() => {Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect(); document.body.replaceChildren();});
 afterEach(() => {app?.destroy();});
+/** Passages of the open document, listed after scenes in the ⌘K palette. */
+const passages = () => { document.body.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', ctrlKey: true, bubbles: true, cancelable: true})); return [...document.querySelectorAll<HTMLElement>('.palette-item')].filter(row => row.querySelector('.palette-num')?.textContent === '§'); };
 describe('assembled chapter to proposed revision', () => {
   it('opens a live chapter without reading its export and selects repeated prose in the correct editable source', async () => {
     const {core} = bridge(); await start(core);
@@ -74,7 +76,7 @@ describe('assembled chapter to proposed revision', () => {
   it('navigates breaks in an assembled chapter by exact position', async () => {
     const {core, files} = bridge(); files.set('one.md', 'Opening.\n---\nRepeated line.\n---\nRepeated line.');
     await start(core);
-    const entries = [...document.querySelectorAll<HTMLButtonElement>('.scene-break-list button')];
+    const entries = passages();
     expect(entries).toHaveLength(2); entries[1].click();
     expect(view().state.selection.main.from).toBe(view().state.doc.toString().lastIndexOf('Repeated line.'));
     expect(view().state.readOnly).toBe(true); expect(core.saveDocument).not.toHaveBeenCalled();

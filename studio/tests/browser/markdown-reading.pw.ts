@@ -290,9 +290,12 @@ test('scene navigation reveals Source and focuses the exact passage with keyboar
   const before = await source(page);
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Reading', exact: true }).click();
   await expect(reader(page)).toBeVisible();
-  const toggle=page.getByRole('button',{name:'Navigation',exact:true});if(await toggle.isVisible())await toggle.click();await page.getByRole('tab',{name:'Scenes',exact:true}).click();
-  const passage = page.getByRole('button',{name:'Passage 1: Synthetic breadcrumb passage.',exact:true});
-  await expect(passage).toBeVisible(); await passage.focus(); await expect(passage).toBeFocused(); await page.keyboard.press('Enter');
+  // Passages of the open document are listed in the ⌘K palette after the scenes.
+  await page.keyboard.press(`${modifier}+k`);
+  const input = page.getByRole('combobox', {name: 'Search scenes, files and commands'}); await expect(input).toBeFocused();
+  await input.fill('Synthetic breadcrumb passage');
+  const passage = page.getByRole('option').filter({hasText: 'Synthetic breadcrumb passage.'}).filter({hasText: 'Passage 1'});
+  await expect(passage).toBeVisible(); await expect(passage).toHaveAttribute('aria-selected', 'true'); await page.keyboard.press('Enter');
   await expect(reader(page)).toBeHidden();
   await expect(page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Source', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(editor).toBeVisible();

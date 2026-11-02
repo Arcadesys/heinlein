@@ -1,82 +1,46 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNavigationDrawer } from './navigationDrawer';
-import { REPOSITORY_DRAG_TYPE, SCENE_DRAG_TYPE } from './draftingPanel';
 
-describe('unified navigation drawer', () => {
+describe('project navigation drawer', () => {
   beforeEach(() => { localStorage.clear(); document.body.replaceChildren(); vi.unstubAllGlobals(); });
   function setup() {
-    const files = document.createElement('section'); const manuscript = document.createElement('section');
-    files.innerHTML = '<button>Open folder</button><input value="retained">';
-    manuscript.innerHTML = '<button>New scene</button>';
-    const scenes = document.createElement('section'); scenes.textContent = 'Scene passages';
-    const changed = vi.fn(); const drawer = createNavigationDrawer(files, manuscript, scenes, changed);
+    const library = document.createElement('section');
+    library.innerHTML = '<button>New scene</button><input value="retained">';
+    const changed = vi.fn(); const drawer = createNavigationDrawer(library, changed);
     document.body.append(drawer.element);
-    const tabs = ['files', 'manuscript', 'scenes'].map(key => drawer.element.querySelector<HTMLButtonElement>(`#navigation-tab-${key}`)!);
     const toggle = drawer.element.querySelector<HTMLButtonElement>('.navigation-toggle')!;
-    return {drawer, files, manuscript, scenes, tabs, toggle, changed};
+    return {drawer, library, toggle, changed};
   }
   function key(node: HTMLElement, key: string) { node.dispatchEvent(new KeyboardEvent('keydown', {key, bubbles: true, cancelable: true})); }
-  it('shows exactly one named panel and one keyboard tab stop', () => {
-    const {files, manuscript, tabs} = setup();
-    expect(files.hidden).toBe(false); expect(manuscript.hidden).toBe(true);
-    expect(tabs.map(tab => tab.tabIndex)).toEqual([0, -1, -1]);
-    for (const tab of tabs) {
-      const panel = document.getElementById(tab.getAttribute('aria-controls')!)!;
-      expect(panel.getAttribute('role')).toBe('tabpanel'); expect(panel.getAttribute('aria-labelledby')).toBe(tab.id);
-    }
+  it('holds one panel with no tabs', () => {
+    const {drawer, library} = setup();
+    expect(drawer.element.querySelectorAll('[role="tab"]')).toHaveLength(0);
+    expect(document.getElementById('navigation-drawer')!.children).toHaveLength(1);
+    expect(library.parentElement!.id).toBe('navigation-drawer'); expect(drawer.visible()).toBe(true);
   });
-  it('switches with clicks, arrows, Home and End while retaining live data', () => {
-    const {files, manuscript, tabs} = setup(); const input = files.querySelector('input')!; input.value = 'still here';
-    tabs[1].click(); expect(manuscript.hidden).toBe(false); expect(files.hidden).toBe(true);
-    expect(document.activeElement).toBe(tabs[1]);
-    key(tabs[1], 'ArrowRight'); expect(document.activeElement).toBe(tabs[2]);
-    key(tabs[2], 'ArrowRight'); expect(document.activeElement).toBe(tabs[0]);
-    key(tabs[0], 'ArrowLeft'); expect(document.activeElement).toBe(tabs[2]);
-    key(tabs[2], 'Home'); expect(document.activeElement).toBe(tabs[1]);
-    key(tabs[1], 'End'); expect(document.activeElement).toBe(tabs[0]);
-    tabs[0].click(); expect(files.querySelector('input')).toBe(input); expect(input.value).toBe('still here');
-  });
-  it('Escape closes from panel content and restores focus to the single opener', () => {
-    const {drawer, manuscript, toggle, tabs} = setup(); drawer.select('manuscript');
-    const control = manuscript.querySelector('button')!; control.focus(); key(control, 'Escape');
+  it('Escape closes from panel content and restores focus to the single opener, retaining live data', () => {
+    const {drawer, library, toggle} = setup(); const input = library.querySelector('input')!; input.value = 'still here';
+    const control = library.querySelector('button')!; control.focus(); key(control, 'Escape');
     expect(document.activeElement).toBe(toggle); expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(document.getElementById('navigation-drawer')!.getAttribute('aria-hidden')).toBe('true');
     expect(document.getElementById('navigation-drawer')!.inert).toBe(true);
-    toggle.click(); expect(document.activeElement).toBe(tabs[1]); expect(drawer.visible('manuscript')).toBe(true);
+    toggle.click(); expect(document.activeElement).toBe(library); expect(drawer.visible()).toBe(true);
+    expect(library.querySelector('input')).toBe(input); expect(input.value).toBe('still here');
   });
-  it.each([REPOSITORY_DRAG_TYPE, SCENE_DRAG_TYPE])('reveals existing drop targets for internal drags: %s', type => {
-    const {files, manuscript, tabs} = setup();
-    const event = new Event('dragover', {bubbles: true, cancelable: true});
-    Object.defineProperty(event, 'dataTransfer', {value: {types: [type], dropEffect: 'none'}});
-    tabs[1].dispatchEvent(event);
-    expect(event.defaultPrevented).toBe(true); expect(manuscript.hidden).toBe(false); expect(files.hidden).toBe(true);
-    expect(manuscript.querySelector('button')!.textContent).toBe('New scene');
-  });
-  it('does not switch panels or accept arbitrary external drops', () => {
-    const {files, manuscript, tabs} = setup();
-    const event = new Event('dragover', {bubbles: true, cancelable: true});
-    Object.defineProperty(event, 'dataTransfer', {value: {types: ['Files'], dropEffect: 'none'}});
-    tabs[1].dispatchEvent(event);
-    expect(event.defaultPrevented).toBe(false); expect(manuscript.hidden).toBe(true); expect(files.hidden).toBe(false);
-  });
-  it('persists one open state and the selected tab across remounts', () => {
-    const {drawer} = setup(); drawer.select('manuscript'); drawer.toggle(); document.body.replaceChildren();
+  it('persists the open state across remounts', () => {
+    const {drawer} = setup(); drawer.toggle(); document.body.replaceChildren();
     const next = setup(); expect(next.toggle.getAttribute('aria-expanded')).toBe('false');
-    next.toggle.click(); expect(next.drawer.visible('manuscript')).toBe(true);
+    next.drawer.select(); expect(next.drawer.visible()).toBe(true);
   });
-  it('migrates the old fully collapsed layout without restoring broken vertical rails', () => {
+  it('migrates the old fully collapsed layout', () => {
     localStorage.setItem('heinlein-studio-collapsed-v1', JSON.stringify({files: true, manuscript: true}));
     const {drawer, toggle} = setup(); expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(drawer.element.querySelectorAll('.panel-toggle')).toHaveLength(0);
   });
-  it('migrates the old manuscript-only state', () => {
-    localStorage.setItem('heinlein-studio-collapsed-v1', JSON.stringify({files: true, manuscript: false}));
-    expect(setup().drawer.visible('manuscript')).toBe(true);
-  });
-  it.each(['{broken', 'null', '[]', '{"open":true,"active":"unknown"}'])('ignores invalid stored state: %s', value => {
+  it.each(['{broken', 'null', '[]', '{"open":"yes"}'])('ignores invalid stored state: %s', value => {
     localStorage.setItem('heinlein-studio-navigation-v1', value);
-    expect(setup().drawer.visible('files')).toBe(true);
+    expect(setup().drawer.visible()).toBe(true);
   });
   it('starts closed on a narrow first launch so the editor stays reachable', () => {
     vi.stubGlobal('matchMedia', vi.fn(() => ({matches: true})));
@@ -85,13 +49,19 @@ describe('unified navigation drawer', () => {
   it('suspends the drawer for Questions without changing its saved preference or reopening a narrow modal', () => {
     let small = false; const listeners = new Set<() => void>();
     vi.stubGlobal('matchMedia', () => ({get matches(){return small;},addEventListener: (_event: string, callback: () => void) => listeners.add(callback),removeEventListener: (_event: string, callback: () => void) => listeners.delete(callback)}));
-    const {drawer} = setup(); drawer.select('scenes', false);
+    const {drawer} = setup(); drawer.select(false);
     const saved = localStorage.getItem('heinlein-studio-navigation-v1');
-    drawer.suspend(true); expect(drawer.visible('scenes')).toBe(false); expect(localStorage.getItem('heinlein-studio-navigation-v1')).toBe(saved);
+    drawer.suspend(true); expect(drawer.visible()).toBe(false); expect(localStorage.getItem('heinlein-studio-navigation-v1')).toBe(saved);
     small = true; listeners.forEach(callback => callback()); drawer.suspend(false);
-    expect(drawer.visible('scenes')).toBe(false); expect(document.querySelector('dialog[open]')).toBeNull();
+    expect(drawer.visible()).toBe(false); expect(document.querySelector('dialog[open]')).toBeNull();
     expect(localStorage.getItem('heinlein-studio-navigation-v1')).toBe(saved);
-    small = false; listeners.forEach(callback => callback()); expect(drawer.visible('scenes')).toBe(true); drawer.destroy();
+    small = false; listeners.forEach(callback => callback()); expect(drawer.visible()).toBe(true); drawer.destroy();
   });
-
+  it('holds its one panel inside the narrow-screen modal', () => {
+    vi.stubGlobal('matchMedia', () => ({matches: true, addEventListener() {}, removeEventListener() {}}));
+    HTMLDialogElement.prototype.showModal ??= function (this: HTMLDialogElement) { this.setAttribute('open', ''); };
+    const {drawer, library} = setup(); drawer.select(false);
+    expect(library.closest('dialog.navigation-modal')).not.toBeNull(); expect(drawer.visible()).toBe(true);
+    drawer.destroy();
+  });
 });

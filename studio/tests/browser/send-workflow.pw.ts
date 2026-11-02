@@ -1,5 +1,7 @@
-import {test,expect,type Locator} from '@playwright/test';
+import {test,expect,type Locator,type Page} from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+/** Source files open from the project ⋯ menu (keyboard: Enter, arrows, Enter) unless the drawer already shows them. */
+async function showSourceFiles(page:Page){await expect(page.locator('#navigation-drawer')).toHaveAttribute('aria-hidden','false');await expect(page.locator('.nav-view:not([hidden])').first()).toBeVisible();if(await page.locator('.files.nav-view').isVisible())return;const more=page.locator('summary[aria-label="Project actions"]');await expect(more).toBeVisible();await more.focus();await page.keyboard.press('Enter');const item=page.getByRole('group',{name:'Project actions'}).getByRole('button',{name:'Source files',exact:true});await expect(item).toBeVisible();for(let i=0;i<12&&!await item.evaluate(el=>el===document.activeElement);i++)await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');await expect(page.locator('.files.nav-view')).toBeVisible();}
 for(const contrast of [false,true])test(`focused Send: Not now, native cancel, keyboard200 contrast=${contrast}`,async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
 
@@ -9,7 +11,7 @@ for(const contrast of [false,true])test(`focused Send: Not now, native cancel, k
  for(let n=0;n<8&&await page.locator('html').getAttribute('data-zoom')!=='200';n++)await page.keyboard.press('Control+=');
  await expect(page.locator('html')).toHaveAttribute('data-zoom','200');
  if(await page.getByRole('button',{name:'Navigation',exact:true}).count())await activate(page.getByRole('button',{name:'Navigation',exact:true}));
- await activate(page.getByRole('tab',{name:'Source files',exact:true}));await activate(page.locator('.source-project-info > summary'));await activate(page.locator('.repository-send'));
+ await showSourceFiles(page);await activate(page.locator('.source-project-info > summary'));await activate(page.locator('.repository-send'));
  const dialog=page.locator('dialog.github-panel:not(.project-library)');await expect(dialog.getByRole('heading',{name:'Send your changes',exact:true})).toBeVisible();await expect(dialog).not.toHaveAttribute('aria-busy','');
  await expect(dialog).not.toContainText('Sign out of GitHub');
  await activate(dialog.getByRole('button',{name:'Not now',exact:true}));await expect(dialog).not.toBeVisible();

@@ -36,7 +36,9 @@ function bridge(generic = false) {
     undoDraftingChange: vi.fn(async () => {files.set(sourcePath, source); if(generic)files.delete(split.path); return state();}),
   } satisfies LocalCore;
 }
-function button(label:string){const find=()=>[...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent===label||b.getAttribute('aria-label')===label);if(!find()&&label.startsWith('Read beside active document:'))button('Read beside…').click();if(!find()&&label.startsWith('Close document '))button('Document details').click();const b=find();if(!b)throw Error(`Missing ${label}`);return b;}
+/** Project-level actions live in the drawer's ⋯ menu, rebuilt each time it opens. */
+function projectMenuButton(label:string){const menu=document.querySelector<HTMLDetailsElement>('details.project-menu');if(!menu)return undefined;menu.open=true;menu.dispatchEvent(new Event('toggle'));return [...document.querySelectorAll<HTMLButtonElement>('.row-menu-items[aria-label="Project actions"] button')].find(b=>b.textContent===label);}
+function button(label:string){const find=()=>[...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>(b.textContent===label||b.getAttribute('aria-label')===label)&&!b.closest('.row-menu-items'))??projectMenuButton(label);if(!find()&&label.startsWith('Read beside active document:'))button('Read beside…').click();if(!find()&&label.startsWith('Close document '))button('Document details').click();const b=find();if(!b)throw Error(`Missing ${label}`);return b;}
 const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
 async function start(core: LocalCore) {
   app = mountStudio(document.body, core); await app.selectRepository(async () => session); await app.showDocument('ms/scene.md');
