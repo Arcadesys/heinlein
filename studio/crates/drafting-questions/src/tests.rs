@@ -55,10 +55,10 @@ fn request_wire_contract_rejects_unknown_fields_and_privileged_roles() {
 fn byte_limits_include_unicode_and_exact_boundaries() {
     let mut value = request("one");
     value.question = "🦊".repeat(1_000);
-    value.context = "é".repeat(8_000);
+    value.context = "é".repeat(32_000);
     value.history.push(HistoryMessage {
         role: Role::User,
-        text: "x".repeat(12_000),
+        text: "x".repeat(28_000),
     });
     assert!(value.validate().is_ok());
     value.history[0].text.push('x');
@@ -1307,4 +1307,17 @@ fn contradictory_terminal_fields_cannot_publish_answer_text() {
         assert_eq!(error.diagnostic, Some(ProtocolDiagnostic::TerminalStatus));
         assert!(!serde_json::to_string(&error).unwrap().contains("private"));
     }
+}
+
+#[test]
+fn full_scene_context_is_bounded_separately_from_revision_targets() {
+    let mut value = request("scene-limit");
+    value.context = "x".repeat(MAX_SCENE_CONTEXT_BYTES);
+    assert!(value.validate().is_ok());
+    value.context.push('x');
+    assert!(value.validate().is_err());
+    assert_eq!(MAX_CONTEXT_BYTES, 16_000);
+    value.context = "x".repeat(MAX_CONTEXT_BYTES + 1);
+    assert!(value.validate().is_ok());
+    assert!(validate_revision_request(&value, "target").is_err());
 }

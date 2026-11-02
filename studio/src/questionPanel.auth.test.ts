@@ -34,7 +34,7 @@ async function start(core = bridge()) {
   await vi.waitFor(() => expect(button('Recheck OpenAI setup').disabled).toBe(false)); return core;
 }
 async function send(text = 'Synthetic question') {write(text); button('Send to OpenAI').click(); await vi.waitFor(() => expect(button('Cancel request').hidden).toBe(true));}
-beforeEach(() => {vi.stubGlobal('crypto', webcrypto); document.body.replaceChildren(); scene = {repositoryId: 'repository', path: 'scene.md', source: 'Private scene snapshot', from: 0, to: 7, canCapture: true};});
+beforeEach(() => {localStorage.clear(); vi.stubGlobal('crypto', webcrypto); document.body.replaceChildren(); scene = {repositoryId: 'repository', path: 'scene.md', source: 'Private scene snapshot', from: 0, to: 7, canCapture: true};});
 afterEach(() => {panel?.destroy(); panel = undefined; vi.unstubAllGlobals();});
 
 describe('ChatGPT sign-in controls and billing bindings', () => {
@@ -86,9 +86,9 @@ describe('ChatGPT sign-in controls and billing bindings', () => {
     const response = deferred<QuestionAnswer>(); const core = await start(); core.askQuestion.mockReturnValueOnce(response.promise);
     button('Capture current scene').click(); write('Old account question'); button('Send to OpenAI').click(); const request = core.askQuestion.mock.calls[0][0];
     choose('ChatGPT account', 'account-two'); expect(core.cancelQuestion).toHaveBeenCalledWith(request.requestId);
-    await vi.waitFor(() => expect(status()).toContain('Connection updated')); expect(panel!.element.textContent).not.toContain('Private scene snapshot');
+    await vi.waitFor(() => expect(status()).toContain('Connection updated')); expect(document.querySelector('.question-transcript')!.textContent).not.toContain('Private scene snapshot');
     response.resolve(answer(request, 'Late old account answer')); await Promise.resolve(); expect(panel!.element.textContent).not.toContain('Late old account answer');
-    await send('New account question'); expect(core.askQuestion.mock.calls[1][0]).toMatchObject({context: '', history: []});
+    await send('New account question'); expect(core.askQuestion.mock.calls[1][0]).toMatchObject({context: scene!.source, history: []});
     expect(core.askQuestion.mock.calls[1][1]).toEqual({generation: 2, accountId: 'account-two', model: 'model-one'});
   });
   it('disables Send during model changes and binds the resulting model without stale history', async () => {
@@ -97,7 +97,7 @@ describe('ChatGPT sign-in controls and billing bindings', () => {
     write('Cannot send yet'); expect(button('Send to OpenAI').disabled).toBe(true); expect(panel!.element.textContent).not.toContain('Old model question');
     selection.resolve({...ready, generation: 2, model: 'model-two', selectedModel: 'model-two'}); await vi.waitFor(() => expect(status()).toContain('Connection updated'));
     await send('New model question'); expect(core.askQuestion.mock.calls[1][1]).toEqual({generation: 2, accountId: 'account-one', model: 'model-two'});
-    expect(core.askQuestion.mock.calls[1][0]).toMatchObject({history: [], context: ''});
+    expect(core.askQuestion.mock.calls[1][0]).toMatchObject({history: [], context: scene!.source});
   });
   it('cancels sign-in and ignores completion arriving before cancellation acknowledgement', async () => {
     const connection = deferred<QuestionStatus>(); const cancellation = deferred<void>(); const core = bridge(disconnected);
@@ -125,7 +125,7 @@ describe('ChatGPT sign-in controls and billing bindings', () => {
     button('Sign out of selected account').click(); await vi.waitFor(() => expect(status()).toContain('Signed out'));
     expect(core.signOutQuestionAccount).toHaveBeenCalledWith('account-one'); expect(core.cancelQuestion).toHaveBeenCalledWith(request.requestId);
     response.resolve(answer(request, 'Answer after sign-out')); await Promise.resolve(); expect(panel!.element.textContent).not.toContain('Answer after sign-out');
-    expect(panel!.element.textContent).not.toContain('Private scene snapshot'); write('After sign-out'); expect(button('Send to OpenAI').disabled).toBe(true);
+    expect(document.querySelector('.question-transcript')!.textContent).not.toContain('Private scene snapshot'); write('After sign-out'); expect(button('Send to OpenAI').disabled).toBe(true);
   });
   it('never re-enables Send after an unconfirmed account change', async () => {
     const core = await start(); core.selectQuestionAccount.mockRejectedValueOnce({code: 'stale', message: 'The account changed elsewhere.'}); choose('ChatGPT account', 'account-two');
@@ -142,7 +142,7 @@ describe('ChatGPT sign-in controls and billing bindings', () => {
     const core = await start(); await send('Old external generation'); button('Capture current scene').click();
     core.refreshQuestionConnection.mockResolvedValueOnce({...ready, generation: 9, activeAccountId: 'account-two'}); button('Recheck OpenAI setup').click();
     await vi.waitFor(() => expect(button('Recheck OpenAI setup').disabled).toBe(false)); expect(panel!.element.textContent).not.toContain('Old external generation');
-    expect(panel!.element.textContent).not.toContain('Private scene snapshot'); await send('New external generation');
+    expect(document.querySelector('.question-transcript')!.textContent).not.toContain('Private scene snapshot'); await send('New external generation');
     expect(core.askQuestion.mock.calls[1][1]).toEqual({generation: 9, accountId: 'account-two', model: 'model-one'});
   });
   it('blocks further sends after a native plan-limit error until an explicit successful recheck', async () => {
@@ -157,4 +157,9 @@ describe('ChatGPT sign-in controls and billing bindings', () => {
     const core = bridge({...ready, authURL: 'https://example.invalid/private-oauth', accessToken: 'synthetic-secret'} as QuestionStatus); await start(core);
     expect(panel!.element.textContent).not.toContain('private-oauth'); expect(panel!.element.textContent).not.toContain('synthetic-secret'); expect(storage).not.toHaveBeenCalled(); storage.mockRestore();
   });
+});
+
+it('restores each account conversation when returning without mixing histories',async()=>{
+ const core=await start();await send('Account one message');choose('ChatGPT account','account-two');await vi.waitFor(()=>expect(status()).toContain('Connection updated'));await send('Account two message');
+ choose('ChatGPT account','account-one');await vi.waitFor(()=>expect(status()).toContain('Connection updated'));expect(document.querySelector('.question-transcript')!.textContent).toContain('Account one message');expect(document.querySelector('.question-transcript')!.textContent).not.toContain('Account two message');
 });

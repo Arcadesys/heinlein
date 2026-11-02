@@ -792,11 +792,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   draftingQuestions = createQuestionPanel(core, {
     current: () => {
       if (reference.fromReference() || disposed || !opened || !repository) return null;
-      if (!editor) return {repositoryId: repository.id, path: opened.path, source: '', from: 0, to: 0, canCapture: false};
-      if (readingActive()) return {repositoryId: repository.id, path: opened.path, source: editor.text(), from: -1, to: -1, canCapture: false};
+      if (!editor) return {repositoryId: repository.id, projectKey: repository.projectKey, path: opened.path, source: '', from: 0, to: 0, canCapture: false};
+      if (readingActive()) return {repositoryId: repository.id, projectKey: repository.projectKey, path: opened.path, source: editor.text(), from: -1, to: -1, canCapture: !opened.generatedCompatibility && !recoveryPending && !repositoryDetached && !selecting && !structuralBusy && !proposalBusy};
       const source = editor.text(); const range = editor.view.state.selection.main;
       const single = editor.view.state.selection.ranges.length === 1;
-      return {repositoryId: repository.id, path: opened.path, source,
+      return {repositoryId: repository.id, projectKey: repository.projectKey, path: opened.path, source,
         from: single ? rawOffset(source, range.from) : -1, to: single ? rawOffset(source, range.to) : -1,
         canCapture: !editor.view.state.readOnly && !opened.generatedCompatibility && !recoveryPending && !repositoryDetached && !selecting && !structuralBusy && !proposalBusy};
     },

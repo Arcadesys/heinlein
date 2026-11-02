@@ -52,18 +52,18 @@ describe('nonmodal drafting questions', () => {
     expect(document.querySelector('dialog')).toBeNull(); expect(input()).toBe(document.activeElement);
     expect(core.askQuestion).not.toHaveBeenCalled(); write('  A precise question?  ');
     input().dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
-    expect(core.askQuestion).not.toHaveBeenCalled(); expect(document.body.textContent).toContain('No manuscript text will be sent');
+    expect(core.askQuestion).not.toHaveBeenCalled(); expect(document.body.textContent).toContain('refreshed for each message');
     button('Send to OpenAI').click(); await vi.waitFor(() => expect(status()).toContain('Answer ready'));
-    expect(core.askQuestion.mock.calls[0][0]).toEqual({requestId: expect.any(String), question: '  A precise question?  ', context: '', history: []});
+    expect(core.askQuestion.mock.calls[0][0]).toEqual({requestId: expect.any(String), question: '  A precise question?  ', context: scene!.source, history: []});
     expect(fetch).not.toHaveBeenCalled(); expect(focusEditor).not.toHaveBeenCalled();
   });
-  it('captures raw context only on request and shows the exact frozen snapshot', async () => {
+  it('uses fresh scene context for each send and allows explicit removal', async () => {
     const core = await start(); button('Capture current scene').click();
     const captured = scene!.source; expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe(captured);
     scene!.source += ' newer edits'; write('Question'); button('Send to OpenAI').click();
     await vi.waitFor(() => expect(status()).toContain('Answer ready'));
-    expect(core.askQuestion.mock.calls[0][0].context).toBe(captured);
-    expect(document.body.textContent).toContain('Later editor changes are not included');
+    expect(core.askQuestion.mock.calls[0][0].context).toBe(scene!.source);
+    expect(document.body.textContent).toContain('refreshed for each message');
     button('Remove context').click(); await send('Question without context');
     expect(core.askQuestion.mock.calls[1][0].context).toBe('');
   });
@@ -73,8 +73,8 @@ describe('nonmodal drafting questions', () => {
     expect(Object.keys(core.askQuestion.mock.calls[0][0]).sort()).toEqual(['context', 'history', 'question', 'requestId']);
   });
   it('rejects oversized captures without replacing the existing preview', async () => {
-    await start(); button('Capture selected text').click(); scene!.source = '🐺'.repeat(4001); button('Capture current scene').click();
-    expect(status()).toContain('16,000'); expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe('🐺');
+    await start(); button('Capture selected text').click(); scene!.source = '🐺'.repeat(16001); button('Capture current scene').click(); write('Question');
+    expect(button('Send to OpenAI').disabled).toBe(true); expect(button('Send to OpenAI').title).toContain('too large');
     scene!.source = '🐺'.repeat(4000); button('Capture current scene').click();
     expect(questionBytes(document.querySelector('[aria-label="Exact context to send"]')!.textContent!)).toBe(16000);
   });
@@ -82,7 +82,7 @@ describe('nonmodal drafting questions', () => {
     await start(); scene!.to = scene!.from; button('Capture selected text').click(); expect(status()).toContain('nonempty');
     scene!.to = 3; button('Capture selected text').click(); expect(status()).toContain('complete Unicode');
     scene!.canCapture = false; button('Capture current scene').click(); expect(status()).toContain('recovery');
-    expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe('');
+    expect(button('Send to OpenAI').disabled).toBe(true);
   });
   it('disables empty/oversized questions without a network request', async () => {
     const core = await start(); expect(button('Send to OpenAI').disabled).toBe(true);
@@ -160,7 +160,7 @@ describe('nonmodal drafting questions', () => {
     button('Capture current scene').click(); core.askQuestion.mockReturnValueOnce(result.promise); write('Pending'); button('Send to OpenAI').click();
     const request = core.askQuestion.mock.calls[1][0]; button('Clear conversation').click();
     expect(input().value).toBe(''); expect(document.querySelector('.question-transcript')!.textContent).toBe('');
-    expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe('');
+    expect(document.querySelector('[aria-label="Exact context to send"]')!.textContent).toBe(scene!.source);
     result.resolve(reply(request, 'Late reset answer')); await Promise.resolve(); expect(document.body.textContent).not.toContain('Late reset answer');
     expect(core.cancelQuestion).toHaveBeenCalledWith(request.requestId); button('Close questions').click(); expect(panel!.element.hidden).toBe(true);
   });
@@ -185,12 +185,12 @@ describe('nonmodal drafting questions', () => {
     button('Send to OpenAI').click(); await vi.waitFor(() => expect(status()).toContain('Answer ready'));
     expect(core.askQuestion.mock.calls[1][0]).toMatchObject({question: 'Second', context: '', history: [{role: 'user', text: 'First'}, {role: 'assistant', text: 'Mock answer'}]});
     for (let i = 3; i <= 6; i++) await send(`Question ${i}`);
-    expect(core.askQuestion.mock.calls[5][0].history).toHaveLength(8); expect(document.querySelectorAll('.question-turn')).toHaveLength(4);
-    expect(document.body.textContent).toContain('2 earlier turns have been cleared'); expect(storage).not.toHaveBeenCalled(); storage.mockRestore();
+    expect(core.askQuestion.mock.calls[5][0].history).toHaveLength(8); expect(document.querySelectorAll('.question-turn')).toHaveLength(6);
+    expect(document.body.textContent).not.toContain('earlier turns were removed'); expect(storage).toHaveBeenCalled(); storage.mockRestore();
   });
   it('visibly omits a whole previous turn when remaining request budget is too small', async () => {
-    const core = bridge(); core.askQuestion.mockImplementationOnce(async request => reply(request, 'x'.repeat(20000))); await start(core); await send('First');
-    scene!.source = 'y'.repeat(16000); button('Capture current scene').click(); write('Next');
+    const core = bridge(); core.askQuestion.mockImplementationOnce(async request => reply(request, 'x'.repeat(32000))); await start(core); await send('First');
+    scene!.source = 'y'.repeat(64000); button('Capture current scene').click(); write('Next');
     expect(document.body.textContent).toContain('2 older messages are omitted'); button('Send to OpenAI').click();
     await vi.waitFor(() => expect(core.askQuestion).toHaveBeenCalledTimes(2)); expect(core.askQuestion.mock.calls[1][0].history).toEqual([]);
   });
@@ -204,3 +204,26 @@ describe('nonmodal drafting questions', () => {
     input().dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); expect(panel!.element.hidden).toBe(true); expect(focusEditor).toHaveBeenCalledTimes(2);
   });
 });
+
+
+describe('saved project conversations and live scene context',()=>{
+ it('restores messages and an unsent draft after panel recreation and scene/session changes',async()=>{
+  scene!.projectKey='stable-book';const core=await start();await send('First scene question');write('Unsent follow-up');
+  panel!.destroy();scene={...scene!,repositoryId:'new-native-session',path:'second.md',source:'Second scene exact bytes',projectKey:'stable-book'};
+  await start(core);expect(document.querySelector('.question-transcript')!.textContent).toContain('First scene question');expect(input().value).toBe('Unsent follow-up');
+  button('Send to OpenAI').click();await vi.waitFor(()=>expect(core.askQuestion).toHaveBeenCalledTimes(2));expect(core.askQuestion.mock.calls[1][0]).toMatchObject({question:'Unsent follow-up',context:'Second scene exact bytes',history:[{role:'user',text:'First scene question'},{role:'assistant',text:'Mock answer'}]});
+  button('Clear conversation').click();panel!.destroy();await start(core);expect(document.querySelector('.question-transcript')!.textContent).toBe('');
+ });
+ it('reads scene edits made after opening immediately before send and supports omission',async()=>{
+  const core=await start();scene!.source='Newest scene text';write('Discuss this');button('Send to OpenAI').click();await vi.waitFor(()=>expect(core.askQuestion).toHaveBeenCalledTimes(1));expect(core.askQuestion.mock.calls[0][0].context).toBe('Newest scene text');
+  await vi.waitFor(()=>expect(button('Cancel request').hidden).toBe(true));button('Remove context').click();await send('No scene please');expect(core.askQuestion.mock.calls[1][0].context).toBe('');
+ });
+ it('keeps corrupted saved data intact and exposes recovery through clear',async()=>{
+  const core=await start();await send('Before corruption');button('Close questions').click();const key=Object.keys(localStorage).find(k=>k.startsWith('heinlein.conversation.v1:'))!;localStorage.setItem(key,'broken');panel!.open();await vi.waitFor(()=>expect(document.querySelector('.question-persistence')!.textContent).toContain('could not be read'));
+  write('New question');expect(localStorage.getItem(key)).toBe('broken');button('Clear conversation').click();await send('After clear');expect(localStorage.getItem(key)).toContain('After clear');
+ });
+});
+
+ it('allows deliberately omitting unavailable scene context',async()=>{
+   const core=await start();scene!.canCapture=false;write('A general question');expect(button('Send to OpenAI').disabled).toBe(true);expect(button('Remove context').disabled).toBe(false);button('Remove context').click();button('Send to OpenAI').click();await vi.waitFor(()=>expect(core.askQuestion).toHaveBeenCalledTimes(1));expect(core.askQuestion.mock.calls[0][0].context).toBe('');
+ });

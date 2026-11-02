@@ -23,7 +23,7 @@ it('connection_fuzz_renderer: bounded async sequences preserve authority, focus 
   try{
     for(let seed=start;seed<start+seeds;seed++){
       let rng=seed>>>0;const next=()=>{rng=(Math.imul(rng,1664525)+1013904223)>>>0;return rng;};
-      document.body.replaceChildren();
+      document.body.replaceChildren();localStorage.clear();
       const source='Synthetic source 🦊 — unchanged.';
       const scene: QuestionScene={repositoryId:'synthetic-repository',path:'synthetic.md',source,from:0,to:9,canCapture:true};
       const focus=vi.fn();const core={available:()=>true,questionStatus:vi.fn(async()=>ready),askQuestion:vi.fn<(request:QuestionRequest)=>Promise<QuestionAnswer>>(),cancelQuestion:vi.fn(async()=>true)};
@@ -37,7 +37,7 @@ it('connection_fuzz_renderer: bounded async sequences preserve authority, focus 
           const pending=deferred<QuestionAnswer>();core.askQuestion.mockReturnValueOnce(pending.promise);
           const marker=`Synthetic-${seed}-${step}`;write(marker);button('Send to OpenAI').click();
           const request=core.askQuestion.mock.calls.at(-1)![0];const before=core.askQuestion.mock.calls.length;
-          expect(request).toMatchObject({question:marker,context:'',history:[]});
+          expect(request).toMatchObject({question:marker,context:'Synthetic source 🦊 — unchanged.',history:[]});
           expect(button('Send to OpenAI').disabled).toBe(true);
           const external=document.createElement('button');document.body.append(external);external.focus();
           const answer:QuestionAnswer={requestId:request.requestId,text:`${marker} <img src=x onerror=alert(1)> 🦊`,model:'synthetic-model',incomplete:false};
@@ -52,7 +52,7 @@ it('connection_fuzz_renderer: bounded async sequences preserve authority, focus 
           await settle();
           expect(core.askQuestion.mock.calls.length).toBe(before);
           expect(document.querySelector('img, script')).toBeNull();
-          expect(scene.source).toBe(source);expect(network).not.toHaveBeenCalled();expect(storage).not.toHaveBeenCalled();
+          expect(scene.source).toBe(source);expect(network).not.toHaveBeenCalled();expect(storage.mock.calls.every(([key])=>String(key).startsWith('heinlein.conversation.v1:'))).toBe(true);
           if(kind===0||kind===6){expect(document.querySelector('.question-transcript')!.textContent).toContain(marker);expect(document.activeElement).toBe(external);}
           else expect(document.querySelector('.question-transcript')!.textContent).not.toContain(marker);
           if(kind===1)expect(document.querySelector('.question-status')!.textContent).toContain('HTTP content type · HTTP 200 · req_synthetic');
