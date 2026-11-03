@@ -16,10 +16,11 @@ if(new URLSearchParams(location.search).has('library'))queueMicrotask(()=>docume
 // Demo navigation uses ordinary production controls, never a native-authority shortcut.
 if(new URLSearchParams(location.search).has('manuscript-demo')||moving)void(async()=>{
  const settle=async()=>{for(let i=0;i<6;i++)await new Promise(r=>setTimeout(r,0));};
- const click=async(find:()=>HTMLButtonElement|undefined)=>{for(let i=0;i<50;i++){const b=find();if(b&&!b.disabled){b.click();await settle();return;}await settle();}throw Error('Synthetic demo navigation unavailable');};
+ // Wait by elapsed time, not tick count: slow CI runners need more ticks before the switcher is ready.
+ const click=async(find:()=>HTMLButtonElement|undefined)=>{const until=Date.now()+10_000;while(Date.now()<until){const b=find();if(b&&!b.disabled){b.click();await settle();return;}await settle();}throw Error('Synthetic demo navigation unavailable');};
  await settle();await click(()=>document.querySelector<HTMLButtonElement>('.project-switcher')??undefined);
  await click(()=>[...document.querySelectorAll<HTMLButtonElement>('.project-library button')].find(b=>b.textContent==='Open Novel A'));
  const toggle=document.querySelector<HTMLButtonElement>('.navigation-toggle');if(toggle?.getAttribute('aria-expanded')!=='true'){toggle?.click();await settle();}
- for(let i=0;i<50&&!document.querySelector('.library-tree, .drafting-panel .primary');i++)await settle();
+ for(const until=Date.now()+10_000;Date.now()<until&&!document.querySelector('.tree-footer, .drafting-panel .primary');)await settle();
  document.documentElement.dataset.demoReady='true';
 })();
