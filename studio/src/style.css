@@ -1277,3 +1277,6 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 .question-panel-integrated .question-heading > button {max-width:100%;flex:1 0 auto;min-inline-size:min(100%,12rem);overflow-wrap:normal;word-break:normal;}
 /* Activity/count text must not wrap the editor toolbar and move the manuscript. */
 .document-command-bar button[aria-controls="drafting-questions"] {flex:0 0 12ch;inline-size:12ch;max-inline-size:12ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* Chrome padding stays bounded when text zoom leaves only a few words per line. */
+.question-panel-integrated {padding-inline:clamp(12px,1.25rem,24px);}
+.question-panel-integrated .question-heading button {padding-inline:clamp(8px,.75rem,16px);overflow-wrap:anywhere;}
