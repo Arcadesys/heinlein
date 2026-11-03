@@ -10,6 +10,7 @@ permissions:
 jobs:
   studio:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
@@ -44,6 +45,15 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Theme browser acceptance (synthetic provider, desktop and 320px)
         run: npm run test:theme:browser
+        env:
+          TMPDIR: ${{ runner.temp }}
+      - name: Keep browser traces from a failed acceptance run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-results-${{ matrix.os }}
+          path: ${{ runner.temp }}/heinlein-theme-browser-results
+          retention-days: 7
       - run: npm run build
       - name: Compile isolated standalone fixture assets (never launch native fixture)
         if: runner.os == 'macOS'
