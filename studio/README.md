@@ -4,9 +4,9 @@ An additive native desktop editor with local autosave and explicit recovery deci
 folder, browse its files, and use a scene manifest to navigate the manuscript.
 The existing Python publisher and its CLI remain unchanged.
 
-## 1.6 release packaging
+## 1.7 release packaging
 
-Heinlein Studio is version **1.6.1**. The independent Python
+Heinlein Studio is version **1.7.0**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:

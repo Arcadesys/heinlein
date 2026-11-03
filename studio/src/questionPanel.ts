@@ -108,6 +108,11 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const closeButton = unified ? header.querySelector<HTMLButtonElement>('.heinlein-close')! : button(integrated ? 'Collapse' : 'Close questions', () => integrated ? collapse() : close(true));
   if (unified) {setHeinleinStatus(settingsToggle, 'checking', 'Checking connection');} else if (integrated) header.append(el('h3', 'Questions'), closeButton); else header.append(heading, closeButton);
   const connection = el('p', '', 'question-connection'); connection.setAttribute('role', 'status');
+  // The unified pane shows who and which model at a glance, then setup as numbered steps.
+  const accountCard = el('div', '', 'heinlein-account'); const accountAvatar = el('span', '', 'heinlein-account-avatar'); accountAvatar.setAttribute('aria-hidden', 'true');
+  const accountName = el('span', '', 'heinlein-account-name'); const accountModel = el('span', '', 'heinlein-account-model'); const accountState = el('span', '', 'heinlein-account-state');
+  const accountText = el('div', '', 'heinlein-account-text'); accountText.append(accountName, accountModel); accountCard.append(accountAvatar, accountText, accountState);
+  let setupSteps: HTMLElement[] = [];
   const refresh = button('Recheck OpenAI setup', () => { void checkStatus(true); });
   const auth = el('details', '', 'question-auth'); auth.setAttribute('aria-label', 'ChatGPT connection'); auth.open = true;
   auth.append(el('summary', integrated ? 'Connection settings' : 'ChatGPT account & model'));
@@ -248,6 +253,20 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     if (unified) {
       // Conversation scrolls; the composer and what it will send stay pinned below it.
       element.classList.add('heinlein-pane'); connectionArea.classList.add('heinlein-settings');
+      const summary = auth.querySelector('summary')!; summary.textContent = 'Account & model';
+      consentLabel.lastChild!.textContent = ' Use my ChatGPT plan allowance';
+      const step = (n: number, title: string, ...content: HTMLElement[]) => {
+        const item = el('li', '', 'heinlein-step'); const marker = el('span', String(n), 'heinlein-step-marker'); marker.setAttribute('aria-hidden', 'true');
+        const main = el('div', '', 'heinlein-step-body'); main.append(el('span', title, 'heinlein-step-title'), ...content); item.append(marker, main); return item;
+      };
+      const steps = el('ol', '', 'heinlein-steps'); steps.setAttribute('aria-label', 'ChatGPT setup');
+      setupSteps = [step(1, 'Allow plan use', consentLabel), step(2, 'Sign in', accountLabel, connectActions), step(3, 'Choose a model', modelLabel)];
+      steps.append(...setupSteps);
+      for (const [control, label] of [[addAccount, '+ Add account'], [refresh, 'Recheck'], [signOut, 'Sign out'], [usage, 'Usage']] as const) {control.setAttribute('aria-label', control.textContent!); control.textContent = label; control.classList.add('ghost');}
+      accountActions.classList.add('heinlein-account-actions'); accountActions.prepend(addAccount);
+      const privacy = el('p', 'Sign-in stays on this Mac. Questions use your ChatGPT plan allowance.', 'heinlein-privacy');
+      auth.replaceChildren(summary, steps, accountActions, privacy);
+      connectionArea.prepend(accountCard);
       const shortcut = el('kbd', /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘↵' : 'Ctrl+↵', 'heinlein-shortcut'); shortcut.setAttribute('aria-hidden', 'true'); askButton.append(shortcut);
       askButton.setAttribute('aria-keyshortcuts', 'Meta+Enter Control+Enter'); askButton.title = 'Ask (Cmd/Ctrl+Enter)';
       if (copyPrompt) copyPrompt.classList.add('ghost');
@@ -407,6 +426,17 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       const ready = connectionReady();
       setHeinleinStatus(settingsToggle, ready ? 'ready' : checking ? 'checking' : 'attention', ready ? `Ready · ${configuration!.model}` : checking ? 'Checking connection' : configuration?.usageLimited ? 'Usage limited' : 'Not connected');
       connectionArea.hidden = ready && !showSettings;
+      const account = activeAccount(); const signedIn = Boolean(account?.signedIn && account.planEnabled) && !reauthorizing;
+      const name = account && !reauthorizing ? account.label.replace(/\s*\([^)]*\)$/, '') : addingAccount ? 'New account' : 'No account connected';
+      accountAvatar.textContent = account && !reauthorizing ? name.charAt(0).toUpperCase() : '?'; accountName.textContent = name; accountName.title = account?.label ?? '';
+      accountModel.textContent = configuration?.model ?? ''; accountModel.hidden = !signedIn || !configuration?.model;
+      accountLabel.hidden = signedIn && (configuration?.accounts.length ?? 0) < 2;
+      accountCard.dataset.state = ready ? 'ready' : checking ? 'checking' : 'attention';
+      accountState.textContent = ready ? 'Ready' : checking ? 'Checking…' : configuration?.usageLimited ? 'Usage limited' : 'Setup needed';
+      connection.hidden = ready;
+      const done = [signedIn || consent.checked, signedIn, ready]; const current = done.indexOf(false);
+      setupSteps.forEach((item, index) => {item.dataset.state = done[index] ? 'done' : index === current ? 'current' : 'todo'; item.firstElementChild!.textContent = done[index] ? '✓' : String(index + 1);});
+      consentLabel.hidden = connect.hidden = signedIn;
       const snapshotScene = contextMode === 'snapshot' && contextLabel.startsWith('Current scene');
       const passageText = revising ? (target ? target.source.slice(target.from, target.to) : '') : contextMode === 'snapshot' && !snapshotScene ? context : '';
       const sceneAttached = !revising && (contextMode === 'scene' || snapshotScene);
@@ -473,7 +503,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     seenConnection = key; configuration = next; selectedAccountId = next.activeAccountId; reauthorizing = false; addingAccount = false;
     restoreConversation(next);
     const account = activeAccount();
-    connection.textContent = `${account ? `ChatGPT · ${account.label}${next.model ? ` · ${next.model}` : ''}. ` : ''}${next.message}${next.usageLimited ? ' Plan usage is limited. Manage usage or explicitly recheck before trying again.' : ''}`;
+    connection.textContent = `${account && !unified ? `ChatGPT · ${account.label}${next.model ? ` · ${next.model}` : ''}. ` : ''}${next.message}${next.usageLimited ? ' Plan usage is limited. Manage usage or explicitly recheck before trying again.' : ''}`;
     accounts.replaceChildren(); models.replaceChildren();
     const accountPlaceholder = el('option', 'Choose an account'); accountPlaceholder.value = ''; accountPlaceholder.disabled = true; accounts.append(accountPlaceholder);
     next.accounts.forEach(value => {const option = el('option', `${value.label}${!value.signedIn ? ' · signed out' : !value.planEnabled ? ' · plan use disabled' : ''}`); option.value = value.id; accounts.append(option);});
