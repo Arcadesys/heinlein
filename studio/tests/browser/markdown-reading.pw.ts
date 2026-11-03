@@ -3,7 +3,7 @@ import AxeBuilder from '@axe-core/playwright';
 // Invented text and a simulated backend, through the production panel, reader and writer.
 const url = '/tests/browser/markdown-reading.html';
 const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
-const panelOf = (page: Page) => page.getByRole('region', { name: 'Heinlein Review', exact: true });
+const panelOf = (page: Page) => page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
 // By class, not role: an open review panel is a full sheet on narrow windows, which hides the page beneath it.
 const reader = (page: Page) => page.locator('.active-document-pane .markdown-reader');
 const source = (page: Page, path = 'opening.md') => page.evaluate(p => (window as any).readingFixture.docs[p] as string, path);
@@ -160,7 +160,7 @@ test('Selecting in Reading cannot ask, split, undo or find through the hidden ed
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(status).toContainText('Switch to Source');
   expect(await source(page)).toBe(before);
-  await page.getByRole('button',{name:/^(Editing|Reading).* actions$/}).click();await expect(page.getByRole('button', { name: 'Heinlein Review', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Heinlein(?: ·.*)?$/ })).toBeVisible();
 });
 test('Toggling keeps one writer: unsaved text shows in Reading, caret and bytes survive, and marks stop after an edit', async ({ page }) => {
   await start(page);
@@ -290,9 +290,12 @@ test('scene navigation reveals Source and focuses the exact passage with keyboar
   const before = await source(page);
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Reading', exact: true }).click();
   await expect(reader(page)).toBeVisible();
-  const toggle=page.getByRole('button',{name:'Navigation',exact:true});if(await toggle.isVisible())await toggle.click();await page.getByRole('tab',{name:'Scenes',exact:true}).click();
-  const passage = page.getByRole('button',{name:'Passage 1: Synthetic breadcrumb passage.',exact:true});
-  await expect(passage).toBeVisible(); await passage.focus(); await expect(passage).toBeFocused(); await page.keyboard.press('Enter');
+  // Passages of the open document are listed in the ⌘K palette after the scenes.
+  await page.keyboard.press(`${modifier}+k`);
+  const input = page.getByRole('combobox', {name: 'Search scenes, files and commands'}); await expect(input).toBeFocused();
+  await input.fill('Synthetic breadcrumb passage');
+  const passage = page.getByRole('option').filter({hasText: 'Synthetic breadcrumb passage.'}).filter({hasText: 'Passage 1'});
+  await expect(passage).toBeVisible(); await expect(passage).toHaveAttribute('aria-selected', 'true'); await page.keyboard.press('Enter');
   await expect(reader(page)).toBeHidden();
   await expect(page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Source', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(editor).toBeVisible();

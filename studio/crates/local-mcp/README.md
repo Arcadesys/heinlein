@@ -1,6 +1,8 @@
 # Heinlein local drafting MCP
 
-Minimal local **read/proposal** workflow for an external Claude/Codex MCP client.
+Local manuscript access for an external Claude/Codex MCP client. Fixed selections
+are **read-only by default**, with optional proposals for explicit author review.
+Studio-following access uses only the files explicitly allowed in Studio.
 This is not granted draft saving or an implementation of the complete ADR-001
 authority contract. No client configuration, credentials, persistent access,
 network listener, provider call, or background service is installed or required.
@@ -9,6 +11,39 @@ separately authenticated/native Studio author flow may apply them through Core.
 
 ## Build and explicitly launch
 
+For one reusable Codex connection, build the server once and use
+`--studio-selection PRIVATE_ABSOLUTE_DIRECTORY`. Point it to Studio's private
+`app_data_dir/mcp-selection-v1` directory. The server starts with no project
+access when that directory has no selection; it does not discover folders.
+
+In Studio, open any local or managed project and a saved Markdown source file.
+Choose **More actions → MCP connection… → Allow this source file…**, then review
+the native confirmation's complete file list. Add source files one at a time.
+Choosing a source in another project replaces the previous project's selection.
+**Disconnect all project access** revokes the selection without deleting pending
+proposals. Opening a project alone does not share it with MCP.
+
+The same running connection follows explicitly confirmed selection changes.
+Changes and revocation invalidate cached read snapshots, including when switching
+away and back to the same project. Selection files are private, bounded,
+atomically persisted, tied to the repository's filesystem identity, and separate
+from manuscript storage. MCP tools cannot create or change this selection.
+Revocation and each tool call share a filesystem lock so a successful revocation
+does not leave an old-scope operation running behind it. A stale native
+confirmation cannot overwrite a newer selection or revocation.
+
+For example, after replacing the binary/directory arguments with real absolute
+paths, Codex's one-time registration is:
+
+```sh
+codex mcp add heinlein -- /absolute/path/to/heinlein-local-mcp \
+  --studio-selection /absolute/private/app_data_dir/mcp-selection-v1 \
+  --client-label 'Codex local drafting'
+```
+
+The server also retains its fixed selection mode below for isolated clients and
+tests. Do not combine `--studio-selection` with fixed-selection arguments.
+
 macOS/Linux with Rust and Cargo:
 
 ```sh
@@ -16,18 +51,72 @@ cd studio
 cargo build --locked -p heinlein-local-mcp --release
 ./target/release/heinlein-local-mcp \
   --repository /absolute/path/to/selected-project \
-  --scene ms/scenes/selected-scene.md \
-  --proposal-store /absolute/private/path/pending-proposals-v1 \
+  --manuscript ms/manuscript.json \
   --client-label 'Codex local drafting'
 ```
 
+Without `--proposal-store`, only `list_projects`, `list_scenes`, and `read_scene`
+exist. No proposal directory is opened or created. Suggestions can be discussed in
+conversation without giving the agent a manuscript mutation capability.
+
 The command speaks MCP JSON-RPC on stdin/stdout; human diagnostics go to stderr.
-Use `--help` for its arguments. Supply `--scene` once for each selected existing
-Markdown scene (1–128). Nothing recursively discovers manuscripts or expands
-scope. Relative root/store paths, duplicate selections, symlinks, ignored/internal
+Use `--help` for its arguments. Choose one scope:
+
+- `--manuscript ms/manuscript.json` selects the tracked scenes in Studio's v2
+  index, in manuscript order. Untracked files are excluded; missing scenes or
+  pending structural recovery must be resolved in Studio first.
+- `--manuscript book/scene-manifest.json` selects scenes from one validated legacy
+  v1 index, in volume/chapter/scene order. Generated chapter copies are excluded.
+- Supply `--scene` once for each selected existing Markdown scene instead.
+
+Selections contain 1–128 scenes. Manuscript selection and individual scene flags
+cannot be combined. Nothing discovers other manuscripts or expands scope.
+The selected index is hash-pinned at launch and rechecked on every tool call;
+changing it requires restarting the client connection. Ordinary scene edits remain
+readable without restarting. Index reads are bounded to 2 MiB.
+Relative root/store paths, duplicate selections, symlinks, ignored/internal
 paths, non-Markdown files and generated compatibility files are rejected. The
 proposal-store path must be outside and not contain the repository. There is no
 default home-directory scan or environment-driven scope.
+
+### Connect a local agent
+
+After building, register a stdio server in Codex (substitute the absolute binary
+and selected manuscript project paths):
+
+```sh
+codex mcp add heinlein -- /absolute/path/to/heinlein/studio/target/release/heinlein-local-mcp \
+  --repository /absolute/path/to/selected-project \
+  --manuscript ms/manuscript.json --client-label Codex
+```
+
+For clients with a JSON `mcpServers` configuration, the equivalent entry is:
+
+```json
+{
+  "mcpServers": {
+    "heinlein": {
+      "command": "/absolute/path/to/heinlein/studio/target/release/heinlein-local-mcp",
+      "args": [
+        "--repository", "/absolute/path/to/selected-project",
+        "--manuscript", "ms/manuscript.json",
+        "--client-label", "Local writing agent"
+      ]
+    }
+  }
+}
+```
+
+Reconnect/restart the client after registration. Ask the agent to list the
+selected manuscript's scenes and read the relevant ones before giving feedback.
+Each client launches its own process; it does not connect to a shared network port.
+
+To enable the existing Studio proposal workflow, add
+`--proposal-store /absolute/private/path/pending-proposals-v1` to the server
+arguments. Use Studio's own proposal directory to see suggestions there. The agent
+can then submit a replacement bound to its latest exact scene read. Only Studio's
+separate author review/apply flow can change the manuscript. The agent cannot
+enable proposals through a tool call, approve its own suggestion, or save text.
 
 When the author elects to set up an MCP client, its stdio launch entry should point
 to the built binary and the explicit arguments above. Do not put author secrets,
@@ -41,11 +130,13 @@ sandbox the client's other filesystem/shell tools.
 
 ## Workflow
 
-1. `list_projects {}` returns one selected project and its opaque `projectId`
-2. `list_scenes {projectId}` returns only explicitly selected relative paths/IDs
+1. `list_projects {}` returns one selected project, its opaque `projectId`, and
+   `accessMode` (`readOnly` or `readAndPropose`)
+2. `list_scenes {projectId}` returns only selected relative paths/IDs, in launch
+   selection or manuscript order
 3. `read_scene {projectId, sceneId}` returns exact persisted UTF-8 `text`,
    `baseHash`, `snapshotId` and byte count
-4. Draft an alternative, preserving authorial choices. Submit
+4. With proposal storage enabled, draft an alternative, preserving authorial choices. Submit
    `propose_scene {projectId, sceneId, snapshotId, baseHash, replacementText}`
 5. `list_proposals {projectId}` and
    `get_proposal {projectId, proposalId}` inspect bounded pending proposals
@@ -103,7 +194,9 @@ cargo clippy --locked -p proposal-store -p heinlein-local-mcp --all-targets -- -
 ```
 
 Synthetic tests exercise actual binary stdin/stdout initialization and tools,
-exact CRLF text, proposal persistence, forged Studio identity/grant/approval,
+read-only tool denial without storage creation, both manuscript index formats,
+manuscript order, scope invalidation on index changes, exact CRLF text,
+proposal persistence, forged Studio identity/grant/approval,
 unknown fields/tools, unselected paths/proposals, stale/latest-read/restarted
 snapshots, root/symlink swaps, current ignore-policy changes, malformed/oversized
 messages, and source/dirty-buffer preservation. Store tests cover private modes,

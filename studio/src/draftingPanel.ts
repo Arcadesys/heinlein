@@ -1,6 +1,6 @@
 import {GROUP_DRAG_TYPE as LEGACY_GROUP_DRAG_TYPE,moveIntent,moveTargetLabel,type MoveSource,type MoveTarget} from './manuscriptMoves';
 import type { DraftingChange, DraftingFileChange, DraftingPreview, DraftingScene, DraftingSelection, DraftingState, LibraryEntry, LocalCore, RepositorySession } from './localCore';
-import { sheetPreview } from './sheetPreview';
+import { rowMenu } from './rowMenu';
 
 export const REPOSITORY_DRAG_TYPE = 'application/x-heinlein-repository-entry';
 export const SCENE_DRAG_TYPE = 'application/x-heinlein-scene';
@@ -13,14 +13,6 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className 
 }
 function button(label: string, action: () => void, className = '') {
   const node = el('button', label, className); node.type = 'button'; node.addEventListener('click', action); return node;
-}
-function iconButton(label: string, path: string, action: () => void, className = '') {
-  const node = button('', action, `library-icon-button ${className}`.trim());
-  node.setAttribute('aria-label', label); node.title = label;
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false');
-  const line = document.createElementNS('http://www.w3.org/2000/svg', 'path'); line.setAttribute('d', path); svg.append(line); node.append(svg);
-  return node;
 }
 interface DraftingHooks {
   root: HTMLElement;
@@ -43,28 +35,19 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   let disposed = false;
   let picking = false;
   let selectedGroup: string | null = null;
-  let narrowStep: 'library' | 'sheets' = 'library';
-  let libraryCollapsed = false, sheetsCollapsed = false;
-  const selectedSheets = new Set<string>();
+  const collapsedGroups = new Set<string>();
   let canUndo = false, canRedo = false;
   let activeBuffer: {path: string; text: string} | null = null;
-  let previewGeneration = 0;
   let undo: {id: string; changes: DraftingFileChange[]; summary: string} | null = null;
   const moveLive=el('p','','manuscript-move-status');moveLive.setAttribute('role','status');
   let movementBusy=false,drag:{token:string;source:MoveSource;repositoryId:string;revision:string}|null=null;
   const dialogs = new Map<HTMLDialogElement, () => void>();
   function closeDialogs() { for (const cancel of [...dialogs.values()]) cancel(); }
-  function clear() { version++; clearDrag(); previewGeneration++; activeBuffer = null; selectedGroup = null; narrowStep = 'library'; selectedSheets.clear(); canUndo = false; canRedo = false; closeDialogs(); state = null; undo = null; element.replaceChildren(); }
+  function clear() { version++; clearDrag(); activeBuffer = null; selectedGroup = null; collapsedGroups.clear(); canUndo = false; canRedo = false; closeDialogs(); state = null; undo = null; element.replaceChildren(); }
   function updateBuffer(path: string, text: string) {
     activeBuffer = {path, text};
-    for (const item of element.querySelectorAll<HTMLElement>('[data-scene-id]')) {
-      const selected = state?.scenes.find(scene => scene.id === item.dataset.sceneId)?.path === path;
-      const control = item.querySelector<HTMLButtonElement>('.scene-open');
-      if (selected) control?.setAttribute('aria-current', 'true'); else control?.removeAttribute('aria-current');
-      const indicator = item.querySelector<HTMLElement>('.current-sheet'); if (indicator) indicator.hidden = !selected;
-    }
-    for (const node of element.querySelectorAll<HTMLElement>('[data-preview-path]')) {
-      if (node.dataset.previewPath === path) node.textContent = sheetPreview(text) || 'No prose preview';
+    for (const control of element.querySelectorAll<HTMLButtonElement>('.scene-open')) {
+      if (control.dataset.path === path) control.setAttribute('aria-current', 'true'); else control.removeAttribute('aria-current');
     }
   }
   async function load() {
@@ -179,7 +162,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
           const control = focusItem.kind === 'group'
             ? [...element.querySelectorAll<HTMLButtonElement>('[data-group-id]')].find(node => node.dataset.groupId === focusItem.id)
             : [...element.querySelectorAll<HTMLElement>('[data-scene-id]')].find(node => node.dataset.sceneId === focusItem.id)?.querySelector<HTMLButtonElement>('.scene-open');
-          (control ?? element.querySelector<HTMLElement>('.sheets-heading'))?.focus();
+          (control ?? element.querySelector<HTMLElement>('.tree-add'))?.focus();
         }
         hooks.report(`${announcement ?? friendlySummary(preview.summary)} · Saved locally.${undo ? ' Undo is available during this session.' : ''}`);
       } catch (error) {
@@ -201,9 +184,9 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   }
   function newSheet() {
     const opener=document.activeElement as HTMLElement|null;
-    const node = dialog('New sheet'); const body = el('form'); const cancel = () => { remove(node); if(opener?.isConnected)opener.focus(); };
-    const name = field(body, 'Sheet title', 'Untitled sheet');
-    submitButton(body, 'Create sheet', () => {
+    const node = dialog('New scene'); const body = el('form'); const cancel = () => { remove(node); if(opener?.isConnected)opener.focus(); };
+    const name = field(body, 'Scene title', 'Untitled scene');
+    submitButton(body, 'Create scene', () => {
       const path = `ms/sheet-${crypto.randomUUID()}.md`;
       const title = name.value.trim(); cancel();
       void changeManuscript({kind: 'createScene', title, path, groupId: selectedGroup, beforeId: null}, path, undefined, true);
@@ -278,6 +261,16 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       ...(state?.scenes ?? []).map(scene => ({id: scene.id, kind: 'scene' as const, parentId: scene.groupId})),
     ];
   }
+  /** Without a stored tree, show groups where their first scene falls so the tree reads in manuscript order. */
+  function manuscriptOrderEntries(): LibraryEntry[] {
+    const entries: LibraryEntry[] = []; const placed = new Set<string>();
+    for (const scene of state?.scenes ?? []) {
+      if (scene.groupId && !placed.has(scene.groupId) && state!.groups.some(group => group.id === scene.groupId)) { placed.add(scene.groupId); entries.push({id: scene.groupId, kind: 'group', parentId: null}); }
+      entries.push({id: scene.id, kind: 'scene', parentId: scene.groupId && placed.has(scene.groupId) ? scene.groupId : null});
+    }
+    for (const group of state?.groups ?? []) if (!placed.has(group.id)) entries.push({id: group.id, kind: 'group', parentId: null});
+    return entries;
+  }
   function orderedSheets(parent: string | null, entries = libraryEntries()): DraftingScene[] {
     return entries.filter(entry => entry.parentId === parent).flatMap(entry => entry.kind === 'group'
       ? orderedSheets(entry.id, entries)
@@ -298,8 +291,8 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   function renameLibraryItem(id: string, kind: 'group' | 'scene') {
     const old = kind === 'group' ? state!.groups.find(item => item.id === id) : state!.scenes.find(item => item.id === id);
     if (!old) return;
-    form(kind === 'group' ? 'Rename group' : 'Rename sheet', (body, submit) => {
-      const name = field(body, kind === 'group' ? 'Group name' : 'Sheet title', old.title);
+    form(kind === 'group' ? 'Rename group' : 'Rename scene', (body, submit) => {
+      const name = field(body, kind === 'group' ? 'Group name' : 'Scene title', old.title);
       submitButton(body, 'Rename', () => submit(organization(libraryEntries(),
         state!.groups.map(group => group.id === id && kind === 'group' ? {...group, title: name.value.trim()} : group),
         state!.scenes.map(scene => scene.id === id && kind === 'scene' ? {...scene, title: name.value.trim()} : scene))));
@@ -320,15 +313,14 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     const destination = parentId ? state!.groups.find(group => group.id === parentId)?.title ?? 'group' : 'library root';
     return changeManuscript(organization(rest), undefined, undefined, false, `Moved ${names.join(', ')} to ${destination}${beforeId ? ' in the chosen position' : ' at the end'}`, moving[0]).then(() => {});
   }
-  function moveSheets(ids: string[]) {
+  function moveSheets(ids: string[], current: string | null = selectedGroup) {
     if (!ids.length) return;
-    const node = dialog('Move selected sheets'); const body = el('form');
+    const node = dialog(ids.length === 1 ? 'Move scene' : 'Move scenes'); const body = el('form');
     const cancel = () => remove(node);
-    const group = groupField(body, selectedGroup);
-    submitButton(body, 'Move sheets', () => { cancel(); moveLibraryItems(ids, group.value || null); });
+    const group = groupField(body, current);
+    submitButton(body, ids.length === 1 ? 'Move scene' : 'Move scenes', () => { cancel(); moveLibraryItems(ids, group.value || null); });
     body.append(button('Cancel', cancel)); node.append(body); display(node, cancel);
   }
-  function moveSelectedSheets() { moveSheets([...selectedSheets]); }
   function moveGroup(id: string) {
     const node = dialog('Move group'); const body = el('form'); const cancel = () => remove(node);
     const group = groupField(body, libraryEntries().find(entry => entry.id === id)?.parentId ?? null);
@@ -498,8 +490,8 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         if (source.sceneId === beforeId) return;
         const scene = state.scenes.find(scene => scene.id === source.sceneId)!;
         if (state.library) {
-          const destination = beforeId ? state.library.find(entry => entry.id === beforeId)?.parentId : selectedGroup;
-          moveLibraryItems(selectedSheets.has(scene.id) ? [...selectedSheets] : [scene.id], destination ?? null, beforeId); return;
+          const destination = beforeId ? state.library.find(entry => entry.id === beforeId)?.parentId : null;
+          moveLibraryItems([scene.id], destination ?? null, beforeId); return;
         }
         void changeManuscript({kind: 'reorderScene', sceneId: scene.id, beforeId, groupId: scene.groupId}); return;
       }
@@ -514,12 +506,11 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   }
   function dropTarget(target: HTMLElement, beforeId: string | null = null) {
     target.addEventListener('dragover', event => {
-      if (event.dataTransfer?.types.includes(REPOSITORY_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }
+      if (event.dataTransfer?.types.some(type => type === REPOSITORY_DRAG_TYPE || type === SCENE_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }
     });
     target.addEventListener('drop', event => acceptDrop(event, beforeId));
   }
   function render() {
-    const currentPreview = ++previewGeneration;
     element.replaceChildren(); if (!state) return;
     clearDrag(); element.append(moveLive);
     if (state.recoveryRequired) {
@@ -529,124 +520,116 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     if (!state.revision) {
       element.append(el('p', 'Set up a library. Existing legacy sheets remain available in the file browser and their existing manuscripts.', 'empty'), button('Set up library', initialize, 'primary')); return;
     }
-    element.dataset.step = narrowStep;
-    const library = el('section', '', 'library-groups'); library.setAttribute('aria-label', 'Library'); library.classList.toggle('pane-collapsed', libraryCollapsed);
-    const toggleLibrary = iconButton(libraryCollapsed ? 'Show library' : 'Collapse library', libraryCollapsed ? 'M9 5l7 7-7 7' : 'M15 5l-7 7 7 7', () => { libraryCollapsed = !libraryCollapsed; render(); element.querySelector<HTMLButtonElement>('.library-groups .pane-collapse')?.focus(); }, 'pane-collapse'); toggleLibrary.setAttribute('aria-expanded', String(!libraryCollapsed));
-    library.append(toggleLibrary, el('h3', 'Library'), el('p', state.project || hooks.repository()?.name || 'Project'));
-    function chooseGroup(id: string | null) {
-      selectedGroup = id; const narrow = Boolean(window.matchMedia?.('(max-width: 1000px)').matches);
-      if (narrow) narrowStep = 'sheets'; render();
-      if (narrow) element.querySelector<HTMLElement>('.sheets-heading')?.focus();
-      else if (id === null) element.querySelector<HTMLButtonElement>('[data-group-root]')?.focus();
-      else [...element.querySelectorAll<HTMLButtonElement>('[data-group-id]')].find(control => control.dataset.groupId === id)?.focus();
+    const entries = state.library ? libraryEntries() : manuscriptOrderEntries();
+    const current = activeBuffer?.path ?? hooks.selectedPath?.();
+    const tree = el('ul', '', 'library-tree'); tree.setAttribute('aria-label', 'Groups and scenes');
+    // A group drop in its top third lands before it; lower down it nests inside.
+    const side = (row: HTMLElement, event: DragEvent): 'before' | 'after' => { const bounds = row.getBoundingClientRect(); return event.clientY < bounds.top + bounds.height / 3 ? 'before' : 'after'; };
+    const groupRow = (entry: LibraryEntry, depth: number) => {
+      const group = state!.groups.find(item => item.id === entry.id); if (!group) return null;
+      const expanded = !collapsedGroups.has(group.id);
+      const row = el('li', '', 'tree-group'); const line = el('div', '', 'tree-row'); line.style.setProperty('--depth', String(depth));
+      const toggle = button(group.title, () => {
+        if (expanded) collapsedGroups.add(group.id); else collapsedGroups.delete(group.id);
+        render(); [...element.querySelectorAll<HTMLButtonElement>('[data-group-id]')].find(node => node.dataset.groupId === group.id)?.focus();
+      }, 'tree-toggle');
+      toggle.dataset.groupId = group.id; toggle.setAttribute('aria-expanded', String(expanded)); toggle.draggable = true;
+      toggle.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(GROUP_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()?.id, groupId: group.id})); });
+      toggle.addEventListener('dragover', event => { if (event.dataTransfer?.types.some(type => type === SCENE_DRAG_TYPE || type === GROUP_DRAG_TYPE)) event.preventDefault(); });
+      toggle.addEventListener('drop', event => {
+        event.preventDefault(); event.stopPropagation();
+        try {
+          const rawGroup = event.dataTransfer?.getData(GROUP_DRAG_TYPE);
+          if (rawGroup) {
+            const source = JSON.parse(rawGroup) as {repositoryId?: string; groupId?: string};
+            if (source.repositoryId !== hooks.repository()?.id || !source.groupId || source.groupId === group.id || !state!.groups.some(item => item.id === source.groupId)) return;
+            const before = side(toggle, event) === 'before';
+            moveLibraryItems([source.groupId], before ? entry.parentId : group.id, before ? group.id : null); return;
+          }
+          const source = JSON.parse(event.dataTransfer?.getData(SCENE_DRAG_TYPE) ?? '{}') as {repositoryId?: string; sceneId?: string};
+          if (source.repositoryId === hooks.repository()?.id && source.sceneId && state!.scenes.some(scene => scene.id === source.sceneId)) moveLibraryItems([source.sceneId], group.id);
+        } catch { hooks.report('Could not read this drag. Use the ⋯ menu to move it instead.', true); }
+      });
+      const count = entries.filter(item => item.parentId === group.id && item.kind === 'scene').length;
+      const badge = el('span', String(count), 'tree-count'); badge.setAttribute('aria-hidden', 'true');
+      const siblings = entries.filter(item => item.parentId === entry.parentId); const at = siblings.findIndex(item => item.id === group.id);
+      const earlier = button('Move earlier', () => reorderLibraryItem(group.id, -1)); earlier.disabled = at <= 0;
+      const later = button('Move later', () => reorderLibraryItem(group.id, 1)); later.disabled = at === siblings.length - 1;
+      line.prepend(toggle, badge, rowMenu(`Actions for ${group.title}`, [
+        button('New scene here', () => { selectedGroup = group.id; newSheet(); }),
+        button('New group inside', () => { selectedGroup = group.id; createLibraryGroup(); }),
+        button('Rename…', () => renameLibraryItem(group.id, 'group')), button('Move to…', () => moveGroup(group.id)), earlier, later,
+      ]));
+      row.append(line);
+      if (expanded) { const children = el('ul'); draw(group.id, children, depth + 1); if (children.childElementCount) row.append(children); }
+      return row;
+    };
+    const sceneRow = (scene: DraftingScene, depth: number) => {
+      const index = state!.scenes.findIndex(item => item.id === scene.id);
+      const row = el('li', '', 'tree-scene'); row.dataset.sceneId = scene.id;
+      const line = el('div', '', 'tree-row'); line.style.setProperty('--depth', String(depth));
+      const open = button(scene.title || 'Untitled scene', () => hooks.open(scene.path), 'scene-open');
+      open.dataset.path = scene.path; open.title = scene.path; open.draggable = true;
+      if (scene.path === current) open.setAttribute('aria-current', 'true');
+      open.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(SCENE_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()!.id, sceneId: scene.id})); });
+      const siblings = entries.filter(entry => entry.parentId === scene.groupId); const siblingIndex = siblings.findIndex(entry => entry.id === scene.id);
+      const earlier = button('Move earlier', () => state?.library ? reorderLibraryItem(scene.id, -1) : reorder(scene, -1)); earlier.disabled = state!.library ? siblingIndex <= 0 : index === 0;
+      const later = button('Move later', () => state?.library ? reorderLibraryItem(scene.id, 1) : reorder(scene, 1)); later.disabled = state!.library ? siblingIndex === siblings.length - 1 : index === state!.scenes.length - 1;
+      line.prepend(open, rowMenu(`Actions for ${scene.title || basename(scene.path)}`, [
+        button('Rename…', () => renameLibraryItem(scene.id, 'scene')), button('Move to…', () => state?.library ? moveSheets([scene.id], scene.groupId) : moveScene(scene)),
+        earlier, later, el('p', scene.path, 'scene-path'),
+      ]));
+      row.append(line); dropTarget(row, scene.id);
+      return row;
+    };
+    function draw(parent: string | null, container: HTMLElement, depth: number) {
+      for (const entry of entries.filter(item => item.parentId === parent)) {
+        const scene = entry.kind === 'scene' ? state!.scenes.find(item => item.id === entry.id) : null;
+        const row = entry.kind === 'group' ? groupRow(entry, depth) : scene ? sceneRow(scene, depth) : null;
+        if (row) container.append(row);
+      }
     }
-    const all = button('All sheets', () => chooseGroup(null)); all.dataset.groupRoot = '';
-    all.addEventListener('dragover', event => { if (event.dataTransfer?.types.some(type => type === GROUP_DRAG_TYPE || type === SCENE_DRAG_TYPE)) event.preventDefault(); });
-    all.addEventListener('drop', event => {
+    draw(null, tree, 0);
+    if (tree.childElementCount) element.append(tree);
+    else element.append(el('p', 'No scenes yet. Create a scene or import Markdown files.', 'empty'));
+    if (state.groupMoveIssue) { const issue = el('p', state.groupMoveIssue, 'muted'); issue.id = 'manuscript-group-move-issue'; element.append(issue); }
+    const footer = el('div', '', 'tree-footer');
+    footer.append(button('New scene', () => { selectedGroup = null; newSheet(); }, 'tree-add'), button('New group', () => { selectedGroup = null; createLibraryGroup(); }, 'tree-add'));
+    // Dropping on the footer places scenes and groups at the end of the project, outside any group.
+    footer.addEventListener('dragover', event => { if (event.dataTransfer?.types.some(type => type === GROUP_DRAG_TYPE || type === SCENE_DRAG_TYPE || type === REPOSITORY_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer!.dropEffect = 'move'; } });
+    footer.addEventListener('drop', event => {
+      const raw = event.dataTransfer?.getData(GROUP_DRAG_TYPE);
+      if (!raw) { acceptDrop(event); return; }
       event.preventDefault();
       try {
-        const transfer = event.dataTransfer; const group = transfer?.getData(GROUP_DRAG_TYPE);
-        const source = JSON.parse(group || transfer?.getData(SCENE_DRAG_TYPE) || '{}') as {repositoryId?: string; groupId?: string; sceneId?: string};
-        if (source.repositoryId !== hooks.repository()?.id) return;
-        if (group && source.groupId && state!.groups.some(item => item.id === source.groupId)) moveLibraryItems([source.groupId], null);
-        else if (source.sceneId && state!.scenes.some(item => item.id === source.sceneId)) moveLibraryItems(selectedSheets.has(source.sceneId) ? [...selectedSheets] : [source.sceneId], null);
-      } catch { hooks.report('Could not read this drag. Use the move controls instead.', true); }
+        const source = JSON.parse(raw) as {repositoryId?: string; groupId?: string};
+        if (source.repositoryId === hooks.repository()?.id && source.groupId && state!.groups.some(item => item.id === source.groupId)) moveLibraryItems([source.groupId], null);
+      } catch { hooks.report('Could not read this drag. Use the ⋯ menu to move it instead.', true); }
     });
-    all.setAttribute('aria-pressed', String(selectedGroup === null)); library.append(all);
-    const entries = libraryEntries();
-    const drawGroups = (parent: string | null, container: HTMLElement) => {
-      for (const entry of entries.filter(item => item.kind === 'group' && item.parentId === parent)) {
-        const group = state!.groups.find(item => item.id === entry.id); if (!group) continue;
-        const row = el('li'); const select = button(group.title, () => chooseGroup(group.id)); select.dataset.groupId = group.id;
-        select.setAttribute('aria-pressed', String(selectedGroup === group.id));
-        select.draggable = true;
-        select.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(GROUP_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()?.id, groupId: group.id})); });
-        select.addEventListener('dragover', event => { if (event.dataTransfer?.types.some(type => type === SCENE_DRAG_TYPE || type === GROUP_DRAG_TYPE)) event.preventDefault(); });
-        select.addEventListener('drop', event => {
-          event.preventDefault();
-          try {
-            const rawGroup = event.dataTransfer?.getData(GROUP_DRAG_TYPE);
-            if (rawGroup) {
-              const source = JSON.parse(rawGroup) as {repositoryId?: string; groupId?: string};
-              if (source.repositoryId !== hooks.repository()?.id || !source.groupId || source.groupId === group.id || !state!.groups.some(item => item.id === source.groupId)) return;
-              const bounds = select.getBoundingClientRect(); const before = event.clientY < bounds.top + bounds.height / 3;
-              moveLibraryItems([source.groupId], before ? entry.parentId : group.id, before ? group.id : null); return;
-            }
-            const source = JSON.parse(event.dataTransfer?.getData(SCENE_DRAG_TYPE) ?? '{}') as {repositoryId?: string; sceneId?: string};
-            if (source.repositoryId === hooks.repository()?.id && source.sceneId && state!.scenes.some(scene => scene.id === source.sceneId)) {
-              moveLibraryItems(selectedSheets.has(source.sceneId) ? [...selectedSheets] : [source.sceneId], group.id);
-            }
-          } catch { hooks.report('Could not read this drag. Use Move selected sheets instead.', true); }
-        });
-        const actions = el('details'); actions.append(el('summary', `Actions for ${group.title}`), button(`Rename ${group.title}`, () => renameLibraryItem(group.id, 'group')),
-          button(`Move ${group.title}…`, () => moveGroup(group.id)), button(`Move ${group.title} earlier`, () => reorderLibraryItem(group.id, -1)),
-          button(`Move ${group.title} later`, () => reorderLibraryItem(group.id, 1)));
-        row.append(select, actions);
-        const children = el('ul'); drawGroups(group.id, children); if (children.childElementCount) row.append(children);
-        container.append(row);
-      }
-    };
-    const groupsList = el('ul'); drawGroups(null, groupsList); library.append(groupsList, button('New library group', createLibraryGroup));
-    const sheets = el('section', '', 'library-sheets'); sheets.setAttribute('aria-label', 'Sheets'); sheets.classList.toggle('pane-collapsed', sheetsCollapsed);
-    const toggleSheets = iconButton(sheetsCollapsed ? 'Show sheets' : 'Collapse sheets', sheetsCollapsed ? 'M9 5l7 7-7 7' : 'M15 5l-7 7 7 7', () => { sheetsCollapsed = !sheetsCollapsed; render(); element.querySelector<HTMLButtonElement>('.library-sheets .pane-collapse')?.focus(); }, 'pane-collapse'); toggleSheets.setAttribute('aria-expanded', String(!sheetsCollapsed));
-    const back = button('Back to library', () => { narrowStep = 'library'; render(); element.querySelector<HTMLButtonElement>('[data-group-root]')?.focus(); }, 'sheets-back');
-    const heading = el('h3', selectedGroup ? `Sheets in ${state.groups.find(group => group.id === selectedGroup)?.title ?? 'group'}` : 'Sheets', 'sheets-heading'); heading.tabIndex = -1;
-    sheets.append(toggleSheets, back, heading, button('New sheet', newSheet)); element.append(library, sheets);
-    const controls = el('div', '', 'drafting-actions');
-    const advanced = el('details', '', 'drafting-advanced'); advanced.append(el('summary', 'Import and document actions'));
-    advanced.append(button('Import files…', () => { void importExternal(); }), button('Import repository files…', () => { void importRepository(); }), button('Copy legacy scenes…', () => { void importRepository('copy'); }));
-    const undoButton = button('Undo last change', () => { void undoLastChange(); }); undoButton.disabled = !undo;
-    advanced.append(undoButton, button('Refresh ms', () => { void hooks.run(async () => { try { const loaded = await load(); if (loaded) { await hooks.changed(loaded, null, []); hooks.report('Manuscript refreshed from disk.'); } } catch (error) { hooks.report(`Refresh failed: ${String(error)}`, true); } }); }));
-    if (core.historyDraftingChange) {
-      const undoLibrary = button('Undo library change', () => { void history('undo'); }); undoLibrary.disabled = !canUndo;
-      const redoLibrary = button('Redo library change', () => { void history('redo'); }); redoLibrary.disabled = !canRedo;
-      controls.append(undoLibrary, redoLibrary);
-    }
-    const moveSelected = button('Move selected sheets…', moveSelectedSheets); moveSelected.disabled = !selectedSheets.size; controls.append(moveSelected);
-    sheets.append(controls, advanced);
+    element.append(footer);
     if (state.untrackedPaths.length || state.missingPaths.length) {
       const changes = el('details', '', 'drafting-warning');
       changes.append(el('summary', `${state.untrackedPaths.length} unlisted · ${state.missingPaths.length} missing scene files`));
       const list = el('ul'); state.untrackedPaths.forEach(path => list.append(el('li', `Unlisted: ${path}`))); state.missingPaths.forEach(path => list.append(el('li', `Missing: ${path}`)));
-      changes.append(list, el('p', 'Discovery adds unlisted files and removes missing paths from the index. Existing scenes keep their order and IDs; source text is not rewritten.'), button('Preview ms discovery', () => { void changeManuscript({kind: 'reconcile'}); })); sheets.append(changes);
+      changes.append(list, el('p', 'Discovery adds unlisted files and removes missing paths from the index. Existing scenes keep their order and IDs; source text is not rewritten.'), button('Preview ms discovery', () => { void changeManuscript({kind: 'reconcile'}); })); element.append(changes);
     }
-    const list = el('ol', '', 'drafting-scenes'); list.setAttribute('aria-label', 'Drafting scenes in manuscript order');
-    const visibleScenes = state.library && !(state.libraryLegacy && selectedGroup === null) ? orderedSheets(selectedGroup) : selectedGroup ? state.scenes.filter(scene => scene.groupId === selectedGroup) : state.scenes;
-    visibleScenes.forEach((scene, visibleIndex) => {
-      const index = state!.scenes.findIndex(item => item.id === scene.id);
-      const item = el('li', '', 'drafting-scene'); item.dataset.sceneId = scene.id;
-      const selection = el('label'); const checkbox = el('input'); checkbox.type = 'checkbox'; checkbox.checked = selectedSheets.has(scene.id);
-      checkbox.addEventListener('change', () => { if (checkbox.checked) selectedSheets.add(scene.id); else selectedSheets.delete(scene.id); moveSelected.disabled = !selectedSheets.size; });
-      selection.append(checkbox, document.createTextNode(` Select ${scene.title || 'untitled sheet'}`)); item.append(selection);
-      const open = button(`${visibleIndex + 1}. ${scene.title || 'Untitled sheet'}`, () => hooks.open(scene.path), 'scene-open');
-      open.draggable = true;
-      open.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(SCENE_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()!.id, sceneId: scene.id})); });
-      const excerpt = el('p', 'Loading preview…', 'sheet-preview'); excerpt.dataset.previewPath = scene.path;
-      if (activeBuffer?.path === scene.path) excerpt.textContent = sheetPreview(activeBuffer.text) || 'No prose preview';
-      else {
-        const repositoryId = hooks.repository()?.id;
-        if (repositoryId) void core.readDocument(repositoryId, scene.path).then(doc => {
-          if (currentPreview !== previewGeneration || repositoryId !== hooks.repository()?.id) return;
-          excerpt.textContent = sheetPreview(activeBuffer?.path === scene.path ? activeBuffer.text : doc.text) || 'No prose preview';
-        }).catch(() => { if (currentPreview === previewGeneration) excerpt.textContent = 'Preview unavailable'; });
-      }
-      const details = el('details'); details.append(el('summary', 'Document details'), el('p', scene.path, 'scene-path'));
-      const current = el('span', 'Current sheet', 'current-sheet'); current.hidden = scene.path !== (activeBuffer?.path ?? hooks.selectedPath?.());
-      if (!current.hidden) open.setAttribute('aria-current', 'true');
-      item.append(open, current, excerpt, details);
-      const group = state!.groups.find(group => group.id === scene.groupId); item.append(el('span', group?.title ?? 'Loose scene', 'scene-group'));
-      const actions = el('div', '', 'scene-actions');
-      const siblings = entries.filter(entry => entry.parentId === scene.groupId); const siblingIndex = siblings.findIndex(entry => entry.id === scene.id);
-      const earlier = iconButton(`Move ${scene.title || basename(scene.path)} earlier`, 'M12 19V5m-6 6 6-6 6 6', () => state?.library ? reorderLibraryItem(scene.id, -1) : reorder(scene, -1)); earlier.disabled = state!.library ? siblingIndex <= 0 : index === 0;
-      const later = iconButton(`Move ${scene.title || basename(scene.path)} later`, 'M12 5v14m-6-6 6 6 6-6', () => state?.library ? reorderLibraryItem(scene.id, 1) : reorder(scene, 1)); later.disabled = state!.library ? siblingIndex === siblings.length - 1 : index === state!.scenes.length - 1;
-      const rename = iconButton('Rename sheet', 'M4 20l4-.8L19 8l-3-3L5 16l-1 4zm10-13 3 3', () => renameLibraryItem(scene.id, 'scene'));
-      actions.append(earlier, later, button('Move…', () => state?.library ? moveSheets([scene.id]) : moveScene(scene)), rename); item.append(actions); dropTarget(item, scene.id); list.append(item);
-    });
-    sheets.append(list);
-    const dropEnd = el('div', state.scenes.length ? 'Drop here to place at the end' : 'No scenes yet. Create a scene or import Markdown files.', 'drafting-drop');
-    dropTarget(dropEnd); sheets.append(dropEnd);
   }
-  return { element, supported, clear, load, initialize, importExternal, splitScene, splitFile, renameFile, bindMoveSource, bindMoveTarget: moveDrop, updateBuffer, get state() { return state; },
+  /** Project-level actions, built fresh each time the project ⋯ menu opens. */
+  function menuItems(): HTMLElement[] {
+    if (!state?.revision || state.recoveryRequired) return [];
+    const items: HTMLElement[] = [];
+    if (core.historyDraftingChange) {
+      const undoLibrary = button('Undo library change', () => { void history('undo'); }); undoLibrary.disabled = !canUndo;
+      const redoLibrary = button('Redo library change', () => { void history('redo'); }); redoLibrary.disabled = !canRedo;
+      items.push(undoLibrary, redoLibrary);
+    }
+    const undoButton = button('Undo last change', () => { void undoLastChange(); }); undoButton.disabled = !undo;
+    items.push(undoButton,
+      button('Import files…', () => { void importExternal(); }), button('Import repository files…', () => { void importRepository(); }), button('Copy legacy scenes…', () => { void importRepository('copy'); }),
+      button('Refresh from disk', () => { void hooks.run(async () => { try { const loaded = await load(); if (loaded) { await hooks.changed(loaded, null, []); hooks.report('Manuscript refreshed from disk.'); } } catch (error) { hooks.report(`Refresh failed: ${String(error)}`, true); } }); }));
+    return items;
+  }
+  return { element, supported, clear, load, menuItems, initialize, importExternal, splitScene, splitFile, renameFile, bindMoveSource, bindMoveTarget: moveDrop, updateBuffer, get state() { return state; },
     /** The same previewed, confirmed reorder as the ↑/↓ buttons. Resolves once the change settles. */
     async reorderScene(sceneId: string, delta: -1 | 1) { const scene = state?.scenes.find(item => item.id === sceneId); if (scene && state?.revision && !dialogs.size) await (state.library ? reorderLibraryItem(sceneId, delta) : reorder(scene, delta)); },
     newScene() { if (state?.revision && !dialogs.size) newScene(); },

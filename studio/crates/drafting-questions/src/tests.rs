@@ -286,6 +286,84 @@ fn sse_handles_every_chunk_boundary_including_utf8_and_crlf() {
 }
 
 #[test]
+fn sse_completed_items_fill_empty_terminal_output() {
+    let mut terminal = answer_value();
+    terminal["output"] = json!([]);
+    let mut item = answer_value()["output"][0].clone();
+    item["id"] = json!("msg_test");
+    item["status"] = json!("completed");
+    let prefix = [
+        event("response.created", json!({"id":"resp_ignored"})),
+        format!(
+            "data: {}\n\n",
+            json!({"type":"response.output_item.done", "output_index":0, "item":item})
+        )
+        .into_bytes(),
+    ]
+    .concat();
+    let bytes = [
+        prefix.clone(),
+        event("response.completed", terminal.clone()),
+    ]
+    .concat();
+    for split in 0..=bytes.len() {
+        let mut stream = ResponseStream::default();
+        stream.push(&bytes[..split]).unwrap();
+        stream.push(&bytes[split..]).unwrap();
+        let answer = parse_response("one", &stream.finish().unwrap()).unwrap();
+        assert_eq!(answer.text, "Keep the door open—literally.");
+        assert_eq!(answer.output_tokens, Some(12));
+    }
+    let mut stream = ResponseStream::default();
+    stream.push(&prefix).unwrap();
+    assert_eq!(stream.finish().unwrap_err().code, "interrupted");
+    let mut stream = ResponseStream::default();
+    stream.push(&prefix).unwrap();
+    assert!(stream.push(&prefix).is_err());
+    let mut stream = ResponseStream::default();
+    stream.push(&prefix).unwrap();
+    terminal["id"] = json!("resp_other");
+    assert!(stream.push(&event("response.completed", terminal)).is_err());
+}
+
+#[test]
+fn sse_completed_items_keep_content_and_revision_guards() {
+    for (kind, status, text, ask_ok, revision_ok) in [
+        (
+            "message",
+            "completed",
+            r#"{"explanation":"Advice","replacement":"Proposed text"}"#,
+            true,
+            true,
+        ),
+        ("message", "completed", "ordinary advice", true, false),
+        ("function_call", "completed", "tool output", false, false),
+        ("message", "in_progress", "unfinished", false, false),
+    ] {
+        let mut stream = ResponseStream::default();
+        stream
+            .push(&event("response.created", json!({"id":"resp_ignored"})))
+            .unwrap();
+        let item_event = format!(
+            "data: {}\n\n",
+            json!({"type":"response.output_item.done", "output_index":0,
+            "item":{"id":"msg_test", "type":kind, "status":status, "role":"assistant", "content":[{"type":"output_text","text":text}]}})
+        );
+        if status != "completed" {
+            assert!(stream.push(item_event.as_bytes()).is_err());
+            continue;
+        }
+        stream.push(item_event.as_bytes()).unwrap();
+        let mut terminal = answer_value();
+        terminal["output"] = json!([]);
+        stream.push(&event("response.completed", terminal)).unwrap();
+        let bytes = stream.finish().unwrap();
+        assert_eq!(parse_response("one", &bytes).is_ok(), ask_ok);
+        assert_eq!(parse_revision("one", &bytes).is_ok(), revision_ok);
+    }
+}
+
+#[test]
 fn sse_ignores_deltas_comments_and_requires_a_terminal_response() {
     let mut stream = ResponseStream::default();
     stream.push(b": heartbeat\n\ndata: {").unwrap();
@@ -349,7 +427,7 @@ fn sse_caps_event_line_stream_and_multiline_data() {
     let mut stream = ResponseStream::default();
     stream.push(b"data: {\n").unwrap();
     stream
-        .push(b"data: \"type\":\"response.created\"}\n\n")
+        .push(b"data: \"type\":\"response.created\",\"response\":{\"id\":\"resp_test\"}}\n\n")
         .unwrap();
     assert!(stream.finish().is_err());
     let mut stream = ResponseStream::default();
@@ -1320,4 +1398,40 @@ fn full_scene_context_is_bounded_separately_from_revision_targets() {
     value.context = "x".repeat(MAX_CONTEXT_BYTES + 1);
     assert!(value.validate().is_ok());
     assert!(validate_revision_request(&value, "target").is_err());
+}
+
+#[test]
+fn streaming_preview_is_incremental_bounded_and_not_a_completed_answer() {
+    let first = format!(
+        "data: {}\n\n",
+        json!({"type":"response.output_text.delta","delta":"Live 🦊"})
+    );
+    let second = format!(
+        "data: {}\n\n",
+        json!({"type":"response.output_text.delta","delta":"—next"})
+    );
+    for size in 1..=first.len() {
+        let mut body = ResponseBody::new(None).unwrap();
+        let mut preview = None;
+        for chunk in first.as_bytes().chunks(size) {
+            body.push(chunk).unwrap();
+            if let Some(text) = body.take_preview() {
+                preview = Some(text);
+            }
+        }
+        assert_eq!(preview.as_deref(), Some("Live 🦊"));
+        assert!(body.take_preview().is_none());
+        body.push(second.as_bytes()).unwrap();
+        assert_eq!(body.take_preview().as_deref(), Some("Live 🦊—next"));
+        assert_eq!(body.finish().unwrap_err().code, "interrupted");
+    }
+    let mut body = ResponseBody::new(None).unwrap();
+    let huge = format!(
+        "data: {}\n\n",
+        json!({"type":"response.output_text.delta","delta":"x".repeat(MAX_ANSWER_BYTES + 1)})
+    );
+    assert_eq!(
+        body.push(huge.as_bytes()).unwrap_err().code,
+        "responseTooLarge"
+    );
 }

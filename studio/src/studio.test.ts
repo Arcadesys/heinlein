@@ -30,6 +30,11 @@ function bridge(): LocalCore {
   };
 }
 const settle = async () => { await new Promise(resolve => setTimeout(resolve, 0)); };
+/** Open a ⋯ menu by its label so its (possibly lazily built) buttons exist. */
+function openMenu(label: string) {
+  const summary = document.querySelector<HTMLElement>(`summary[aria-label="${label}"]`); if (!summary) throw new Error(`Missing menu ${label}`);
+  const menu = summary.parentElement as HTMLDetailsElement; menu.open = true; menu.dispatchEvent(new Event('toggle'));
+}
 function findButton(text: string) { const result = [...document.querySelectorAll('button')].find(node => node.textContent?.includes(text)); if (!result) throw new Error(`Missing button ${text}`); return result; }
 beforeEach(() => { document.querySelectorAll('.cm-editor').forEach(el => EditorView.findFromDOM(el as HTMLElement)?.destroy()); Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect(); document.body.replaceChildren(document.createElement('div')); });
 
@@ -179,7 +184,7 @@ describe('manifest discovery warnings', () => {
     expect(document.querySelector('.zoom-level')?.textContent).toBe('100%');
     vi.unstubAllGlobals();
   });
-  it('closes the unified drawer and remembers its selected tab', async () => {
+  it('closes the project drawer and remembers it', async () => {
     const store = new Map<string, string>();
     vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } });
     mountStudio(document.body.firstElementChild as HTMLElement, bridge());
@@ -191,10 +196,10 @@ describe('manifest discovery warnings', () => {
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     document.dispatchEvent(new KeyboardEvent('keydown', { key: '\\', ctrlKey: true }));
     expect(layout.classList.contains('navigation-open')).toBe(true);
-    document.querySelector<HTMLButtonElement>('#navigation-tab-manuscript')!.click();
-    expect(JSON.parse(store.get('heinlein-studio-navigation-v1')!)).toEqual({open: true, active: 'manuscript'});
+    toggle.click();
+    expect(JSON.parse(store.get('heinlein-studio-navigation-v1')!)).toEqual({open: false});
     mountStudio(document.body.firstElementChild as HTMLElement, bridge());
-    expect(document.querySelector<HTMLButtonElement>('#navigation-tab-manuscript')!.getAttribute('aria-selected')).toBe('true');
+    expect([...document.querySelectorAll<HTMLButtonElement>('.navigation-toggle')].at(-1)!.getAttribute('aria-expanded')).toBe('false');
     vi.unstubAllGlobals();
   });
   it('lists installed fonts in Appearance and applies a chosen family', async () => {
@@ -705,20 +710,30 @@ describe('ms drafting structure and recovery guard', () => {
     return {app, core};
   }
   const exact = (text: string) => {
-    const match = [...document.querySelectorAll('button')].find(node => node.textContent === text);
+    // Menu contents are rebuilt each time a menu opens, so only trust buttons outside menus or in a freshly opened one.
+    let match = [...document.querySelectorAll('button')].find(node => node.textContent === text && !node.closest('.row-menu-items'));
+    if (!match && document.querySelector('summary[aria-label="Project actions"]')) {
+      openMenu('Project actions');
+      match = [...document.querySelectorAll('.row-menu-items[aria-label="Project actions"] button')].find(node => node.textContent === text) as HTMLButtonElement | undefined;
+    }
     if (!match) throw new Error(`Missing ${text}`); return match;
+  };
+  const rowAction = (row: string, action: string) => {
+    openMenu(`Actions for ${row}`);
+    const match = [...document.querySelectorAll<HTMLButtonElement>(`.row-menu-items[aria-label="Actions for ${row}"] button`)].find(node => node.textContent === action);
+    if (!match) throw new Error(`Missing ${action} for ${row}`); return match;
   };
   function edit(text = 'Still my exact — draft') {
     const view = EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
     view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: text}, annotations: Transaction.userEvent.of('input.type')}); return view;
   }
-  function moveLaterSceneEarlier() { document.querySelector<HTMLButtonElement>('[aria-label="Move Later earlier"]')!.click(); }
+  function moveLaterSceneEarlier() { rowAction('Later', 'Move earlier').click(); }
   it('renames a library group without saving or replacing an unsaved editor buffer', async () => {
     const core = draftingBridge();
     core.loadDrafting = vi.fn(async (): Promise<import('./localCore').DraftingState> => ({...initial(), library:[{id:'g1',kind:'group',parentId:null},{id:'scene-a',kind:'scene',parentId:'g1'},{id:'scene-b',kind:'scene',parentId:null}]}));
     core.historyDraftingChange = vi.fn(async () => ({state: initial(), canUndo:false, canRedo:true, metadataOnly:true}));
-    await setupDrafting(core); exact('2. Opening').click(); await settle();
-    const view = edit('Unsaved synthetic buffer'); exact('Rename First chapter').click();
+    await setupDrafting(core); exact('Opening').click(); await settle();
+    const view = edit('Unsaved synthetic buffer'); rowAction('First chapter', 'Rename…').click();
     const input = document.querySelector<HTMLInputElement>('dialog input')!; input.value = 'Renamed group';
     document.querySelector<HTMLFormElement>('dialog form')!.dispatchEvent(new Event('submit', {bubbles:true,cancelable:true}));
     await vi.waitFor(() => expect(core.applyDraftingChange).toHaveBeenCalledOnce());
@@ -739,13 +754,13 @@ describe('ms drafting structure and recovery guard', () => {
   });
   it('shows explicit ID order and reorders without including a filename mutation', async () => {
     const {core} = await setupDrafting();
-    expect([...document.querySelectorAll('.scene-open')].map(node => node.textContent)).toEqual(['1. Opening', '2. Later']);
+    expect([...document.querySelectorAll('.scene-open')].map(node => node.textContent)).toEqual(['Opening', 'Later']);
     moveLaterSceneEarlier(); await settle();
     expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'reorderScene', sceneId: 'scene-a', beforeId: 'scene-b', groupId: 'g1'});
     expect(core.applyDraftingChange).not.toHaveBeenCalled();
     exact('Apply change').click(); await settle();
     expect(core.applyDraftingChange).toHaveBeenCalledWith(session.id, 'opaque-preview');
-    expect([...document.querySelectorAll('.scene-open')].map(node => node.textContent)).toEqual(['1. Later', '2. Opening']);
+    expect([...document.querySelectorAll('.scene-open')].map(node => node.textContent)).toEqual(['Later', 'Opening']);
     expect([...document.querySelectorAll('.scene-path')].map(node => node.textContent)).toEqual(['ms/nested/a-later.md', 'ms/z-opening.md']);
     expect(exact('Undo last change').disabled).toBe(false);
   });
@@ -826,7 +841,7 @@ describe('ms drafting structure and recovery guard', () => {
   });
   it('offers interrupted rollback before any other structure action', async () => {
     const core = draftingBridge(); core.loadDrafting = vi.fn(async () => ({...initial(), recoveryRequired: true})); await setupDrafting(core);
-    expect(document.querySelector('.drafting-actions')).toBeNull(); exact('Preview rollback of interrupted change').click(); await settle();
+    expect(document.querySelector('.library-tree')).toBeNull(); exact('Preview rollback of interrupted change').click(); await settle();
     expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'recoverInterrupted'});
     exact('Cancel').click(); await settle();
   });
@@ -843,7 +858,7 @@ describe('ms drafting structure and recovery guard', () => {
     showAll.click(); await settle();
     dragEvent(document.querySelector('[aria-label="Open file README.md"]')!, 'dragstart', data);
     expect(data.getData('application/x-heinlein-repository-entry')).toBe(JSON.stringify({repositoryId: session.id, path: 'README.md'}));
-    dragEvent(document.querySelector('.drafting-drop')!, 'drop', data);
+    dragEvent(document.querySelector('.tree-footer')!, 'drop', data);
     expect(document.body.textContent).toContain('Sheets referenced by a legacy manuscript cannot be moved');
     exact('Preview import').click(); await settle();
     expect(core.previewDraftingChange).toHaveBeenCalledWith(session.id, 'manifest-1', {kind: 'importRepository', paths: ['README.md'], destination: 'ms', mode: 'move', groupId: null, beforeId: null});
@@ -858,7 +873,7 @@ describe('ms drafting structure and recovery guard', () => {
   });
   it('ignores repository drags from another session', async () => {
     const {core} = await setupDrafting(); const data = transfer(); data.setData('application/x-heinlein-repository-entry', JSON.stringify({repositoryId: 'other-session', path: 'README.md'}));
-    dragEvent(document.querySelector('.drafting-drop')!, 'drop', data); await settle();
+    dragEvent(document.querySelector('.tree-footer')!, 'drop', data); await settle();
     expect(document.querySelector('.drafting-dialog')).toBeNull(); expect(core.previewDraftingChange).not.toHaveBeenCalled();
   });
   it('copies a trusted Finder drop using the native selection without opening another picker', async () => {
@@ -872,7 +887,7 @@ describe('ms drafting structure and recovery guard', () => {
   });
   it('never constructs an external import from a browser file path', async () => {
     const {core} = await setupDrafting(); const data = transfer(); data.files.push({name: 'browser-scene.md'});
-    dragEvent(document.querySelector('.drafting-drop')!, 'drop', data); await settle();
+    dragEvent(document.querySelector('.tree-footer')!, 'drop', data); await settle();
     expect(core.previewDraftingChange).not.toHaveBeenCalled(); expect(core.pickDraftingImport).not.toHaveBeenCalled();
     expect(document.querySelector('.status')?.textContent).toContain('native picker');
   });
@@ -910,8 +925,8 @@ describe('ms drafting structure and recovery guard', () => {
     const {core} = await setupDrafting();
     let path = '';
     core.previewDraftingChange = vi.fn(async (_repo, _revision, change) => { if (change.kind === 'createScene') path = change.path; return {id:'opaque-preview', summary:'New sheet', changes:[], warnings:[]}; });
-    core.applyDraftingChange = vi.fn(async () => ({state: {...initial(), revision: 'manifest-2', scenes: [...initial().scenes, {id: 'new-scene-id', title: 'Untitled sheet', path, groupId: null}]}, undoId: 'create-undo'}));
-    exact('New sheet').click(); expect(document.querySelector('dialog')!.textContent).not.toContain('file'); exact('Create sheet').click();
+    core.applyDraftingChange = vi.fn(async () => ({state: {...initial(), revision: 'manifest-2', scenes: [...initial().scenes, {id: 'new-scene-id', title: 'Untitled scene', path, groupId: null}]}, undoId: 'create-undo'}));
+    exact('New scene').click(); expect(document.querySelector('dialog')!.textContent).not.toContain('file'); exact('Create scene').click();
     await vi.waitFor(() => expect(core.applyDraftingChange).toHaveBeenCalledOnce());
     expect(path).toMatch(/^ms\/sheet-[0-9a-f-]+\.md$/); await vi.waitFor(() => expect(core.readDocument).toHaveBeenCalledWith(session.id, path));
   });
@@ -946,7 +961,7 @@ describe('ms drafting structure and recovery guard', () => {
     const {core} = await setupDrafting(); moveLaterSceneEarlier(); await settle(); exact('Apply change').click(); await settle();
     expect(exact('Undo last change').disabled).toBe(false);
     core.loadDrafting = vi.fn(async () => ({...initial(), revision: 'interrupted-revision', recoveryRequired: true}));
-    exact('Refresh ms').click(); await settle();
+    exact('Refresh from disk').click(); await settle();
     core.previewDraftingChange = vi.fn(async () => ({id: 'rollback-preview', summary: 'Interrupted change rolled back', changes: [{kind: 'restore', source: 'ms/manuscript.json', destination: 'ms/manuscript.json'}], warnings: []}));
     core.applyDraftingChange = vi.fn(async () => ({state: initial(), undoId: null}));
     exact('Preview rollback of interrupted change').click(); await settle(); exact('Apply change').click(); await settle();

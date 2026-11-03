@@ -20,7 +20,7 @@ function core() {
     setUnsavedChanges: vi.fn(async () => {}), requestClose: vi.fn(async () => {}), onCloseRequested: vi.fn(async () => () => {}),
   } satisfies LocalCore;
 }
-function button(label: string) {const node = [...document.querySelectorAll('button')].find(node => node.textContent === label); if (!node) throw new Error(`Missing ${label}`); return node;}
+function button(label: string) {if(label==='Ask about selection'){[...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent?.startsWith('Heinlein')&&!b.textContent?.includes('Review'))!.click();label='Copy as prompt…';}const node = [...document.querySelectorAll('button')].find(node => node.textContent === label); if (!node) throw new Error(`Missing ${label}`); return node;}
 const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
 async function dialog() {await vi.waitFor(() => expect(document.querySelector('[aria-label="Ask ChatGPT about selection"]')).not.toBeNull());}
 async function start(bridge: LocalCore) {

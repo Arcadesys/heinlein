@@ -19,6 +19,8 @@ interface Hooks {
     reviewProposal(id: string, guard: () => string | null): Promise<void>;
     openConnection(): void;
     focusEditor(): void;
+    headerTabs?: HTMLElement;
+    visibilityChanged?(visible: boolean): void;
     approveReview?(run: () => Promise<ProposalOutcome | null>, guard: () => string | null): Promise<ProposalOutcome | null>;
     announce?(text: string): void;
     marksChanged?(input: ReviewMarkInput | null, report: (count: number | null) => void): void;
@@ -31,6 +33,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const element = el('section', '', 'heinlein-review-panel');
     element.hidden = true;
     element.setAttribute('aria-label', 'Heinlein Review');
+    if (hooks.headerTabs) {element.classList.add('heinlein-integrated'); element.setAttribute('role','dialog'); element.setAttribute('aria-modal','true');}
+    let suspended = false;
     let scope: ReviewScope | null = null;
     let recaptureLibrary: (() => Promise<CapturedLibraryScope>) | null = null;
     let result: ReviewResult | null = null;
@@ -95,7 +99,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     resultActions.append(continueNote, continueBatch, refreshReview);
     const head = el('header', '', 'review-head'), nav = el('div', '', 'review-nav');
     nav.append(button('Return to writing', tuck), button('Close review', clear));
-    head.append(title, nav);
+    head.append(title, ...(hooks.headerTabs ? [hooks.headerTabs] : []), nav);
     const savedSection = el('section', '', 'review-saved-section');
     savedSection.setAttribute('aria-label', 'Saved reviews');
     savedSection.hidden = true;
@@ -114,10 +118,15 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     element.addEventListener('keydown', event => { if (event.key === 'Escape' && !event.isComposing) {
         event.preventDefault();
         event.stopPropagation();
-        clear();
+        if (hooks.headerTabs) hide(); else clear();
         hooks.focusEditor();
+    }
+    if (hooks.headerTabs && event.key === 'Tab') {
+      const controls=[...element.querySelectorAll<HTMLElement>('button,summary,input,select,textarea,[tabindex="0"]')].filter(n=>!n.closest('[hidden]')&&!n.matches(':disabled')&&n.getClientRects().length&&!n.closest('details:not([open]) :not(summary)'));
+      if (event.shiftKey && document.activeElement===controls[0]) {event.preventDefault();controls.at(-1)?.focus();}
+      else if (!event.shiftKey && document.activeElement===controls.at(-1)) {event.preventDefault();controls[0]?.focus();}
     } });
-    function live(token: number) { return !disposed && !element.hidden && token === generation; }
+    function live(token: number) { return !disposed && (!element.hidden || suspended) && token === generation; }
     function scopeProblem() {
         if (!scope)
             return 'Open an editable source file or a mapped assembled chapter.';
@@ -201,7 +210,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         void core.cancelQuestion?.(id).catch(() => { });
         retry.hidden = false;
     } }
-    function clear() { cancelRequest(); element.hidden = true; element.classList.remove('review-tucked'); scope = null; recaptureLibrary = null; result = null; config = null; savedRecords = []; shownReview = null; historyOpen = null; receipts.clear(); publishMarks(); saved.replaceChildren(); savedSection.hidden = true; edits.replaceChildren(); sources.replaceChildren(); blob.textContent = ''; json.hidden = true; refreshReview.hidden = true; newReview.open = true; }
+    function clear() { suspended=false; cancelRequest(); element.hidden = true; hooks.visibilityChanged?.(false); element.classList.remove('review-tucked'); scope = null; recaptureLibrary = null; result = null; config = null; savedRecords = []; shownReview = null; historyOpen = null; receipts.clear(); publishMarks(); saved.replaceChildren(); savedSection.hidden = true; edits.replaceChildren(); sources.replaceChildren(); blob.textContent = ''; json.hidden = true; refreshReview.hidden = true; newReview.open = true; }
     function untuck() {
         if (element.classList.contains('review-tucked')) {
             element.classList.remove('review-tucked');
@@ -210,6 +219,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     }
     // Keeps the review and any running request while giving the whole window back to writing.
     function tuck() {
+        if (hooks.headerTabs) {hide(); hooks.focusEditor(); return;}
         element.classList.add('review-tucked');
         const count = result?.edits.filter(waiting).length ?? 0;
         hooks.announce?.(`Heinlein Review stays open${count ? ` with ${count} ${count === 1 ? 'suggestion' : 'suggestions'} waiting` : ''}. Choose Heinlein Review to come back.`);
@@ -826,7 +836,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             batchPreview.replaceChildren();
             savedRecords = [];
             renderSaved();
-            element.hidden = false;
+            suspended=false; element.hidden = false; hooks.visibilityChanged?.(true);
             retry.hidden = true;
             status.textContent = '';
             sources.replaceChildren();
@@ -842,11 +852,14 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             void configure();
             title.focus({ preventScroll: true });
         }
-    return { element, open: () => openScope(), librarySupported: workflowMode, openLibrary: (captured: ReviewScope, recapture: () => Promise<CapturedLibraryScope>) => { if (workflowMode) { clear(); openScope(captured, recapture); } }, clear, stateChanged: update,
+    function hide() { suspended=Boolean(scope); element.hidden=true; hooks.visibilityChanged?.(false); }
+    function show() { if (scope && element.hidden && !disposed) {suspended=false; element.hidden=false; element.classList.remove('review-tucked'); hooks.visibilityChanged?.(true); update(); title.focus({preventScroll:true});} else openScope(); }
+    return { element, show, hide, visible:()=>!element.hidden&&!element.classList.contains('review-tucked'), open: () => openScope(), librarySupported: workflowMode, openLibrary: (captured: ReviewScope, recapture: () => Promise<CapturedLibraryScope>) => { if (workflowMode) { clear(); openScope(captured, recapture); } }, clear, stateChanged: update,
         // Only shows the card. It never applies, rejects or chooses, and a competing group stays unchosen.
         openSuggestion(id: string) {
-            if (disposed || element.hidden || !result)
-                return false;
+            if (disposed || !result) return false;
+            if (element.hidden && hooks.headerTabs) show();
+            if (element.hidden) return false;
             const item = [...edits.querySelectorAll<HTMLElement>('.review-edit')].find(n => n.dataset.findingId === id);
             if (!item)
                 return false;

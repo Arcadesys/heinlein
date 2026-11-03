@@ -1,17 +1,19 @@
-import {test,expect,type Locator} from '@playwright/test';
+import {test,expect,type Locator,type Page} from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+/** Source files open from the project ⋯ menu (keyboard: Enter, arrows, Enter) unless the drawer already shows them. */
+async function showSourceFiles(page:Page){await expect(page.locator('#navigation-drawer')).toHaveAttribute('aria-hidden','false');await expect(page.locator('.nav-view:not([hidden])').first()).toBeVisible();if(await page.locator('.files.nav-view').isVisible())return;const more=page.locator('summary[aria-label="Project actions"]');await expect(more).toBeVisible();await more.focus();await page.keyboard.press('Enter');const item=page.getByRole('group',{name:'Project actions'}).getByRole('button',{name:'Source files',exact:true});await expect(item).toBeVisible();for(let i=0;i<12&&!await item.evaluate(el=>el===document.activeElement);i++)await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');await expect(page.locator('.files.nav-view')).toBeVisible();}
 test('repository-first open and offline reopen keep local saves separate from sending, keyboard and 200% reflow',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  async function activate(target:Locator){await expect(target).toBeVisible();for(let i=0;i<100;i++){if(await target.evaluate(el=>el===document.activeElement)){await page.keyboard.press('Enter');return;}await page.keyboard.press('Tab');}throw Error('Unreachable keyboard target');}
  await page.goto('/tests/browser/github.html?repo-first');
  if(await page.getByRole('button',{name:'Navigation',exact:true}).count())await activate(page.getByRole('button',{name:'Navigation',exact:true}));
- await activate(page.getByRole('tab',{name:'Source files',exact:true}));
+ await showSourceFiles(page);
  await expect(page.getByRole('button',{name:'Open from GitHub…',exact:true})).toBeVisible();
  await expect(page.getByRole('region',{name:'Recent GitHub repositories'})).toContainText('example/synthetic-story');
  await activate(page.getByRole('button',{name:'Open example/synthetic-story',exact:true}));
  await activate(page.getByRole('button',{name:'Open file story.md',exact:true}));
  if(await page.getByRole('button',{name:'Navigation',exact:true}).count())await activate(page.getByRole('button',{name:'Navigation',exact:true}));
- await activate(page.getByRole('tab',{name:'Source files',exact:true}));
+ await showSourceFiles(page);
  await expect(page.locator('.pill-project')).toHaveText('example/synthetic-story');
  await expect(page.locator('.repository-origin-status')).toContainText(/not yet sent|No Send is recorded|successful Send/);
  const editor=page.locator('.cm-content');await editor.focus();await page.keyboard.press('End');await page.keyboard.insertText(' Unsaved exact words.');
@@ -68,7 +70,7 @@ for(const saved of [null,{open:true,active:'manuscript'},{open:false,active:'man
   await expect(page).toHaveTitle('Heinlein project-first — synthetic local preview');
   await activate(page.locator('.project-switcher'));await activate(page.getByRole('button',{name:'Open Novel B',exact:true}));
   const original=await page.evaluate(()=>structuredClone((window as any).projectFixture.documents));
-  await expect(page.getByRole('tab',{name:'Source files',exact:true})).toHaveAttribute('aria-selected','true');
+  await expect(page.locator('.files.nav-view')).toBeVisible();
   const guide=page.locator('.source-file-guide');await expect(guide).toBeHidden();
   await activate(page.locator('.source-project-info > summary'));await expect(guide).toBeVisible();
   await activate(page.locator('.source-project-info > summary'));await expect(guide).toBeHidden();
@@ -79,23 +81,6 @@ for(const saved of [null,{open:true,active:'manuscript'},{open:false,active:'man
     for(let n=0;n<8&&await page.locator('html').getAttribute('data-zoom')!==zoom;n++)await page.keyboard.press(zoom==='200'?'Control+=':'Control+-');
     await expect(page.locator('html')).toHaveAttribute('data-zoom',zoom);
     await page.evaluate(()=>document.fonts.ready);
-    const labels=await page.locator('.navigation-tabs [role="tab"]').evaluateAll(tabs=>tabs.map(tab=>{
-      const rect=tab.getBoundingClientRect(),text=tab.firstChild!;
-      const words=[...tab.textContent!.matchAll(/\S+/g)].map(word=>{
-        const range=document.createRange();range.setStart(text,word.index!);range.setEnd(text,word.index!+word[0].length);
-        return range.getClientRects().length;
-      });
-      return {label:tab.textContent,x:rect.x,width:rect.width,top:rect.top,bottom:rect.bottom,words};
-    }));
-    expect(labels.map(tab=>tab.label)).toEqual(['Library','Scenes','Source files']);
-    expect(labels.flatMap(tab=>tab.words).every(lines=>lines===1)).toBe(true);
-    const stacked=(page.viewportSize()!.width<=560);
-    expect(await page.locator('.navigation-tabs').evaluate(el=>getComputedStyle(el).flexDirection)).toBe(stacked?'column':'row');
-    if(stacked)for(let n=1;n<labels.length;n++){
-      expect(Math.abs(labels[n].x-labels[0].x)).toBeLessThanOrEqual(1);
-      expect(Math.abs(labels[n].width-labels[0].width)).toBeLessThanOrEqual(1);
-      expect(labels[n].top).toBeGreaterThanOrEqual(labels[n-1].bottom);
-    }
     const file=page.getByRole('button',{name:'Open file scene.md',exact:true});
     // Re-enter after zoom changes so this proves ordinary keyboard scrolling,
     // rather than relying on a browser to re-scroll an already focused control.

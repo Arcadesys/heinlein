@@ -1,9 +1,10 @@
 import type {ProjectRequest,ProjectResponse,ProjectResume} from './projects';
+import type {McpAccessRequest,McpAccessView} from './mcpAccess';
 import type {DraftRequest,DraftResponse} from './standaloneDrafts';
 import type {UpdateStatus} from './updatePanel';
 import type {GitHubRequest,GitHubResponse} from './githubTypes';
 import type {FirstStoryState, PublishingMetadata, PublishingCopy} from './firstStory';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 export interface RecentRepository { id: string; name: string }
 export interface RepositorySession extends RecentRepository { projectKey?: string; manifests: string[]; warning?: string | null; githubWorkspaceId?: string | null; projectId?:string; projectRevision?:number; resume?:ProjectResume|null }
@@ -76,6 +77,7 @@ export interface ReviewEdit { location?:{line:number;column:number}; id: string;
 export interface ReviewResult { reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
 export interface LocalCore {
   projectRequest?(request:ProjectRequest):Promise<ProjectResponse>;
+  mcpRequest?(request:McpAccessRequest):Promise<McpAccessView>;
   standalone?(request:DraftRequest):Promise<DraftResponse>;
   available(): boolean;
   updateRequest?(action: 'status'|'check'|'schedule'):Promise<UpdateStatus>;
@@ -96,7 +98,7 @@ export interface LocalCore {
   rejectReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<ReviewResult>;
   getReview?(repositoryId: string, reviewId: string): Promise<ReviewResult>;
   questionStatus?(): Promise<QuestionStatus>;
-  askQuestion?(request: QuestionRequest, connection: QuestionConnection): Promise<QuestionAnswer>;
+  askQuestion?(request: QuestionRequest, connection: QuestionConnection, onProgress?: (text: string) => void): Promise<QuestionAnswer>;
   suggestQuestionRevision?(request: QuestionRequest, connection: QuestionConnection, target: QuestionRevisionTarget): Promise<QuestionRevisionAnswer>;
   cancelQuestion?(requestId: string): Promise<boolean>;
   connectQuestionAccount?(options: {allowChatgptPlan: boolean; accountId?: string}): Promise<QuestionStatus>;
@@ -159,7 +161,11 @@ export const localCore: LocalCore = {
   rejectReviewEdit: (repositoryId, reviewId, editId) => invoke('reject_review_edit', {repositoryId, reviewId, editId}),
   getReview: (repositoryId, reviewId) => invoke('get_review', {repositoryId, reviewId}),
   questionStatus: () => invoke('question_status'),
-  askQuestion: (request, connection) => invoke('ask_question', {request, connection}),
+  askQuestion: (request, connection, onProgress) => {
+    const channel = new Channel<string>();
+    channel.onmessage = text => onProgress?.(text);
+    return invoke('ask_question', {request, connection, onProgress: channel});
+  },
   suggestQuestionRevision: (request, connection, target) => invoke('suggest_question_revision', {request, connection, target}),
   cancelQuestion: requestId => invoke('cancel_question', {requestId}),
   connectQuestionAccount: options => invoke('connect_question_account', options),
@@ -194,6 +200,7 @@ export const localCore: LocalCore = {
   onQuitRefused:callback=>listen<string>('quit-refused',event=>callback(event.payload)),
   onCloseRequested: callback => listen('close-requested', callback),
   projectRequest:request=>invoke('project_request',{request}),
+  mcpRequest:request=>invoke('mcp_access_request',{request}),
   pickRepository: () => invoke('pick_repository'),
   recentRepositories: () => invoke('recent_repositories'),
   openRecentRepository: id => invoke('open_recent_repository', { id }),

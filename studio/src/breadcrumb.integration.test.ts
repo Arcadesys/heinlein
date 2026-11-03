@@ -15,17 +15,17 @@ function view(){return EditorView.findFromDOM(document.querySelector('.cm-editor
 const items=()=>[...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
 const item=(text:string)=>items().find(node=>node.textContent?.startsWith(text))!;
 async function begin(){const f=syntheticProjects();f.seedMovement();const {app}=start(f);await tick();await open('Novel A');await app.showDocument('ms/meeting.md');await tick();return {f,app};}
-it('opens on the Binder and shows the chapter between project and scene',async()=>{
+it('opens on the project tree and shows the chapter between project and scene',async()=>{
  await begin();
- expect(document.querySelector('#navigation-tab-manuscript')!.getAttribute('aria-selected')).toBe('true');
+ expect(document.querySelector<HTMLElement>('.manuscript.nav-view')!.hidden).toBe(false);
  expect(document.querySelector('.pill-chapter')!.textContent).toBe('Opening');
  expect(document.querySelector('.pill-scene')!.textContent).toBe('Meeting');
 });
-it('the Library identifies the current sheet and opens another sheet',async()=>{
+it('the project tree identifies the current scene and opens another scene',async()=>{
  await begin();
  const here=document.querySelector<HTMLButtonElement>('.scene-open[aria-current="true"]')!;
- expect(here.textContent).toContain('Meeting');expect(here.closest('.drafting-scene')?.querySelector<HTMLElement>('.current-sheet')?.hidden).toBe(false);
- document.querySelector<HTMLButtonElement>('.scene-open:not([aria-current])')!.click();await tick();
+ expect(here.textContent).toBe('Meeting');expect(here.closest('.tree-scene')).not.toBeNull();expect(document.querySelectorAll('.scene-open[aria-current]')).toHaveLength(1);
+ [...document.querySelectorAll<HTMLButtonElement>('.scene-open:not([aria-current])')].find(node=>node.textContent==='Prelude')!.click();await tick();
  expect(document.querySelector('.pill-scene')!.textContent).toBe('Prelude');
 });
 it('the Scene menu lists the chapter, moves between scenes and keeps the buffer',async()=>{

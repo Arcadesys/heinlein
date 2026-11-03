@@ -1,8 +1,34 @@
 // @vitest-environment jsdom
-import {describe, expect, it} from 'vitest';
+import {describe, expect, it, vi} from 'vitest';
 import {applyRawChanges, createEditor} from './editor';
 import {Transaction} from '@codemirror/state';
 import {historyField, isolateHistory} from '@codemirror/commands';
+describe('paste integrity', () => {
+  it('keeps exact source, selection and undo history when a paste contains no text', async () => {
+    const source='---\r\nprivate: preserved\r\n---\nBefore — e\u0301 🦊\r\nSelected passage.\r\nLater notes.\n';
+    const changed=vi.fn(),notice=vi.fn();
+    const editor=createEditor(document.createElement('div'),source,changed,()=>{},undefined,notice);
+    editor.view.dispatch({selection:{anchor:0,head:editor.view.state.doc.length}});
+    const selection=editor.view.state.selection;
+    editor.view.dispatch({changes:{from:0,to:editor.view.state.doc.length,insert:''},selection:{anchor:0},annotations:Transaction.userEvent.of('input.paste')});
+    await Promise.resolve();
+    expect(editor.text()).toBe(source);expect(editor.view.state.selection.eq(selection)).toBe(true);
+    expect(changed).not.toHaveBeenCalled();expect(editor.undo()).toBe(false);
+    expect(notice).toHaveBeenCalledWith('Paste contained no readable text. Nothing was replaced.');
+    editor.destroy();
+  });
+  it('allows nonempty multiline paste and normal deletion, with exact undo', () => {
+    const source='Before — 🦊\r\nSelected passage.\r\nLater notes.\n';
+    const editor=createEditor(document.createElement('div'),source,()=>{},()=>{});
+    const from=editor.view.state.doc.toString().indexOf('Selected'),to=from+'Selected passage.'.length;
+    editor.view.dispatch({changes:{from,to,insert:'New paragraph.\nSecond line.'},annotations:Transaction.userEvent.of('input.paste')});
+    expect(editor.text()).toBe(source.replace('Selected passage.','New paragraph.\r\nSecond line.'));
+    editor.undo();expect(editor.text()).toBe(source);
+    editor.view.dispatch({changes:{from:0,to:editor.view.state.doc.length},annotations:Transaction.userEvent.of('delete.selection')});
+    expect(editor.text()).toBe('');editor.undo();expect(editor.text()).toBe(source);
+    editor.replaceText('');expect(editor.text()).toBe('');editor.destroy();
+  });
+});
 describe('byte-preserving editor changes', () => {
   it('retains unknown frontmatter, CRLF and mixed unchanged endings', () => {
     const raw = '---\r\nunknown: yes\r\n---\nHello\r\nWorld';

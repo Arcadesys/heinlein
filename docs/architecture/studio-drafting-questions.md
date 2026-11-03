@@ -2,14 +2,22 @@
 
 Heinlein's drafting conversation is an optional aid alongside the editor.
 Its model transport is distinct from the external MCP revision workflow.
+The **Heinlein** toolbar button opens one overlay with **Passage** and **Whole scene**
+views. Passage quotes the captured text and offers separate **Ask** and **Suggest
+rewrite** sends. Account/model and storage settings stay behind the connection
+button; manual copy/paste is available through **Copy as prompt…**. Whole scene
+retains review results and explicitly requested work while switching tabs. Neither
+view resizes the manuscript. Guarded Undo change remains a separate review and
+native confirmation.
 
 ## Author control
 
 Opening the panel, typing, saving, navigating, and recovering a draft do not send
 anything to a provider. Each request requires an explicit Send action. The panel
 shows the question, captured context and conversation history being shared.
-Context starts empty when opened from the toolbar; the author can choose a bounded
-selection or scene snapshot. The contextual Ask Heinlein action explicitly captures
+Without a highlighted passage, the current scene is refreshed for each message
+and shown in the send preview. A highlighted passage uses its captured snapshot.
+The author can choose or remove additional context explicitly. The contextual Ask Heinlein action explicitly captures
 the highlighted passage and focuses the question field without sending.
 Later typing never silently changes an already captured context snapshot.
 

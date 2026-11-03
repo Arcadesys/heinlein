@@ -1,5 +1,81 @@
 # ChatGPT connection repair and deterministic fuzzing
 
+## 2026-10-16 live Ask streaming checkpoint
+
+Route: bounded workhorse, medium requested, one context; no runtime model/effort
+switch is claimed. Ask now sends bounded cumulative text previews through a
+request-specific Tauri channel. The panel labels them as streaming, uses plain
+text, avoids automatic scrolling/focus changes, and announces the receiving state
+once rather than every token. Cancel/error labels retained text as an interrupted
+preview excluded from history. Close/context/account changes clear private text;
+stale callbacks cannot update a subsequent request. Final validation replaces the
+preview with the authoritative answer. Suggest revision does not stream previews
+and retains its separate proposal/author-confirmation path.
+
+Validation: 57 drafting-questions tests, 101 focused panel/bridge tests (including
+the default renderer fuzz corpus), workspace strict Clippy, formatting, TypeScript,
+frontend/native release build and local signature verification passed. New checks
+cover fragmented Unicode deltas, preview size limits, no success without a terminal
+event, inert text rendering, focus preservation, invalid/late callbacks, cancellation,
+and final replacement without provisional history.
+
+The local repair bundle was updated, preserving the previous executable outside
+the bundle. A single native synthetic request used the retained selected
+`gpt-6.1-sol`, zero manuscript context and zero history. While Cancel remained
+available, live snapshots grew from 8 to 13 numbered sentences. The preview wrapped
+at the current large text size; keyboard Tab put a visible focus ring on Cancel
+while updates continued. The request then reached Answer ready, replaced the provisional preview with the
+validated attributed answer, and reported 154 input / 783 output tokens. The
+synthetic source remained byte-identical. The existing Documents-folder issue
+remains out of scope.
+
+## 2026-10-16 completed-item repair checkpoint
+
+Route: bounded workhorse pass, medium requested, one context. Runtime model/effort
+switching was unavailable; no enforced model substitution is claimed.
+
+A fresh synthetic probe with the saved selected account and `gpt-6.1-sol`
+identified the failure: the HTTP 200 SSE stream carried a completed assistant
+message in `response.output_item.done`, while `response.completed.response.output`
+was empty. The old decoder discarded the completed item. Only event structure,
+field names and text lengths were inspected; no credentials or response bodies
+were logged or saved.
+
+The decoder now retains bounded, ordered completed items and fills an empty
+terminal output array only after a matching response ID reaches its terminal
+event. It rejects duplicate IDs/indices, unfinished message items and mismatched
+responses. It never reconstructs answers from deltas. Existing answer/revision
+validation, cancellation, size limits and no-retry behavior remain in force.
+
+Current evidence:
+
+- 56 drafting-questions tests passed, including every two-chunk split of the
+  observed event pattern, interrupted/duplicate/mismatched streams, tool output
+  rejection and strict revision validation; default deterministic fuzz corpus passed.
+- Repository-core tests passed (two existing intentional ignores); workspace
+  strict Clippy, Rust formatting and diff whitespace checks passed.
+- TypeScript/frontend and native release build passed; local bundle signature verified.
+- Native Ask returned `Connection OK`, followed by `Follow-up OK` with the same
+  selected account/model. The follow-up included only the synthetic first turn.
+  Both requests sent zero manuscript context; no revisions were requested/applied.
+  Three live requests total: one structural probe and two native questions.
+- The follow-up answer was visible in the native panel at the existing large text
+  size, wrapped alongside metadata, and exposed in the accessibility tree.
+  No frontend styles or interactions changed; this is not an app-wide accessibility audit.
+- The synthetic 58-byte source remained byte-identical. No manuscript files changed.
+
+Local repair bundle:
+`/Users/arcades/Documents/Codex/heinlein-response-fix/Heinlein Studio.app`.
+It opens the repaired native executable directly. Existing updater-enabled apps
+were preserved and still follow remote main; this branch is not merged/deployed.
+Issue #22 stays open pending integration and remaining restart/author acceptance.
+The separate native Documents-folder opening stall reproduced; using a fixture
+under `/private/tmp/heinlein-response-smoke` allowed the live connection check.
+No macOS security settings changed.
+
+The following sections record the earlier 2026-10-15 work and its then-open live
+acceptance boundary.
+
 ## Outcome boundary
 
 The native smoke test reproduced the reported failure. The first two synthetic

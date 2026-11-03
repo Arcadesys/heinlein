@@ -22,6 +22,8 @@ export interface QuestionPanelHooks {
   prepareRevision?(snapshot: SelectionQuestionSnapshot): Promise<void>;
   reviewRevision?(proposalId: string, snapshot: SelectionQuestionSnapshot, guard: () => string | null, presenter?: (view: ProposalReview) => Promise<boolean>): Promise<void>;
   visibilityChanged?(open: boolean): void;
+  headerTabs?: HTMLElement;
+  copyPrompt?(): void;
 }
 interface Revision {snapshot: SelectionQuestionSnapshot; contextVersion: number; proposalId: string; replacementText: string; rejected: boolean; busy: boolean}
 interface Turn { question: string; answer: QuestionAnswer; contextBytes: number; scenePath?: string; proposalId?: string; revision?: Revision }
@@ -70,6 +72,7 @@ function errorMessage(error: unknown): string {
 }
 export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) {
   const integrated = Boolean(hooks.passages);
+  const unified = Boolean(hooks.headerTabs);
   const element: HTMLElement = el(integrated ? 'div' : 'aside', '', 'question-panel'); element.hidden = true;
   element.setAttribute('aria-label', 'Drafting questions');
   if (integrated) element.classList.add('question-panel-integrated');
@@ -96,7 +99,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const header = el('div', '', 'question-heading');
   const heading = el('div'); heading.append(el('h3', 'Writing conversation'), el('p', 'Project conversation · shared across scenes.', 'muted'));
   const closeButton = button(integrated ? 'Collapse' : 'Close questions', () => integrated ? collapse() : close(true));
-  if (integrated) header.append(el('h3', 'Questions'), closeButton); else header.append(heading, closeButton);
+  if (integrated) header.append(el('h3', unified ? 'Heinlein' : 'Questions'), ...(hooks.headerTabs ? [hooks.headerTabs] : []), closeButton); else header.append(heading, closeButton);
   const connection = el('p', '', 'question-connection'); connection.setAttribute('role', 'status');
   const refresh = button('Recheck OpenAI setup', () => { void checkStatus(true); });
   const auth = el('details', '', 'question-auth'); auth.setAttribute('aria-label', 'ChatGPT connection'); auth.open = true;
@@ -191,6 +194,10 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const latestReply = button('Read latest reply', () => (integrated ? transcript.firstElementChild : transcript.lastElementChild)?.scrollIntoView({block: 'start'})); latestReply.hidden = true;
   const actions = el('div', '', 'question-actions question-send-actions'); actions.append(send, cancel, button('Return to writing', () => hooks.focusEditor()), latestReply);
   const transcript = el('section', '', 'question-transcript'); transcript.setAttribute('aria-label', 'Question conversation');
+  const streaming = el('section', '', 'question-stream-preview'); streaming.hidden = true;
+  const streamingLabel = el('h4', 'OpenAI · Streaming answer');
+  const streamingText = preview('', 'Live answer preview');
+  streaming.setAttribute('aria-busy', 'false'); streaming.append(streamingLabel, streamingText);
   const lifetime = el('p', 'Questions and answers are saved on this Mac for this project, account and model, including across scene changes and app restarts. The latest 100 turns are retained within 512 KB. Only recent messages that fit the request limit are sent. Exact scene snapshots and revision targets are not stored in chat history; saved revision proposals remain in Proposed revisions. Clear conversation removes this saved chat.', 'muted');
   const settings = el('details', '', 'question-settings'); settings.append(el('summary', 'Connection & conversation details'), connection, auth, guidance, count, historyDetails, disclosure, lifetime, reset);
   const welcome = el('section', '', 'question-welcome'); welcome.append(el('h4', 'A second pair of eyes'), el('p', 'Explore an idea, work through a scene, or ask what a reader might notice.'));
@@ -200,21 +207,31 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   }
   welcome.append(starters, el('p', 'Add context below when you want to discuss your writing. Nothing is sent until you choose Send.', 'muted'));
   const waiting = el('div', '', 'question-waiting'); waiting.hidden = true; waiting.setAttribute('role', 'status');
-  const conversation = el('div', '', 'question-conversation'); conversation.tabIndex = 0; conversation.setAttribute('aria-label', 'Conversation'); conversation.append(welcome, transcript, waiting);
+  const conversation = el('div', '', 'question-conversation'); conversation.tabIndex = 0; conversation.setAttribute('aria-label', 'Conversation'); conversation.append(welcome, transcript, waiting, streaming);
   contextDetails.append(contextHeading, contextSource, contextActions, contextText);
   const composer = el('section', '', 'question-composer'); composer.setAttribute('aria-label', 'Write a message');
   const composerTop = el('div', '', 'question-composer-top'); composerTop.append(modeLabel);
   const contextSummary = el('p', '', 'question-context-summary');
   composer.append(contextDetails, targetSection, questionLabel, composerTop, requestNote, contextSummary, actions, status);
+  const askButton = button('Ask', () => submitAs('ask'), 'primary');
+  const suggestButton = button('Suggest rewrite', () => submitAs('revision'));
+  const passageQuote = el('blockquote', '', 'question-passage-quote'); passageQuote.setAttribute('aria-label', 'Selected passage'); passageQuote.hidden = true;
+  const passageNote = el('p', '', 'question-request-note'); passageNote.hidden = true;
+  let showSettings = false;
+  const connectionArea = el('section', '', 'question-connection-area'); connectionArea.setAttribute('aria-label', 'Account and storage');
+  const settingsToggle = button('Connect ChatGPT', () => {showSettings = !showSettings; update(); if (showSettings) connectionArea.querySelector<HTMLElement>('button, summary')?.focus({preventScroll:true});}, 'question-settings-toggle');
   const persistence = el('p', '', 'question-persistence'); persistence.setAttribute('role', 'status');
   composer.append(persistence);
   if (integrated) {
     welcome.hidden = true; contextHeading.textContent = 'What will be sent';
     contextDetails.classList.add('question-send-preview'); contextDetails.append(targetSection, historyDetails, disclosure);
-    const connectionArea = el('section', '', 'question-connection-area'); connectionArea.setAttribute('aria-label', 'Account and storage'); connectionArea.append(connection, auth, settings);
+    connectionArea.append(connection, auth, settings); if(unified) {header.insertBefore(settingsToggle, closeButton);settings.append(reset);}
     settings.querySelector('summary')!.textContent = 'Storage and revision safety'; settings.append(persistence);
-    composer.replaceChildren(modeLabel, questionLabel, requestNote, actions, contextSummary, contextDetails, status);
-    element.append(header, currentTitle, fullReview, passagePicker, transcript, waiting, composer, connectionArea);
+    if(unified) actions.replaceChildren(askButton, suggestButton, cancel);
+    composer.replaceChildren(...(unified ? [] : [modeLabel]), questionLabel, requestNote, actions, contextSummary, contextDetails, status);
+    if (hooks.copyPrompt) composer.append(button('Copy as prompt…', () => hooks.copyPrompt!(), 'question-copy-prompt'));
+    question.placeholder = 'What would you like to know or change?';
+    element.append(header, passageQuote, passageNote, fullReview, passagePicker, transcript, waiting, streaming, composer, connectionArea);
   } else element.append(header, settings, conversation, composer);
 
   const layoutQuery = window.matchMedia?.('(max-width: 1399px)');
@@ -223,17 +240,17 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     // Media-query rem units use the browser's initial font size, not app text zoom.
     const textSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
     dedicated = integrated && (Boolean(layoutQuery?.matches) || window.innerWidth < 64 * textSize);
-    element.dataset.presentation = dedicated ? 'dedicated' : 'docked';
-    element.setAttribute('role', dedicated ? 'dialog' : 'complementary');
-    if (dedicated) element.setAttribute('aria-modal', 'true'); else element.removeAttribute('aria-modal');
-    if (dedicated && !element.hidden && !element.contains(document.activeElement)) closeButton.focus({preventScroll: true});
+    element.dataset.presentation = dedicated ? 'dedicated' : 'overlay';
+    element.setAttribute('role', integrated ? 'dialog' : 'complementary');
+    if (integrated) element.setAttribute('aria-modal', 'true'); else element.removeAttribute('aria-modal');
+    if (integrated && !element.hidden && !element.contains(document.activeElement)) closeButton.focus({preventScroll: true});
   }
   layoutQuery?.addEventListener?.('change', presentation); window.addEventListener('resize', presentation); presentation();
   const textObserver = new MutationObserver(presentation);
   textObserver.observe(document.documentElement, {attributes: true, attributeFilter: ['style', 'data-zoom']});
   const headerObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => { element.style.setProperty('--question-header-height', `${header.offsetHeight + 16}px`); }); headerObserver?.observe(header);
   element.addEventListener('keydown', event => {
-    if (event.key !== 'Tab' || !dedicated) return;
+    if (event.key !== 'Tab' || !integrated) return;
     const focusable = [...element.querySelectorAll<HTMLElement>('button, select, textarea, input, summary, [tabindex="0"]')].filter(node => !node.closest('[hidden]') && !node.matches(':disabled') && node.getClientRects().length && !node.closest('details:not([open]) :not(summary)'));
     const first = focusable[0]; const last = focusable.at(-1);
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
@@ -351,16 +368,41 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     updateRevisionState();
     cancel.hidden = !pending && !preparing;
     element.setAttribute('aria-busy', String(Boolean(pending) || preparing || checking || authPending));
-    if (integrated) contextHeading.textContent = 'What will be sent';
+    if (unified) {
+      contextHeading.textContent = 'What will be sent';
+      const passage = activePassage;
+      passageQuote.hidden = !passage; passageQuote.textContent = passage ? passage.scene.source.slice(passage.scene.from,passage.scene.to) : '';
+      passageNote.hidden = !passage || !passageStale(passage);
+      passageNote.textContent = passageNote.hidden ? '' : 'This passage changed. Select it again before requesting a rewrite.';
+      const ready = connectionReady();
+      settingsToggle.textContent = ready ? `ChatGPT · ${configuration!.model}` : checking ? 'Checking ChatGPT…' : 'Connect ChatGPT';
+      connectionArea.hidden = ready && !showSettings;
+      settingsToggle.setAttribute('aria-expanded', String(!connectionArea.hidden));
+    }
     notifyPassages();
   }
   function updateRevisionState() {
     const problem = outgoingProblem();
     send.disabled = !live() || checking || Boolean(authBusy) || Boolean(configuration?.signInPending) || !connectionReady() || !core.askQuestion || Boolean(pending) || preparing || Boolean(problem);
     send.title = problem ?? 'Send (Cmd/Ctrl+Enter)'; requestNote.textContent = question.value.trim() ? send.title : ''; requestNote.hidden = !requestNote.textContent;
+    if (unified) {
+      const blocked = !live() || checking || Boolean(authBusy) || Boolean(configuration?.signInPending) || !connectionReady() || !core.askQuestion || Boolean(pending) || preparing || !question.value.trim();
+      askButton.disabled = blocked; suggestButton.disabled = blocked || Boolean(activePassage && passageStale(activePassage)) || !core.suggestQuestionRevision;
+      askButton.hidden = suggestButton.hidden = Boolean(pending) || preparing;
+      const lengthProblem = questionProblem(question.value, '');
+      requestNote.textContent = question.value.trim() && lengthProblem ? lengthProblem : ''; requestNote.hidden = !requestNote.textContent;
+    }
     if (mode.value === 'revision') targetNote.textContent = revisionProblem() ?? `${target!.path} · ${targetBytes().toLocaleString()} UTF-8 bytes. Only this target is replaced; saved source is rechecked before review.`;
     for (const refreshAction of revisionActions) refreshAction();
     notifyPassages();
+  }
+  function submitAs(kind: 'ask' | 'revision') {
+    if (!live() || pending || preparing || authBusy) return;
+    if (mode.value !== kind) {
+      if (kind === 'revision' && activePassage && !passageStale(activePassage)) hooks.passages?.select(activePassage.scene.from, activePassage.scene.to);
+      mode.value = kind; mode.dispatchEvent(new Event('change'));
+    }
+    void submit();
   }
   function capture(kind: 'selection' | 'scene') {
     if (!live() || pending || preparing) return;
@@ -449,6 +491,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   }
   function cancelPending(reportOutcome = false) {
     const epoch = ++version; preparing = false;
+    if (!streaming.hidden) { streamingLabel.textContent = 'OpenAI · Interrupted preview · Not added to history'; streaming.setAttribute('aria-busy', 'false'); }
     const request = pending; const wasRevision = pendingRevision; pending = null; pendingRevision = false;
     if (request && core.cancelQuestion) {
       try {void core.cancelQuestion(request.requestId).then(accepted => {
@@ -462,7 +505,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     if (integrated) {passages.length = 0; activePassage = null; projectTurns = [];}
 
     contextMode='scene'; contextVersion++; cancelPending(); mode.value = 'ask'; target = null; targetText.textContent = ''; targetNote.textContent = ''; targetSection.hidden = true; revisionActions.length = 0; turns = []; forgotten = 0; context = ''; contextLabel = 'None. No manuscript text will be sent.'; question.value = ''; question.placeholder = 'Ask about an idea, a detail, or where to go next…'; transcript.replaceChildren(); contextDetails.open = false;
-    waiting.textContent = ''; waiting.hidden = true; contextSummary.textContent = '';
+    waiting.textContent = ''; waiting.hidden = true; contextSummary.textContent = ''; streaming.hidden = true; streamingText.textContent = '';
     // Closing also removes private snapshots from hidden DOM, not just state.
     contextText.textContent = ''; contextText.hidden = true; contextSource.textContent = contextLabel;
     historyText.replaceChildren(); historyNote.textContent = ''; historySummary.textContent = 'Conversation history to send · 0 messages';
@@ -489,9 +532,15 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
         if (snapshot.sourceHash !== snapshot.sourceSha256) throw new Error('The selected source does not match its saved hash. Save and capture the selection again.');
       }
       preparing = false; pending = request; pendingRevision = Boolean(snapshot); update();
+      streaming.hidden = true; streamingText.textContent = ''; streamingLabel.textContent = 'OpenAI · Streaming answer';
       const answer = snapshot
         ? await core.suggestQuestionRevision!(request, binding, {repositoryId: snapshot.repositoryId, path: snapshot.path, sourceHash: snapshot.sourceHash, fromUtf8: snapshot.fromUtf8, toUtf8: snapshot.toUtf8, selectedText: snapshot.selectedText})
-        : await core.askQuestion(request, binding);
+        : await core.askQuestion(request, binding, text => {
+          if (!live() || version !== epoch || pending !== request || typeof text !== 'string' || !plainUnicode(text) || questionBytes(text) > QUESTION_LIMITS.answer) return;
+          const first = streaming.hidden;
+          streamingText.textContent = text; streaming.hidden = !text; streaming.setAttribute('aria-busy', 'true');
+          if (first && text) status.textContent = 'Receiving OpenAI answer… Preview is incomplete until the request finishes.';
+        });
       if (!live() || version !== epoch || pending !== request) return;
       if (answer.requestId !== request.requestId) throw new Error('The response did not match this question. It was ignored.');
       if (!answer.text?.trim()) throw new Error('OpenAI returned no text. No retry was sent automatically.');
@@ -506,11 +555,12 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
 
       while(turns.reduce((n,t)=>n+(t.revision?questionBytes(t.revision.snapshot.selectedText)+questionBytes(t.revision.replacementText)+questionBytes(t.answer.text):0),0)>QUESTION_LIMITS.memory){const old=turns.find(t=>t.revision);if(!old)break;old.proposalId=old.revision!.proposalId;delete old.revision;}
       question.value = ''; if (integrated) questionLabel.firstChild!.textContent = 'Ask a follow-up'; question.placeholder = 'Ask a follow-up…';
+      streaming.hidden = true; streamingText.textContent = ''; streaming.setAttribute('aria-busy', 'false');
       persist(); renderTranscript();
       const latest = transcript.lastElementChild as HTMLElement | null;
       if (latest && !integrated && !element.hidden) conversation.scrollTop += latest.getBoundingClientRect().top - conversation.getBoundingClientRect().top - 20;
       status.textContent = revision ? 'Suggested revision recorded. Review it or reject it below. Your manuscript has not been changed.' : answer.incomplete ? 'OpenAI returned an incomplete answer. It is marked below; nothing was retried automatically.' : 'Answer ready. Your manuscript has not been changed.';
-    } catch (error) { if (live() && version === epoch) {status.textContent = errorMessage(error); void checkStatus();} }
+    } catch (error) { if (live() && version === epoch) {status.textContent = errorMessage(error); if (!streaming.hidden) { streamingLabel.textContent = 'OpenAI · Interrupted preview · Not added to history'; streaming.setAttribute('aria-busy', 'false'); } void checkStatus();} }
     finally { if (live() && version === epoch) {preparing = false; pending = null; pendingRevision = false; update();} }
   }
   function revisionGuard(revision: Revision, reviewing = false) {
@@ -600,6 +650,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const passage = passages.find(p => p.id === id); if (!passage || disposed || fullReviewCancel) return;
     if ((pending || preparing || authBusy || turns.some(t => t.revision?.busy)) && passage !== activePassage) {open(); status.textContent = 'Wait for the current request or choose Cancel request before opening another passage.'; return;}
     stashPassage();
+    if (passage !== activePassage) { streaming.hidden = true; streamingText.textContent = ''; }
     activePassage = passage;
     ({turns, context, contextLabel, contextVersion, target, contextMode} = passage); mode.value = passage.mode; question.value = passage.draft; questionLabel.firstChild!.textContent = turns.length ? 'Ask a follow-up' : 'Your message'; currentTitle.textContent = passage.title; status.textContent = passage.status;
     contextMode = passage.contextMode;
@@ -678,7 +729,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     },
     visible: () => !element.hidden,
     close: () => integrated ? collapse() : close(true),
-    activatePassage, passageItems, presentReview,
+    activatePassage, passageItems, presentReview, collapse,
     activity: () => pending || preparing ? 'Asking…' : turns.length ? 'Answer ready' : '',
     /** Switches Ask / Suggest revision exactly as choosing it from the Response mode menu. */
     setMode(value: 'ask' | 'revision') { if (mode.value !== value && !mode.disabled) { mode.value = value; mode.dispatchEvent(new Event('change')); } },

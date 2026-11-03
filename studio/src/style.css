@@ -128,17 +128,17 @@ summary { min-height: 2.75rem; padding: .6rem 0; font-weight: 500; }
 .goal-card { position: absolute; top: 4.25rem; left: 50%; transform: translateX(-50%); z-index: 7; width: min(32rem, calc(100vw - 2rem)); }
 .goal-card[hidden] { display: none; }
 
-/* A single bounded drawer shares the repository and manuscript views. */
+/* A single bounded drawer holds the Project › Group › Scene tree (and the source files view). */
 .navigator { position: fixed; top: 4.5rem; left: 1rem; bottom: 1rem; width: min(var(--nav-width), calc(100vw - 2rem)); z-index: 8; display: flex; flex-direction: column; gap: .5rem; pointer-events: none; }
 .navigation-toggle { pointer-events: auto; flex: none; align-self: flex-start; max-width: 100%; background: var(--surface); font-size: .875rem; }
 .navigation-drawer { pointer-events: auto; display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; transform: translateX(0); visibility: visible; transition: transform .22s ease, visibility .22s ease; }
 .navigation-closed .navigation-drawer { transform: translateX(calc(-100% - 1rem)); visibility: hidden; transition-delay: 0s, .22s; }
 .navigation-drawer > [hidden] { display: none; }
-.navigation-tabs { display: flex; flex: none; gap: .25rem; padding: .5rem; border-bottom: 1px solid var(--border); }
-.navigation-tabs [role="tab"] { flex: 1; min-width: 0; padding: .5rem .25rem; font-size: .875rem; text-align: center; overflow-wrap: anywhere; border-color: transparent; }
-.navigation-tabs [aria-selected="true"] { color: var(--accent); background: var(--surface-hover); border-color: var(--border-strong); }
 .navigation-drawer > .panel { flex: 1; min-height: 0; padding: 1rem; overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; }
 .navigation-drawer h2 { font-size: .95rem; margin: 0 0 .75rem; overflow-wrap: anywhere; }
+.nav-view[hidden] { display: none; }
+.nav-back { margin-bottom: .75rem; min-height: 2.75rem; border-color: transparent; padding-inline: .4rem; color: var(--fg-muted); }
+.nav-back:hover { color: var(--accent); border-color: transparent; }
 .files .primary { width: 100%; text-align: center; margin-bottom: .75rem; min-height: 2.25rem; padding: .3rem .7rem; background: transparent; border: 1px solid var(--border-strong); color: var(--fg); font-weight: 500; font-size: .875rem; }
 .files .primary:hover { border-color: var(--accent); color: var(--accent); filter: none; }
 .recent { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: .75rem; }
@@ -334,48 +334,55 @@ dialog { color: var(--fg); }
 .drafting-help { color: var(--fg-muted); font-size: .8rem; margin-block: .8rem; }
 .drafting-warning { color: var(--warn); border: 1px solid var(--warn); border-radius: var(--radius-sm); padding: .7rem; margin-block: .8rem; overflow-wrap: anywhere; }
 .drafting-warning summary { padding-block: .2rem; }
-.drafting-scenes { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; }
-.drafting-scene { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: .4rem; background: var(--surface); min-width: 0; }
-.drafting-scene:focus-within { border-color: var(--accent); }
-.scene-open { width: 100%; border-color: transparent; padding: .35rem; font-size: .9rem; min-height: 2.25rem; }
-.scene-open:hover { color: var(--accent); border-color: transparent; }
-.scene-open[draggable="true"] { cursor: grab; }
-.scene-path { color: var(--fg-muted); font-family: var(--font-mono); font-size: .75rem; overflow-wrap: anywhere; margin: .2rem .4rem; }
-.sheet-preview { margin: .35rem .4rem; overflow-wrap: anywhere; white-space: normal; }
 .manuscript-move-status { grid-column: 1 / -1; }
 .manuscript-move-status:empty { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
-.library-groups ul { list-style: none; padding-inline-start: 1rem; }
-.library-groups > ul { padding-inline-start: 0; }
-.library-groups button, .library-groups summary { min-height: 2.75rem; }
-.library-groups button:focus, .library-groups summary:focus, .library-sheets button:focus { outline: 3px solid var(--accent); outline-offset: 3px; }
-.library-groups summary { cursor: pointer; padding: .6rem; }
 .library-review-choice { display: flex; align-items: center; gap: .5rem; min-height: 2.75rem; }
-.library-groups [aria-pressed="true"] { font-weight: 700; border: 2px solid currentColor; }
-.sheets-back { display: none; }
 .back-to-sheets { display: none; }
-@media (min-width: 1001px) {
-  .navigator:has(#navigation-panel-manuscript:not([hidden]) .drafting-panel) { width: min(42rem, 58vw); }
-  .workspace:has(.navigator:not(.navigation-closed) #navigation-panel-manuscript:not([hidden]) .drafting-panel) .preview { left: min(43rem, 59vw); }
-  .drafting-panel:has(.library-sheets) { display: grid; grid-template-columns: minmax(12rem, 2fr) minmax(16rem, 3fr); gap: 1rem; align-items: start; }
-  .library-groups { border-right: 1px solid var(--border); padding-right: .75rem; }
-  .drafting-panel:has(.library-groups.pane-collapsed) { grid-template-columns: auto minmax(16rem, 1fr); }
-  .drafting-panel:has(.library-sheets.pane-collapsed) { grid-template-columns: minmax(12rem, 1fr) auto; }
-  .library-groups.pane-collapsed > :not(.pane-collapse), .library-sheets.pane-collapsed > :not(.pane-collapse) { display: none; }
-}
 @media (max-width: 1000px) {
-  .drafting-panel[data-step="library"] .library-sheets, .drafting-panel[data-step="sheets"] .library-groups { display: none; }
-  .sheets-back { display: inline-flex; min-height: 2.75rem; }
   .back-to-sheets { display: inline-flex; }
-  .pane-collapse { display: none; }
 }
 @media (max-width: 600px) {
   .studio:not(.standalone-writing) .corner-actions:has(.first-story-entry) { flex-wrap: nowrap; overflow-x: auto; max-width: calc(100vw - 1rem); }
   .studio:not(.standalone-writing) .corner-actions:has(.first-story-entry) button { flex: none; }
 }
-.scene-group { color: var(--fg-muted); font-size: .75rem; display: block; margin: .3rem .4rem; }
-.scene-actions { display: flex; flex-wrap: wrap; gap: .3rem; }
-.scene-actions button { font-size: .75rem; padding: .25rem .55rem; min-width: 2.5rem; min-height: 2.25rem; text-align: center; }
-.drafting-drop { border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); padding: 1rem; margin-block: .7rem; color: var(--fg-muted); font-size: .8125rem; }
+.tree-project { display: flex; align-items: center; gap: .25rem; margin: -.25rem -.25rem .5rem 0; }
+.tree-project h2 { flex: 1; min-width: 0; margin: 0; }
+.library-tree, .library-tree ul { list-style: none; margin: 0; padding: 0; }
+.tree-row { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem; padding-left: calc(var(--depth, 0) * 1rem); border-radius: var(--radius-sm); }
+.tree-row:hover, .tree-row:focus-within { background: var(--surface-hover); }
+.tree-row > button { flex: 1; min-width: 0; min-height: 2.75rem; padding: .35rem .5rem; border-color: transparent; background: transparent; font-size: .9rem; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-row > button:hover { color: var(--accent); border-color: transparent; }
+.tree-row > button:focus { outline: 3px solid var(--accent); outline-offset: -3px; }
+.tree-toggle { font-weight: 600; }
+.tree-toggle::before { content: ''; display: inline-block; width: .35rem; height: .35rem; margin: 0 .6rem .1rem .15rem; border-right: 2px solid var(--fg-muted); border-bottom: 2px solid var(--fg-muted); transform: rotate(-45deg); transition: transform .15s ease; }
+.tree-toggle[aria-expanded="true"]::before { transform: rotate(45deg); }
+.scene-open { padding-left: 1.5rem !important; }
+.scene-open[aria-current] { color: var(--accent); font-weight: 600; }
+.scene-open[draggable="true"], .tree-toggle[draggable="true"] { cursor: grab; }
+.tree-count { flex: none; color: var(--fg-muted); font: 400 .75rem var(--font-mono); padding-inline: .25rem; }
+.scene-path { color: var(--fg-muted); font-family: var(--font-mono); font-size: .75rem; overflow-wrap: anywhere; margin: .35rem .5rem 0; }
+/* Drop captions from the shared move system appear only while a drag is over the row. */
+.tree-row > .manuscript-drop-label, .tree-footer > .manuscript-drop-label { display: none; }
+.tree-row.move-drop-active > .manuscript-drop-label, .tree-footer.move-drop-active > .manuscript-drop-label { display: block; flex-basis: 100%; }
+.tree-footer { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--border); }
+.tree-add { flex: 1; min-height: 2.75rem; font-size: .8125rem; padding: .3rem .6rem; text-align: center; }
+.tree-add::before { content: '+' / ''; color: var(--accent); margin-right: .3rem; }
+/* ⋯ menus hold everything that is not the tree itself. */
+.row-menu { position: relative; flex: none; }
+.row-menu > summary { list-style: none; cursor: pointer; min-width: 2.75rem; min-height: 2.75rem; display: grid; place-items: center; border-radius: var(--radius-sm); color: var(--fg-muted); line-height: 1; }
+.row-menu > summary::-webkit-details-marker { display: none; }
+.tree-row .row-menu > summary { opacity: 0; }
+.tree-row:hover .row-menu > summary, .tree-row:focus-within .row-menu > summary, .row-menu[open] > summary { opacity: 1; }
+.row-menu > summary:hover, .row-menu[open] > summary { color: var(--accent); background: var(--surface); }
+.row-menu > summary:focus { outline: 3px solid var(--accent); outline-offset: -3px; opacity: 1; }
+.row-menu > .row-menu-items { visibility: hidden; }
+.row-menu-items { position: fixed; z-index: 40; display: flex; flex-direction: column; min-width: 12rem; max-width: 18rem; padding: .3rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
+.row-menu-items button { width: 100%; min-height: 2.75rem; padding: .35rem .6rem; border-color: transparent; background: transparent; font-size: .8125rem; text-align: left; }
+.row-menu-items button:hover:not(:disabled) { color: var(--accent); background: var(--surface-hover); }
+.row-menu-items hr { width: 100%; border: 0; border-top: 1px solid var(--border); margin: .3rem 0; }
+.row-menu-items .menu-label { margin: .3rem .6rem .1rem; color: var(--fg-muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; }
+.row-menu-items .recent { flex-direction: column; align-items: stretch; gap: 0; margin: 0; }
+@media (hover: none) { .tree-row .row-menu > summary { opacity: 1; } }
 .drafting-dialog > p { margin-block: .8rem; }
 .drafting-dialog form { display: flex; flex-wrap: wrap; gap: .7rem; }
 .drafting-dialog form > p, .drafting-dialog form > ul { flex-basis: 100%; }
@@ -434,11 +441,6 @@ dialog { color: var(--fg); }
 .assembled-editor .cm-content:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; }
 .assembled-editor .cm-content { padding-bottom: 2rem !important; }
 
-.scene-break-list { margin: 0; padding-left: 1.75rem; }
-.scene-break-list li { padding-left: .25rem; margin: .5rem 0; }
-.scene-break-list button { width: 100%; min-height: 2.75rem; padding: .65rem; font-size: 1rem; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; text-align: left; }
-.scene-break-list button[aria-current="location"] { border-width: 2px; font-weight: 600; }
-.scene-navigator-body .muted { font-size: 1rem; line-height: 1.5; }
 
 /* Document details are a presentation of the unchanged manuscript source. */
 .document-details { margin-block: 1rem; }
@@ -589,7 +591,7 @@ dialog { color: var(--fg); }
 .review-result-actions p { flex-basis: 100%; }
 /* Beside the editor when there is room, so the panel never sits on top of the text being reviewed. */
 @media (min-width: 901px) {
-  :root:not([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .studio:not(.standalone-writing):has(> .heinlein-review-panel:not([hidden],.review-tucked)) .preview { padding-right: calc(var(--review-width) + 2rem); }
+  :root:not([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .studio:not(.standalone-writing):has(> .heinlein-review-panel:not([hidden],.review-tucked,.heinlein-integrated)) .preview { padding-right: calc(var(--review-width) + 2rem); }
 }
 /* A full reading sheet when it is not: narrow windows and large text get the whole viewport, and covered chrome leaves the tab order. */
 @media (max-width: 900px) {
@@ -600,7 +602,7 @@ dialog { color: var(--fg); }
   .review-nav button { line-height: 1.2; padding-block: .25rem; }
   .review-conflict { margin-inline: 0; padding-inline: 0; border-inline: 0; border-radius: 0; }
   .heinlein-review-panel pre { padding: .4rem .5rem; }
-  .studio:has(> .heinlein-review-panel:not([hidden],.review-tucked)) > :not(.heinlein-review-panel, dialog) { visibility: hidden; }
+  .studio:has(> .heinlein-review-panel:not([hidden],.review-tucked,.heinlein-integrated)) > :not(.heinlein-review-panel, dialog) { visibility: hidden; }
 }
 :root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel { inset: 0; width: auto; border: 0; border-radius: 0; padding: 0 .6rem 2rem; scroll-padding-block: 1rem; }
 :root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .review-head { position: static; margin-inline: -.6rem; padding: .35rem .6rem; gap: .3rem; }
@@ -609,7 +611,7 @@ dialog { color: var(--fg); }
 :root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .review-nav button { line-height: 1.2; padding-block: .25rem; }
 :root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .review-conflict { margin-inline: 0; padding-inline: 0; border-inline: 0; border-radius: 0; }
 :root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel pre { padding: .4rem .5rem; }
-:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .studio:has(> .heinlein-review-panel:not([hidden],.review-tucked)) > :not(.heinlein-review-panel, dialog) { visibility: hidden; }
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .studio:has(> .heinlein-review-panel:not([hidden],.review-tucked,.heinlein-integrated)) > :not(.heinlein-review-panel, dialog) { visibility: hidden; }
 
 /* Optional story guide: large targets, one column, no colour-only progress. */
 .first-story { color: var(--fg); background: var(--bg); border: 2px solid var(--border); border-radius: 12px; width: min(46rem, calc(100vw - 1rem)); max-width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); padding: clamp(.75rem, 3vw, 2rem); overflow: auto; font-size: max(18px, 1rem); line-height: 1.6; box-sizing: border-box; }
@@ -809,8 +811,7 @@ dialog { color: var(--fg); }
 /* Keep the scrollable Manuscript pane above the measured desktop action bar.
    Narrow layouts already put that bar after the workspace in normal flow. */
 @media (min-width:761px) {
-  .studio:not(.standalone-writing):has(#navigation-tab-manuscript[aria-selected="true"]) .navigator { bottom:calc(1.6rem + var(--manuscript-footer-space,0px)); }
-  .studio:not(.standalone-writing):has(#navigation-tab-files[aria-selected="true"]) .navigator { bottom:calc(1.6rem + var(--manuscript-footer-space,0px)); }
+  .studio:not(.standalone-writing) .navigator { bottom:calc(1.6rem + var(--manuscript-footer-space,0px)); }
 }
 /* Manuscript moves use readable text grips and explicit, non-colour drop feedback. */
 .manuscript-move-grip { min-height:44px; font-size:1rem; cursor:grab; white-space:normal; text-align:start; }
@@ -830,14 +831,9 @@ dialog { color: var(--fg); }
 .manuscript-move-dialog form, .manuscript-move-dialog .drafting-field { min-width:0; }
 .manuscript-move-dialog .drafting-field { grid-template-columns:minmax(0,1fr); }
 @media (max-width:560px) {
-  .navigator:has(#navigation-tab-manuscript[aria-selected="true"]) .navigation-tabs { flex-direction:column; padding:.25rem; }
-  .navigator:has(#navigation-tab-manuscript[aria-selected="true"]) .navigation-tabs [role="tab"] { flex:none; width:100%; min-height:44px; overflow-wrap:normal; word-break:normal; }
-  .navigator:has(#navigation-tab-files[aria-selected="true"]) .navigation-tabs { flex-direction:column; padding:.25rem; }
-  .navigator:has(#navigation-tab-files[aria-selected="true"]) .navigation-tabs [role="tab"] { flex:none; width:100%; min-height:48px; overflow-wrap:normal; word-break:normal; }
-  #navigation-panel-manuscript { padding:.35rem; }
-  #navigation-panel-manuscript .drafting-chapters { padding:.25rem; }
-  #navigation-panel-manuscript .manuscript-group-card { padding:.3rem; }
-  #navigation-panel-manuscript .manuscript-group-card button { margin:.2rem 0; width:100%; }
+  .nav-panel .drafting-chapters { padding:.25rem; }
+  .nav-panel .manuscript-group-card { padding:.3rem; }
+  .nav-panel .manuscript-group-card button { margin:.2rem 0; width:100%; }
   .manuscript-move-dialog { width:calc(100vw - 1rem); max-width:calc(100vw - 1rem); max-height:calc(100dvh - 1rem); padding:.5rem; }
   .manuscript-move-dialog form { flex-direction:column; align-items:stretch; }
   .manuscript-move-dialog :is(h2,p,label,button) { min-width:0; max-width:100%; overflow-wrap:break-word; word-break:normal; }
@@ -1008,10 +1004,6 @@ dialog { color: var(--fg); }
 .studio:not(.standalone-writing):has(.document-workspace) .preview { grid-column:2; position:relative; inset:auto; min-block-size:0; min-inline-size:0; overflow:hidden; padding:0; scroll-padding:0; }
 /* The workspace grid owns pane positions. Legacy floating navigation rules must
    not widen the sidebar or offset the editor inside this grid. */
-.studio:not(.standalone-writing):has(.document-workspace) .navigator:has(#navigation-panel-manuscript:not([hidden]) .drafting-panel) { width:100%; box-sizing:border-box; }
-.studio:not(.standalone-writing):has(.document-workspace) .workspace:has(.navigator:not(.navigation-closed) #navigation-panel-manuscript:not([hidden]) .drafting-panel) .preview { left:auto; }
-.studio:not(.standalone-writing):has(.document-workspace) .drafting-panel:has(.library-sheets) { display:block; }
-.studio:not(.standalone-writing):has(.document-workspace) .library-groups { border-right:0; padding-right:0; }
 .studio:not(.standalone-writing):has(.document-workspace) .document-workspace { height:100%; min-block-size:0; display:flex; flex-direction:column; padding:0; }
 .document-workspace .document-tabs { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:4px; min-inline-size:0; container-type:normal; }
 .document-workspace .document-tab-area { display:block; flex:1 1 10ch; max-block-size:none; min-inline-size:0; overflow-x:auto; overflow-y:hidden; padding:3px; }
@@ -1049,8 +1041,6 @@ dialog { color: var(--fg); }
 .navigation-modal[open] { display:flex; flex-direction:column; gap:4px; }
 .navigation-modal .navigation-drawer { min-height:0;flex:1;max-height:none; }
 .navigation-modal :is(button,summary) { min-block-size:48px; }
-.navigation-modal .navigation-tabs { flex-wrap:wrap; }
-.navigation-modal .navigation-tabs [role=tab] { flex:1 1 100%;white-space:normal;overflow-wrap:normal;font-size:1rem; }
 .studio:not(.standalone-writing):has(.document-workspace) > .status-pill .project-switcher { max-width:min(14rem,30vw); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .studio:not(.standalone-writing):has(.document-workspace) > .status-pill.chrome,.studio:not(.standalone-writing):has(.document-workspace) > .status-pill.chrome > * { opacity:1; }
 .document-workspace .editor-toolbar .document-role { display:inline; font:inherit; color:inherit; }
@@ -1162,13 +1152,6 @@ dialog { color: var(--fg); }
 .file-entry-row > .file-rename { min-block-size:48px; padding:.5rem .65rem; white-space:normal; }
 @media(max-width:380px) { .file-entry-row { grid-template-columns:minmax(0,1fr); gap:0; margin-block-end:.65rem; } .file-entry-row > .file-rename { justify-self:start; } }
 
-.library-icon-button { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: .55rem; }
-.library-icon-button svg { width: 1.25rem; height: 1.25rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.scene-actions > button { min-height: 44px; }
-.scene-actions .library-icon-button { min-width: 44px; min-height: 44px; }
-@media (min-width: 1001px) {
-  .library-groups > h3, .library-sheets > h3 { display: inline-block; margin: 0 0 0 .35rem; vertical-align: middle; }
-}
 
 /* At enlarged narrow widths, focus gives the saved reference room to read. */
 @media (max-width: 600px) {
@@ -1219,11 +1202,9 @@ dialog { color: var(--fg); }
 .question-panel-integrated :focus-visible, .question-passage-chip:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 @media (min-width: 1400px) and (min-width: 64.001rem) {
   .question-panel-integrated { top: 3.5rem; width: min(42vw, 34rem); padding-inline: 1.25rem; }
-  .workspace.questions-open .preview { right: min(42vw, 34rem); padding-inline: 1rem; }
 }
 @media (max-width: 64rem) {
   .question-panel-integrated { inset: 0; width: auto; }
-  .workspace.questions-open .preview { right: 0; }
   .question-panel-integrated .question-return { display: none; }
 }
 @media (max-width: 700px) {
@@ -1253,7 +1234,6 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 .question-panel-integrated summary, .question-panel-integrated label, .question-panel-integrated h4 { overflow-wrap: anywhere; }
 .question-panel-integrated[data-presentation="dedicated"] { inset: 0; width: auto; }
 .question-panel-integrated[data-presentation="dedicated"] .question-return { display: none; }
-body:has(.question-panel-integrated[data-presentation="dedicated"]:not([hidden])) .workspace.questions-open .preview { right: 0; }
 /* The integrated pane uses one scroll surface rather than the existing chat grid. */
 .question-panel-integrated { display:flex; flex-direction:column; inset:0 0 0 auto; z-index:20; padding:0 1.25rem 2rem; background:var(--bg); backdrop-filter:none; -webkit-backdrop-filter:none; border-radius:0; box-shadow:none; overflow-y:auto; font-size:1rem; }
 .question-panel-integrated > * { flex-shrink:0; min-width:0; }
@@ -1263,10 +1243,9 @@ body:has(.question-panel-integrated[data-presentation="dedicated"]:not([hidden])
 .question-panel-integrated .question-text { max-height:none; overflow:visible; font-style:normal; }
 .question-panel-integrated .question-turn > .markdown-reading { padding:0; background:transparent; }
 .question-panel-integrated .question-settings { margin:0; }
-@media (min-width:1400px) { .question-panel-integrated[data-presentation="docked"] { top:3.5rem; width:min(42vw,34rem); } }
+@media (min-width:1400px) { .question-panel-integrated[data-presentation="overlay"] { top:3.5rem; width:min(42vw,34rem); } }
 .question-panel-integrated[data-presentation="dedicated"] { inset:0; width:auto; }
-.workspace.questions-open .navigator { display:none; }
-body:has(.question-panel-integrated[data-presentation="docked"]:not([hidden])) .studio > .workspace.questions-open { padding-right:min(42vw,34rem); }
+/* Questions occupies its own overlay; opening it never resizes the workspace. */
 @media (max-width:700px) {
   .cm-editor .cm-gutters .question-gutter, .cm-editor .cm-gutters-after:has(> .question-gutter:only-child) { display:none; }
 }
@@ -1276,3 +1255,28 @@ body:has(.question-panel-integrated[data-presentation="docked"]:not([hidden])) .
   .document-workspace:has(.reference-pane:not([hidden])):has(.active-document-pane:focus-within) > .split-reading-offer,
   .document-workspace:has(.reference-pane:focus-within) > .split-reading-offer { display:none; }
 }
+
+/* One Heinlein surface; neither tab changes manuscript layout. */
+.heinlein-tabs {display:flex;flex-wrap:wrap;gap:.5rem;}
+.heinlein-tabs button {min-block-size:48px;font-size:1rem;padding:.5rem .75rem;}
+.heinlein-tabs [aria-pressed="true"] {font-weight:700;text-decoration:underline;text-underline-offset:.25em;}
+.question-panel-integrated .question-heading {display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;}
+.question-panel-integrated .question-heading h3 {margin:0;}
+.question-settings-toggle {font-size:1rem;min-block-size:48px;}
+.question-passage-quote {margin:0;padding:.75rem;border-inline-start:3px solid currentColor;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--font-text);}
+.heinlein-review-panel.heinlein-integrated {position:fixed;inset:0;z-index:20;width:auto;max-height:none;overflow:auto;background:var(--bg);border-radius:0;padding:1rem 1.25rem 2rem;}
+.heinlein-review-panel.heinlein-integrated [hidden] {display:none;}
+.heinlein-review-panel.heinlein-integrated :is(button,summary,select,input) {min-block-size:48px;font-size:1rem;}
+.heinlein-review-panel.heinlein-integrated .review-head {display:flex;flex-wrap:wrap;align-items:center;gap:.75rem;}
+@media(min-width:1400px) {.heinlein-review-panel.heinlein-integrated {inset:3.5rem 0 0 auto;width:min(42vw,34rem);}}
+
+:root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel.heinlein-integrated {inset:0;width:auto;}
+/* Keep enlarged labels whole: each header action can claim its own row. */
+.question-panel-integrated .heinlein-tabs {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,11rem),1fr));flex:1 0 100%;width:100%;}
+.question-panel-integrated .heinlein-tabs button {max-width:100%;width:100%;min-inline-size:0;overflow-wrap:normal;word-break:normal;}
+.question-panel-integrated .question-heading > button {max-width:100%;flex:1 0 auto;min-inline-size:min(100%,12rem);overflow-wrap:normal;word-break:normal;}
+/* Activity/count text must not wrap the editor toolbar and move the manuscript. */
+.document-command-bar button[aria-controls="drafting-questions"] {flex:0 0 12ch;inline-size:12ch;max-inline-size:12ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* Chrome padding stays bounded when text zoom leaves only a few words per line. */
+.question-panel-integrated {padding-inline:clamp(12px,1.25rem,24px);}
+.question-panel-integrated .question-heading button {padding-inline:clamp(8px,.75rem,16px);overflow-wrap:anywhere;}

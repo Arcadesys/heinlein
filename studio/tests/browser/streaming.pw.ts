@@ -1,0 +1,40 @@
+import {test,expect} from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+for (const zoom of [100,200]) test(`live answer preview preserves source and focus at ${zoom}%`,async({page})=>{
+ const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('/tests/browser/questions.html');
+ await page.evaluate(async zoom=>{await (window as any).questionsFixture.ready;document.documentElement.dataset.zoom=String(zoom);await document.fonts.ready;(window as any).questionsFixture.select();},zoom);
+ const geometry=()=>page.locator('.cm-content').evaluate(el=>{const r=el.getBoundingClientRect();return {width:r.width,top:r.top,left:r.left};});
+ const before=await geometry();await page.keyboard.press('Control+j');
+ const pane=page.locator('.question-panel');await expect(pane).toBeVisible();
+ const labels=await pane.locator('.question-heading button').evaluateAll(buttons=>buttons.map(button=>{const box=button.getBoundingClientRect(),walk=document.createTreeWalker(button,NodeFilter.SHOW_TEXT);let fits=true;for(let node=walk.nextNode();node;node=walk.nextNode()){const expression=/[A-Za-z]+/g;for(const match of (node.textContent??'').matchAll(expression)){const range=document.createRange();range.setStart(node,match.index!);range.setEnd(node,match.index!+match[0].length);const lines=[...range.getClientRects()];if(lines.length!==1||lines.some(r=>r.left<box.left||r.right>box.right))fits=false;}}return {text:button.textContent,fits};}));
+ expect(labels.filter(label=>!label.fits)).toEqual([]);
+ await pane.getByRole('textbox',{name:'Your drafting question',exact:true}).fill('What stands out?');
+ await pane.getByRole('button',{name:'Ask',exact:true}).click();
+ const cancel=pane.getByRole('button',{name:'Cancel request',exact:true});await cancel.focus();
+ await page.evaluate(()=>(window as any).questionsFixture.progress('Live <script>inert</script> — 🦊'));
+ const preview=pane.getByLabel('Live answer preview',{exact:true});await expect(preview).toHaveText('Live <script>inert</script> — 🦊');
+ await expect(cancel).toBeFocused();await expect(preview.locator('script')).toHaveCount(0);
+ await expect(pane.locator('.question-transcript')).not.toContainText('Live');
+ await expect.poll(geometry).toEqual(before);
+ expect((await new AxeBuilder({page}).include('.question-panel').analyze()).violations).toEqual([]);
+ await page.evaluate(()=>(window as any).questionsFixture.finishAnswer());
+ await expect(pane.locator('.question-transcript')).toContainText('Validated final answer.');await expect(preview).toBeHidden();
+ await page.evaluate(()=>(window as any).questionsFixture.progress('Late chunk'));
+ await expect(preview).toHaveText('');await pane.getByRole('button',{name:'Collapse',exact:true}).click();
+ await expect.poll(geometry).toEqual(before);
+ const state=await page.evaluate(()=>(window as any).questionsFixture.state());expect(state.source).toBe(state.original);expect(state.sent).toBe(1);expect(state.applied).toBe(0);expect(errors).toEqual([]);
+});
+
+test('one Heinlein pane keeps a pending whole-scene review across tab switches',async({page})=>{
+ await page.goto('/tests/browser/questions.html');await page.evaluate(async()=>{await (window as any).questionsFixture.ready;document.documentElement.dataset.zoom='200';(window as any).questionsFixture.select();});
+ const geometry=()=>page.locator('.cm-content').evaluate(el=>{const r=el.getBoundingClientRect();return {width:r.width,left:r.left,top:r.top};});const before=await geometry();
+ await page.keyboard.press('Control+j');const passage=page.locator('.question-panel');await expect(passage.getByRole('heading',{name:'Heinlein',exact:true})).toBeVisible();
+ await passage.getByRole('button',{name:'Whole scene',exact:true}).click();const review=page.getByRole('dialog',{name:'Heinlein Review',exact:true});await expect(review).toBeVisible();
+ await review.getByRole('button',{name:'Run Heinlein Review',exact:true}).click();await expect.poll(()=>page.evaluate(()=>(window as any).questionsFixture.state().reviewCalls)).toBe(1);
+ await review.getByRole('button',{name:'Passage',exact:true}).click();await expect(passage).toBeVisible();await page.evaluate(()=>(window as any).questionsFixture.finishReview());
+ await passage.getByRole('button',{name:'Whole scene',exact:true}).click();await expect(review).toBeVisible();await expect(review.locator('.review-status')).toContainText('Review ready');
+ await expect.poll(geometry).toEqual(before);expect((await new AxeBuilder({page}).include('.heinlein-review-panel').analyze()).violations).toEqual([]);
+ await review.getByRole('button',{name:'Return to writing',exact:true}).click();await expect(review).toBeHidden();await expect.poll(geometry).toEqual(before);
+ const state=await page.evaluate(()=>(window as any).questionsFixture.state());expect(state.reviewCalls).toBe(1);expect(state.source).toBe(state.original);expect(state.applied).toBe(0);
+});

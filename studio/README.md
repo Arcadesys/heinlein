@@ -152,6 +152,15 @@ no repository access and displays a native-app requirement.
 
 ## Use
 
+On relaunch, Studio reopens the last project and its last editable source document,
+with the saved cursor/selection, scroll position, and Source or Reading view.
+Position metadata stays in the local project library and is flushed on native
+close. Folder identity, source hash, scene identity, and recovery checks still
+apply: changed or missing writing opens the project overview with a message;
+an unavailable project leaves drafts and Projects usable. Earlier libraries
+without a recorded last project keep the existing drafts startup. Closing from
+standalone writing returns to drafts, retaining project positions for later.
+
 Choose **Open folder** using the operating system's native folder picker. Select
 your existing `writing-archive` checkout (or the Singularity Log project folder).
 The File tree preserves normal directory navigation. The Manuscript view lists
@@ -208,6 +217,15 @@ The pill fades while you type and returns when the pointer moves.
 - **Cmd/Ctrl+/** or **?** shows every shortcut.
 
 ## Local MCP proposals
+
+**More actions → MCP connection…** lets you explicitly allow the current saved
+source file for a reusable local MCP connection. Review the full file list in
+the native confirmation. Add files individually; allowing a source from another
+project replaces the selection. **Disconnect all project access** stops reads
+and proposals. Project opening alone grants nothing, and unsaved buffers remain
+private. Configure Codex once with the server's `--studio-selection` launch mode;
+the same running server follows confirmed project changes and invalidates old
+snapshots. See the launch instructions below for the one-time setup.
 
 The **MCP proposals** button lists pending proposals for the selected repository
 and attributed local operation receipts. Save and resolve recovery first. Review
