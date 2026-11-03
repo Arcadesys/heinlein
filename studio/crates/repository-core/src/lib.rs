@@ -3,6 +3,8 @@
 mod drafting;
 #[cfg(all(test, unix))]
 mod fuzz_support;
+#[cfg(unix)]
+pub mod mcp_selection;
 mod publishing_copy;
 mod recovery;
 pub mod standalone;

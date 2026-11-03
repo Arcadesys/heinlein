@@ -27,6 +27,7 @@ compile_error!("Select exactly one native acceptance fixture");
 mod drafting;
 mod first_story;
 mod github;
+mod mcp_access;
 #[cfg(all(test, unix))]
 mod persistence_tests;
 mod projects;
@@ -785,6 +786,7 @@ fn production_main() {
         })
         .invoke_handler(tauri::generate_handler![
             projects::project_request,
+            mcp_access::mcp_access_request,
             standalone::standalone_request,
             github::github_request,
             update::update_request,

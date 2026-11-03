@@ -9,6 +9,39 @@ separately authenticated/native Studio author flow may apply them through Core.
 
 ## Build and explicitly launch
 
+For one reusable Codex connection, build the server once and use
+`--studio-selection PRIVATE_ABSOLUTE_DIRECTORY`. Point it to Studio's private
+`app_data_dir/mcp-selection-v1` directory. The server starts with no project
+access when that directory has no selection; it does not discover folders.
+
+In Studio, open any local or managed project and a saved Markdown source file.
+Choose **More actions → MCP connection… → Allow this source file…**, then review
+the native confirmation's complete file list. Add source files one at a time.
+Choosing a source in another project replaces the previous project's selection.
+**Disconnect all project access** revokes the selection without deleting pending
+proposals. Opening a project alone does not share it with MCP.
+
+The same running connection follows explicitly confirmed selection changes.
+Changes and revocation invalidate cached read snapshots, including when switching
+away and back to the same project. Selection files are private, bounded,
+atomically persisted, tied to the repository's filesystem identity, and separate
+from manuscript storage. MCP tools cannot create or change this selection.
+Revocation and each tool call share a filesystem lock so a successful revocation
+does not leave an old-scope operation running behind it. A stale native
+confirmation cannot overwrite a newer selection or revocation.
+
+For example, after replacing the binary/directory arguments with real absolute
+paths, Codex's one-time registration is:
+
+```sh
+codex mcp add heinlein -- /absolute/path/to/heinlein-local-mcp \
+  --studio-selection /absolute/private/app_data_dir/mcp-selection-v1 \
+  --client-label 'Codex local drafting'
+```
+
+The server also retains its fixed selection mode below for isolated clients and
+tests. Do not combine `--studio-selection` with fixed-selection arguments.
+
 macOS/Linux with Rust and Cargo:
 
 ```sh

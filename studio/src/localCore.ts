@@ -1,4 +1,5 @@
 import type {ProjectRequest,ProjectResponse,ProjectResume} from './projects';
+import type {McpAccessRequest,McpAccessView} from './mcpAccess';
 import type {DraftRequest,DraftResponse} from './standaloneDrafts';
 import type {UpdateStatus} from './updatePanel';
 import type {GitHubRequest,GitHubResponse} from './githubTypes';
@@ -76,6 +77,7 @@ export interface ReviewEdit { location?:{line:number;column:number}; id: string;
 export interface ReviewResult { reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
 export interface LocalCore {
   projectRequest?(request:ProjectRequest):Promise<ProjectResponse>;
+  mcpRequest?(request:McpAccessRequest):Promise<McpAccessView>;
   standalone?(request:DraftRequest):Promise<DraftResponse>;
   available(): boolean;
   updateRequest?(action: 'status'|'check'|'schedule'):Promise<UpdateStatus>;
@@ -194,6 +196,7 @@ export const localCore: LocalCore = {
   onQuitRefused:callback=>listen<string>('quit-refused',event=>callback(event.payload)),
   onCloseRequested: callback => listen('close-requested', callback),
   projectRequest:request=>invoke('project_request',{request}),
+  mcpRequest:request=>invoke('mcp_access_request',{request}),
   pickRepository: () => invoke('pick_repository'),
   recentRepositories: () => invoke('recent_repositories'),
   openRecentRepository: id => invoke('open_recent_repository', { id }),

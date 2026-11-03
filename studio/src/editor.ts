@@ -93,9 +93,10 @@ function historyEndings(text: string): RawHistory {
   }
   return {length: text.length - removed, breaks, endings};
 }
-export function createEditor(parent: HTMLElement, source: string, changed: (raw: string, origin: EditorChangeOrigin) => void, save: () => void, typed?: (kind: TypewriterKey) => void) {
+export function createEditor(parent: HTMLElement, source: string, changed: (raw: string, origin: EditorChangeOrigin) => void, save: () => void, typed?: (kind: TypewriterKey) => void, notice?: (message:string)=>void) {
   let raw = source;
   let savedSource = source;
+  let destroyed = false;
   const editable = new Compartment();
   const normalize = (text: string) => text.replace(/\r\n|\r/g, '\n');
   const rawSource = StateField.define<string>({
@@ -126,6 +127,18 @@ export function createEditor(parent: HTMLElement, source: string, changed: (raw:
   const view = new EditorView({ parent, state: EditorState.create({
     doc: normalize(source),
     extensions: [editable.of([EditorState.readOnly.of(false), EditorView.editable.of(true)]), rawSource, passageField,
+      EditorState.transactionFilter.of(transaction => {
+        if (!transaction.docChanged || !transaction.isUserEvent('input.paste')) return transaction;
+        let hasText = false;
+        transaction.changes.iterChanges((_a, _b, _c, _d, insert) => { if (insert.length) hasText = true; });
+        if (hasText) return transaction;
+        // A missing/unreadable clipboard payload is not a request to delete the
+        // selection. Inspect the resulting transaction without reading the
+        // native clipboard a second time or replacing CodeMirror's paste logic.
+        const message = 'Paste contained no readable text. Nothing was replaced.';
+        queueMicrotask(() => { if (!destroyed) notice?.(message); });
+        return {effects: EditorView.announce.of(message)};
+      }),
       // Reserve the compact icon width even before the first passage is marked.
       gutter({class: 'question-gutter', side: 'after', initialSpacer: () => new PassageMarker([]), markers: view => view.state.field(passageField).markers}),
       invertedEffects.of(transaction => transaction.docChanged ? [rawHistory.of(historyEndings(transaction.startState.field(rawSource)))] : []),
@@ -178,5 +191,5 @@ export function createEditor(parent: HTMLElement, source: string, changed: (raw:
       view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: text.replace(/\r\n|\r/g, '\n')}, annotations: replacement.of({text, origin})});
     },
     setEditable: (value: boolean) => view.dispatch({effects: editable.reconfigure([EditorState.readOnly.of(!value), EditorView.editable.of(value)])}),
-    markSaved: (text: string) => { savedSource = text; }, text: () => raw, destroy: () => view.destroy(), undo: () => undo(view), redo: () => redo(view), find: () => openSearchPanel(view) };
+    markSaved: (text: string) => { savedSource = text; }, text: () => raw, destroy: () => { destroyed = true; view.destroy(); }, undo: () => undo(view), redo: () => redo(view), find: () => openSearchPanel(view) };
 }
