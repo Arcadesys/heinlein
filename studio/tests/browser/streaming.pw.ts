@@ -7,6 +7,8 @@ for (const zoom of [100,200]) test(`live answer preview preserves source and foc
  const geometry=()=>page.locator('.cm-content').evaluate(el=>{const r=el.getBoundingClientRect();return {width:r.width,top:r.top,left:r.left};});
  const before=await geometry();await page.keyboard.press('Control+j');
  const pane=page.locator('.question-panel');await expect(pane).toBeVisible();
+ const labels=await pane.locator('.question-heading button').evaluateAll(buttons=>buttons.map(button=>{const box=button.getBoundingClientRect(),walk=document.createTreeWalker(button,NodeFilter.SHOW_TEXT);let fits=true;for(let node=walk.nextNode();node;node=walk.nextNode()){const expression=/[A-Za-z]+/g;for(const match of (node.textContent??'').matchAll(expression)){const range=document.createRange();range.setStart(node,match.index!);range.setEnd(node,match.index!+match[0].length);const lines=[...range.getClientRects()];if(lines.length!==1||lines.some(r=>r.left<box.left||r.right>box.right))fits=false;}}return {text:button.textContent,fits};}));
+ expect(labels.filter(label=>!label.fits)).toEqual([]);
  await pane.getByRole('textbox',{name:'Your drafting question',exact:true}).fill('What stands out?');
  await pane.getByRole('button',{name:'Ask',exact:true}).click();
  const cancel=pane.getByRole('button',{name:'Cancel request',exact:true});await cancel.focus();
