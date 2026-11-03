@@ -37,7 +37,7 @@ test('chapter revision reveals a scene left in Reading and keeps its exact selec
   await expect(page.getByRole('textbox', {name: 'Your drafting question', exact: true})).toBeFocused();
   const selection = await page.evaluate(() => {const v = (window as any).readingFixture.view();return v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to);});
   expect(selection).toBe('twice');
-  await page.locator('.question-panel').getByRole('button', {name: 'Collapse', exact: true}).click();
+  await page.locator('.question-panel').getByRole('button', {name: 'Close Heinlein', exact: true}).click();
   await expect(content).toBeFocused();
   const visible = () => page.evaluate(() => {
     const v = (window as any).readingFixture.view(), range = v.state.selection.main;
