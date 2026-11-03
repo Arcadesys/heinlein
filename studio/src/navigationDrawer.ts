@@ -36,14 +36,17 @@ export function createNavigationDrawer(panel: HTMLElement, changed: (open: boole
   document.addEventListener('keydown', closeFromPage);
   function render() {
     const showing = open && !suspended && !(narrowSuppressed && small?.matches);
+    // Suspend interaction and narrow-screen dialogs without taking space away
+    // from the desktop navigator while Questions overlays the manuscript.
+    const occupying = showing || (suspended && open && !small?.matches);
     if(small?.matches&&showing){modal.append(drawer);drawer.hidden=false;if(modal.isConnected&&!modal.open&&modal.showModal)modal.showModal();}
-    else{if(modal.open&&modal.close)modal.close();element.append(drawer);drawer.hidden=!showing;}
-     element.classList.toggle('navigation-closed', !showing);
+    else{if(modal.open&&modal.close)modal.close();element.append(drawer);drawer.hidden=!occupying;}
+    element.classList.toggle('navigation-closed', !occupying);
     drawer.inert = !showing; drawer.setAttribute('aria-hidden', String(!showing));
-    toggle.textContent = showing ? 'Close navigation' : 'Navigation';
+    toggle.textContent = occupying ? 'Close navigation' : 'Navigation';
     toggle.setAttribute('aria-expanded', String(showing));
     toggle.title = `${showing ? 'Close' : 'Open'} navigation (Cmd/Ctrl+\\)`;
-    changed(showing);
+    changed(occupying);
   }
   function save() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify({open})); } catch { /* Convenience only. */ }

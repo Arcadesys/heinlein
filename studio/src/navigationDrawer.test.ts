@@ -49,9 +49,13 @@ describe('project navigation drawer', () => {
   it('suspends the drawer for Questions without changing its saved preference or reopening a narrow modal', () => {
     let small = false; const listeners = new Set<() => void>();
     vi.stubGlobal('matchMedia', () => ({get matches(){return small;},addEventListener: (_event: string, callback: () => void) => listeners.add(callback),removeEventListener: (_event: string, callback: () => void) => listeners.delete(callback)}));
-    const {drawer} = setup(); drawer.select(false);
+    const {drawer, changed} = setup(); drawer.select(false);
     const saved = localStorage.getItem('heinlein-studio-navigation-v1');
     drawer.suspend(true); expect(drawer.visible()).toBe(false); expect(localStorage.getItem('heinlein-studio-navigation-v1')).toBe(saved);
+    expect(changed).toHaveBeenLastCalledWith(true);
+    expect(document.getElementById('navigation-drawer')!.hidden).toBe(false);
+    expect(document.getElementById('navigation-drawer')!.inert).toBe(true);
+
     small = true; listeners.forEach(callback => callback()); drawer.suspend(false);
     expect(drawer.visible()).toBe(false); expect(document.querySelector('dialog[open]')).toBeNull();
     expect(localStorage.getItem('heinlein-studio-navigation-v1')).toBe(saved);

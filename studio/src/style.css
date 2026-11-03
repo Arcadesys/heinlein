@@ -1202,11 +1202,9 @@ dialog { color: var(--fg); }
 .question-panel-integrated :focus-visible, .question-passage-chip:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 @media (min-width: 1400px) and (min-width: 64.001rem) {
   .question-panel-integrated { top: 3.5rem; width: min(42vw, 34rem); padding-inline: 1.25rem; }
-  .workspace.questions-open .preview { right: min(42vw, 34rem); padding-inline: 1rem; }
 }
 @media (max-width: 64rem) {
   .question-panel-integrated { inset: 0; width: auto; }
-  .workspace.questions-open .preview { right: 0; }
   .question-panel-integrated .question-return { display: none; }
 }
 @media (max-width: 700px) {
@@ -1236,7 +1234,6 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 .question-panel-integrated summary, .question-panel-integrated label, .question-panel-integrated h4 { overflow-wrap: anywhere; }
 .question-panel-integrated[data-presentation="dedicated"] { inset: 0; width: auto; }
 .question-panel-integrated[data-presentation="dedicated"] .question-return { display: none; }
-body:has(.question-panel-integrated[data-presentation="dedicated"]:not([hidden])) .workspace.questions-open .preview { right: 0; }
 /* The integrated pane uses one scroll surface rather than the existing chat grid. */
 .question-panel-integrated { display:flex; flex-direction:column; inset:0 0 0 auto; z-index:20; padding:0 1.25rem 2rem; background:var(--bg); backdrop-filter:none; -webkit-backdrop-filter:none; border-radius:0; box-shadow:none; overflow-y:auto; font-size:1rem; }
 .question-panel-integrated > * { flex-shrink:0; min-width:0; }
@@ -1246,10 +1243,9 @@ body:has(.question-panel-integrated[data-presentation="dedicated"]:not([hidden])
 .question-panel-integrated .question-text { max-height:none; overflow:visible; font-style:normal; }
 .question-panel-integrated .question-turn > .markdown-reading { padding:0; background:transparent; }
 .question-panel-integrated .question-settings { margin:0; }
-@media (min-width:1400px) { .question-panel-integrated[data-presentation="docked"] { top:3.5rem; width:min(42vw,34rem); } }
+@media (min-width:1400px) { .question-panel-integrated[data-presentation="overlay"] { top:3.5rem; width:min(42vw,34rem); } }
 .question-panel-integrated[data-presentation="dedicated"] { inset:0; width:auto; }
-.workspace.questions-open .navigator { display:none; }
-body:has(.question-panel-integrated[data-presentation="docked"]:not([hidden])) .studio > .workspace.questions-open { padding-right:min(42vw,34rem); }
+/* Questions occupies its own overlay; opening it never resizes the workspace. */
 @media (max-width:700px) {
   .cm-editor .cm-gutters .question-gutter, .cm-editor .cm-gutters-after:has(> .question-gutter:only-child) { display:none; }
 }

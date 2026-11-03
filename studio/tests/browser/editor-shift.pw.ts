@@ -1,4 +1,49 @@
 import {test, expect} from '@playwright/test';
+for (const zoom of [100, 200]) {
+  test(`Questions overlays a scrolled manuscript without moving it at ${zoom}%`, async ({page}) => {
+    await page.goto('/tests/browser/editor-shift.html?middle');
+    await page.waitForFunction(() => (window as any).shiftFixture);
+    await page.evaluate(async zoom => {
+      document.documentElement.dataset.zoom = String(zoom);
+      await document.fonts.ready;
+      const view = (window as any).shiftFixture.view;
+      view.dispatch({selection: {anchor: view.state.doc.line(181).from + 25}, scrollIntoView: true});
+      view.focus();
+    }, zoom);
+    await page.waitForTimeout(300);
+    await page.evaluate(() => {
+      const {at} = (window as any).shiftFixture.sample();
+      const scroller = document.querySelector('.active-document-pane')!;
+      scroller.scrollTop += at.top - innerHeight / 2;
+    });
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.waitForTimeout(200);
+    const sample = () => page.evaluate(() => (window as any).shiftFixture.sample());
+    const before = await sample();
+    const anchored = async () => {
+      const current = await sample();
+      // CodeMirror's caret x can differ by 1/32px when focus leaves the
+      // selection. All paragraph geometry and scroll positions stay exact.
+      expect(current.at.left).toBeCloseTo(before.at.left, 1);
+      expect(current.at.right).toBeCloseTo(before.at.right, 1);
+      expect({...current, at: {...current.at, left: 0, right: 0}}).toEqual(
+        {...before, at: {...before.at, left: 0, right: 0}},
+      );
+    };
+    await page.keyboard.press('Control+j');
+    await expect(page.locator('.question-panel')).toBeVisible();
+    await expect(page.locator('.question-panel')).toHaveAttribute('aria-modal', 'true');
+    await expect(anchored).toPass();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.question-panel')).toBeHidden();
+    await expect(page.locator('.workspace')).toHaveJSProperty('inert', false);
+    await expect(page.locator('.cm-content')).toBeFocused();
+    await expect(anchored).toPass();
+    expect(await page.evaluate(() => (window as any).shiftFixture.view.state.doc.toString())).toBe(
+      await page.evaluate(() => (window as any).shiftFixture.baseline.replace(/\r\n/g, '\n')),
+    );
+  });
+}
 for (const zoom of [1, 2]) for (const theme of ['default', 'contrast']) {
   test(`visible writing stays anchored: ${theme}, ${zoom * 100}%`, async ({page}) => {
     await page.goto('/tests/browser/editor-shift.html');
