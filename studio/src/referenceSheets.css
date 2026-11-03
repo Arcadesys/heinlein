@@ -1,0 +1,4 @@
+.tree-reference > .tree-row { padding-left: min(calc(var(--depth, 0) * 1rem), 1rem); }
+.tree-reference > .tree-row > .scene-open { flex: 1 1 100%; padding-left: .5rem !important; color: var(--accent); white-space: normal; overflow-wrap: anywhere; }
+.tree-reference > .tree-row > .row-menu { margin-left: auto; }
+.reference-sheet-badge { display: block; width: fit-content; margin-top: .25rem; padding: .1rem .35rem; border: 1px solid currentColor; border-radius: .25rem; font-size: .85em; font-weight: 700; line-height: 1.4; white-space: nowrap; }

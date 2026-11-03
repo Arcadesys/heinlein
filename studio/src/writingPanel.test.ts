@@ -8,6 +8,12 @@ const book={path:'scene-manifest.json',project:'Book',schemaVersion:1,volumes:[{
 beforeEach(()=>{const store=new Map<string,string>();vi.stubGlobal('localStorage',{getItem:(k:string)=>store.get(k)??null,setItem:(k:string,v:string)=>store.set(k,v)});panel=createWritingPanel();document.body.replaceChildren(panel.element);});
 afterEach(()=>{panel.destroy();vi.unstubAllGlobals();});
 describe('writing progress panel',()=>{
+  it('excludes reference sheets from manuscript totals and reads',async()=>{
+    const core={readDocument:vi.fn(async()=>({text:'one two'}))} as unknown as LocalCore;
+    await panel.setManuscript(core,repo,{scenes:[{path:'ms/a.md'},{path:'ms/reference.md',reference:true}]});
+    expect(panel.element.textContent).toContain('Manuscript: 2 words');
+    expect(core.readDocument).toHaveBeenCalledExactlyOnceWith('session','ms/a.md');
+  });
   it('shows scene counts without frontmatter and sound starts off',()=>{
     panel.openScene('stable','a.md','---\ntitle: Hidden words\n---\none two');
     expect(panel.element.textContent).toContain('Scene: 2 words');

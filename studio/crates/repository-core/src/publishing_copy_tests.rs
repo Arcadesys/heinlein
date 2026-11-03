@@ -1,4 +1,5 @@
 use super::*;
+use crate::DraftingChange;
 use std::fs;
 use tempfile::TempDir;
 struct Fixture {
@@ -6,6 +7,35 @@ struct Fixture {
     repo: Repository,
     recovery: RecoveryStore,
     parent: std::path::PathBuf,
+}
+#[test]
+fn publishing_copy_excludes_reference_sheets_without_changing_sources() {
+    let f = Fixture::new();
+    let state = f.repo.load_drafting().unwrap();
+    let plan = f
+        .repo
+        .preview_drafting(
+            state.revision.as_deref(),
+            DraftingChange::SetSheetReference {
+                path: "ms/a.md".into(),
+                reference: true,
+            },
+            &[],
+            &f.recovery,
+        )
+        .unwrap();
+    f.repo.apply_drafting(&plan, &f.recovery).unwrap();
+    let publishing = f
+        .repo
+        .preview_publishing_copy(f.metadata(), &f.recovery)
+        .unwrap();
+    assert_eq!(publishing.preview.sources.len(), 1);
+    assert_eq!(publishing.preview.sources[0].path, "ms/z.md");
+    assert!(!publishing.preview.manuscript.contains("The end."));
+    assert_eq!(
+        f.repo.read("ms/a.md").unwrap().text,
+        "Second\r\n\r\nThe end."
+    );
 }
 impl Fixture {
     fn new() -> Self {

@@ -172,3 +172,29 @@ missing `glib-2.0.pc`, before host code compilation. Cloud Chromium screenshot
 attempts failed at browser startup, so no visual/native-runtime acceptance is
 claimed. No live provider request, real manuscript edit, macOS change, push,
 PR or merge was performed.
+
+## Passage Ask and revision diffs
+
+Passage revision inference returns `{explanation, edits: [{original, replacement}]}`
+instead of a complete rewritten passage. The strict schema allows up to 32
+small edits, bounded to 4,000 UTF-8 bytes per side. Every original must occur
+exactly once in the immutable captured passage; edits must appear in source
+order and cannot overlap. Insertions carry an existing textual anchor. Missing,
+ambiguous (including overlapping matches), malformed or reordered anchors fail
+closed. No model-produced offsets or fuzzy matching are used. Empty edits means
+no change and creates no pending proposal.
+
+Native code assembles the verified patches into the existing immutable proposal;
+the saved-source checks, cancellation barrier, whole-scene comparison and native
+author confirmation remain in force. The pane displays compact, expandable diff
+chips showing only removed/added spans. Chips are presentation, not apply authority;
+**Review changes…** reviews the proposal's changes together. Dismiss uses the
+existing rejection receipt. Unchanged passage prose is available in the full-scene
+comparison rather than repeated in the answer.
+
+Ordinary Ask remains read-only advice. Its instructions request small fenced diff
+blocks for wording suggestions, never a rewritten passage. Valid simple diff
+blocks render as read-only chips; malformed blocks stay literal text. Ask chips
+cannot apply edits or create proposals. All generated strings stay inert text or
+pass through the existing safe Markdown renderer. Chips live inside the overlay
+and do not change manuscript layout.

@@ -788,7 +788,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     appCommands.button.textContent=compact?'More':'More actions';
     appCommands.button.setAttribute('aria-label','More actions');
   }
-  root.replaceChildren(glow, ...(projectLibrary.supported ? [pill, layout] : [layout, pill]), noticeSlot, goalCard, corner, firstStory.element, github.element, updates.element, projectLibrary.element,mcpAccess.element);
+  root.replaceChildren(glow, ...(projectLibrary.supported ? [pill, layout] : [layout, pill]), noticeSlot, goalCard, corner, firstStory.element, github.element, updates.element, updates.notice, projectLibrary.element,mcpAccess.element);
   const drafting = createDraftingPanel(core, {
     root, repository: () => standalone?.active?null:repository, run: runStructural, runOrganization: runLibraryOrganization, verify: verifyStructuralBuffer, selectedPath:()=>opened?.path??null,
     show: () => { renderPill(); draftingEntry.hidden = Boolean(drafting.state?.revision); outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
@@ -1128,7 +1128,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (!organizationOnly) verifyStructuralBuffer(); github.sourceChanged(); firstStory.sourceChanged();
     showAllLabel.hidden = !state.revision;
     currentBook = null; searchScopeRevision++; manuscriptSearch.invalidate();
-    if (organizationOnly) { await writing.setManuscript(core, repository!, state); return; }
+    if (organizationOnly) {
+      const sheet = state.scenes.find(scene => scene.path === opened?.path);
+      const eyebrow = activeDocumentPane.querySelector<HTMLElement>('.page > .eyebrow');
+      if (sheet && eyebrow) {
+        const regular = state.scenes.filter(scene => !scene.reference);
+        eyebrow.textContent = sheet.reference ? 'Reference sheet' : `Scene ${regular.indexOf(sheet) + 1} of ${regular.length}`;
+      }
+      await writing.setManuscript(core, repository!, state); return;
+    }
     const oldPath=opened?.path,oldText=opened?.text;
     const renamingActive=changes.some(change=>(change.kind==='renameFile'||change.kind==='Undo renameFile')&&change.source===oldPath);
     const renamePosition=renamingActive&&editor?{anchor:editor.view.state.selection.main.anchor,head:editor.view.state.selection.main.head,scrollTop:writerScrollTop()}:null;
@@ -1947,6 +1955,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         }
       }
       if (chapter) {
+        const references = new Set(drafting.state?.scenes.filter(scene => scene.reference).map(scene => scene.path));
+        chapter = {...chapter, scenes: chapter.scenes.filter(scene => !references.has(scene.path))};
         if (!chapter.scenes.length || chapter.scenes.length > 500) throw new Error('Open source scenes individually; this chapter has no bounded source mapping.');
         const sources: Document[] = [];
         let totalChars = 0;
@@ -2002,7 +2012,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     editor?.destroy(); editor = null; opened = doc; saveButton = null; dirtyBadge = null; setDirty(false);
     if (!assembled) drafting.updateBuffer(doc.path, doc.text);
     const sceneInfo = drafting.state?.scenes.find(scene => scene.path === doc.path);
-    const sceneIndex = sceneInfo ? drafting.state!.scenes.indexOf(sceneInfo) : -1;
+    const regularScenes = drafting.state?.scenes.filter(scene => !scene.reference) ?? [];
+    const sceneIndex = sceneInfo ? regularScenes.indexOf(sceneInfo) : -1;
     const sourceKind = sceneInfo || currentBook?.volumes.some(volume => volume.chapters.some(chapter => chapter.scenes.some(scene => scene.path === doc.path))) ? 'Source scene' : 'Source file';
     const title = el('h2', assembled?.chapter.title || sceneInfo?.title || basename(doc.path).replace(/\.(?:md|markdown)$/i, ''), 'page-title');
     title.tabIndex = -1;
@@ -2017,7 +2028,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     // Never interpret manuscript HTML, scripts, links, or embedded instructions.
     const meta = el('div', '', 'page-meta'); meta.append(documentRole, source, badge);
     const page = el('div', '', 'page');
-    page.append(el('p', assembled ? 'Assembled chapter' : sceneIndex >= 0 ? `Scene ${sceneIndex + 1} of ${drafting.state!.scenes.length}` : sourceKind, 'eyebrow'), title, meta, metadata, text);
+    page.append(el('p', assembled ? 'Assembled chapter' : sceneInfo?.reference ? 'Reference sheet' : sceneIndex >= 0 ? `Scene ${sceneIndex + 1} of ${regularScenes.length}` : sourceKind, 'eyebrow'), title, meta, metadata, text);
     const mountedTab=documentTabs.mount({path:doc.path,title:assembled?.chapter.title || sceneInfo?.title,kind:doc.generatedCompatibility?'assembled':'source',sceneId:sceneInfo?.id,chapter:assembled?structuredClone(assembled.chapter):undefined});
     if(mountedTab)activeDocumentPane.setAttribute('aria-labelledby',mountedTab.id);
     reference.activateWriter();mountActive(page);
@@ -2221,6 +2232,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     }
   }
   if (core.available()) {
+    updates.startChecking();
     initialHistory=refreshRecent();
     // Hosts without standalone drafts still restore project sessions.
     queueMicrotask(()=>{if(!repository&&!disposed)void startInitialSession();});

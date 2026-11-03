@@ -14,11 +14,12 @@ export interface RecoveryDraft { id: string; path: string; baseHash: string; tex
 export interface Chapter { number: number; title: string; path: string; source: string; scenes: {path: string}[] }
 export interface Manuscript { path: string; project: string; schemaVersion: number; volumes: {number: number; title: string; path: string; chapters: Chapter[]}[] }
 export interface DraftingGroup { id: string; title: string }
-export interface DraftingScene { id: string; title: string; path: string; groupId: string | null }
+export interface DraftingScene { id: string; title: string; path: string; groupId: string | null; reference?: boolean }
 export interface LibraryEntry { id: string; kind: 'group' | 'scene'; parentId: string | null }
 export interface DraftingState {
   manifestPath: string; revision: string | null; project: string;
   groups: DraftingGroup[]; scenes: DraftingScene[];
+  referenceSheets?: DraftingScene[];
   library?: LibraryEntry[];
   libraryLegacy?: boolean;
   untrackedPaths: string[]; missingPaths: string[]; recoveryRequired?: boolean;
@@ -26,6 +27,7 @@ export interface DraftingState {
 }
 export type SceneDestination = {kind:'before'|'after';sceneId:string;groupId:string|null}|{kind:'groupEnd';groupId:string}|{kind:'ungroupedEnd'};
 export type DraftingChange =
+  | { kind: 'setSheetReference'; path: string; reference: boolean }
   | { kind: 'organizeLibrary'; groups: DraftingGroup[]; sceneTitles: {id: string; title: string}[]; entries: LibraryEntry[] }
   | { kind: 'initialize'; project: string }
   | { kind: 'createScene'; title: string; path: string; groupId?: string | null; beforeId?: string | null }
@@ -80,7 +82,7 @@ export interface LocalCore {
   mcpRequest?(request:McpAccessRequest):Promise<McpAccessView>;
   standalone?(request:DraftRequest):Promise<DraftResponse>;
   available(): boolean;
-  updateRequest?(action: 'status'|'check'|'schedule'):Promise<UpdateStatus>;
+  updateRequest?(action: 'status'|'check'|'schedule'|'openRelease'):Promise<UpdateStatus>;
   githubRequest?(request: GitHubRequest): Promise<GitHubResponse>;
   loadFirstStory?(repositoryId: string): Promise<FirstStoryState>;
   saveFirstStory?(repositoryId: string, guide: FirstStoryState, markProof: boolean): Promise<FirstStoryState>;

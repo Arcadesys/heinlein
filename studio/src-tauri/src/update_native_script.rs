@@ -47,6 +47,9 @@ impl Script {
             Action::Status => "status",
             Action::Check => "check",
             Action::Schedule => "schedule",
+            Action::OpenRelease => {
+                return Err("Release downloads disabled in synthetic fixture".into())
+            }
         };
         s.calls.push(label.into());
         let mut index = 0;
