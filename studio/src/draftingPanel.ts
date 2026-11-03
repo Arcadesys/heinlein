@@ -1,6 +1,7 @@
 import {GROUP_DRAG_TYPE as LEGACY_GROUP_DRAG_TYPE,moveIntent,moveTargetLabel,type MoveSource,type MoveTarget} from './manuscriptMoves';
 import type { DraftingChange, DraftingFileChange, DraftingPreview, DraftingScene, DraftingSelection, DraftingState, LibraryEntry, LocalCore, RepositorySession } from './localCore';
 import { rowMenu } from './rowMenu';
+import {libraryPointerDrag, type LibraryDragSource, type LibraryDropTarget} from './libraryPointerDrag';
 
 export const REPOSITORY_DRAG_TYPE = 'application/x-heinlein-repository-entry';
 export const SCENE_DRAG_TYPE = 'application/x-heinlein-scene';
@@ -43,7 +44,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   let movementBusy=false,drag:{token:string;source:MoveSource;repositoryId:string;revision:string}|null=null;
   const dialogs = new Map<HTMLDialogElement, () => void>();
   function closeDialogs() { for (const cancel of [...dialogs.values()]) cancel(); }
-  function clear() { version++; clearDrag(); activeBuffer = null; selectedGroup = null; collapsedGroups.clear(); canUndo = false; canRedo = false; closeDialogs(); state = null; undo = null; element.replaceChildren(); }
+  function clear() { version++; pointerMoves.cancel(); clearDrag(); activeBuffer = null; selectedGroup = null; collapsedGroups.clear(); canUndo = false; canRedo = false; closeDialogs(); state = null; undo = null; element.replaceChildren(); }
   function updateBuffer(path: string, text: string) {
     activeBuffer = {path, text};
     for (const control of element.querySelectorAll<HTMLButtonElement>('.scene-open')) {
@@ -510,6 +511,44 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       if (event.dataTransfer.files.length) hooks.report('Use Import files… to authorize these files with the native picker. Browser-provided file paths are not used.', true);
     } catch { hooks.report('This drag could not be read. Use Move… or Import repository files… instead.', true); }
   }
+  function pointerDestination(source: LibraryDragSource, x: number, y: number): LibraryDropTarget | null {
+    if (!state) return null;
+    const hit = document.elementFromPoint(x, y); if (!hit || !element.contains(hit)) return null;
+    const entries = libraryEntries();
+    const name = source.kind === 'scene' ? state.scenes.find(s => s.id === source.id)?.title : state.groups.find(g => g.id === source.id)?.title;
+    const sceneRow = hit.closest<HTMLElement>('.tree-scene');
+    if (source.kind === 'scene' && sceneRow) {
+      const id = sceneRow.dataset.sceneId!; if (id === source.id) return null;
+      const entry = entries.find(e => e.id === id); if (!entry) return null;
+      const line = sceneRow.querySelector<HTMLElement>(':scope > .tree-row')!;
+      const b = line.getBoundingClientRect(), before = y <= b.top + b.height / 2;
+      const siblings = entries.filter(e => e.parentId === entry.parentId), at = siblings.findIndex(e => e.id === id);
+      return {parentId: entry.parentId, beforeId: before ? id : siblings[at + 1]?.id ?? null, marker: line, side: before ? 'before' : 'after', label: `Move “${name}” ${before ? 'before' : 'after'} “${state.scenes.find(s => s.id === id)?.title}”`};
+    }
+    const line = hit.closest<HTMLElement>('.tree-row'), group = line?.querySelector<HTMLElement>(':scope > .tree-toggle');
+    if (line && group) {
+      const id = group.dataset.groupId!; if (id === source.id) return null;
+      const entry = entries.find(e => e.id === id); if (!entry) return null;
+      const b = line.getBoundingClientRect(), before = source.kind === 'group' && y < b.top + b.height / 3;
+      if (source.kind === 'group') { let parent: string | null = before ? entry.parentId : id; while (parent) { if (parent === source.id) return null; parent = entries.find(e => e.id === parent)?.parentId ?? null; } }
+      return {parentId: before ? entry.parentId : id, beforeId: before ? id : null, marker: line, side: before ? 'before' : 'inside', label: `Move “${name}” ${before ? 'before' : 'into'} “${state.groups.find(g => g.id === id)?.title}”`};
+    }
+    const footer = hit.closest<HTMLElement>('.tree-footer');
+    return footer ? {parentId: null, beforeId: null, marker: footer, side: 'inside', label: `Move “${name}” to the end of the project`} : null;
+  }
+  const pointerMoves = libraryPointerDrag(element, {
+    begin: () => state?.revision && !state.recoveryRequired && !dialogs.size && !movementBusy && hooks.repository() ? {revision: state.revision, repositoryId: hooks.repository()!.id} : null,
+    resolve: pointerDestination,
+    announce: message => hooks.report(message),
+    drop: (source, target, guard) => {
+      if (state?.revision !== guard.revision || hooks.repository()?.id !== guard.repositoryId) { hooks.report('The library changed during the drag. Try the move again.', true); return; }
+      const entries = libraryEntries(), current = entries.find(entry => entry.id === source.id);
+      const siblings = entries.filter(entry => entry.parentId === current?.parentId);
+      const nextId = siblings[siblings.findIndex(entry => entry.id === source.id) + 1]?.id ?? null;
+      if (current?.parentId === target.parentId && nextId === target.beforeId) { hooks.report('Already in that position.'); return; }
+      void moveLibraryItems([source.id], target.parentId, target.beforeId);
+    },
+  });
   const DROP_MARKS = ['drop-before', 'drop-after', 'drop-into', 'dragging'];
   const clearDropMarks = () => element.querySelectorAll(DROP_MARKS.map(mark => `.${mark}`).join(',')).forEach(node => node.classList.remove(...DROP_MARKS));
   /** A scene row accepts a drop above or below its midline; the marker is a shadow so rows never shift. */
@@ -530,7 +569,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     });
   }
   function render() {
-    element.replaceChildren(); if (!state) return;
+    pointerMoves.cancel(); element.replaceChildren(); if (!state) return;
     clearDrag(); element.append(moveLive);
     if (state.recoveryRequired) {
       element.append(el('p', 'An interrupted manuscript change needs attention. Review its guarded rollback before making more structural changes.', 'drafting-warning'), button('Preview rollback of interrupted change', () => { void changeManuscript({kind: 'recoverInterrupted'}); }));
@@ -552,7 +591,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         if (expanded) collapsedGroups.add(group.id); else collapsedGroups.delete(group.id);
         render(); [...element.querySelectorAll<HTMLButtonElement>('[data-group-id]')].find(node => node.dataset.groupId === group.id)?.focus();
       }, 'tree-toggle');
-      toggle.dataset.groupId = group.id; toggle.setAttribute('aria-expanded', String(expanded)); toggle.draggable = true;
+      toggle.dataset.groupId = group.id; toggle.setAttribute('aria-expanded', String(expanded)); pointerMoves.bind(toggle, {kind: 'group', id: group.id});
       toggle.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(GROUP_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()?.id, groupId: group.id})); });
       toggle.addEventListener('dragover', event => {
         if (!event.dataTransfer?.types.some(type => type === SCENE_DRAG_TYPE || type === GROUP_DRAG_TYPE)) return;
@@ -592,7 +631,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const row = el('li', '', 'tree-scene'); row.dataset.sceneId = scene.id;
       const line = el('div', '', 'tree-row'); line.style.setProperty('--depth', String(depth));
       const open = button(scene.title || 'Untitled scene', () => hooks.open(scene.path), 'scene-open');
-      open.dataset.path = scene.path; open.title = scene.path; open.draggable = true;
+      open.dataset.path = scene.path; open.title = scene.path; pointerMoves.bind(open, {kind: 'scene', id: scene.id});
       if (scene.path === current) open.setAttribute('aria-current', 'true');
       open.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(SCENE_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()!.id, sceneId: scene.id})); row.classList.add('dragging'); });
       open.addEventListener('dragend', clearDropMarks);
@@ -660,5 +699,5 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     importRepository(mode: 'move' | 'copy' = 'move') { void importRepository(mode); },
     undoLastChange() { void undoLastChange(); },
     get canUndoRename() { return Boolean(undo?.changes.some(change=>change.kind==='renameFile')); },
-    get canUndo() { return Boolean(undo); }, destroy() { disposed = true; clear(); } };
+    get canUndo() { return Boolean(undo); }, destroy() { disposed = true; pointerMoves.destroy(); clear(); } };
 }
