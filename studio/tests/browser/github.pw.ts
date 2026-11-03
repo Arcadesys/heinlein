@@ -4,7 +4,7 @@ test('guided draft pull request sends selected changes and returns to the steps'
     await page.goto('/tests/browser/github.html?repo-first&writing');
     await page.getByRole('button', { name: 'More actions' }).click();
     await page.getByRole('button', { name: 'GitHub actions…', exact: true }).click();
-    const dialog = page.locator('dialog.github-panel:not(.project-library)');
+    const dialog = page.locator('dialog.github-panel:not(.project-library):not(.mcp-access-panel)');
     await dialog.getByRole('button', { name: 'Create or update a draft pull request…' }).click();
     await expect(dialog.getByRole('heading', { name: 'Create or update a draft pull request', level: 3 })).toBeFocused();
     expect((await new AxeBuilder({ page }).include('.github-panel').analyze()).violations).toEqual([]);
@@ -28,7 +28,7 @@ test('GitHub synthetic account, exact-file version, send, draft feedback and exp
     async function type(target:Locator,text:string){await tabTo(target);await page.keyboard.press('ControlOrMeta+A');await page.keyboard.insertText(text);}
     await page.goto('/tests/browser/github.html');
     await activate(page.getByRole('button', { name: 'More actions' })); await activate(page.getByRole('button', { name: 'GitHub actions…', exact: true }));
-    const dialog = page.locator('dialog.github-panel:not(.project-library)');
+    const dialog = page.locator('dialog.github-panel:not(.project-library):not(.mcp-access-panel)');
     await expect(dialog).toBeVisible();
     await activate(dialog.getByRole('button', { name: 'Connect GitHub…', exact: true }));
     await expect(dialog).toContainText('SYNTHETIC');

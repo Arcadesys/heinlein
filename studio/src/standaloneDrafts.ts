@@ -246,7 +246,7 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
         body.className = 'standalone-editor';
         view.append(title, status, toolbar, body, node('p', 'Choosing a destination makes an independent copy. Nothing is uploaded or shared by keeping this draft here.'));
         hooks.parent.replaceChildren(view);
-        editor = createEditor(body, text, raw => changed(raw), () => void flush());
+        editor = createEditor(body, text, raw => changed(raw), () => void flush(), undefined, report);
         const readOnly = Boolean(opened?.readOnlyReason || opened?.loaded.recoveryRequired || opened?.loaded.draft.state === 'discarded');
         editor.setEditable(!readOnly);
         hooks.dirty(false);

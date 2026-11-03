@@ -18,14 +18,25 @@ struct Client {
 }
 impl Client {
     fn start() -> Self {
+        Self::start_mode(false)
+    }
+    fn start_mode(follow_studio: bool) -> Self {
         let t = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let root = t.path().join("repository");
         fs::create_dir(&root).unwrap();
         let source = root.join("scene.md");
         fs::write(&source, "Synthetic—before.\r\n").unwrap();
         fs::write(root.join("unselected.md"), "Never disclosed").unwrap();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_heinlein-local-mcp"))
-            .args([
+        let mut command = Command::new(env!("CARGO_BIN_EXE_heinlein-local-mcp"));
+        if follow_studio {
+            command.args([
+                "--studio-selection",
+                t.path().join("selection").to_str().unwrap(),
+                "--client-label",
+                "wire-fixture",
+            ]);
+        } else {
+            command.args([
                 "--repository",
                 root.to_str().unwrap(),
                 "--proposal-store",
@@ -34,7 +45,9 @@ impl Client {
                 "scene.md",
                 "--client-label",
                 "wire-fixture",
-            ])
+            ]);
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -112,6 +125,138 @@ impl Drop for Client {
         let _ = self.child.wait();
     }
 }
+#[test]
+fn one_connection_follows_explicit_project_selection_and_revocation() {
+    use repository_core::{mcp_selection::SelectionStore, Repository};
+    let mut c = Client::start_mode(true);
+    c.initialize();
+    let empty = c.tool(2, "list_projects", json!({}));
+    assert_eq!(empty["result"]["structuredContent"]["projects"], json!([]));
+    let author = SelectionStore::open(&c._temp.path().join("selection")).unwrap();
+    let a = Repository::open(c.source.parent().unwrap()).unwrap();
+    author
+        .select(
+            &a,
+            vec!["scene.md".into()],
+            &c._temp.path().join("proposals"),
+        )
+        .unwrap();
+    let project = c.tool(3, "list_projects", json!({}))["result"]["structuredContent"]["projects"]
+        [0]["projectId"]
+        .clone();
+    let scene = c.tool(4, "list_scenes", json!({"projectId":project}))["result"]
+        ["structuredContent"]["scenes"][0]["sceneId"]
+        .clone();
+    let old = c.tool(
+        5,
+        "read_scene",
+        json!({"projectId":project,"sceneId":scene}),
+    )["result"]["structuredContent"]
+        .clone();
+    let bpath = c._temp.path().join("project-b");
+    fs::create_dir(&bpath).unwrap();
+    fs::write(bpath.join("other.md"), "Other project — 🦊\r\n").unwrap();
+    let b = Repository::open(&bpath).unwrap();
+    author
+        .select(
+            &b,
+            vec!["other.md".into()],
+            &c._temp.path().join("proposals"),
+        )
+        .unwrap();
+    let next = c.tool(6, "list_projects", json!({}));
+    assert_eq!(
+        next["result"]["structuredContent"]["projects"][0]["projectId"],
+        b.project_key()
+    );
+    let denied = c.tool(
+        7,
+        "read_scene",
+        json!({"projectId":project,"sceneId":scene}),
+    );
+    assert_eq!(
+        denied["result"]["structuredContent"]["error"]["code"],
+        "outOfScope"
+    );
+    author
+        .select(
+            &a,
+            vec!["scene.md".into()],
+            &c._temp.path().join("proposals"),
+        )
+        .unwrap();
+    let stale=c.tool(8,"propose_scene",json!({"projectId":project,"sceneId":scene,"snapshotId":old["snapshotId"],"baseHash":old["baseHash"],"replacementText":"Never apply old snapshots"}));
+    assert_eq!(
+        stale["result"]["structuredContent"]["error"]["code"],
+        "readRequired"
+    );
+    author.revoke().unwrap();
+    assert_eq!(
+        c.tool(9, "list_projects", json!({}))["result"]["structuredContent"]["projects"],
+        json!([])
+    );
+    assert_eq!(
+        c.tool(
+            10,
+            "read_scene",
+            json!({"projectId":project,"sceneId":scene})
+        )["result"]["structuredContent"]["error"]["code"],
+        "noSelection"
+    );
+    assert_eq!(
+        fs::read(&c.source).unwrap(),
+        "Synthetic—before.\r\n".as_bytes()
+    );
+    assert_eq!(
+        fs::read(bpath.join("other.md")).unwrap(),
+        "Other project — 🦊\r\n".as_bytes()
+    );
+    c.exited();
+}
+
+#[test]
+fn long_scene_read_and_proposal_preserve_complete_source_bytes() {
+    let mut c = Client::start();
+    let original = format!(
+        "---\r\nunknown: preserved\r\n---\r\n{}TARGET — e\u{301} 🦊.\r\n{}END OF OUTLINE.\n",
+        "Earlier paragraph — 🦊.\r\n\r\n".repeat(300),
+        "Later notes — preserved.\r\n\r\n".repeat(300)
+    );
+    fs::write(&c.source, &original).unwrap();
+    c.initialize();
+    let project = c.tool(2, "list_projects", json!({}))["result"]["structuredContent"]["projects"]
+        [0]["projectId"]
+        .clone();
+    let scene = c.tool(3, "list_scenes", json!({"projectId":project}))["result"]
+        ["structuredContent"]["scenes"][0]["sceneId"]
+        .clone();
+    let read = c.tool(
+        4,
+        "read_scene",
+        json!({"projectId":project,"sceneId":scene}),
+    )["result"]["structuredContent"]
+        .clone();
+    assert_eq!(read["text"], original);
+    let replacement =
+        original.replacen("TARGET — e\u{301} 🦊.", "Revised passage — e\u{301} 🦊.", 1);
+    let proposed = c.tool(5, "propose_scene", json!({"projectId":project,"sceneId":scene,"snapshotId":read["snapshotId"],"baseHash":read["baseHash"],"replacementText":replacement}));
+    assert_eq!(
+        proposed["result"]["structuredContent"]["manuscriptChanged"],
+        false
+    );
+    let proposal = proposed["result"]["structuredContent"]["proposal"]["id"].clone();
+    let record = c.tool(
+        6,
+        "get_proposal",
+        json!({"projectId":project,"proposalId":proposal}),
+    )["result"]["structuredContent"]["proposal"]
+        .clone();
+    assert_eq!(record["baseText"], original);
+    assert_eq!(record["replacementText"], replacement);
+    assert_eq!(fs::read(&c.source).unwrap(), original.as_bytes());
+    c.exited();
+}
+
 #[test]
 fn actual_stdio_initialize_list_read_propose_get_and_forbidden_routes() {
     let mut c = Client::start();

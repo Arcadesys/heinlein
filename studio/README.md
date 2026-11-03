@@ -218,6 +218,15 @@ The pill fades while you type and returns when the pointer moves.
 
 ## Local MCP proposals
 
+**More actions → MCP connection…** lets you explicitly allow the current saved
+source file for a reusable local MCP connection. Review the full file list in
+the native confirmation. Add files individually; allowing a source from another
+project replaces the selection. **Disconnect all project access** stops reads
+and proposals. Project opening alone grants nothing, and unsaved buffers remain
+private. Configure Codex once with the server's `--studio-selection` launch mode;
+the same running server follows confirmed project changes and invalidates old
+snapshots. See the launch instructions below for the one-time setup.
+
 The **MCP proposals** button lists pending proposals for the selected repository
 and attributed local operation receipts. Save and resolve recovery first. Review
 the full before/after source, then explicitly confirm the retained change in a

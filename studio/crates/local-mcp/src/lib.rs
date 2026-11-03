@@ -54,7 +54,6 @@ struct Scope {
     store: ProposalStore,
     origin: ProposalOrigin,
     snapshots: Mutex<BTreeMap<String, SnapshotPin>>,
-    work_slots: Arc<tokio::sync::Semaphore>,
     #[cfg(unix)]
     root_identity: (u64, u64),
 }
@@ -64,9 +63,82 @@ struct SnapshotPin {
 }
 #[derive(Clone)]
 pub struct LocalMcp {
+    source: Source,
+    work_slots: Arc<tokio::sync::Semaphore>,
+}
+#[derive(Clone)]
+enum Source {
+    Pinned(Pinned),
+    #[cfg(unix)]
+    Studio(Arc<StudioSelection>),
+}
+#[cfg(unix)]
+struct StudioSelection {
+    store: repository_core::mcp_selection::SelectionStore,
+    client_label: String,
+    cached: Mutex<Option<(String, Pinned)>>,
+}
+#[derive(Clone)]
+struct Pinned {
     scope: Arc<Scope>,
 }
 impl LocalMcp {
+    pub fn open(
+        repository: &Path,
+        scenes: Vec<String>,
+        store: &Path,
+        client_label: String,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            source: Source::Pinned(Pinned::open(repository, scenes, store, client_label)?),
+            work_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+        })
+    }
+    #[cfg(unix)]
+    pub fn follow_studio(directory: &Path, client_label: String) -> Result<Self, String> {
+        if client_label.is_empty()
+            || client_label.len() > 128
+            || client_label.chars().any(char::is_control)
+        {
+            return Err("Use a short client label".into());
+        }
+        let store = repository_core::mcp_selection::SelectionStore::open(directory)
+            .map_err(|_| "Studio MCP selection is unavailable or unsafe")?;
+        store
+            .load()
+            .map_err(|_| "Studio MCP selection needs recovery; original data preserved")?;
+        Ok(Self {
+            source: Source::Studio(Arc::new(StudioSelection {
+                store,
+                client_label,
+                cached: Mutex::new(None),
+            })),
+            work_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+        })
+    }
+    pub fn execute(&self, name: &str, arguments: Value) -> AppResult<Value> {
+        match &self.source {
+            Source::Pinned(server)=>server.execute(name,arguments),
+            #[cfg(unix)]
+            Source::Studio(studio)=>studio.store.with_current(|state|{
+                let mut cache=studio.cached.lock().map_err(|_|("busy","Selection state is busy"))?;
+                let Some((generation,selection))=state.and_then(|s|s.selection.map(|selection|(s.generation,selection))) else {
+                    *cache=None;
+                    if name=="list_projects" {let _:Empty=decode(arguments)?;return Ok(json!({"projects":[],"dataNotice":DATA_NOTICE,"message":"Choose MCP connection in Heinlein Studio and explicitly allow a source file."}));}
+                    return Err(("noSelection","No project is allowed. Choose MCP connection in Heinlein Studio."));
+                };
+                if cache.as_ref().is_none_or(|(previous,_)|previous!=&generation){
+                    *cache=None;
+                    let repo=selection.repository().map_err(|_|("selectionUnavailable","Allowed project moved or is unavailable"))?;
+                    let server=Pinned::open(repo.root(),selection.scenes,&selection.proposal_store,studio.client_label.clone()).map_err(|_|("selectionUnavailable","Allowed sources are unavailable or unsafe"))?;
+                    *cache=Some((generation,server));
+                }
+                cache.as_ref().ok_or(("noSelection","No project is allowed"))?.1.execute(name,arguments)
+            }).map_err(|_|("selectionUnavailable","Studio selection is busy, unavailable, or needs recovery"))?,
+        }
+    }
+}
+impl Pinned {
     pub fn open(
         repository: &Path,
         scenes: Vec<String>,
@@ -143,7 +215,6 @@ impl LocalMcp {
                 store,
                 origin: ProposalOrigin::local_mcp(uuid::Uuid::new_v4().to_string(), client_label),
                 snapshots: Mutex::new(BTreeMap::new()),
-                work_slots: Arc::new(tokio::sync::Semaphore::new(4)),
                 #[cfg(unix)]
                 root_identity,
             }),
@@ -397,7 +468,7 @@ impl ServerHandler for LocalMcp {
         if self.get_tool(&request.name).is_none() {
             return Err(ErrorData::method_not_found::<CallToolRequestMethod>());
         }
-        let Ok(permit) = self.scope.work_slots.clone().try_acquire_owned() else {
+        let Ok(permit) = self.work_slots.clone().try_acquire_owned() else {
             return Ok(CallToolResult::structured_error(json!({"error":{"code":"busy","message":"Local tools are busy; retry after an outstanding call completes"}})).into());
         };
         let server = self.clone();
