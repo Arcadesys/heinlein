@@ -85,9 +85,9 @@ export function createWritingPanel(rendered?: (summary: WritingSummary) => void)
       if(active.projectKey)tracker.recordChange(`${active.projectKey}:${active.sceneKey}`,before,after,origin);
       render();
     },
-    async setManuscript(core:LocalCore, repository:RepositorySession, book:Manuscript | {scenes: {path:string}[]}) {
+    async setManuscript(core:LocalCore, repository:RepositorySession, book:Manuscript | {scenes: {path:string;reference?:boolean}[]}) {
       const request=++generation; bookKey=repository.projectKey??''; counts.clear(); revisions.clear(); failed=0; loading=true;
-      paths=new Set('scenes' in book ? book.scenes.map(s=>s.path) : book.volumes.flatMap(v=>v.chapters.flatMap(c=>c.scenes.map(s=>s.path))));
+      paths=new Set('scenes' in book ? book.scenes.filter(s=>!s.reference).map(s=>s.path) : book.volumes.flatMap(v=>v.chapters.flatMap(c=>c.scenes.map(s=>s.path))));
       const queue=[...paths]; render();
       await Promise.all(Array.from({length:Math.min(3,queue.length)},async()=>{
         while(queue.length&&request===generation&&!destroyed){ const path=queue.shift()!; const revision=revisions.get(path)??0;

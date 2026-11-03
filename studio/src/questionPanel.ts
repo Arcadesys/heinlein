@@ -1,7 +1,7 @@
 import {conversationKey,loadConversation,saveConversation} from './questionHistoryStore';
-import {createQuestionComparison} from './questionDiff';
+import {createQuestionComparison, createQuestionDiffChips} from './questionDiff';
 import type {ProposalReview} from './localCore';
-import {renderMarkdown} from './markdown';
+import {renderQuestionAnswer} from './questionAnswer';
 import {createHeinleinHeader, setHeinleinStatus} from './heinleinHeader';
 import './heinleinPane.css';
 import {captureSelectionQuestion, selectionQuestionAvailability, selectionQuestionProblem, type SelectionQuestionSnapshot, type SelectionQuestionState} from './selectionQuestion';
@@ -186,7 +186,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const historyText = el('div'); historyText.setAttribute('aria-label', 'Exact conversation history to send');
   const historyNote = el('p', '', 'muted'); historyDetails.append(historySummary, historyNote, historyText);
   const disclosure = el('p', 'Send shares your exact question, any revision target, the context preview, and the history preview with OpenAI using the selected ChatGPT account and model. Requests consume that plan’s usage allowance; account limits apply. Each request allows up to 2,000 output tokens. Manage ChatGPT usage to review usage or revoke access.', 'drafting-warning');
-  const guidance = el('p', 'Nothing is sent while you type or open this panel. Ask returns attributed advice. Suggest revision prepares a saved proposal for your review, followed by a separate native author confirmation. It never applies an answer automatically.', 'muted');
+  const guidance = el('p', 'Nothing is sent while you type or open this panel. Ask returns advice with wording changes shown as diff chips. Suggest revision prepares exact-text patches in a saved proposal for your review, followed by a separate native author confirmation. It never applies an answer automatically.', 'muted');
   const status = el('p', '', 'question-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const send = button('Send to OpenAI', () => { void submit(); }, 'primary');
   const cancel = button('Cancel request', () => {
@@ -226,7 +226,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const contextSummary = el('p', '', 'question-context-summary');
   composer.append(contextDetails, targetSection, questionLabel, composerTop, requestNote, contextSummary, actions, status);
   const askButton = button('Ask', () => submitAs('ask'), 'primary heinlein-ask');
-  const suggestButton = button('Suggest rewrite', () => submitAs('revision'));
+  const suggestButton = button('Suggest edits', () => submitAs('revision'));
   const passageQuote = el('blockquote', '', 'question-passage-quote'); passageQuote.setAttribute('aria-label', 'Selected passage'); passageQuote.hidden = true;
   const passageNote = el('p', '', 'question-request-note'); passageNote.hidden = true;
   const persistence = el('p', '', 'question-persistence'); persistence.setAttribute('role', 'status');
@@ -617,8 +617,11 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       let revision: Revision | undefined;
       if (snapshot) {
         const result = answer as QuestionRevisionAnswer;
-        if (!result.proposalId || result.incomplete || typeof result.replacementText !== 'string' || !plainUnicode(result.replacementText) || questionBytes(result.replacementText) + questionBytes(result.text) > QUESTION_LIMITS.answer) throw new Error('The revision response was incomplete or invalid. No review was opened.');
-        revision = {snapshot, contextVersion: capturedContext, proposalId: result.proposalId, replacementText: result.replacementText, rejected: false, busy: false};
+        if (result.incomplete || typeof result.replacementText !== 'string' || !plainUnicode(result.replacementText) || questionBytes(result.replacementText) + questionBytes(result.text) > QUESTION_LIMITS.answer) throw new Error('The revision response was incomplete or invalid. No review was opened.');
+        if (result.replacementText !== snapshot.selectedText) {
+          if (!result.proposalId) throw new Error('The revision response has no saved proposal.');
+          revision = {snapshot, contextVersion: capturedContext, proposalId: result.proposalId, replacementText: result.replacementText, rejected: false, busy: false};
+        }
       }
       turns.push({question: request.question, answer, contextBytes: questionBytes(request.context), scenePath: hooks.current()?.path, revision});
 
@@ -642,8 +645,8 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       const section = el('section', '', 'question-turn');
       const usage = [turn.answer.inputTokens == null ? null : `${turn.answer.inputTokens.toLocaleString()} input tokens`, turn.answer.outputTokens == null ? null : `${turn.answer.outputTokens.toLocaleString()} output tokens`].filter(Boolean).join(' · ');
       const message = preview(turn.question, `Question ${index + 1}`); message.classList.add('question-user-message');
-      if (integrated) {section.append(message, ...(unified ? [el('p', 'Heinlein', 'heinlein-answer-label')] : []), renderMarkdown(turn.answer.text, `Answer ${index + 1}`)); if (turn.answer.incomplete) section.append(el('p', 'Incomplete answer', 'drafting-warning'));}
-      else section.append(el('h4', 'You'), message, el('h4', turn.answer.incomplete ? 'Heinlein · Incomplete answer' : 'Heinlein'), renderMarkdown(turn.answer.text, `Answer ${index + 1}`));
+      if (integrated) {section.append(message, ...(unified ? [el('p', 'Heinlein', 'heinlein-answer-label')] : []), renderQuestionAnswer(turn.answer.text, `Answer ${index + 1}`)); if (turn.answer.incomplete) section.append(el('p', 'Incomplete answer', 'drafting-warning'));}
+      else section.append(el('h4', 'You'), message, el('h4', turn.answer.incomplete ? 'Heinlein · Incomplete answer' : 'Heinlein'), renderQuestionAnswer(turn.answer.text, `Answer ${index + 1}`));
       const details = el('details', '', 'question-response-details'); details.append(el('summary', 'Response details'), el('p', `${turn.contextBytes.toLocaleString()} UTF-8 bytes of context sent`, 'muted'), el('p', usage || 'Token usage was not returned.', 'muted'));
       const origin = el('p', `Recorded origin: native OpenAI · Model: ${turn.answer.model} · Request: ${turn.answer.requestId}. Provider metadata is not authenticated authorship.`, 'muted'); details.append(origin); section.append(details);
       if(turn.scenePath)section.append(el('p', `Scene: ${turn.scenePath}`, 'muted'));
@@ -651,7 +654,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       const revision = turn.revision;
       if (revision) {
         const note = el('p', '', 'question-revision-status'); note.setAttribute('role', 'status');
-        const review = button(integrated ? 'Apply…' : 'Review proposed revision', () => {
+        const review = button(integrated ? 'Review changes…' : 'Review proposed revision', () => {
           if (revision.busy || revision.rejected) return;
           const stale = revisionGuard(revision); if (stale) {note.textContent = stale; review.disabled = true; return;}
           revision.busy = true; refreshAction();
@@ -677,10 +680,10 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
           note.textContent = revision!.rejected ? 'Rejected. The local decision receipt is retained.' : revision!.busy ? 'Opening the requested revision action…' : stale ?? (integrated ? '' : 'Review opens the exact whole-scene before/after comparison, then a separate native author confirmation.');
         }
         if (integrated) {
-          section.append(createQuestionComparison(revision.snapshot.selectedText, revision.replacementText));
-          const full = button('Show full scene comparison', () => review.click(), 'question-full-comparison');
+          section.append(createQuestionDiffChips(revision.snapshot.selectedText, revision.replacementText));
+          const full = button('Review all changes in full scene', () => review.click(), 'question-full-comparison');
           revisionActions.push(() => {full.disabled = review.disabled;}); section.append(full, note, review, reject, el('p', 'Requires author confirmation', 'muted'));
-        } else section.append(el('h4', 'Original selected passage'), preview(revision.snapshot.selectedText, `Original target ${index + 1}`), el('h4', 'Proposed selected-passage replacement'), preview(revision.replacementText, `Suggested replacement ${index + 1}`), el('p', `Proposal: ${revision.proposalId}`, 'muted'), note, review, reject);
+        } else section.append(createQuestionDiffChips(revision.snapshot.selectedText, revision.replacementText), el('p', `Proposal: ${revision.proposalId}`, 'muted'), note, review, reject);
         if (!revision.replacementText) section.append(el('p', 'The replacement is empty. Accepting after review will delete the selected passage.', 'drafting-warning'));
         revisionActions.push(refreshAction); refreshAction();
       }

@@ -118,16 +118,21 @@ impl Repository {
         self.require_clean_structure()?;
         let state = self.load_drafting()?;
         let manifest = state.revision.ok_or(Error::InvalidManifest)?;
-        if state.scenes.is_empty() || !state.missing_paths.is_empty() {
+        let scenes: Vec<_> = state
+            .scenes
+            .into_iter()
+            .filter(|scene| !scene.reference)
+            .collect();
+        if scenes.is_empty() || !state.missing_paths.is_empty() {
             return Err(Error::InvalidManifest);
         }
-        if state.scenes.len() > 256 {
+        if scenes.len() > 256 {
             return Err(Error::LimitExceeded);
         }
         let mut sources = Vec::new();
         let mut texts = Vec::new();
         let mut size = 0;
-        for scene in state.scenes {
+        for scene in scenes {
             let doc = self.read(&scene.path)?;
             if doc.generated_compatibility {
                 return Err(Error::ReadOnly);

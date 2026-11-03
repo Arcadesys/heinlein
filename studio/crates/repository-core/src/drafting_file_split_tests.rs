@@ -159,6 +159,7 @@ fn file_split_registration_after_interruption_refuses_rollback_before_inverse_pl
                 title: "Registered after interruption".into(),
                 path: registered.into(),
                 group_id: None,
+                reference: false,
             }],
         };
         f.put(MANIFEST, &manifest_text(&author).unwrap());
@@ -235,6 +236,7 @@ fn file_split_registration_after_rollback_preview_is_already_guarded_at_apply() 
                 title: "Registered".into(),
                 path: registered.into(),
                 group_id: None,
+                reference: false,
             }],
         };
         f.put(MANIFEST, &manifest_text(&author).unwrap());

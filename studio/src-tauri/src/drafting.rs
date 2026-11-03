@@ -74,7 +74,10 @@ pub(crate) async fn preview_drafting_change(
             .map_err(|_| "Another folder or structure change is in progress")?;
         let _mutation = state.mutation_gate.author_operation()?;
         state.mutation_gate.invalidate();
-        if !matches!(&change, DraftingChange::OrganizeLibrary { .. }) {
+        if !matches!(
+            &change,
+            DraftingChange::OrganizeLibrary { .. } | DraftingChange::SetSheetReference { .. }
+        ) {
             clean_editor(&state)?;
         }
         let mut host = state

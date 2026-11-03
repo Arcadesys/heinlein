@@ -57,7 +57,7 @@ describe('explicit revision requests', () => {
     const bridge = await start(); write(); button('Send to OpenAI').click(); await vi.waitFor(() => expect(panel.element.textContent).toContain('Advice only'));
     await sendRevision(); expect(bridge.suggestQuestionRevision.mock.calls[0][0].history).toEqual([]);
     expect(panel.element.textContent).toContain('Revision requests include no conversation history');
-    expect(document.querySelector('[aria-label="Suggested replacement 2"]')!.textContent).toBe('A different 🐺 passage.'); expect(review).not.toHaveBeenCalled();
+    expect(document.querySelector('.question-diff-chip ins')!.textContent).toBe('different '); expect(review).not.toHaveBeenCalled();
     button('Review proposed revision').click(); await vi.waitFor(() => expect(review).toHaveBeenCalledTimes(1));
     expect(review.mock.calls[0][0]).toBe('proposal-1'); expect(review.mock.calls[0][2]()).toBeNull();
   });
@@ -120,16 +120,23 @@ describe('explicit revision requests', () => {
     state.source = 'x'.repeat(16000); state.from = 0; state.to = 16000; button('Capture revision selection').click(); button('Capture current scene').click(); write('q');
     expect(button('Send to OpenAI').disabled).toBe(true); expect(button('Send to OpenAI').title).toContain('32,000');
   });
+  it('shows a no-change answer without creating review or rejection controls', async () => {
+    const bridge = core(); bridge.suggestQuestionRevision.mockImplementation(async request => ({...answer(request), text: 'Keep this passage.', proposalId: '', replacementText: state.source.slice(state.from, state.to)}));
+    await start(bridge); mode('revision'); write(); button('Send to OpenAI').click();
+    await vi.waitFor(() => expect(panel.element.textContent).toContain('Keep this passage.'));
+    expect(button('Review proposed revision')).toBeUndefined(); expect(review).not.toHaveBeenCalled();
+    expect(bridge.rejectProposal).not.toHaveBeenCalled();
+  });
   it('marks an explicitly empty replacement as a deletion that still requires review', async () => {
     const bridge = core(); bridge.suggestQuestionRevision.mockImplementation(async request => ({...answer(request), replacementText: ''})); await start(bridge); await sendRevision();
-    expect(document.querySelector('[aria-label="Suggested replacement 1"]')!.textContent).toBe(''); expect(panel.element.textContent).toContain('will delete the selected passage'); expect(review).not.toHaveBeenCalled();
+    expect(document.querySelector('.question-diff-chip ins')).toBeNull(); expect(panel.element.textContent).toContain('will delete the selected passage'); expect(review).not.toHaveBeenCalled();
   });
   it('bounds visible conversation text including original revision targets and replacements', async () => {
     state.source = 'x'.repeat(16000); state.from = 0; state.to = state.source.length;
     const digest = await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(state.source)); state.sourceHash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
     const bridge = core(); bridge.suggestQuestionRevision.mockImplementation(async request => ({...answer(request), text: 'e'.repeat(10000), replacementText: 'r'.repeat(1000)})); await start(bridge); mode('revision');
     for (let index = 0; index < 3; index++) {write(`Revision ${index}`); button('Send to OpenAI').click(); await vi.waitFor(() => expect(bridge.suggestQuestionRevision).toHaveBeenCalledTimes(index + 1)); await vi.waitFor(() => expect(button('Cancel request').hidden).toBe(true));}
-    expect(document.querySelectorAll('.question-turn')).toHaveLength(3); expect(panel.element.textContent).toContain('Revision 0'); expect(document.querySelector('[aria-label="Original target 1"]')).toBeNull();
+    expect(document.querySelectorAll('.question-turn')).toHaveLength(3); expect(panel.element.textContent).toContain('Revision 0'); expect(document.querySelector('.question-turn:first-child .question-diff-chip')).toBeNull();
   });
   it('rejects incomplete or invalid revision results without offering review', async () => {
     const bridge = core(); bridge.suggestQuestionRevision.mockImplementation(async request => ({...answer(request), incomplete: true})); await start(bridge); mode('revision'); write(); button('Send to OpenAI').click();

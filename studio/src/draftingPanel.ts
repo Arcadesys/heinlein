@@ -1,6 +1,8 @@
 import {GROUP_DRAG_TYPE as LEGACY_GROUP_DRAG_TYPE,moveIntent,moveTargetLabel,type MoveSource,type MoveTarget} from './manuscriptMoves';
 import type { DraftingChange, DraftingFileChange, DraftingPreview, DraftingScene, DraftingSelection, DraftingState, LibraryEntry, LocalCore, RepositorySession } from './localCore';
 import { rowMenu } from './rowMenu';
+import {withReferenceSheets} from './sheetManagement';
+import './referenceSheets.css';
 import {libraryPointerDrag, type LibraryDragSource, type LibraryDropTarget} from './libraryPointerDrag';
 
 export const REPOSITORY_DRAG_TYPE = 'application/x-heinlein-repository-entry';
@@ -58,7 +60,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     const repositoryId = hooks.repository()!.id;
     const loaded = await core.loadDrafting!(repositoryId);
     if (disposed || current !== version || request !== loadRequest || repositoryId !== hooks.repository()?.id) return null;
-    state = loaded; render(); return loaded;
+    state = withReferenceSheets(loaded); render(); return state;
   }
   function dialog(title: string) {
     const node = el('dialog', '', 'appearance-dialog drafting-dialog');
@@ -142,7 +144,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     if (!before || !repositoryId) return false;
     let didApply=false;
     loadRequest++;
-    const organizationOnly = change.kind === 'organizeLibrary';
+    const organizationOnly = change.kind === 'organizeLibrary' || change.kind === 'setSheetReference';
     await (organizationOnly ? hooks.runOrganization ?? hooks.run : hooks.run)(async () => {
       let applied = false;
       try {
@@ -151,14 +153,14 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         const preview = await core.previewDraftingChange!(repositoryId, before.revision, change);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
         if(!preview.changes.length && !organizationOnly && !immediate){hooks.report(preview.summary);return;}
-        if (!immediate && change.kind !== 'organizeLibrary' && !await confirmPreview(preview)) { hooks.report('Change canceled.'); return; }
+        if (!immediate && !organizationOnly && !await confirmPreview(preview)) { hooks.report('Change canceled.'); return; }
         if (disposed || repositoryId !== hooks.repository()?.id) return;
         if (!organizationOnly) hooks.verify?.();
         if (prepare) prepare();
         const result = await core.applyDraftingChange!(repositoryId, preview.id);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
-        applied = true; didApply = true; state = result.state; undo = result.undoId ? {id: result.undoId, changes: preview.changes, summary: preview.summary} : null; canUndo = Boolean(result.undoId); canRedo = false; render(); hooks.show();
-        await hooks.changed(state, before, preview.changes, focusPath, change.kind === 'organizeLibrary');
+        applied = true; didApply = true; state = withReferenceSheets(result.state); undo = result.undoId ? {id: result.undoId, changes: preview.changes, summary: preview.summary} : null; canUndo = Boolean(result.undoId); canRedo = false; render(); hooks.show();
+        await hooks.changed(state, before, preview.changes, focusPath, organizationOnly);
         if (focusItem) {
           const control = focusItem.kind === 'group'
             ? [...element.querySelectorAll<HTMLButtonElement>('[data-group-id]')].find(node => node.dataset.groupId === focusItem.id)
@@ -344,7 +346,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         if (!metadataOnly) hooks.verify?.();
         const result = await core.historyDraftingChange!(repositoryId!, direction, metadataOnly);
         if (disposed || hooks.repository()?.id !== repositoryId) return;
-        state = result.state; canUndo = result.canUndo; canRedo = result.canRedo; undo = null; render(); hooks.show();
+        state = withReferenceSheets(result.state); canUndo = result.canUndo; canRedo = result.canRedo; undo = null; render(); hooks.show();
         await hooks.changed(state, before, [], undefined, result.metadataOnly); hooks.report(`${direction === 'undo' ? 'Undid' : 'Redid'} library change locally.`);
       } catch (error) {
         if (metadataOnly && String(error).includes('HISTORY_REQUIRES_SAVED_EDITOR')) { needsFileGuard = true; return; }
@@ -426,7 +428,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         hooks.verify?.();
         const restored = await core.undoDraftingChange!(repositoryId, entry.id);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
-        applied = true; state = restored; undo = null; render(); hooks.show();
+        applied = true; state = withReferenceSheets(restored); undo = null; render(); hooks.show();
         await hooks.changed(restored, before, preview.changes);
         hooks.report('Last manuscript change undone locally.');
       } catch (error) { hooks.report(`${applied ? 'Undo saved locally, but the view could not refresh' : 'Undo could not be completed'}: ${String(error)}. Current files and recovery remain available.`, true); }
@@ -628,9 +630,14 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     };
     const sceneRow = (scene: DraftingScene, depth: number) => {
       const index = state!.scenes.findIndex(item => item.id === scene.id);
-      const row = el('li', '', 'tree-scene'); row.dataset.sceneId = scene.id;
+      const row = el('li', '', `tree-scene${scene.reference ? ' tree-reference' : ''}`); row.dataset.sceneId = scene.id;
       const line = el('div', '', 'tree-row'); line.style.setProperty('--depth', String(depth));
       const open = button(scene.title || 'Untitled scene', () => hooks.open(scene.path), 'scene-open');
+      if (scene.reference) {
+        const badge = el('span', 'Reference', 'reference-sheet-badge');
+        badge.setAttribute('aria-hidden', 'true'); open.append(document.createTextNode(' '), badge);
+        open.setAttribute('aria-label', `${scene.title || 'Untitled sheet'} Reference`);
+      }
       open.dataset.path = scene.path; open.title = scene.path; pointerMoves.bind(open, {kind: 'scene', id: scene.id});
       if (scene.path === current) open.setAttribute('aria-current', 'true');
       open.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(SCENE_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()!.id, sceneId: scene.id})); row.classList.add('dragging'); });
@@ -640,7 +647,12 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const later = button('Move later', () => state?.library ? reorderLibraryItem(scene.id, 1) : reorder(scene, 1)); later.disabled = state!.library ? siblingIndex === siblings.length - 1 : index === state!.scenes.length - 1;
       line.prepend(open, rowMenu(`Actions for ${scene.title || basename(scene.path)}`, [
         button('Rename…', () => renameLibraryItem(scene.id, 'scene')), button('Move to…', () => state?.library ? moveSheets([scene.id], scene.groupId) : moveScene(scene)),
-        earlier, later, el('p', scene.path, 'scene-path'),
+        earlier, later,
+        button(scene.reference ? 'Make regular sheet' : 'Make reference sheet', () => {
+          void changeManuscript({kind: 'setSheetReference', path: scene.path, reference: !scene.reference}, undefined, undefined, true,
+            `${scene.title} is now a ${scene.reference ? 'regular' : 'reference'} sheet`, {id: scene.id, kind: 'scene', parentId: scene.groupId});
+        }),
+        el('p', scene.path, 'scene-path'),
       ]));
       row.append(line); sceneDropTarget(row, line, scene, entries);
       return row;

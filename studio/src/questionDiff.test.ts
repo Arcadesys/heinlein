@@ -22,3 +22,22 @@ describe('exact presentation diffs', () => {
     expect(view.querySelector('.question-diff-add')?.textContent).toBe('drummed against');
   });
 });
+
+describe('compact diff chips', () => {
+  it('shows multiple changed spans without echoing unchanged prose', async () => {
+    const {createQuestionDiffChips} = await import('./questionDiff');
+    const view = createQuestionDiffChips('Rain tapped the glass roof. She waited.', 'Rain drummed the glass roof. She left.');
+    expect(view.querySelectorAll('details')).toHaveLength(2);
+    expect(view.textContent).not.toContain('the glass roof');
+    expect([...view.querySelectorAll('del')].map(n => n.textContent)).toEqual(['tapped', 'waited']);
+    expect([...view.querySelectorAll('ins')].map(n => n.textContent)).toEqual(['drummed', 'left']);
+    expect(view.querySelector('details')!.open).toBe(false);
+  });
+  it('retains whitespace, Unicode and literal HTML in expanded diff text', async () => {
+    const {createQuestionDiffChips} = await import('./questionDiff');
+    const view = createQuestionDiffChips('— 🦊\r\n', '— <script>alert(1)</script>\t');
+    expect(view.querySelector('script')).toBeNull();
+    expect([...view.querySelectorAll('del')].map(n => n.textContent).join('')).toBe('🦊\r\n');
+    expect([...view.querySelectorAll('ins')].map(n => n.textContent).join('')).toBe('<script>alert(1)</script>\t');
+  });
+});

@@ -332,7 +332,7 @@ fn sse_completed_items_keep_content_and_revision_guards() {
         (
             "message",
             "completed",
-            r#"{"explanation":"Advice","replacement":"Proposed text"}"#,
+            r#"{"explanation":"Advice","edits":[{"original":"Exact","replacement":"Proposed text"}]}"#,
             true,
             true,
         ),
@@ -973,7 +973,7 @@ async fn prepared_revision(
             permit,
             |_, _| async {
                 Ok(revision_bytes(
-                    r#"{"explanation":"Keep the voice.","replacement":"  Revised—🦊\r\n"}"#,
+                    r#"{"explanation":"Keep the voice.","edits":[{"original":"Exact—🦊\r\n","replacement":"  Revised—🦊\r\n"}]}"#,
                 ))
             },
             REQUEST_TIMEOUT,
@@ -1006,7 +1006,7 @@ fn revision_wire_is_strict_bounded_and_only_explicitly_supplied_text() {
     );
     assert_eq!(
         value["text"]["format"]["schema"]["required"],
-        json!(["explanation", "replacement"])
+        json!(["explanation", "edits"])
     );
     assert_eq!(value["store"], false);
     assert_eq!(value["stream"], true);
@@ -1029,21 +1029,24 @@ fn revision_wire_is_strict_bounded_and_only_explicitly_supplied_text() {
 fn revision_parser_preserves_whitespace_and_accepts_explicit_deletion() {
     let (answer, replacement) = parse_revision(
         "r",
-        &revision_bytes(r#"{"explanation":"  Reason.\n","replacement":"  Élan—🦊\r\n"}"#),
+        &revision_bytes(r#"{"explanation":"  Reason.\n","edits":[{"original":"Exact","replacement":"  Élan—🦊\r\n"}]}"#),
     )
     .unwrap();
     assert_eq!(answer.text, "  Reason.\n");
-    assert_eq!(replacement, "  Élan—🦊\r\n");
+    assert_eq!(
+        apply_revision_diffs("Exact", &replacement).unwrap(),
+        "  Élan—🦊\r\n"
+    );
     assert!(!answer.incomplete);
     assert_eq!(
-        parse_revision(
+        apply_revision_diffs("Exact", &parse_revision(
             "r",
             &revision_bytes(
-                r#"{"explanation":"Remove the selected repetition.","replacement":""}"#
+                r#"{"explanation":"Remove the selected repetition.","edits":[{"original":"Exact","replacement":""}]}"#
             )
         )
         .unwrap()
-        .1,
+        .1).unwrap(),
         ""
     );
 }
@@ -1071,7 +1074,8 @@ fn revision_parser_never_repairs_or_promotes_advice_or_malformed_json() {
 
 #[test]
 fn revision_parser_rejects_incomplete_refusal_and_ambiguous_outputs() {
-    let valid = revision_bytes(r#"{"explanation":"x","replacement":"y"}"#);
+    let valid =
+        revision_bytes(r#"{"explanation":"x","edits":[{"original":"x","replacement":"y"}]}"#);
     let value: Value = serde_json::from_slice(&valid).unwrap();
     for key in ["incomplete_details", "error"] {
         let mut response = value.clone();
@@ -1434,4 +1438,54 @@ fn streaming_preview_is_incremental_bounded_and_not_a_completed_answer() {
         body.push(huge.as_bytes()).unwrap_err().code,
         "responseTooLarge"
     );
+}
+
+#[test]
+fn revision_diffs_bind_to_unique_ordered_originals_and_preserve_surroundings() {
+    let diff = |original: &str, replacement: &str| RevisionDiff {
+        original: original.into(),
+        replacement: replacement.into(),
+    };
+    let source = "— 🦊\r\nRain tapped. She waited.\r\n";
+    assert_eq!(
+        apply_revision_diffs(source, &[diff("tapped", "drummed"), diff("waited", "left")]).unwrap(),
+        "— 🦊\r\nRain drummed. She left.\r\n"
+    );
+    assert_eq!(apply_revision_diffs(source, &[]).unwrap(), source);
+    assert_eq!(
+        apply_revision_diffs(source, &[diff("Rain", "Cold rain")]).unwrap(),
+        "— 🦊\r\nCold rain tapped. She waited.\r\n"
+    );
+    for (source, edits) in [
+        ("again again", vec![diff("again", "once")]),
+        ("aaa", vec![diff("aa", "a")]),
+        ("abc", vec![diff("", "insert")]),
+        ("abc", vec![diff("missing", "a")]),
+        ("abc", vec![diff("ab", "x"), diff("bc", "y")]),
+        ("abc", vec![diff("c", "x"), diff("a", "y")]),
+    ] {
+        assert!(apply_revision_diffs(source, &edits).is_err());
+    }
+}
+
+#[test]
+fn revision_parser_rejects_full_prose_and_invalid_patch_shapes() {
+    for text in [
+        r#"{"explanation":"Reason","replacement":"Rewritten scene"}"#,
+        r#"{"explanation":"Reason","edits":[{"original":"","replacement":"x"}]}"#,
+        r#"{"explanation":"Reason","edits":[{"original":"x","replacement":"x"}]}"#,
+        r#"{"explanation":"Reason","edits":[{"original":"x","replacement":"y","apply":true}]}"#,
+        r#"{"explanation":"Reason","edits":[{"original":"x","original":"y","replacement":"z"}]}"#,
+    ] {
+        assert!(
+            parse_revision("diff-shape", &revision_bytes(text)).is_err(),
+            "{text}"
+        );
+    }
+    let (_, edits) = parse_revision(
+        "no-changes",
+        &revision_bytes(r#"{"explanation":"Keep this passage.","edits":[]}"#),
+    )
+    .unwrap();
+    assert!(edits.is_empty());
 }

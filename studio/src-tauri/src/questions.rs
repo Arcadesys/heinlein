@@ -475,6 +475,9 @@ pub(crate) async fn suggest_question_revision(
     // serializes cancellation with this final, local pending-proposal operation.
     tauri::async_runtime::spawn_blocking(move || {
         let (answer, replacement_text, proposal_id) = prepared.persist(|answer, replacement| {
+            if replacement == snapshot.target.selected_text {
+                return Ok(String::new());
+            }
             persist_revision(&app, &auth, &connection, &snapshot, answer, replacement)
         })?;
         Ok(RevisionAnswer {

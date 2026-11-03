@@ -27,7 +27,7 @@ function core() {
 let desiredResponse: 'ask' | 'revision' = 'ask';
 /** Accessible-ish name: aria-label, else text without aria-hidden decoration such as the Ask shortcut hint. */
 const nameOf = (node: Element) => node.getAttribute('aria-label') ?? [...node.childNodes].filter(child => !(child instanceof Element && child.getAttribute('aria-hidden') === 'true')).map(child => child.textContent).join('');
-function button(label: string) {if(label==='Send to OpenAI')label=desiredResponse==='revision'?'Suggest rewrite':'Ask';if(label==='Return to writing'||label==='Collapse')label='Close Heinlein';if(label==='Questions'||label==='Ask Heinlein about selection')label='Heinlein';// Both Heinlein views carry the shared header, so a hidden Review's identical controls come last.
+function button(label: string) {if(label==='Send to OpenAI')label=desiredResponse==='revision'?'Suggest edits':'Ask';if(label==='Return to writing'||label==='Collapse')label='Close Heinlein';if(label==='Questions'||label==='Ask Heinlein about selection')label='Heinlein';// Both Heinlein views carry the shared header, so a hidden Review's identical controls come last.
   const found = [...document.querySelectorAll('button')].sort((a, b) => Number(Boolean(a.closest('.heinlein-review-panel[hidden]'))) - Number(Boolean(b.closest('.heinlein-review-panel[hidden]')))).find(node => nameOf(node) === label || label==='Heinlein' && node.textContent?.startsWith('Heinlein') && !node.textContent?.includes('Review')); if (!found) throw new Error(`Missing ${label}`); return found;}
 const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
 const panel = () => document.querySelector<HTMLElement>('[aria-label="Drafting questions"]')!;
@@ -170,7 +170,7 @@ async function beginRevision(bridge: LocalCore) {
   await start(bridge); const source = view().state.doc.toString(); const from = source.indexOf('🐺');
   await highlight(from, source.indexOf('\nLast')); await open(); responseMode('revision'); question('Suggest a clearer passage');
 }
-async function suggested() {button('Send to OpenAI').click(); await vi.waitFor(() => expect([...document.querySelectorAll('button')].some(node => node.textContent === 'Apply…')).toBe(true));}
+async function suggested() {button('Send to OpenAI').click(); await vi.waitFor(() => expect([...document.querySelectorAll('button')].some(node => node.textContent === 'Review changes…')).toBe(true));}
 
 describe('Studio attributed revision workflow', () => {
   it('uses only the exact saved selection and requires whole-scene review then native author confirmation', async () => {
@@ -179,7 +179,7 @@ describe('Studio attributed revision workflow', () => {
     const args = bridge.suggestQuestionRevision.mock.calls[0] as unknown as [QuestionRequest, unknown, {selectedText: string; fromUtf8: number; toUtf8: number}];
     expect(args[0].context).toBe(''); expect(args[0].history).toEqual([]); expect(args[2].selectedText).toBe('🐺 passage.');
     expect(args[2].fromUtf8).toBe(new TextEncoder().encode(original.slice(0, original.indexOf('🐺'))).length);
-    expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n')); button('Apply…').click();
+    expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n')); button('Review changes…').click();
     await vi.waitFor(() => expect(document.querySelector<HTMLElement>('[aria-label="Review whole-scene revision"]')?.hidden).toBe(false));
     const dialog = document.querySelector('[aria-label="Review whole-scene revision"]')!;
     expect(dialog.textContent).toContain('Native OpenAI suggestion'); expect(dialog.textContent).not.toContain('Unverified local MCP client'); expect(dialog.textContent).toContain('not authenticated authorship');
@@ -194,7 +194,7 @@ describe('Studio attributed revision workflow', () => {
     expect(view().state.readOnly).toBe(false); [...panel().querySelectorAll<HTMLButtonElement>('button')].find(node => node.getAttribute('aria-label') === 'Close Heinlein')!.click(); view().dispatch({changes: {from: view().state.doc.length, insert: '!'}}); await app!.saveCurrent();
     expect(bridge.saveDocument).toHaveBeenCalledTimes(1); const request = bridge.suggestQuestionRevision.mock.calls[0][0];
     result.resolve({requestId: request.requestId, text: 'Stale explanation remains readable', model: 'mock-model', incomplete: false, proposalId: 'proposal', replacementText: 'new passage.'});
-    await vi.waitFor(() => expect(panel().textContent).toContain('Stale explanation')); expect(button('Apply…').disabled).toBe(true); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(panel().textContent).toContain('Stale explanation')); expect(button('Review changes…').disabled).toBe(true); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
     button('Dismiss').click(); await vi.waitFor(() => expect(bridge.rejectProposal).toHaveBeenCalledWith(session.id, 'proposal'));
   });
   it('blocks dirty targets without saving and allows switching back to ordinary advice', async () => {
@@ -205,8 +205,8 @@ describe('Studio attributed revision workflow', () => {
   it('invalidates a suggested revision after edit then undo even when exact source is restored', async () => {
     const bridge = await revisionCore(); await beginRevision(bridge); await suggested(); const selected = view().state.selection;
     view().dispatch({changes: {from: view().state.doc.length, insert: '!'}}); button('Undo').click(); view().dispatch({selection: selected});
-    expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n')); expect(button('Apply…').disabled).toBe(true);
-    button('Apply…').click(); expect(bridge.reviewProposal).not.toHaveBeenCalled(); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
+    expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n')); expect(button('Review changes…').disabled).toBe(true);
+    button('Review changes…').click(); expect(bridge.reviewProposal).not.toHaveBeenCalled(); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
   });
   it('awaits native dirty synchronization before recapturing and invalidates a moved selection', async () => {
     const bridge = await revisionCore(); await beginRevision(bridge); const waiting = deferred<void>();
@@ -215,17 +215,17 @@ describe('Studio attributed revision workflow', () => {
     button('Collapse').click();view().contentDOM.dispatchEvent(new KeyboardEvent('keydown',{key:'j',ctrlKey:true,bubbles:true}));
     await new Promise(resolve=>setTimeout(resolve,20));expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled();
     view().dispatch({selection:{anchor:0,head:3}});waiting.resolve();await new Promise(resolve=>setTimeout(resolve,20));
-    expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled();expect(button('Suggest rewrite').disabled).toBe(true);
+    expect(bridge.suggestQuestionRevision).not.toHaveBeenCalled();expect(button('Suggest edits').disabled).toBe(true);
   });
   it('rechecks exact editor revision after loading native review and never promotes late programmatic changes', async () => {
     const bridge = await revisionCore(); await beginRevision(bridge); await suggested(); const waiting = deferred<Awaited<ReturnType<typeof bridge.reviewProposal>>>(); const review = await bridge.reviewProposal(); bridge.reviewProposal.mockClear(); bridge.reviewProposal.mockReturnValueOnce(waiting.promise);
-    button('Apply…').click(); await vi.waitFor(() => expect(bridge.reviewProposal).toHaveBeenCalledTimes(1));
+    button('Review changes…').click(); await vi.waitFor(() => expect(bridge.reviewProposal).toHaveBeenCalledTimes(1));
     view().dispatch({changes: {from: view().state.doc.length, insert: ' late edit'}}); waiting.resolve(review);
     await vi.waitFor(() => expect(bridge.cancelProposalReview).toHaveBeenCalledWith(session.id, 'review'));
     expect(document.querySelector<HTMLElement>('[aria-label="Review whole-scene revision"]')?.hidden).toBe(true); expect(bridge.applyProposalReview).not.toHaveBeenCalled(); expect(view().state.doc.toString()).toContain('late edit');
   });
   it('retains the captured passage when the caret moves before native confirmation', async () => {
-    const bridge = await revisionCore(); await beginRevision(bridge); await suggested(); button('Apply…').click();
+    const bridge = await revisionCore(); await beginRevision(bridge); await suggested(); button('Review changes…').click();
     await vi.waitFor(() => expect(document.querySelector<HTMLElement>('[aria-label="Review whole-scene revision"]')?.hidden).toBe(false));
     view().dispatch({selection: {anchor: 0, head: 3}}); button('Continue to native confirmation').click();
     await vi.waitFor(() => expect(bridge.cancelProposalReview).toHaveBeenCalledWith(session.id, 'review')); expect(bridge.applyProposalReview).toHaveBeenCalledTimes(1); expect(bridge.saveDocument).not.toHaveBeenCalled();

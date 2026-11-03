@@ -43,7 +43,7 @@ fn connection_fuzz_protocol() {
             let revision_kind = (seed as usize + step) % 8;
             let revision_text = match revision_kind {
                 0 => serde_json::to_string(
-                    &json!({"explanation":"Synthetic reason", "replacement":replacement}),
+                    &json!({"explanation":"Synthetic reason", "edits":[{"original":"Exact", "replacement":replacement}]}),
                 )
                 .unwrap(),
                 1 => "{\"explanation\":\"reason\"}".to_owned(),
@@ -58,7 +58,10 @@ fn connection_fuzz_protocol() {
             revision["output"][0]["content"][0]["text"] = json!(revision_text);
             let parsed = parse_revision("revision", &serde_json::to_vec(&revision).unwrap());
             if revision_kind == 0 {
-                assert_eq!(parsed.unwrap().1, replacement);
+                assert_eq!(
+                    apply_revision_diffs("Exact", &parsed.unwrap().1).unwrap(),
+                    replacement
+                );
             } else {
                 assert!(parsed.is_err(), "revision seed={seed} step={step}");
             }
