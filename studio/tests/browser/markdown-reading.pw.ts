@@ -14,10 +14,10 @@ async function start(page: Page, path = url) {
   await page.evaluate(() => localStorage.clear());
   await page.goto(path);
   await expect(panelOf(page).locator('.review-edit').first()).toBeVisible();
-  await expect(panelOf(page).locator('.review-mark-status')).toContainText('marked in the open text');
+  await expect(panelOf(page).locator('.review-mark-status')).toHaveAttribute('data-marked', /^[1-9]/);
 }
 async function openReading(page: Page) {
-  await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
+  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Reading', exact: true }).click();
   await expect(reader(page)).toBeVisible();
 }
@@ -27,7 +27,7 @@ test('Reading is explicit, formats safely, makes no requests and leaves source b
   const external: string[] = [];
   page.on('request', request => { if (!request.url().startsWith('http://127.0.0.1')) external.push(request.url()); });
   await start(page);
-  await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
+  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
   const group = page.getByRole('group', { name: 'Document view' });
   await expect(group.getByRole('button', { name: 'Source', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(reader(page)).toBeHidden();
@@ -91,7 +91,7 @@ test('An overlap opens its group with nothing chosen, and stale or other-file su
   const group = panelOf(page).locator('.review-conflict');
   await expect(group).toBeFocused();
   await expect(group.locator('input[type=radio]:checked')).toHaveCount(0);
-  await expect(group.getByRole('button', { name: 'Approve this change…', exact: true }).first()).toBeDisabled();
+  await expect(group.getByRole('button', { name: 'Choose an alternative first', exact: true })).toBeDisabled();
   expect(await decisionCalls(page)).toEqual([]);
 });
 test('Markup-only suggestions use an honest control and an insertion shows a point, with no misplaced mark', async ({ page }) => {
@@ -109,7 +109,7 @@ test('Markup-only suggestions use an honest control and an insertion shows a poi
   await heading.focus();
   await page.keyboard.press('Enter');
   await expect(panelOf(page).locator('[data-finding-id="example-heading-mark"] h4')).toBeFocused();
-  await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
+  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
   await expect(reader(page)).toBeFocused();
   await mark(page, 'example-frontmatter').click();
   await expect(panelOf(page).locator('[data-finding-id="example-frontmatter"] h4')).toBeFocused();
@@ -126,7 +126,7 @@ test('Keyboard steps through every Reading suggestion and opens the one reached,
     const card = panelOf(page).locator(`[data-finding-id="${id}"]`);
     if (id.startsWith('example-overlap')) await expect(panelOf(page).locator('.review-conflict')).toBeFocused();
     else await expect(card.locator('h4')).toBeFocused();
-    await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
+    await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
   }
   expect(await decisionCalls(page)).toEqual([]);
 });
@@ -164,7 +164,7 @@ test('Selecting in Reading cannot ask, split, undo or find through the hidden ed
 });
 test('Toggling keeps one writer: unsaved text shows in Reading, caret and bytes survive, and marks stop after an edit', async ({ page }) => {
   await start(page);
-  await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
+  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
   const group = page.getByRole('group', { name: 'Document view' });
   const editor = page.locator('.cm-content');
   await editor.click();
@@ -192,7 +192,7 @@ test('Approving from Reading stays in Reading and removes only resolved marks, w
   await openReading(page);
   await mark(page, 'example-approve').click();
   const panel = panelOf(page);
-  await panel.locator('[data-finding-id="example-approve"]').getByRole('button', { name: 'Approve this change…', exact: true }).click();
+  await panel.locator('[data-finding-id="example-approve"]').getByRole('button', { name: 'Accept…', exact: true }).click();
   await page.getByRole('dialog', { name: 'Simulated final confirmation' }).getByRole('button', { name: 'Confirm and apply', exact: true }).click();
   await expect(panel.locator('.review-decision-note')).toContainText('Applied to opening.md');
   await expect(reader(page)).not.toHaveAttribute('hidden', '');
@@ -200,13 +200,13 @@ test('Approving from Reading stays in Reading and removes only resolved marks, w
   await expect(mark(page, 'example-approve')).toHaveCount(0);
   await expect(mark(page, 'example-dismiss')).toHaveText('Nobody looked up.');
   await expect(mark(page, 'example-overlap-word')).toHaveText('grey');
-  await panel.locator('[data-finding-id="example-dismiss"]').getByRole('button', { name: 'Reject this change', exact: true }).click();
+  await panel.locator('[data-finding-id="example-dismiss"]').getByRole('button', { name: 'Keep mine', exact: true }).click();
   await expect(mark(page, 'example-dismiss')).toHaveCount(0);
   await expect(mark(page, 'example-overlap-word')).toHaveText('grey');
 });
 test('A saved reference reads as formatted text with no marks, and stays exact in Source', async ({ page }) => {
   await start(page);
-  await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
+  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
   const documents=page.getByRole('button',{name:'Documents',exact:true});if(await documents.isVisible())await documents.click();
   await page.getByRole('button',{name:'Read beside…',exact:true}).click();await page.getByRole('button', { name: 'Read beside active document: opening.md', exact: true }).click();
   const pane = page.getByRole('region', { name: 'Saved source reference', exact: true });
@@ -238,7 +238,7 @@ test('An assembled chapter reads part by part, and each mark opens the card for 
   await expect(revise).toBeHidden();
   const hint = page.locator('.active-document-pane .page > p.muted').first();
   await expect(hint).toHaveText('A formatted, read-only copy of the current source scenes. Switch to Source to select a passage and revise it.');
-  await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
+  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Source', exact: true }).click();
   await expect(hint).toContainText('Select a passage, then choose Revise source passage.');
   await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).click(); await expect(revise).toBeVisible();
@@ -248,7 +248,7 @@ test('The role label follows the view, and the preview entry opens ready in Read
   const role = page.locator('.document-command-bar .document-role');
   await expect(role).toHaveText('Reading');
   await expect(reader(page)).not.toHaveAttribute('hidden', '');
-  await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
+  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Source', exact: true }).click();
   await expect(role).toHaveText('Editing');
   await expect(page.locator('.cm-content')).toBeFocused();
@@ -265,9 +265,10 @@ test('Reading and AI advice keep separate policies on one screen, and manuscript
   await expect(advice.locator('strong')).toHaveText('singular');
   const link = advice.getByRole('link', { name: 'a usage note' });
   await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
-  await expect(card.locator('pre[data-side="current"] a, pre[data-side="proposed"] a')).toHaveCount(0);
-  await expect(card.locator('pre[data-side="current"]')).toContainText('The manifest were wrong again');
-  await expect(card.locator('pre[data-side="current"] strong')).toHaveCount(0);
+  await expect(card.locator('.review-inline-diff a')).toHaveCount(0);
+  await expect(card.locator('.review-inline-diff')).toContainText('The manifest');
+  await expect(card.locator('.review-inline-diff del')).toHaveText('were');
+  await expect(card.locator('.review-inline-diff strong')).toHaveCount(0);
   await expect(card.locator('.review-technical code')).toContainText('"before":"were"');
   expect(external).toEqual([]);
   expect((await new AxeBuilder({ page }).include('[data-finding-id="example-approve"]').analyze()).violations).toEqual([]);
@@ -281,7 +282,7 @@ test('This fixture keeps to its own storage key', async ({ page }) => {
 
 test('scene navigation reveals Source and focuses the exact passage with keyboard access', async ({ page }, info) => {
   await start(page, `${url}?sceneNavigation`);
-  await panelOf(page).getByRole('button', { name: 'Return to writing', exact: true }).click();
+  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
   const editor = page.locator('.active-document-pane .cm-content');
   await editor.click();
   await page.keyboard.press(`${modifier}+End`);
