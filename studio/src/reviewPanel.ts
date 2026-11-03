@@ -897,7 +897,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             check.onchange = () => { if (scope?.targetPaths) useSelection = false; if (check.checked)
                 selectedPaths.add(snapshot.path);
             else
-                selectedPaths.delete(snapshot.path); invalidatePreview(); scopeCards_(); targets.querySelector<HTMLInputElement>(`input[data-path="${CSS.escape(snapshot.path)}"]`)?.focus(); };
+                selectedPaths.delete(snapshot.path); invalidatePreview(); scopeCards_(); [...targets.querySelectorAll<HTMLInputElement>('input[data-path]')].find(n => n.dataset.path === snapshot.path)?.focus(); };
             check.dataset.path = snapshot.path;
             const unchecked = scope.contextPaths && !scope.contextPaths.includes(snapshot.path) ? 'excluded if unchecked' : 'context if unchecked';
             label.append(check, el('span', `Suggest edits in ${snapshot.path}`), el('span', ` · ${unchecked}`, 'review-scope-detail'));
@@ -916,7 +916,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 if (on && reviewerIds.length === 1) { say('Keep at least one reviewer.'); return; }
                 reviewerIds = on ? reviewerIds.filter(id => id !== d.id) : definitions.map(x => x.id).filter(id => id === d.id || reviewerIds.includes(id));
                 invalidatePreview(); settings(); update();
-                setup.querySelector<HTMLElement>(`[data-reviewer="${CSS.escape(d.id)}"]`)?.focus();
+                [...setup.querySelectorAll<HTMLElement>('[data-reviewer]')].find(n => n.dataset.reviewer === d.id)?.focus();
             }, 'review-chip-toggle');
             chip.dataset.reviewer = d.id;
             chip.setAttribute('aria-pressed', String(on));
