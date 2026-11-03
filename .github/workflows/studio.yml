@@ -45,6 +45,9 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Theme browser acceptance (synthetic provider, desktop and 320px)
         run: npm run test:theme:browser
+        # playwright.config.ts writes results under $TMPDIR; keep them where the upload step looks.
+        env:
+          TMPDIR: ${{ runner.temp }}
       - name: Keep browser diagnostics when validation fails
         if: failure()
         uses: actions/upload-artifact@v4
