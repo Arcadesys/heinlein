@@ -31,7 +31,7 @@ test('one Heinlein pane keeps a pending whole-scene review across tab switches',
  await passage.getByRole('button',{name:'Whole scene',exact:true}).click();const review=page.getByRole('dialog',{name:'Heinlein Review',exact:true});await expect(review).toBeVisible();
  await review.getByRole('button',{name:'Run Heinlein Review',exact:true}).click();await expect.poll(()=>page.evaluate(()=>(window as any).questionsFixture.state().reviewCalls)).toBe(1);
  await review.getByRole('button',{name:'Passage',exact:true}).click();await expect(passage).toBeVisible();await page.evaluate(()=>(window as any).questionsFixture.finishReview());
- await passage.getByRole('button',{name:'Whole scene',exact:true}).click();await expect(review).toBeVisible();await expect(review.locator('.review-status')).toContainText('0');
+ await passage.getByRole('button',{name:'Whole scene',exact:true}).click();await expect(review).toBeVisible();await expect(review.locator('.review-status')).toContainText('Review ready');
  await expect.poll(geometry).toEqual(before);expect((await new AxeBuilder({page}).include('.heinlein-review-panel').analyze()).violations).toEqual([]);
  await review.getByRole('button',{name:'Return to writing',exact:true}).click();await expect(review).toBeHidden();await expect.poll(geometry).toEqual(before);
  const state=await page.evaluate(()=>(window as any).questionsFixture.state());expect(state.reviewCalls).toBe(1);expect(state.source).toBe(state.original);expect(state.applied).toBe(0);
