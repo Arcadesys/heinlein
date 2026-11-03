@@ -115,7 +115,7 @@ test('narrow and enlarged text retain keyboard access, diff labels and no overfl
   for (const zoom of ['200%', '400%']) {await page.evaluate(zoom=>{document.documentElement.style.fontSize=zoom;},zoom); expect(await pane.evaluate(node=>node.scrollWidth<=node.clientWidth+1)).toBe(true);}
   await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});
   const collapse=pane.getByRole('button',{name:'Collapse',exact:true});await collapse.focus();await expect(collapse).toBeFocused();
-  const last=pane.locator('.question-settings > summary');await last.focus();await page.keyboard.press('Tab');await expect(collapse).toBeFocused();await page.keyboard.press('Shift+Tab');await expect(last).toBeFocused();await collapse.focus();
+  const last=pane.getByRole('button',{name:'Copy as prompt…',exact:true});await last.focus();await page.keyboard.press('Tab');await expect(pane.getByRole('button',{name:'Passage',exact:true})).toBeFocused();await page.keyboard.press('Shift+Tab');await expect(last).toBeFocused();await collapse.focus();
   const size=await collapse.boundingBox();expect(size!.height).toBeGreaterThanOrEqual(44);
   expect((await new AxeBuilder({page}).include('.question-panel').analyze()).violations).toEqual([]);
   await page.screenshot({path:`/tmp/heinlein-questions-${info.project.name}-narrow.png`});

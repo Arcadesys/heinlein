@@ -1273,5 +1273,7 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 :root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel.heinlein-integrated {inset:0;width:auto;}
 /* Keep enlarged labels whole: each header action can claim its own row. */
 .question-panel-integrated .heinlein-tabs {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,11rem),1fr));flex:1 0 100%;width:100%;}
-.question-panel-integrated .heinlein-tabs button {width:100%;min-inline-size:0;overflow-wrap:normal;word-break:normal;}
-.question-panel-integrated .question-heading > button {flex:1 0 auto;min-inline-size:min(100%,12rem);overflow-wrap:normal;word-break:normal;}
+.question-panel-integrated .heinlein-tabs button {max-width:100%;width:100%;min-inline-size:0;overflow-wrap:normal;word-break:normal;}
+.question-panel-integrated .question-heading > button {max-width:100%;flex:1 0 auto;min-inline-size:min(100%,12rem);overflow-wrap:normal;word-break:normal;}
+/* Activity/count text must not wrap the editor toolbar and move the manuscript. */
+.document-command-bar button[aria-controls="drafting-questions"] {flex:0 0 12ch;inline-size:12ch;max-inline-size:12ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
