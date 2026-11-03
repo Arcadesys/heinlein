@@ -48,5 +48,6 @@ export function createUpdatePanel(core:LocalCore,options:{quit:()=>Promise<void>
   const explanation=document.createElement('p');explanation.textContent='Updates build the trusted Heinlein main source locally. Nothing replaces the app while it is running. You can defer an update and keep writing; quitting uses the normal save and recovery checks. Python, Node/npm, Rust and Apple build tools are required.';
   element.append(heading,exit,status,details,explanation,check,schedule,quit);schedule.hidden=true;quit.hidden=true;
   element.addEventListener('cancel',event=>{event.preventDefault();close()});
-  return{element,async open(){openedFrom=document.activeElement as HTMLElement;const view=++generation;element.showModal();heading.focus();await pending;if(element.open&&view===generation)await act(()=>load('status'))},destroy(){generation++;element.remove()}};
+  async function open(action:'status'|'check'='status'){if(element.open){if(action==='check')await act(()=>load('check'));return;}openedFrom=document.activeElement as HTMLElement;const view=++generation;element.showModal();heading.focus();await pending;if(element.open&&view===generation)await act(()=>load(action))}
+  return{element,open:()=>open(),checkNow:()=>open('check'),destroy(){generation++;element.remove()}};
 }
