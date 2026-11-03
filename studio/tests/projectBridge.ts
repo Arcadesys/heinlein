@@ -4,7 +4,7 @@ import type {LocalCore,RepositorySession,Document,RecoveryDraft,DraftingState,Dr
 import type {Project,ProjectRequest,ProjectResponse} from '../src/projects';
 import type {StandaloneDraft} from '../src/standaloneDrafts';
 import {syntheticDraftBridge} from './standaloneBridge';
-export type ProjectSeed={projects:Project[];documents:Record<string,Record<string,string>>;drafts:StandaloneDraft[];unknownWorkspaces?:string[];manuscripts?:Record<string,DraftingState>};
+export type ProjectSeed={projects:Project[];documents:Record<string,Record<string,string>>;drafts:StandaloneDraft[];unknownWorkspaces?:string[];manuscripts?:Record<string,DraftingState>;lastOpenedProjectId?:string|null};
 export function syntheticProjects(seed?:ProjectSeed,persist?:(state:ProjectSeed)=>void){
  const copy=<T>(v:T):T=>structuredClone(v);
  const projects:Project[]=copy(seed?.projects??[
@@ -21,10 +21,11 @@ export function syntheticProjects(seed?:ProjectSeed,persist?:(state:ProjectSeed)
  const requests:ProjectRequest[]=[],externalCalls:string[]=[],githubCalls:string[]=[];
  const recovery=new Map<string,RecoveryDraft>(),sessions=new Map<string,string>();
  let serial=0,active:string|null=null,dirty=false,epoch=0;
+ let lastOpenedProjectId=seed?.lastOpenedProjectId??null;
  const plans=new Map<string,{project:Project;origin:string|null;epoch:number}>();
  let failSave=false,failTarget:string|null=null,holdPreview:((resolve:()=>void)=>void)|null=null;
  const draft=syntheticDraftBridge(seed?.drafts,()=>save());
- const state=():ProjectSeed=>({projects:copy(projects),documents:copy(documents),drafts:copy([...draft.records.values()]),unknownWorkspaces:[...unknownWorkspaces],manuscripts:copy(manuscripts)});
+ const state=():ProjectSeed=>({projects:copy(projects),documents:copy(documents),drafts:copy([...draft.records.values()]),unknownWorkspaces:[...unknownWorkspaces],manuscripts:copy(manuscripts),lastOpenedProjectId});
  function save(){persist?.(state());}
  function project(id:string){const p=projects.find(p=>p.id===id);if(!p)throw Error('Unknown synthetic project');return p;}
  function selected(id:string){if(id!==active)throw Error('Synthetic project session changed');return project(sessions.get(id)!);}
@@ -34,12 +35,14 @@ export function syntheticProjects(seed?:ProjectSeed,persist?:(state:ProjectSeed)
  const core:LocalCore={...draft.core,
   async projectRequest(r:ProjectRequest):Promise<ProjectResponse>{requests.push(copy(r));switch(r.action){
    case'list':return copy(projects);
+   case'lastOpened':return lastOpenedProjectId?{id:lastOpenedProjectId}:null;
+   case'clearLastOpened':lastOpenedProjectId=null;save();return null;
    case'settings':return{...copy(project(r.id)),writingLocation:`/Synthetic/${project(r.id).kind==='local'?'Writing':'Managed copies'}/${r.id}`};
    case'rename':{const p=project(r.id);if(p.revision!==r.revision)throw Error('Project settings changed');if(!r.name.trim())throw Error('Enter a project name');p.name=r.name.trim();p.revision++;save();return copy(p);}
    case'saveResume':{const p=selected(r.repositoryId);if(dirty||p.id!==r.projectId||p.revision!==r.revision||doc(p,r.resume.path).contentHash!==r.resume.sourceHash)throw Error('Writing or project metadata changed');p.resume=copy(r.resume);p.revision++;save();return copy(p);}
    case'previewOpen':{const p=project(r.id);if(p.unavailable||failTarget===r.id)throw Error('Synthetic target unavailable; current writing retained');if(dirty)throw Error('Keep current writing first');const id=`project-plan-${++serial}`;plans.set(id,{project:copy(p),origin:active,epoch});if(holdPreview){const hold=holdPreview;holdPreview=null;await new Promise<void>(resolve=>hold(resolve));}return{id};}
    case'cancel':plans.delete(r.previewId);return null;
-   case'activate':{const p=plans.get(r.previewId);plans.delete(r.previewId);if(!p||p.origin!==active||p.epoch!==epoch||dirty||p.project.revision!==project(p.project.id).revision)throw Error('Project switch became stale');return session(project(p.project.id));}
+   case'activate':{const p=plans.get(r.previewId);plans.delete(r.previewId);if(!p||p.origin!==active||p.epoch!==epoch||dirty||p.project.revision!==project(p.project.id).revision)throw Error('Project switch became stale');lastOpenedProjectId=p.project.id;save();return session(project(p.project.id));}
   }},
   pickRepository:async()=>session(project('local-a')),
   recentRepositories:async()=>[],openRecentRepository:async()=>{throw Error('Use the project library');},

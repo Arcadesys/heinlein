@@ -152,6 +152,15 @@ no repository access and displays a native-app requirement.
 
 ## Use
 
+On relaunch, Studio reopens the last project and its last editable source document,
+with the saved cursor/selection, scroll position, and Source or Reading view.
+Position metadata stays in the local project library and is flushed on native
+close. Folder identity, source hash, scene identity, and recovery checks still
+apply: changed or missing writing opens the project overview with a message;
+an unavailable project leaves drafts and Projects usable. Earlier libraries
+without a recorded last project keep the existing drafts startup. Closing from
+standalone writing returns to drafts, retaining project positions for later.
+
 Choose **Open folder** using the operating system's native folder picker. Select
 your existing `writing-archive` checkout (or the Singularity Log project folder).
 The File tree preserves normal directory navigation. The Manuscript view lists

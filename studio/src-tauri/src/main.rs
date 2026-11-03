@@ -273,7 +273,7 @@ fn select_repository_with_origin(
     } else {
         warning
     };
-    let session = Session {
+    let mut session = Session {
         id: id(),
         project_key: repo.project_key(),
         name: project.name,
@@ -312,6 +312,17 @@ fn select_repository_with_origin(
         id: session.id.clone(),
         repo: Arc::new(repo),
     });
+    // Only a committed selection becomes the next launch target. Failed opens
+    // must not replace the previous project, even if registration succeeded.
+    if library.remember_opened(&session.project_id).is_err() {
+        let warning = session.warning.get_or_insert_with(String::new);
+        if !warning.is_empty() {
+            warning.push(' ');
+        }
+        warning.push_str(
+            "The last project could not be remembered. Choose Projects to reopen it next time.",
+        );
+    }
     Ok(session)
 }
 #[tauri::command]

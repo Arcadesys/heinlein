@@ -1,7 +1,7 @@
 import type {LocalCore,RepositorySession} from './localCore';
-export interface ProjectResume {path:string;sourceHash:string;sceneId:string|null;anchor:number;head:number;scrollTop:number}
+export interface ProjectResume {path:string;sourceHash:string;sceneId:string|null;anchor:number;head:number;scrollTop:number;readingScrollTop?:number|null}
 export interface Project {id:string;name:string;revision:number;kind:'local'|'managed';workspaceId:string|null;resume:ProjectResume|null;unavailable:string|null;github:{owner:string;repository:string;accountId:number;branch:string}|null;writingLocation?:string}
-export type ProjectRequest={action:'list'}|{action:'settings'|'previewOpen';id:string}|{action:'activate'|'cancel';previewId:string}|{action:'rename';id:string;revision:number;name:string}|{action:'saveResume';repositoryId:string;projectId:string;revision:number;resume:ProjectResume};
+export type ProjectRequest={action:'list'|'lastOpened'|'clearLastOpened'}|{action:'settings'|'previewOpen';id:string}|{action:'activate'|'cancel';previewId:string}|{action:'rename';id:string;revision:number;name:string}|{action:'saveResume';repositoryId:string;projectId:string;revision:number;resume:ProjectResume};
 export type ProjectResponse=Project[]|Project|RepositorySession|{id:string}|null;
 const el=<K extends keyof HTMLElementTagNameMap>(tag:K,text='')=>{const n=document.createElement(tag);n.textContent=text;return n;};
 export function createProjectLibrary(core:LocalCore,hooks:{current():RepositorySession|null;switchProject(id:string):Promise<boolean>;openLocal():Promise<boolean>;openGitHub():void;newDraft():Promise<void>;drafts():Promise<void>;metadata(project:Project):void;focusWriting():void}){
