@@ -21,7 +21,9 @@ async function openPassage(page:Page) {
   await expect(pane).toBeVisible();
   await expect(page.locator('.workspace')).toHaveJSProperty('inert', true);
   await expect.poll(() => textLayout(page)).toEqual(layout);
-  const lastControl = pane.getByRole('button',{name:'Copy as prompt…',exact:true});
+  // The composer ends with the "What will be sent" disclosure; Copy as prompt… stays in the send row.
+  await expect(pane.getByRole('button',{name:'Copy as prompt…',exact:true})).toBeVisible();
+  const lastControl = pane.locator('.heinlein-send-note > details > summary');await expect(lastControl).toHaveText('What will be sent');
   await lastControl.focus();await page.keyboard.press('Tab');
   await expect(pane.getByRole('button',{name:'Passage',exact:true})).toBeFocused();
   return layout;
@@ -82,7 +84,7 @@ for (const zoom of [100, 200]) {
 test('passage chip survives collapse, background completion, exact diff and guarded apply',async({page},info)=>{
   await page.setViewportSize({width:1600,height:1000});const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   const layout = await openPassage(page);await sendRevision(page);const pane=page.locator('.question-panel');
-  await pane.getByRole('button',{name:'Collapse',exact:true}).click();await expect(page.locator('.question-passage-chip[aria-label="Asking… at this passage"]')).toBeVisible();
+  await pane.getByRole('button',{name:'Close Heinlein',exact:true}).click();await expect(page.locator('.question-passage-chip[aria-label="Asking… at this passage"]')).toBeVisible();
   await expect.poll(()=>textLayout(page)).toEqual(layout);
   await fixture(page,'finish');await expect(page.locator('.question-passage-chip[aria-label="1 suggestion at this passage"]')).toBeVisible();expect((await state(page)).canceled).toBe(0);
   await expect.poll(()=>textLayout(page)).toEqual(layout);
@@ -114,8 +116,8 @@ test('narrow and enlarged text retain keyboard access, diff labels and no overfl
   }
   for (const zoom of ['200%', '400%']) {await page.evaluate(zoom=>{document.documentElement.style.fontSize=zoom;},zoom); expect(await pane.evaluate(node=>node.scrollWidth<=node.clientWidth+1)).toBe(true);}
   await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});
-  const collapse=pane.getByRole('button',{name:'Collapse',exact:true});await collapse.focus();await expect(collapse).toBeFocused();
-  const last=pane.getByRole('button',{name:'Copy as prompt…',exact:true});await last.focus();await page.keyboard.press('Tab');await expect(pane.getByRole('button',{name:'Passage',exact:true})).toBeFocused();await page.keyboard.press('Shift+Tab');await expect(last).toBeFocused();await collapse.focus();
+  const collapse=pane.getByRole('button',{name:'Close Heinlein',exact:true});await collapse.focus();await expect(collapse).toBeFocused();
+  const last=pane.locator('.heinlein-send-note > details > summary');await last.focus();await page.keyboard.press('Tab');await expect(pane.getByRole('button',{name:'Passage',exact:true})).toBeFocused();await page.keyboard.press('Shift+Tab');await expect(last).toBeFocused();await collapse.focus();
   const size=await collapse.boundingBox();expect(size!.height).toBeGreaterThanOrEqual(44);
   expect((await new AxeBuilder({page}).include('.question-panel').analyze()).violations).toEqual([]);
   await page.screenshot({path:`/tmp/heinlein-questions-${info.project.name}-narrow.png`});
@@ -129,7 +131,7 @@ test('dismiss records rejection without applying',async({page})=>{
 
 test('editing the manuscript removes stale anchors and disables applying the old suggestion',async({page})=>{
   await page.setViewportSize({width:1600,height:1000});await openPassage(page);await sendRevision(page);await fixture(page,'finish');const pane=page.locator('.question-panel');await expect(pane.getByRole('button',{name:'Apply…',exact:true})).toBeVisible();
-  await pane.getByRole('button',{name:'Collapse',exact:true}).click();await page.keyboard.press('ArrowRight');await page.keyboard.type('!');
+  await pane.getByRole('button',{name:'Close Heinlein',exact:true}).click();await page.keyboard.press('ArrowRight');await page.keyboard.type('!');
   await expect(page.locator('.question-passage-chip[aria-label="1 suggestion at this passage"]')).toHaveCount(0);
   await page.locator('.editor-toolbar button[aria-controls="drafting-questions"]').click();await pane.locator('.question-passage-picker > summary').click();
   await expect(pane.getByRole('button',{name:/Passage 1 · Source changed/})).toBeVisible();await expect(pane.getByRole('button',{name:'Apply…',exact:true})).toBeDisabled();expect((await state(page)).sent).toBe(1);expect((await state(page)).applied).toBe(0);

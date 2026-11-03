@@ -955,7 +955,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     marksChanged: (input, report) => reviewMarkPublisher.publish(input, report),
     focusEditor: () => focusWriterView(),
   });
-  const reviewExtras=el('div','','heinlein-review-extras');reviewExtras.append(libraryReviewEntry);libraryReviewEntry.hidden=!reviewPanel.librarySupported;reviewPanel.element.prepend(reviewExtras);
+  const reviewExtras=el('div','','heinlein-review-extras');reviewExtras.append(libraryReviewEntry);libraryReviewEntry.hidden=!reviewPanel.librarySupported;reviewPanel.element.append(reviewExtras); // Whole-scene view only, below its shared header.
   root.append(reviewPanel.element);
 
   // Marks show only over clean text this exact view can prove it holds. Chapter parts already carry their source mapping.
