@@ -52,15 +52,15 @@ test('library review picker separates context and target without sending',async(
  await page.goto('/tests/browser/library-app.html');
  await openDrawer(page);
  await page.getByRole('button',{name:'First sheet',exact:true}).click();
- await openHeinleinReview(page);await page.getByRole('button',{name:'Review library sheets…'}).click();
+ await openHeinleinReview(page);await page.getByRole('dialog',{name:'Heinlein Review'}).getByRole('button',{name:/^Several sheets…/}).click();
  const dialog=page.getByRole('dialog',{name:'Choose revision context and targets'});
  await dialog.getByRole('group',{name:'Additional context sheets'}).getByRole('checkbox',{name:'Second sheet'}).check();
  expect((await new AxeBuilder({page}).include('dialog[aria-label="Choose revision context and targets"]').analyze()).violations).toEqual([]);
  await dialog.getByRole('button',{name:'Prepare review'}).click();
  const review=page.getByRole('dialog',{name:'Heinlein Review'}); await expect(review).toBeVisible();
- await expect(review.getByText(/2 source snapshot/)).toBeVisible();
- await expect(review.getByRole('checkbox',{name:/Allow prepared edits in ms\/first.md/})).toBeChecked();
- await expect(review.getByRole('checkbox',{name:/Allow prepared edits in ms\/second.md/})).not.toBeChecked();
+ await expect(review.locator('.review-send-summary')).toHaveText(/^Sends 1 sheet \+ 1 context · /);
+ await expect(review.getByRole('checkbox',{name:/Suggest edits in ms\/first.md/})).toBeChecked();
+ await expect(review.getByRole('checkbox',{name:/Suggest edits in ms\/second.md/})).not.toBeChecked();
  expect((await new AxeBuilder({page}).include('.heinlein-review-panel').analyze()).violations).toEqual([]);
 });
 test('library reflows with enlarged text and retains a visible focus indicator',async({page})=>{

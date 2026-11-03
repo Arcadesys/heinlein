@@ -9,7 +9,7 @@ test('chapter revision reveals a scene left in Reading and keeps its exact selec
   await page.goto('/tests/browser/markdown-reading.html?doc=chapter.md');
   const review = page.getByRole('dialog', {name: 'Heinlein Review', exact: true});
   await expect(review.locator('.review-edit').first()).toBeVisible();
-  await review.getByRole('button', {name: 'Return to writing', exact: true}).click();
+  await review.getByRole('button', {name: 'Close Heinlein', exact: true}).click();
   if (high) await page.evaluate(() => {document.documentElement.dataset.zoom = '200';(window as any).readingFixture.theme();});
   const before = await page.evaluate(() => JSON.stringify((window as any).readingFixture.docs));
   await page.evaluate(() => (window as any).readingFixture.app.showDocument('harbor.md'));

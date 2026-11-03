@@ -110,7 +110,7 @@ function mountGuide() {
   const title = document.createElement('summary');
   title.textContent = 'Demo guide · what to try';
   help.append(title);
-  add(help, 'p', 'Choose Return to writing, then Reading. Headings, lists, tables and code are formatted. Source stays exact.');
+  add(help, 'p', 'Close Heinlein (×), then choose Reading. Headings, lists, tables and code are formatted. Source stays exact.');
   add(help, 'p', 'Click an underlined phrase in Reading to open its card. Example 1 approves, Example 2 dismisses, and Example 3 needs you to choose between alternatives.');
   add(help, 'p', 'Markup examples show a Formatting suggestion button, because a heading marker has no visible text to underline.');
   add(help, 'p', 'Links do not open and images do not load. Selecting text in Reading cannot ask, split or edit.');
@@ -127,7 +127,7 @@ function mountGuide() {
   box.append(help, details, reset);
   guide = { refresh() { source.textContent = stored.docs['opening.md']; state.textContent = stored.docs['opening.md'] === baseline['opening.md'] ? 'Simulated source file: unchanged since reset.' : 'Simulated source file: changed since reset.'; } };
   guide.refresh();
-  document.querySelector('.heinlein-review-panel .review-head')?.after(box);
+  document.querySelector('.heinlein-review-panel .review-body')?.prepend(box);
 }
 void app.selectRepository(async () => session).then(() => app.showDocument(params.get('doc') ?? 'opening.md')).then(async () => {
   [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.startsWith('Heinlein')&&!b.textContent?.includes('Review'))?.click();

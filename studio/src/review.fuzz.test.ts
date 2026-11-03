@@ -55,7 +55,7 @@ it('review_fuzz_renderer: replayable stateful asynchronous operations preserve m
           const kind = step < 5 ? [1, 2, 10, 12, 13][step] : next() % names.length; counts[names[kind]]++; trace.push(`${step}:${names[kind]}`); if (trace.length > 32) trace.shift();
           const beforeSaves = core.saveDocument.mock.calls.length;
           if (kind === 0) panel.open();
-          else if (kind === 1) click('Run Heinlein Review');
+          else if (kind === 1) click('Run review');
           else if (kind >= 2 && kind <= 4) {
             const candidates = requests.filter(item => !item.settled); const item = candidates.length ? candidates[next() % candidates.length] : null;
             if (item) {
@@ -72,8 +72,8 @@ it('review_fuzz_renderer: replayable stateful asynchronous operations preserve m
           else if (kind === 7) {text += ` Author-${seed}-${step}🦊`; expectedText = text; epoch++; panel.stateChanged();}
           else if (kind === 8) {explicitSaves++; expectedDisk.set(path, text); await core.saveDocument('synthetic', path, 'synthetic-base', text); panel.stateChanged();}
           else if (kind === 9) {panel.clear(); path = path === 'one.md' ? 'two.md' : 'one.md'; text = files.get(path)!; expectedText = text; epoch++; expect(panel.element.querySelectorAll('.question-text').length).toBe(1);}
-          else if (kind === 10) {const dirty = text !== files.get(path); const calls = core.prepareReviewEdit.mock.calls.length; click('Accept edit'); if (dirty) expect(core.prepareReviewEdit.mock.calls.length).toBe(calls);}
-          else if (kind === 11) click('Reject edit');
+          else if (kind === 10) {const dirty = text !== files.get(path); const calls = core.prepareReviewEdit.mock.calls.length; click('Accept…'); if (dirty) expect(core.prepareReviewEdit.mock.calls.length).toBe(calls);}
+          else if (kind === 11) click('Keep mine');
           else if (kind === 12) {const item = preparations.shift(); if (item) {const before = confirmations.length; item.wait.resolve({proposalId: item.reviewId}); await settle(); if (text !== files.get(path) || panel.element.hidden) {stoppedGuards++; expect(confirmations.length).toBe(before);}}}
           else if (kind === 13) {
             const item = confirmations.shift(); if (item) {
