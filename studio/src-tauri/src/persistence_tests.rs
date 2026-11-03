@@ -125,6 +125,13 @@ fn persist_failure_leaves_selected_root_session_recents_and_disk_unchanged() {
     assert_eq!(recents_json(&state), old_recents);
     assert_eq!(fs::read(&fixture.preferences).unwrap(), old_disk);
     assert_eq!(fs::read(blocked.join("sentinel")).unwrap(), b"keep");
+    assert_eq!(
+        projects::Store::open(&fixture.root.join("projects-v1"))
+            .unwrap()
+            .last_opened()
+            .unwrap(),
+        Some(old_session.project_id)
+    );
 }
 #[test]
 fn initial_persist_failure_does_not_select_a_root() {
@@ -297,6 +304,7 @@ fn project_library_preserves_selection_identity_label_and_resume_across_native_r
                 anchor: 3,
                 head: 3,
                 scroll_top: 42,
+                reading_scroll_top: None,
             }),
         )
         .unwrap();

@@ -54,6 +54,8 @@ pub(crate) struct Resume {
     pub anchor: usize,
     pub head: usize,
     pub scroll_top: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading_scroll_top: Option<u32>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -72,6 +74,8 @@ struct Library {
     schema_version: u32,
     revision: u64,
     legacy_imported: bool,
+    #[serde(default)]
+    last_opened_project_id: Option<String>,
     projects: Vec<Project>,
 }
 impl Default for Library {
@@ -80,6 +84,7 @@ impl Default for Library {
             schema_version: 1,
             revision: 0,
             legacy_imported: false,
+            last_opened_project_id: None,
             projects: vec![],
         }
     }
@@ -164,6 +169,36 @@ impl Store {
             .into_iter()
             .find(|p| p.id == id)
             .ok_or("Unknown project".into())
+    }
+    pub fn last_opened(&self) -> Result<Option<String>> {
+        let _lock = self
+            .dir
+            .lock("library.lock")
+            .map_err(|_| "Project library is busy")?;
+        Ok(self.load()?.last_opened_project_id)
+    }
+    pub fn clear_last_opened(&self) -> Result<()> {
+        let _lock = self
+            .dir
+            .lock("library.lock")
+            .map_err(|_| "Project library is busy")?;
+        let mut library = self.load()?;
+        if library.last_opened_project_id.take().is_some() {
+            self.write(library)?;
+        }
+        Ok(())
+    }
+    pub fn remember_opened(&self, id: &str) -> Result<()> {
+        let _lock = self
+            .dir
+            .lock("library.lock")
+            .map_err(|_| "Project library is busy")?;
+        let mut library = self.load()?;
+        if !library.projects.iter().any(|p| p.id == id) {
+            return Err("Unknown project".into());
+        }
+        library.last_opened_project_id = Some(id.into());
+        self.write(library)
     }
     fn add(v: &mut Library, location: Location, name: String) -> Result<Project> {
         if let Some(p) = v.projects.iter().find(|p| p.location == location) {
@@ -370,6 +405,7 @@ pub(crate) fn validate_resume(repo: &repository_core::Repository, h: &Resume) ->
     if !boundaries.contains(&h.anchor)
         || !boundaries.contains(&h.head)
         || h.scroll_top > 100_000_000
+        || h.reading_scroll_top.is_some_and(|top| top > 100_000_000)
     {
         return Err("Last writing position is invalid; open the project overview".into());
     }
@@ -395,6 +431,8 @@ pub(crate) struct Host {
 )]
 pub(crate) enum Request {
     List,
+    LastOpened,
+    ClearLastOpened,
     Settings {
         id: String,
     },
@@ -437,6 +475,14 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<serde_json::Valu
     }
     let (s, r) = inventory(app)?;
     match request {
+        Request::ClearLastOpened => {
+            s.clear_last_opened()?;
+            Ok(serde_json::Value::Null)
+        }
+        Request::LastOpened => Ok(s
+            .last_opened()?
+            .map(|id| serde_json::json!({"id":id}))
+            .unwrap_or(serde_json::Value::Null)),
         Request::List => Ok(serde_json::Value::Array(
             s.list()?.iter().map(|p| view(p, &r)).collect(),
         )),
@@ -616,6 +662,7 @@ mod tests {
         let w2 = workspace(&id(), 19);
         let g = s.register(&root, Some(&w1)).unwrap();
         let h = s.register(&root, Some(&w2)).unwrap();
+        s.remember_opened(&h.id).unwrap();
         assert_ne!(g.id, h.id);
         assert_ne!(p.id, q.id);
         let repo = repository_core::Repository::open(&a).unwrap();
@@ -627,6 +674,7 @@ mod tests {
             anchor: 2,
             head: 2,
             scroll_top: 80,
+            reading_scroll_top: Some(120),
         };
         validate_resume(&repo, &hint).unwrap();
         let p = s
@@ -639,17 +687,59 @@ mod tests {
             .unwrap();
         drop(s);
         let s = Store::open(&root.join("private-library")).unwrap();
+        assert_eq!(s.last_opened().unwrap(), Some(h.id.clone()));
         let back = s.get(&p.id).unwrap();
         assert_eq!(back.name, "Novel A");
         assert_eq!(back.resume, Some(hint));
         assert_eq!(Store::local_root(&back).unwrap(), a);
         assert_eq!(s.register(&a, None).unwrap().id, p.id);
+        s.remember_opened(&p.id).unwrap();
+        assert_eq!(
+            Store::open(&root.join("private-library"))
+                .unwrap()
+                .last_opened()
+                .unwrap(),
+            Some(p.id.clone())
+        );
         assert_eq!(s.list().unwrap().len(), 4);
+        s.clear_last_opened().unwrap();
+        assert_eq!(
+            Store::open(&root.join("private-library"))
+                .unwrap()
+                .last_opened()
+                .unwrap(),
+            None
+        );
+        assert!(s.get(&p.id).unwrap().resume.is_some());
         assert_eq!(
             s.get(&g.id).unwrap().location,
             Location::Managed {
                 workspace_id: w1.id
             }
+        );
+    }
+    #[test]
+    fn older_library_defaults_to_drafts_without_rewriting_history() {
+        let (_t, store, root) = setup();
+        let p = store.register(&folder(&root, "A"), None).unwrap();
+        let path = store.dir.path().join(RECORD);
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("lastOpenedProjectId");
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(store.last_opened().unwrap(), None);
+        assert_eq!(store.get(&p.id).unwrap().name, "A");
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+        let old_resume = serde_json::json!({"path":"scene.md","sourceHash":"hash","sceneId":null,"anchor":0,"head":0,"scrollTop":42});
+        assert_eq!(
+            serde_json::from_value::<Resume>(old_resume)
+                .unwrap()
+                .reading_scroll_top,
+            None
         );
     }
     #[test]
@@ -660,6 +750,7 @@ mod tests {
         let bytes=serde_json::to_vec(&serde_json::json!({"schemaVersion":1,"folders":[{"id":"old","name":"A","path":a},{"id":"duplicate","name":"same","path":a},{"id":"missing","name":"Missing","path":root.join("gone")}]})).unwrap();
         std::fs::write(&legacy, &bytes).unwrap();
         s.migrate(&legacy, &[], &root.join("managed")).unwrap();
+        assert_eq!(s.last_opened().unwrap(), None);
         assert_eq!(s.list().unwrap().len(), 2);
         assert_eq!(std::fs::read(&legacy).unwrap(), bytes);
         let p = s
@@ -742,6 +833,7 @@ mod tests {
             anchor: 0,
             head: 0,
             scroll_top: 1,
+            reading_scroll_top: None,
         };
         validate_resume(&repo, &h).unwrap();
         h.anchor = 8;

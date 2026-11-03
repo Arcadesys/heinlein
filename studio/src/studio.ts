@@ -117,6 +117,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let repositoryDetached = false;
   let projectResumeQueue:Promise<void>=Promise.resolve();
   let projectPositionTimer:ReturnType<typeof setTimeout>|null=null;
+  let initialSessionStarted = false;
+  let initialHistory:Promise<void>=Promise.resolve();
+  let projectSelectionIntent=0;
   let placedText: {repositoryId:string;path:string}|null=null;
   let structuralBusy = false;
   let structuralFocusPath:string|null=null;
@@ -579,6 +582,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if (!await allowLeave() || disposed || revision !== edits || saving || structuralBusy || selecting || staging) return;
       if(!await rememberProjectPositionAfterLeave())return;
       root.inert = true;
+      // Closing from standalone writing should return to drafts next time,
+      // while retaining each project's individual resume position.
+      if(standalone?.active&&core.projectRequest)await core.projectRequest({action:'clearLastOpened'}).catch(()=>{});
       await dirtySync;
       if (!disposed && revision === edits && epoch === documentEpoch && session === repository?.id && !projectWritingBlocksLeave() && !saving && !structuralBusy && !selecting && !staging) {
         await core.requestClose(true);
@@ -693,6 +699,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     view.toolbar.classList.toggle('document-reading',mode==='reading');
     view.modeChanged?.(mode);
     view.source.setAttribute('aria-pressed',String(mode==='source'));view.reading.setAttribute('aria-pressed',String(mode==='reading'));
+    scheduleProjectPosition();
   }
   function mountDocumentView(toolbar:HTMLElement,host:HTMLElement,target:EditorView,content:()=>Omit<ReaderContent,'marks'>,modeChanged?:(mode:'source'|'reading')=>void){
     const reader=createMarkdownReader({label:'Reading view',content:()=>({...content(),marks:reviewMarksIn(target.state)}),open:id=>{reviewPanel?.openSuggestion(id);},showSource:()=>{setDocumentView('source');focusWriterView();}});
@@ -721,6 +728,17 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   function restorePosition(position:{anchor:number;head:number;scrollTop:number}){
     if(!editor)return;editor.view.dispatch({selection:{anchor:position.anchor,head:position.head}});if(readingActive()){readerSourceScroll=position.scrollTop;return;}const scroller=primaryScroller();if(scroller)scroller.scrollTop=position.scrollTop;
+  }
+  function focusResumedDocument(resume:ProjectResume){
+    if(!editor)return;
+    focusWriterView();
+    // Selection focus and CodeMirror's first layout must finish before scroll
+    // restoration. The project-opening gate has released DOM inert by now.
+    restoreScrollAfterLayout(editor.view,resume.readingScrollTop??resume.scrollTop);
+  }
+  function restoreScrollAfterLayout(target:EditorView,top:number){
+    const epoch=documentEpoch,selection=target.state.selection;
+    target.requestMeasure({read:()=>primaryScroller(),write:scroller=>{if(disposed||documentEpoch!==epoch||!selection.eq(target.state.selection)||(editor?.view!==target&&chapterEditor?.view!==target))return;if(scroller)scroller.scrollTop=top;}});
   }
   function openDocumentTab(tab:DocumentTab){return !tab.unavailable&&!repositoryDetached&&!structuralBusy?showDocument(tab.path,false,()=>true,tab.chapter):Promise.resolve(false);}
   async function closeDocumentTab(tab:DocumentTab){
@@ -1629,7 +1647,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     editorCommands?.destroy();editorCommands=null;documentCommandBar.replaceChildren();documentReader = null; documentView = null;
     chapterEditor?.destroy(); chapterEditor = null;
     editor?.destroy(); editor = null; opened = null; saveButton = null; dirtyBadge = null; setDirty(false); documentTabs.unmount();activeDocumentPane.removeAttribute('aria-labelledby');
-    if(!repository&&standalone?.supported){queueMicrotask(()=>{if(!repository&&!disposed)void standalone!.start();});return;}
+    if(!repository&&standalone?.supported){queueMicrotask(()=>{if(!repository&&!disposed)void startInitialSession();});return;}
     const welcome = el('div', '', 'welcome');
     welcome.append(el('p', repository ? repository.name : 'Heinlein Studio', 'eyebrow'), el('h2', repository ? 'A quiet place to write' : 'A quiet place to write'),
       el('p', repository ? 'Pick a scene to start writing. Markdown source is preserved exactly. Document details are tucked away above the writing area.' : 'Choose a GitHub repository to work on your writing. Local folders and standalone Drafts are also available.', 'empty'));
@@ -1673,7 +1691,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if(!core.projectRequest||standalone?.active||!repository?.projectId||!opened||!editor||opened.generatedCompatibility)return;
     if(dirty||saving||recoveryPending||recoveryErrorMessage||repositoryDetached)throw Error('Keep the current writing locally and resolve recovery before switching projects.');
     const session=repository,epoch=documentEpoch,revision=edits,doc=opened,range=editor.view.state.selection.main;
-    const hint:ProjectResume={path:doc.path,sourceHash:doc.contentHash,sceneId:drafting.state?.scenes.find(s=>s.path===doc.path)?.id??null,anchor:range.anchor,head:range.head,scrollTop:Math.max(0,Math.round(writerScrollTop()))};
+    const hint:ProjectResume={path:doc.path,sourceHash:doc.contentHash,sceneId:drafting.state?.scenes.find(s=>s.path===doc.path)?.id??null,anchor:range.anchor,head:range.head,scrollTop:Math.max(0,Math.round(writerScrollTop())),...(readingActive()?{readingScrollTop:Math.max(0,Math.round(primaryScroller()?.scrollTop??0))}:{})};
     const task=projectResumeQueue.then(async()=>{
       if(disposed||repository?.id!==session.id||documentEpoch!==epoch||edits!==revision||dirty)throw Error('Writing changed while remembering its position. Keep it locally and try again.');
       const p=await core.projectRequest!({action:'saveResume',repositoryId:session.id,projectId:session.projectId!,revision:session.projectRevision!,resume:hint}) as Project;
@@ -1694,6 +1712,35 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     return !disposed&&!projectWritingBlocksLeave(detachedBlocks)&&documentEpoch===epoch&&edits===revision&&repository?.id===session&&dirty===wasDirty&&(draftText===null||standalone?.text===draftText);
   }
   function scheduleProjectPosition(){if(projectPositionTimer)clearTimeout(projectPositionTimer);projectPositionTimer=setTimeout(()=>{projectPositionTimer=null;if(!dirty&&!saving&&!selecting&&!standalone?.active)void rememberProjectPosition().catch(()=>{});},600);}
+  async function startInitialSession(){
+    if(initialSessionStarted)return;
+    initialSessionStarted=true;
+    if(projectSelectionIntent)return;
+    const epoch=documentEpoch,current=generation,revision=edits,intent=projectSelectionIntent;
+    const unchanged=()=>!disposed&&!repository&&!selecting&&!standalone?.active&&epoch===documentEpoch&&current===generation&&revision===edits&&intent===projectSelectionIntent;
+    let failure:unknown=null;
+    // Both requests use the native project inventory lock; serialize startup
+    // discovery so a history refresh cannot make restoration report "busy".
+    await initialHistory;
+    if(!unchanged())return;
+    if(core.available()&&core.projectRequest){
+      try{
+        const last=await core.projectRequest({action:'lastOpened'}) as {id:string}|null;
+        if(!unchanged())return;
+        if(last){
+          if(!await switchProject(last.id)&&!disposed&&!repository&&!standalone?.active){
+            const message=status.textContent;
+            if(standalone?.supported)await standalone.start();
+            if(!disposed){status.textContent=`Could not reopen the last project. ${message??''} Choose Projects to open another.`;status.classList.add('error');}
+          }
+          return;
+        }
+      }catch(error){failure=error;}
+    }
+    if(!unchanged())return;
+    if(standalone?.supported)await standalone.start();
+    if(failure&&!disposed)reportError(failure);
+  }
   async function switchProject(id:string):Promise<boolean>{
     if(!core.projectRequest||selecting||structuralBusy||proposalBusy)return false;
     await dirtySync;if(writeInFlight)await writeInFlight;await stageQueue;
@@ -1712,6 +1759,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
 
   async function selectRepository(select: () => Promise<RepositorySession | null>) {
+    projectSelectionIntent++;
     if (selecting || !await allowLeave() || selecting) return;
     if(!await rememberProjectPositionAfterLeave(false))return;
     selecting = true;
@@ -1729,6 +1777,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     layout.inert = true; cancelAutosave(); cancelSaveNotice(); editor?.setEditable(false);
     status.classList.remove('error');
     status.textContent = 'Opening your writing…';
+    let resumed:ProjectResume|null=null;
     try {
       const selected = await select();
       if (disposed || current !== generation) return;
@@ -1787,9 +1836,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if (!disposed && current === generation && !status.classList.contains('error')) status.textContent = `${selected.name} · Local drafting${selected.warning ? ` · ${selected.warning}` : ''}`;
       await refreshRecent();
       void refreshSharing();
-      if(selected.resume){await showDocument(selected.resume.path,true,()=>!disposed&&generation===current,undefined,selected.resume);}
+      if(selected.resume&&await showDocument(selected.resume.path,true,()=>!disposed&&generation===current,undefined,selected.resume))resumed=selected.resume;
     } catch (error) { if (!disposed && current === generation) { if (repositoryDetached) reportDetachedRepository(); else reportError(error); } }
-    finally { if (!disposed && current === generation) { selecting = false; open.disabled = false; layout.inert = false; editor?.setEditable(!recoveryPending && (editor !== previousEditor || !wasReadOnly)); [...recent.querySelectorAll('button'), ...projectEntries.querySelectorAll('button')].forEach(node => { node.disabled = false; }); if (dirty && !writePaused) scheduleAutosave(); } }
+    finally { if (!disposed && current === generation) { selecting = false; open.disabled = false; layout.inert = false; editor?.setEditable(!recoveryPending && (editor !== previousEditor || !wasReadOnly)); [...recent.querySelectorAll('button'), ...projectEntries.querySelectorAll('button')].forEach(node => { node.disabled = false; }); if (dirty && !writePaused) scheduleAutosave(); if(resumed)focusResumedDocument(resumed); } }
   }
   async function showDirectory(path: string) {
     const current = generation;
@@ -1880,7 +1929,12 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       renderDocument(doc, draft, assembled);
       const position=documentTabs.active()?.position;
       if(!resume&&position&&editor&&!recoveryPending&&!recoveryError&&position.hash===doc.contentHash&&position.anchor>=0&&position.head>=0&&position.anchor<=editor.view.state.doc.length&&position.head<=editor.view.state.doc.length)restorePosition(position);
-      if(resume&&editor&&!recoveryPending&&!recoveryError){const len=editor.view.state.doc.length;if(!Number.isInteger(resume.anchor)||!Number.isInteger(resume.head)||resume.anchor<0||resume.head<0||resume.anchor>len||resume.head>len){resetPreview();throw Error('The last position is invalid. Open a document from Writing.');}restorePosition(resume);}
+      if(resume&&editor&&!recoveryPending&&!recoveryError){
+        const len=editor.view.state.doc.length;
+        if(!Number.isInteger(resume.anchor)||!Number.isInteger(resume.head)||resume.anchor<0||resume.head<0||resume.anchor>len||resume.head>len){resetPreview();throw Error('The last position is invalid. Open a document from Writing.');}
+        setDocumentView(resume.readingScrollTop!=null?'reading':'source');
+        restorePosition(resume);
+      }
       if(!recoveryError&&!recoveryPending)scheduleProjectPosition();
       if (recoveryError) showRecoveryReadFailure(doc, recoveryError.error);
       else if (!recoveryPending) {
@@ -2123,7 +2177,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     }
   }
   if (core.available()) {
-    void refreshRecent();
+    initialHistory=refreshRecent();
+    // Hosts without standalone drafts still restore project sessions.
+    queueMicrotask(()=>{if(!repository&&!disposed)void startInitialSession();});
     if (core.onDraftingFilesDropped) void core.onDraftingFilesDropped(selection => {
       if (disposed || structuralBusy || selecting || !repository) return;
       void drafting.importExternal(selection);
