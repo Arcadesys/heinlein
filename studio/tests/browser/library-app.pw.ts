@@ -1,3 +1,4 @@
+import {openHeinleinReview} from './heinlein';
 import {test,expect,type Page} from '@playwright/test'; import AxeBuilder from '@axe-core/playwright';
 async function openDrawer(page:Page){const toggle=page.getByRole('button',{name:'Navigation',exact:true}); if(await toggle.isVisible()) await toggle.click(); await expect(page.locator('.tree-project')).toBeVisible(); await expect(page.locator('#navigation-drawer')).toHaveAttribute('aria-hidden','false');}
 async function projectAction(page:Page,name:string){await page.locator('summary[aria-label="Project actions"]').click(); await page.getByRole('group',{name:'Project actions'}).getByRole('button',{name,exact:true}).click();}
@@ -51,12 +52,12 @@ test('library review picker separates context and target without sending',async(
  await page.goto('/tests/browser/library-app.html');
  await openDrawer(page);
  await page.getByRole('button',{name:'First sheet',exact:true}).click();
- await page.getByRole('button',{name:'Editing actions'}).click(); await page.getByRole('button',{name:'Review library sheets…'}).click();
+ await openHeinleinReview(page);await page.getByRole('button',{name:'Review library sheets…'}).click();
  const dialog=page.getByRole('dialog',{name:'Choose revision context and targets'});
  await dialog.getByRole('group',{name:'Additional context sheets'}).getByRole('checkbox',{name:'Second sheet'}).check();
  expect((await new AxeBuilder({page}).include('dialog[aria-label="Choose revision context and targets"]').analyze()).violations).toEqual([]);
  await dialog.getByRole('button',{name:'Prepare review'}).click();
- const review=page.getByRole('region',{name:'Heinlein Review'}); await expect(review).toBeVisible();
+ const review=page.getByRole('dialog',{name:'Heinlein Review'}); await expect(review).toBeVisible();
  await expect(review.getByText(/2 source snapshot/)).toBeVisible();
  await expect(review.getByRole('checkbox',{name:/Allow prepared edits in ms\/first.md/})).toBeChecked();
  await expect(review.getByRole('checkbox',{name:/Allow prepared edits in ms\/second.md/})).not.toBeChecked();

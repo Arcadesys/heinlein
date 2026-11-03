@@ -22,6 +22,8 @@ export interface QuestionPanelHooks {
   prepareRevision?(snapshot: SelectionQuestionSnapshot): Promise<void>;
   reviewRevision?(proposalId: string, snapshot: SelectionQuestionSnapshot, guard: () => string | null, presenter?: (view: ProposalReview) => Promise<boolean>): Promise<void>;
   visibilityChanged?(open: boolean): void;
+  headerTabs?: HTMLElement;
+  copyPrompt?(): void;
 }
 interface Revision {snapshot: SelectionQuestionSnapshot; contextVersion: number; proposalId: string; replacementText: string; rejected: boolean; busy: boolean}
 interface Turn { question: string; answer: QuestionAnswer; contextBytes: number; scenePath?: string; proposalId?: string; revision?: Revision }
@@ -70,6 +72,7 @@ function errorMessage(error: unknown): string {
 }
 export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) {
   const integrated = Boolean(hooks.passages);
+  const unified = Boolean(hooks.headerTabs);
   const element: HTMLElement = el(integrated ? 'div' : 'aside', '', 'question-panel'); element.hidden = true;
   element.setAttribute('aria-label', 'Drafting questions');
   if (integrated) element.classList.add('question-panel-integrated');
@@ -96,7 +99,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const header = el('div', '', 'question-heading');
   const heading = el('div'); heading.append(el('h3', 'Writing conversation'), el('p', 'Project conversation · shared across scenes.', 'muted'));
   const closeButton = button(integrated ? 'Collapse' : 'Close questions', () => integrated ? collapse() : close(true));
-  if (integrated) header.append(el('h3', 'Questions'), closeButton); else header.append(heading, closeButton);
+  if (integrated) header.append(el('h3', unified ? 'Heinlein' : 'Questions'), ...(hooks.headerTabs ? [hooks.headerTabs] : []), closeButton); else header.append(heading, closeButton);
   const connection = el('p', '', 'question-connection'); connection.setAttribute('role', 'status');
   const refresh = button('Recheck OpenAI setup', () => { void checkStatus(true); });
   const auth = el('details', '', 'question-auth'); auth.setAttribute('aria-label', 'ChatGPT connection'); auth.open = true;
@@ -210,15 +213,25 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const composerTop = el('div', '', 'question-composer-top'); composerTop.append(modeLabel);
   const contextSummary = el('p', '', 'question-context-summary');
   composer.append(contextDetails, targetSection, questionLabel, composerTop, requestNote, contextSummary, actions, status);
+  const askButton = button('Ask', () => submitAs('ask'), 'primary');
+  const suggestButton = button('Suggest rewrite', () => submitAs('revision'));
+  const passageQuote = el('blockquote', '', 'question-passage-quote'); passageQuote.setAttribute('aria-label', 'Selected passage'); passageQuote.hidden = true;
+  const passageNote = el('p', '', 'question-request-note'); passageNote.hidden = true;
+  let showSettings = false;
+  const connectionArea = el('section', '', 'question-connection-area'); connectionArea.setAttribute('aria-label', 'Account and storage');
+  const settingsToggle = button('Connect ChatGPT', () => {showSettings = !showSettings; update(); if (showSettings) connectionArea.querySelector<HTMLElement>('button, summary')?.focus({preventScroll:true});}, 'question-settings-toggle');
   const persistence = el('p', '', 'question-persistence'); persistence.setAttribute('role', 'status');
   composer.append(persistence);
   if (integrated) {
     welcome.hidden = true; contextHeading.textContent = 'What will be sent';
     contextDetails.classList.add('question-send-preview'); contextDetails.append(targetSection, historyDetails, disclosure);
-    const connectionArea = el('section', '', 'question-connection-area'); connectionArea.setAttribute('aria-label', 'Account and storage'); connectionArea.append(connection, auth, settings);
+    connectionArea.append(connection, auth, settings); if(unified) {header.insertBefore(settingsToggle, closeButton);settings.append(reset);}
     settings.querySelector('summary')!.textContent = 'Storage and revision safety'; settings.append(persistence);
-    composer.replaceChildren(modeLabel, questionLabel, requestNote, actions, contextSummary, contextDetails, status);
-    element.append(header, currentTitle, fullReview, passagePicker, transcript, waiting, streaming, composer, connectionArea);
+    if(unified) actions.replaceChildren(askButton, suggestButton, cancel);
+    composer.replaceChildren(...(unified ? [] : [modeLabel]), questionLabel, requestNote, actions, contextSummary, contextDetails, status);
+    if (hooks.copyPrompt) composer.append(button('Copy as prompt…', () => hooks.copyPrompt!(), 'question-copy-prompt'));
+    question.placeholder = 'What would you like to know or change?';
+    element.append(header, passageQuote, passageNote, fullReview, passagePicker, transcript, waiting, streaming, composer, connectionArea);
   } else element.append(header, settings, conversation, composer);
 
   const layoutQuery = window.matchMedia?.('(max-width: 1399px)');
@@ -355,16 +368,41 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     updateRevisionState();
     cancel.hidden = !pending && !preparing;
     element.setAttribute('aria-busy', String(Boolean(pending) || preparing || checking || authPending));
-    if (integrated) contextHeading.textContent = 'What will be sent';
+    if (unified) {
+      contextHeading.textContent = 'What will be sent';
+      const passage = activePassage;
+      passageQuote.hidden = !passage; passageQuote.textContent = passage ? passage.scene.source.slice(passage.scene.from,passage.scene.to) : '';
+      passageNote.hidden = !passage || !passageStale(passage);
+      passageNote.textContent = passageNote.hidden ? '' : 'This passage changed. Select it again before requesting a rewrite.';
+      const ready = connectionReady();
+      settingsToggle.textContent = ready ? `ChatGPT · ${configuration!.model}` : checking ? 'Checking ChatGPT…' : 'Connect ChatGPT';
+      connectionArea.hidden = ready && !showSettings;
+      settingsToggle.setAttribute('aria-expanded', String(!connectionArea.hidden));
+    }
     notifyPassages();
   }
   function updateRevisionState() {
     const problem = outgoingProblem();
     send.disabled = !live() || checking || Boolean(authBusy) || Boolean(configuration?.signInPending) || !connectionReady() || !core.askQuestion || Boolean(pending) || preparing || Boolean(problem);
     send.title = problem ?? 'Send (Cmd/Ctrl+Enter)'; requestNote.textContent = question.value.trim() ? send.title : ''; requestNote.hidden = !requestNote.textContent;
+    if (unified) {
+      const blocked = !live() || checking || Boolean(authBusy) || Boolean(configuration?.signInPending) || !connectionReady() || !core.askQuestion || Boolean(pending) || preparing || !question.value.trim();
+      askButton.disabled = blocked; suggestButton.disabled = blocked || Boolean(activePassage && passageStale(activePassage)) || !core.suggestQuestionRevision;
+      askButton.hidden = suggestButton.hidden = Boolean(pending) || preparing;
+      const lengthProblem = questionProblem(question.value, '');
+      requestNote.textContent = question.value.trim() && lengthProblem ? lengthProblem : ''; requestNote.hidden = !requestNote.textContent;
+    }
     if (mode.value === 'revision') targetNote.textContent = revisionProblem() ?? `${target!.path} · ${targetBytes().toLocaleString()} UTF-8 bytes. Only this target is replaced; saved source is rechecked before review.`;
     for (const refreshAction of revisionActions) refreshAction();
     notifyPassages();
+  }
+  function submitAs(kind: 'ask' | 'revision') {
+    if (!live() || pending || preparing || authBusy) return;
+    if (mode.value !== kind) {
+      if (kind === 'revision' && activePassage && !passageStale(activePassage)) hooks.passages?.select(activePassage.scene.from, activePassage.scene.to);
+      mode.value = kind; mode.dispatchEvent(new Event('change'));
+    }
+    void submit();
   }
   function capture(kind: 'selection' | 'scene') {
     if (!live() || pending || preparing) return;
@@ -691,7 +729,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     },
     visible: () => !element.hidden,
     close: () => integrated ? collapse() : close(true),
-    activatePassage, passageItems, presentReview,
+    activatePassage, passageItems, presentReview, collapse,
     activity: () => pending || preparing ? 'Asking…' : turns.length ? 'Answer ready' : '',
     /** Switches Ask / Suggest revision exactly as choosing it from the Response mode menu. */
     setMode(value: 'ask' | 'revision') { if (mode.value !== value && !mode.disabled) { mode.value = value; mode.dispatchEvent(new Event('change')); } },

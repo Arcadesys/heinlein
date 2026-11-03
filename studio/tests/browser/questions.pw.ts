@@ -21,14 +21,14 @@ async function openPassage(page:Page) {
   await expect(pane).toBeVisible();
   await expect(page.locator('.workspace')).toHaveJSProperty('inert', true);
   await expect.poll(() => textLayout(page)).toEqual(layout);
-  const lastControl = pane.locator('.question-settings > summary');
+  const lastControl = pane.getByRole('button',{name:'Copy as prompt…',exact:true});
   await lastControl.focus();await page.keyboard.press('Tab');
-  await expect(pane.getByRole('button',{name:'Collapse',exact:true})).toBeFocused();
+  await expect(pane.getByRole('button',{name:'Passage',exact:true})).toBeFocused();
   return layout;
 }
 async function sendRevision(page:Page) {
-  const pane=page.locator('.question-panel');await pane.getByRole('combobox',{name:'Response mode'}).selectOption('revision');
-  await pane.getByRole('textbox',{name:'Your drafting question'}).fill('Can this sentence feel more immediate?');await pane.getByRole('button',{name:'Send to OpenAI',exact:true}).click();await expect.poll(async()=>(await state(page)).sent).toBe(1);
+  const pane=page.locator('.question-panel');
+  await pane.getByRole('textbox',{name:'Your drafting question'}).fill('Can this sentence feel more immediate?');await pane.getByRole('button',{name:'Suggest rewrite',exact:true}).click();await expect.poll(async()=>(await state(page)).sent).toBe(1);
 }
 for (const zoom of [100, 200]) {
   test(`highlighting and clearing a passage keep the manuscript anchored at ${zoom}%`, async({page}, info) => {

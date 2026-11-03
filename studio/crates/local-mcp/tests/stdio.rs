@@ -38,8 +38,6 @@ impl Client {
             command.args([
                 "--studio-selection",
                 t.path().join("selection").to_str().unwrap(),
-                "--client-label",
-                "wire-fixture",
             ]);
         } else {
             command.arg("--repository").arg(&root);

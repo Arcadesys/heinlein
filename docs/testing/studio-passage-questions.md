@@ -34,3 +34,13 @@ Visual comparison covers chip placement, stacked comparison labels, dotted remov
 The existing current-main fixtures also needed precise control selectors: scoped Return to writing/Close/Undo/Redo, accessible tab labels, and the intended document badge. These corrections change tests, not manuscript behavior. Disposable-file tests use the platform temporary directory. The document-end shortcut follows the host platform while preserving exact unsaved-byte assertions. At narrow widths the command toolbar scrolls independently, and the redundant split summary yields while an open source/reference pane has focus. Existing enlarged-text checks require readable prose and reachable controls in default and high-contrast themes.
 
 Native OS confirmation usability, installed-app behavior, native WebKit/VoiceOver speech, and live-provider acceptance remain unverified. Browser mocks establish renderer behavior and the native-command binding, not physical native confirmation.
+
+## Unified Heinlein pane
+
+Use the Heinlein toolbar button and Passage / Whole scene views. Ask and Suggest
+rewrite are separate explicit sends. Account settings and manual Copy as prompt
+remain available inside the pane. Verify tab switching preserves an in-flight
+whole-scene review without resending, returns focus to the writer on collapse,
+and leaves source bytes, width, line positions and scroll unchanged. Streaming
+previews are untrusted text, do not enter saved history until the answer completes,
+and must not move keyboard focus. Check at 320px and at 200% text size.

@@ -591,7 +591,7 @@ dialog { color: var(--fg); }
 .review-result-actions p { flex-basis: 100%; }
 /* Beside the editor when there is room, so the panel never sits on top of the text being reviewed. */
 @media (min-width: 901px) {
-  :root:not([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .studio:not(.standalone-writing):has(> .heinlein-review-panel:not([hidden],.review-tucked)) .preview { padding-right: calc(var(--review-width) + 2rem); }
+  :root:not([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .studio:not(.standalone-writing):has(> .heinlein-review-panel:not([hidden],.review-tucked,.heinlein-integrated)) .preview { padding-right: calc(var(--review-width) + 2rem); }
 }
 /* A full reading sheet when it is not: narrow windows and large text get the whole viewport, and covered chrome leaves the tab order. */
 @media (max-width: 900px) {
@@ -602,7 +602,7 @@ dialog { color: var(--fg); }
   .review-nav button { line-height: 1.2; padding-block: .25rem; }
   .review-conflict { margin-inline: 0; padding-inline: 0; border-inline: 0; border-radius: 0; }
   .heinlein-review-panel pre { padding: .4rem .5rem; }
-  .studio:has(> .heinlein-review-panel:not([hidden],.review-tucked)) > :not(.heinlein-review-panel, dialog) { visibility: hidden; }
+  .studio:has(> .heinlein-review-panel:not([hidden],.review-tucked,.heinlein-integrated)) > :not(.heinlein-review-panel, dialog) { visibility: hidden; }
 }
 :root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel { inset: 0; width: auto; border: 0; border-radius: 0; padding: 0 .6rem 2rem; scroll-padding-block: 1rem; }
 :root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .review-head { position: static; margin-inline: -.6rem; padding: .35rem .6rem; gap: .3rem; }
@@ -611,7 +611,7 @@ dialog { color: var(--fg); }
 :root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .review-nav button { line-height: 1.2; padding-block: .25rem; }
 :root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .review-conflict { margin-inline: 0; padding-inline: 0; border-inline: 0; border-radius: 0; }
 :root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel pre { padding: .4rem .5rem; }
-:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .studio:has(> .heinlein-review-panel:not([hidden],.review-tucked)) > :not(.heinlein-review-panel, dialog) { visibility: hidden; }
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .studio:has(> .heinlein-review-panel:not([hidden],.review-tucked,.heinlein-integrated)) > :not(.heinlein-review-panel, dialog) { visibility: hidden; }
 
 /* Optional story guide: large targets, one column, no colour-only progress. */
 .first-story { color: var(--fg); background: var(--bg); border: 2px solid var(--border); border-radius: 12px; width: min(46rem, calc(100vw - 1rem)); max-width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); padding: clamp(.75rem, 3vw, 2rem); overflow: auto; font-size: max(18px, 1rem); line-height: 1.6; box-sizing: border-box; }
@@ -1255,3 +1255,19 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
   .document-workspace:has(.reference-pane:not([hidden])):has(.active-document-pane:focus-within) > .split-reading-offer,
   .document-workspace:has(.reference-pane:focus-within) > .split-reading-offer { display:none; }
 }
+
+/* One Heinlein surface; neither tab changes manuscript layout. */
+.heinlein-tabs {display:flex;flex-wrap:wrap;gap:.5rem;}
+.heinlein-tabs button {min-block-size:48px;font-size:1rem;padding:.5rem .75rem;}
+.heinlein-tabs [aria-pressed="true"] {font-weight:700;text-decoration:underline;text-underline-offset:.25em;}
+.question-panel-integrated .question-heading {display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;}
+.question-panel-integrated .question-heading h3 {margin:0;}
+.question-settings-toggle {font-size:1rem;min-block-size:48px;}
+.question-passage-quote {margin:0;padding:.75rem;border-inline-start:3px solid currentColor;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--font-text);}
+.heinlein-review-panel.heinlein-integrated {position:fixed;inset:0;z-index:20;width:auto;max-height:none;overflow:auto;background:var(--bg);border-radius:0;padding:1rem 1.25rem 2rem;}
+.heinlein-review-panel.heinlein-integrated [hidden] {display:none;}
+.heinlein-review-panel.heinlein-integrated :is(button,summary,select,input) {min-block-size:48px;font-size:1rem;}
+.heinlein-review-panel.heinlein-integrated .review-head {display:flex;flex-wrap:wrap;align-items:center;gap:.75rem;}
+@media(min-width:1400px) {.heinlein-review-panel.heinlein-integrated {inset:3.5rem 0 0 auto;width:min(42vw,34rem);}}
+
+:root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel.heinlein-integrated {inset:0;width:auto;}

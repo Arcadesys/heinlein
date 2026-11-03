@@ -571,7 +571,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     settle: async () => {await dirtySync;},
     openFolder: async () => {await selectRepository(() => core.pickRepository());},
     draft: async () => {showProject(); await openDrafting();},
-    review: () => {if(refuseReferenceAction())return;if (reviewPanel) {draftingQuestions?.close(); reviewPanel.open();} else {status.textContent = 'Open a scene, then choose Heinlein Review when you want advisory suggestions.';}},
+    review: () => {if(refuseReferenceAction())return;if (reviewPanel) {openHeinlein('scene');} else {status.textContent = 'Open a scene, then choose Heinlein Review when you want advisory suggestions.';}},
   });
   async function quitSafely() {
     if (quitInProgress) return;
@@ -798,6 +798,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const proposals = createProposalPanel(core, {
     root, repository: () => repository, run: runProposal,
     changed: proposalChanged,
+    applied: receiptId => {status.classList.remove('quiet');status.append(' ',button('Undo change',()=>{void proposals.revert(receiptId);},'status-undo'));},
     report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
   });
   async function proposalChanged(path:string) {
@@ -840,7 +841,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const view = (editor ?? chapterEditor)?.view;
     if (!view || readingActive()) return;
     requestAnimationFrame(() => {
-      if (disposed || (editor ?? chapterEditor)?.view !== view || draftingQuestions?.visible()) return;
+      if (disposed || (editor ?? chapterEditor)?.view !== view || draftingQuestions?.visible() || reviewPanel?.visible()) return;
       // Only the owning pane should scroll; CodeMirror's ancestor scrolling can pan the hidden workspace.
       layout.scrollTop = 0; layout.scrollLeft = 0; preview.scrollTop = 0; preview.scrollLeft = 0;
       const scroller = primaryScroller(); if (!scroller) return;
@@ -854,7 +855,37 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   let questionMarkerSignature = '';
   const questionBackground = new Map<HTMLElement, boolean>();
+  let heinleinView: 'passage' | 'scene' = 'passage';
+  const libraryReviewEntry = button('Review library sheets…', () => reviewLibrary(), 'heinlein-library');
+  function heinleinTabs(active: 'passage' | 'scene') {
+    const tabs=el('div','','heinlein-tabs');tabs.setAttribute('role','group');tabs.setAttribute('aria-label','Heinlein view');
+    for (const [view,label] of [['passage','Passage'],['scene','Whole scene']] as const) {const tab=button(label,()=>openHeinlein(view));tab.setAttribute('aria-pressed',String(view===active));tabs.append(tab);}
+    return tabs;
+  }
+  function syncHeinleinLayout() {
+    const visible=Boolean(draftingQuestions?.visible()||reviewPanel?.visible());
+    navigation.suspend(visible);
+    if (visible) {
+      for (const child of root.children) if (child instanceof HTMLElement && child!==draftingQuestions?.element && child!==reviewPanel?.element) {
+        if(!questionBackground.has(child))questionBackground.set(child,child.inert);
+        child.inert=true;
+      }
+    } else {
+      for (const [child,inert] of questionBackground) child.inert=inert;
+      questionBackground.clear();
+    }
+    layout.classList.toggle('questions-open',visible);questionButton?.setAttribute('aria-expanded',String(visible));
+  }
+  function openHeinlein(view=heinleinView) {
+    if (refuseReferenceAction()) return;
+    heinleinView=view;
+    if(view==='scene') {draftingQuestions?.collapse();reviewPanel?.show();}
+    else {reviewPanel?.hide();const selected=editor?draftingSelectionState():null;if(selected&&!selectionQuestionAvailability(selected)&&!draftingQuestions?.visible()){draftingQuestions?.open();void askDraftingSelection();}else draftingQuestions?.open();}
+    syncHeinleinLayout();
+  }
   draftingQuestions = createQuestionPanel(core, {
+    headerTabs: heinleinTabs('passage'),
+    copyPrompt: () => {void questions?.open();},
     passages: {
       select: (from, to) => {if (readingActive()) setDocumentView('source'); editor?.selectPassage(from, to);},
       changed: items => {
@@ -867,7 +898,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         const signature = JSON.stringify(markers.map(({id, from, to, label, active}) => [id, from, to, label, active]));
         if (signature !== questionMarkerSignature) {questionMarkerSignature = signature; editor.setPassages(markers);}
         const asking = draftingQuestions.activity() === 'Asking…'; const suggestions = items.filter(item => /suggestion/.test(item.label)).length;
-        if (questionButton) questionButton.textContent = `Questions${asking ? ' · Asking…' : suggestions ? ` · ${suggestions}` : items.length ? ` · ${items.length}` : draftingQuestions.activity() ? ` · ${draftingQuestions.activity()}` : ''}`;
+        if (questionButton) questionButton.textContent = `Heinlein${asking ? ' · Asking…' : suggestions ? ` · ${suggestions}` : items.length ? ` · ${items.length}` : draftingQuestions.activity() ? ` · ${draftingQuestions.activity()}` : ''}`;
       },
     },
     current: () => {
@@ -892,26 +923,16 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if (problem) throw new Error(problem);
     },
     reviewRevision: async (id, _snapshot, guard, presenter) => {try {await proposals.reviewProposal(id, guard, presenter);} finally {if (!draftingQuestions?.visible()) returnFromQuestions();}},
-    // Questions overlays the workspace. Preserve the navigator's layout and the
-    // manuscript's width/position while the dialog is open.
     visibilityChanged: visible => {
-      navigation.suspend(visible);
-      if (visible) {
-        for (const child of root.children) if (child instanceof HTMLElement && child !== draftingQuestions?.element) {
-          if (!questionBackground.has(child)) questionBackground.set(child, child.inert);
-          child.inert = true;
-        }
-      } else {
-        for (const [child, inert] of questionBackground) child.inert = inert;
-        questionBackground.clear();
-        selectionCaptureVersion++; selectionCapturePending = false;
-      }
-      layout.classList.toggle('questions-open', visible);
-      questionButton?.setAttribute('aria-expanded', String(visible));
+      if(visible){heinleinView='passage';reviewPanel?.hide();}
+      else {selectionCaptureVersion++;selectionCapturePending=false;}
+      syncHeinleinLayout();
     },
   });
   draftingQuestions.element.id = 'drafting-questions';
   reviewPanel = createReviewPanel(core, {
+    headerTabs: heinleinTabs('scene'),
+    visibilityChanged: visible => {if(visible){heinleinView='scene';draftingQuestions?.collapse();}syncHeinleinLayout();},
     capture: () => {
       if (reference.fromReference() || !repository || !opened || disposed || repositoryDetached || selecting || structuralBusy || recoveryPending) return null;
       if (currentChapter) return {repositoryId: repository.id, scope: 'chapter', label: currentChapter.chapter.title,
@@ -929,11 +950,12 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     },
     reviewProposal: async (id, guard) => {reviewApplying = true; try {await proposals.reviewProposal(id, guard);} finally {reviewApplying = false;}},
     approveReview: async (run,guard)=>{reviewApplying=true;let outcome:import('./localCore').ProposalOutcome|null=null;try{await runProposal(async()=>{const problem=guard();if(problem)throw new Error(problem);outcome=await run();if(outcome&&outcome.receipt.status!=='failed')await proposalChanged(outcome.receipt.path);});return outcome;}finally{reviewApplying=false;}},
-    openConnection: () => {reviewPanel?.clear(); if (draftingQuestions) {root.append(draftingQuestions.element); draftingQuestions.open();}},
+    openConnection: () => {if(draftingQuestions){root.append(draftingQuestions.element);openHeinlein('passage');}},
     announce: text => {status.classList.remove('error'); status.textContent = text;},
     marksChanged: (input, report) => reviewMarkPublisher.publish(input, report),
     focusEditor: () => focusWriterView(),
   });
+  const reviewExtras=el('div','','heinlein-review-extras');reviewExtras.append(libraryReviewEntry);libraryReviewEntry.hidden=!reviewPanel.librarySupported;reviewPanel.element.prepend(reviewExtras);
   root.append(reviewPanel.element);
 
   // Marks show only over clean text this exact view can prove it holds. Chapter parts already carry their source mapping.
@@ -1548,7 +1570,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (!editor || !draftingQuestions) { status.textContent = 'Open a Markdown scene to ask about it.'; return; }
     const selection = editor.view.state.selection;
     if (selection.ranges.length === 1 && !selection.main.empty) { void askDraftingSelection(); return; }
-    if (draftingQuestions.visible()) draftingQuestions.close(); else draftingQuestions.open();
+    if (draftingQuestions.visible()) draftingQuestions.collapse(); else if(reviewPanel?.visible()){reviewPanel.hide();returnFromQuestions();}else openHeinlein();
   }
   async function refreshSharing() {
     const session=repository,revision=edits,view=documentEpoch,ticket=++sharingGeneration;
@@ -2009,7 +2031,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       const askSelection = button('Ask about selection', () => sourceAction(()=>{ void questions?.open(); }), 'source-only');
       askSelection.setAttribute('aria-haspopup', 'dialog');
       askSelection.title = 'Prepare a question for manual copy/paste into ChatGPT or another assistant';
-      questionButton = button('Questions', () => writerAction(()=>{reviewPanel?.clear(); draftingQuestions?.open();}));
+      questionButton = button('Heinlein', () => writerAction(()=>openHeinlein()));
       questionButton.setAttribute('aria-live', 'polite'); questionButton.setAttribute('aria-controls', 'drafting-questions'); questionButton.setAttribute('aria-expanded', 'false');
       questionButton.title = 'Ask OpenAI while drafting, with only the context you choose';
       const askDrafting = button('Ask Heinlein about selection', () => {void askDraftingSelection();}, 'source-only'); askDrafting.disabled = true;
@@ -2022,7 +2044,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       const backToSheets = button('Back to sheets', () => showProject(), 'back-to-sheets');
       const libraryReview = button('Review library sheets…', () => writerAction(reviewLibrary)); libraryReview.disabled = !reviewPanel?.librarySupported || !sceneInfo;
       if (sceneInfo) toolbar.append(backToSheets);
-      toolbar.append(libraryReview, button('Heinlein Review', () => writerAction(()=>{draftingQuestions?.close(); reviewPanel?.open();})), questionButton, askDrafting, askSelection, split, saveButton, button('Undo', () => sourceAction(()=>editor?.undo()), 'source-only'), button('Redo', () => sourceAction(()=>editor?.redo()), 'source-only'), button('Find', () => sourceAction(()=>editor?.find()), 'source-only'), dirtyBadge);
+      libraryReviewEntry.disabled=libraryReview.disabled;
+      toolbar.append(questionButton, split, saveButton, button('Undo', () => sourceAction(()=>editor?.undo()), 'source-only'), button('Redo', () => sourceAction(()=>editor?.redo()), 'source-only'), button('Find', () => sourceAction(()=>editor?.find()), 'source-only'), dirtyBadge);
       const host = el('div', '', 'markdown-editor');
       host.addEventListener('compositionstart', () => { composing = true; noteEditing(); });
       host.addEventListener('compositionend', () => { composing = false; lastEditAt = Date.now(); scheduleSaveNotice(); });
@@ -2078,7 +2101,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const sources = el('details', '', 'chapter-sources'); sources.open = true;
     sources.append(el('summary', 'Source scenes'));
     for (const [index, part] of assembled.parts.entries()) sources.append(button(`Open source scene ${index + 1} · ${basename(part.document.path)}`, () => { void showDocument(part.document.path); }));
-    toolbar.append(button('Heinlein Review', () => writerAction(()=>{draftingQuestions?.close(); reviewPanel?.open();})), revise);
+    toolbar.append(button('Heinlein', () => writerAction(()=>openHeinlein('scene'))), revise);
     text.replaceWith(explanation, toolbar, host, sources);
     const reader = createEditor(host, assembled.text, () => {}, () => {});
     chapterEditor = reader; reader.setEditable(false);

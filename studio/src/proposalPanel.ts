@@ -12,6 +12,7 @@ interface Hooks {
   run(action: () => Promise<void>): Promise<void>;
   changed(path: string): Promise<void>;
   report(message: string, error?: boolean): void;
+  applied?(receiptId: string): void;
 }
 export function createProposalPanel(core: LocalCore, hooks: Hooks) {
   const supported = Boolean(core.listProposals && core.reviewProposal && core.reviewProposalRevert && core.applyProposalReview && core.cancelProposalReview);
@@ -72,6 +73,7 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
         if (!outcome) { hooks.report('Native confirmation canceled. The manuscript was not changed.'); return; }
         if (outcome.receipt.status !== 'failed') await hooks.changed(outcome.receipt.path);
         hooks.report(outcome.warning ?? `${kind === 'revert' ? 'Proposal reverted' : 'Proposal applied'} to ${outcome.receipt.path}. An attributed local receipt has been kept.`, outcome.receipt.status !== 'completed');
+        if(kind==='apply'&&!outcome.warning&&outcome.receipt.status==='completed'&&outcome.receipt.revertAvailable)hooks.applied?.(outcome.receipt.id);
       } catch (error) {
         hooks.report(`Proposal operation stopped: ${String(error)}${submitted ? ' Check the local receipts and current source before any retry.' : ''}`, true);
       } finally {
@@ -128,5 +130,5 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
       hooks.report(`Rejection could not be confirmed: ${String(error)}. Refresh the local receipts before trying again.`, true);
     }
   }
-  return {supported, open, reviewProposal: (id: string, guard?: () => string | null, presenter?: (view: ProposalReview) => Promise<boolean>) => change(id, 'apply', guard, presenter), clear, destroy() { disposed = true; clear(); }};
+  return {supported, open, reviewProposal: (id: string, guard?: () => string | null, presenter?: (view: ProposalReview) => Promise<boolean>) => change(id, 'apply', guard, presenter), revert: (receiptId:string)=>change(receiptId,'revert'), clear, destroy() { disposed = true; clear(); }};
 }

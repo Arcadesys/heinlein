@@ -150,7 +150,8 @@ if (!demo) {
 }
 Object.assign(window, { reviewFixture: { calls, get text() { return stored.text; }, baseline, get record() { return stored.record; } } });
 void app.selectRepository(async () => session).then(() => app.showDocument(scenePath)).then(async () => {
-    [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Heinlein Review')?.click();
+    [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.startsWith('Heinlein')&&!b.textContent?.includes('Review'))?.click();
+  document.querySelector<HTMLButtonElement>('.question-panel .heinlein-tabs button:nth-child(2)')?.click();
     if (!demo)
         return;
     mountGuide();

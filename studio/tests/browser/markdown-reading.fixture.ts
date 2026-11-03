@@ -130,7 +130,8 @@ function mountGuide() {
   document.querySelector('.heinlein-review-panel .review-head')?.after(box);
 }
 void app.selectRepository(async () => session).then(() => app.showDocument(params.get('doc') ?? 'opening.md')).then(async () => {
-  [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent === 'Heinlein Review')?.click();
+  [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.startsWith('Heinlein')&&!b.textContent?.includes('Review'))?.click();
+  document.querySelector<HTMLButtonElement>('.question-panel .heinlein-tabs button:nth-child(2)')?.click();
   mountGuide();
   const panel = document.querySelector<HTMLElement>('.heinlein-review-panel')!;
   await new Promise<void>(resolve => { const look = () => { if (panel.querySelector('.review-saved button')) resolve(); else setTimeout(look, 20); }; look(); });

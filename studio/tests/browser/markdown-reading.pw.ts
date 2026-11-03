@@ -3,7 +3,7 @@ import AxeBuilder from '@axe-core/playwright';
 // Invented text and a simulated backend, through the production panel, reader and writer.
 const url = '/tests/browser/markdown-reading.html';
 const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
-const panelOf = (page: Page) => page.getByRole('region', { name: 'Heinlein Review', exact: true });
+const panelOf = (page: Page) => page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
 // By class, not role: an open review panel is a full sheet on narrow windows, which hides the page beneath it.
 const reader = (page: Page) => page.locator('.active-document-pane .markdown-reader');
 const source = (page: Page, path = 'opening.md') => page.evaluate(p => (window as any).readingFixture.docs[p] as string, path);
@@ -160,7 +160,7 @@ test('Selecting in Reading cannot ask, split, undo or find through the hidden ed
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(status).toContainText('Switch to Source');
   expect(await source(page)).toBe(before);
-  await page.getByRole('button',{name:/^(Editing|Reading).* actions$/}).click();await expect(page.getByRole('button', { name: 'Heinlein Review', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Heinlein(?: ·.*)?$/ })).toBeVisible();
 });
 test('Toggling keeps one writer: unsaved text shows in Reading, caret and bytes survive, and marks stop after an edit', async ({ page }) => {
   await start(page);

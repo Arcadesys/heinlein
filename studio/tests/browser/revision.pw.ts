@@ -1,9 +1,10 @@
+import {openHeinleinReview} from './heinlein';
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 const activate = async (locator: import('@playwright/test').Locator) => { await locator.focus(); await locator.page().keyboard.press('Enter'); };
 test('prepared conflict choice and two sequential approvals keep unrelated Unicode prose', async ({ page }) => {
     await page.goto('/tests/browser/revision.html');
-    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
+    const panel = page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
     await expect(panel).toBeVisible();
     for (let n = 0; n < 5; n++)
         await page.keyboard.press(process.platform === 'darwin' ? 'Meta+=' : 'Control+=');
@@ -48,14 +49,14 @@ test('prepared conflict choice and two sequential approvals keep unrelated Unico
 });
 test('rejected findings disappear only from pending and stay dismissed after close and page restart', async ({ page }) => {
     await page.goto('/tests/browser/revision.html');
-    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
+    const panel = page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
     await expect(panel).toBeVisible();
     await activate(panel.getByRole('button', { name: 'Preview reviewer batch', exact: true }));
     await activate(panel.getByRole('button', { name: 'Run Heinlein Review', exact: true }));
     await activate(panel.locator('[data-finding-id="unrelated"]').getByRole('button', { name: 'Reject this change', exact: true }));
     await expect(panel.locator('[data-finding-id="unrelated"]')).toHaveCount(0);
     await activate(panel.getByRole('button', { name: 'Close review', exact: true }));
-    await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).click();await page.getByRole('button', { name: 'Heinlein Review', exact: true }).click();
+    await openHeinleinReview(page);
     await activate(panel.getByRole('button', { name: 'Reopen saved review synthetic-review-stable', exact: true }));
     await expect(panel.locator('.review-edit')).toHaveCount(2);
     await page.reload();
@@ -76,7 +77,7 @@ async function openDemo(page: import('@playwright/test').Page) {
     await page.goto(demo);
     await page.evaluate(() => localStorage.clear());
     await page.goto(demo);
-    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
+    const panel = page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
     await expect(panel.locator('.review-edit')).toHaveCount(4);
     await expect(panel.locator('.fixture-demo')).toContainText('not native or provider acceptance');
     await expect(panel.locator('.fixture-demo')).toContainText('unchanged since reset');
@@ -234,7 +235,7 @@ test('demo marks: caret, drag selection, typing and layout stay ordinary editing
     await expect(page.locator('.cm-review-mark')).toHaveCount(0);
     await page.keyboard.press('Backspace');
     await expect(page.locator('.cm-review-mark')).toHaveCount(0);
-    await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).click();await page.getByRole('button', { name: 'Heinlein Review', exact: true }).click();
+    await openHeinleinReview(page);
     await expect(panel.locator('.review-mark-status')).toContainText('Highlights are off because the open text changed');
 });
 test('demo marks: resolving one removes only that mark and later ranges still land exactly after a shift', async ({ page }) => {
@@ -259,7 +260,7 @@ test('demo marks: insertion and removal markers are visible, click through and d
     await page.goto(url);
     await page.evaluate(() => localStorage.clear());
     await page.goto(url);
-    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
+    const panel = page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
     await expect(panel.locator('.review-edit')).toHaveCount(8);
     await expect(mark(page, 'marker-delete')).toHaveText(' again');
     const point = page.locator('.cm-review-point');
@@ -280,7 +281,7 @@ test('demo marks: an approved insertion keeps the other marks on their exact wor
     await page.goto(url);
     await page.evaluate(() => localStorage.clear());
     await page.goto(url);
-    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
+    const panel = page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
     await expect(page.locator('.cm-content [data-review-id]')).toHaveCount(8);
     await activate(panel.locator('[data-finding-id="marker-insert"]').getByRole('button', approve));
     await activate(page.getByRole('dialog', { name: 'Simulated final confirmation' }).getByRole('button', { name: 'Confirm and apply', exact: true }));
@@ -298,7 +299,7 @@ test('demo marks: Next then Open reaches the exact card at shared boundaries, an
     await page.goto(url);
     await page.evaluate(() => localStorage.clear());
     await page.goto(url);
-    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
+    const panel = page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
     await expect(page.locator('.cm-content [data-review-id]')).toHaveCount(8);
     const baseline = await source(page);
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
@@ -321,7 +322,7 @@ test('demo marks: closing the review removes every mark and they never changed t
     const baseline = await source(page);
     await panel.getByRole('button', { name: 'Return to writing', exact: true }).click();
     const marked = await geometry(page);
-    await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).click();await page.getByRole('button', { name: 'Heinlein Review', exact: true }).click();
+    await openHeinleinReview(page);
     await activate(panel.getByRole('button', { name: 'Close review', exact: true }));
     await expect(page.locator('.cm-content [data-review-id]')).toHaveCount(0);
     expect(await geometry(page)).toEqual(marked);
