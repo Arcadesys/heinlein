@@ -4,6 +4,7 @@ import { changedSpan, decisionLabel, invisibleChangeNote, lineageDelta, patchCon
 import type { ReviewMarkInput } from './reviewMarks';
 import { formatKeys } from './shortcuts';
 import type {CapturedLibraryScope} from './librarySnapshot';
+import {createHeinleinHeader, setHeinleinStatus} from './heinleinHeader';
 import './heinleinReview.css';
 export interface ReviewScope {
     repositoryId: string;
@@ -78,13 +79,13 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const receipts = new Map<string, string>();
     const uid = Math.random().toString(36).slice(2, 8);
 
-    // Header: one compact row. The shared Heinlein pane styles .heinlein-head and .heinlein-close.
-    const title = el('h2', 'Heinlein');
+    // Header: the shared Heinlein header when this panel sits in the Heinlein pane; a minimal local row otherwise.
+    const chip = el('button');
+    chip.onclick = hooks.openConnection;
+    const head = hooks.headerTabs ? createHeinleinHeader({tabs: hooks.headerTabs, status: chip, close: () => tuck()}) : el('header', '', 'heinlein-head');
+    if (!hooks.headerTabs) head.append(el('h2', 'Heinlein'), iconButton('Close Heinlein', 'M3 3l8 8M11 3l-8 8', () => tuck(), 'heinlein-close'));
+    const title = head.querySelector('h2')!;
     title.tabIndex = -1;
-    const close = iconButton('Close Heinlein', 'M3 3l8 8M11 3l-8 8', () => tuck(), 'heinlein-close');
-    const head = el('header', '', 'heinlein-head');
-    head.append(title, ...(hooks.headerTabs ? [hooks.headerTabs] : []), close);
-
     // Results strip: progress, stepping and the overflow menu.
     const strip = el('div', '', 'review-strip');
     strip.hidden = true;
@@ -263,6 +264,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         connection.hidden = showingResults || checking || ready() || !core.requestReview;
         connection.dataset.state = checking ? 'checking' : ready() ? 'ready' : 'problem';
         connectionText.textContent = config?.message ?? 'ChatGPT connection could not be checked.';
+        if (hooks.headerTabs) setHeinleinStatus(chip, checking ? 'checking' : ready() ? 'ready' : 'attention', checking ? 'Checking connection' : ready() ? `Ready · ${config!.model}` : config?.usageLimited ? 'Usage limited' : 'Not connected');
         run.hidden = showingResults;
         advisory.hidden = showingResults;
         markStatus.hidden = !showingResults || markStatus.dataset.marked === undefined || !result!.edits.some(waiting);

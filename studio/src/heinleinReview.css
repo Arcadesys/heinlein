@@ -32,8 +32,8 @@
 .heinlein-review-panel summary { display: flex; align-items: center; gap: .4rem; cursor: pointer; }
 .heinlein-review-panel :where(input[type=checkbox], input[type=radio]) { width: 1.125rem; height: 1.125rem; flex: 0 0 auto; margin: 0; accent-color: var(--accent); }
 .heinlein-review-panel :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-.heinlein-review-panel :is(h2, h3, h4):focus { outline: none; }
-.heinlein-review-panel :is(h2, h3, h4):focus-visible, .heinlein-review-panel .review-conflict:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.heinlein-review-panel :is(h3, h4):focus { outline: none; }
+.heinlein-review-panel :is(h3, h4):focus-visible, .heinlein-review-panel .review-conflict:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 .heinlein-review-panel :is(p, h3, h4, summary) { overflow-wrap: anywhere; }
 .heinlein-review-panel :is(p, h3, h4, h5) { margin: 0; }
 .heinlein-review-panel textarea { width: 100%; min-height: 6rem; }
@@ -41,11 +41,10 @@
 .heinlein-review-panel .review-guidance { font-size: .8125rem; color: var(--fg-muted); }
 .heinlein-review-panel .drafting-warning { margin: 0; padding: .5rem .65rem; font-size: .8125rem; }
 
-/* Header: one compact row. */
-.heinlein-review-panel .heinlein-head { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; padding: .5rem .75rem .5rem 1rem; border-bottom: 1px solid var(--border); }
-.heinlein-review-panel .heinlein-head h2 { margin: 0; font-size: 1rem; font-weight: 600; }
-.heinlein-review-panel .heinlein-close { margin-left: auto; min-width: max(44px, 2.75rem); display: inline-flex; align-items: center; justify-content: center; padding: 0; color: var(--fg-muted); border-color: transparent; }
-.heinlein-review-panel .heinlein-close:hover { color: var(--fg); }
+/* Header: the shared .heinlein-head is styled by heinleinPane.css; this is only the local fallback row. */
+.heinlein-review-panel:not(.heinlein-integrated) .heinlein-head { flex: none; display: flex; align-items: center; gap: .75rem; padding: .5rem .75rem .5rem 1rem; border-bottom: 1px solid var(--border); }
+.heinlein-review-panel:not(.heinlein-integrated) .heinlein-close { margin-left: auto; min-width: 44px; padding: 0; }
+.heinlein-review-panel .heinlein-head { flex: none; }
 
 /* Shared gutters: centred, readable measure when the panel is wide. */
 .heinlein-review-panel :is(.review-strip, .review-body, .review-footer) { padding-inline: max(1rem, calc((100% - 44rem) / 2)); }

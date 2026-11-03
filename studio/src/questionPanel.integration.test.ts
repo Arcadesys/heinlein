@@ -25,7 +25,10 @@ function core() {
   } satisfies LocalCore;
 }
 let desiredResponse: 'ask' | 'revision' = 'ask';
-function button(label: string) {if(label==='Send to OpenAI')label=desiredResponse==='revision'?'Suggest rewrite':'Ask';if(label==='Return to writing')label='Collapse';if(label==='Questions'||label==='Ask Heinlein about selection')label='Heinlein';const scope = label === 'Return to writing' ? document.querySelector('[aria-label="Drafting questions"]')! : document; const found = [...scope.querySelectorAll('button')].find(node => node.textContent === label || label==='Heinlein' && node.textContent?.startsWith('Heinlein') && !node.textContent?.includes('Review')); if (!found) throw new Error(`Missing ${label}`); return found;}
+/** Accessible-ish name: aria-label, else text without aria-hidden decoration such as the Ask shortcut hint. */
+const nameOf = (node: Element) => node.getAttribute('aria-label') ?? [...node.childNodes].filter(child => !(child instanceof Element && child.getAttribute('aria-hidden') === 'true')).map(child => child.textContent).join('');
+function button(label: string) {if(label==='Send to OpenAI')label=desiredResponse==='revision'?'Suggest rewrite':'Ask';if(label==='Return to writing'||label==='Collapse')label='Close Heinlein';if(label==='Questions'||label==='Ask Heinlein about selection')label='Heinlein';// Both Heinlein views carry the shared header, so a hidden Review's identical controls come last.
+  const found = [...document.querySelectorAll('button')].sort((a, b) => Number(Boolean(a.closest('.heinlein-review-panel[hidden]'))) - Number(Boolean(b.closest('.heinlein-review-panel[hidden]')))).find(node => nameOf(node) === label || label==='Heinlein' && node.textContent?.startsWith('Heinlein') && !node.textContent?.includes('Review')); if (!found) throw new Error(`Missing ${label}`); return found;}
 const view = () => EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
 const panel = () => document.querySelector<HTMLElement>('[aria-label="Drafting questions"]')!;
 function question(value: string) {const input = document.querySelector<HTMLTextAreaElement>('[aria-label="Your drafting question"]')!; input.value = value; input.dispatchEvent(new Event('input', {bubbles: true}));}
@@ -49,7 +52,7 @@ describe('Studio in-app drafting questions', () => {
     const bridge = core(); const response = deferred<QuestionAnswer>(); bridge.askQuestion.mockReturnValueOnce(response.promise);
     await start(bridge); await open(); button('Capture current scene').click(); question('What next?'); button('Send to OpenAI').click();
     expect(document.querySelector('dialog[open]')).toBeNull(); expect(panel().tagName).toBe('DIV'); expect(view().state.readOnly).toBe(false);
-    [...panel().querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'Collapse')!.click(); expect(document.activeElement).toBe(view().contentDOM);
+    [...panel().querySelectorAll<HTMLButtonElement>('button')].find(node => node.getAttribute('aria-label') === 'Close Heinlein')!.click(); expect(document.activeElement).toBe(view().contentDOM);
     view().dispatch({changes: {from: view().state.doc.length, insert: '\nAuthor keeps writing.'}});
     expect(button('Save').disabled).toBe(false); button('Save').click();
     await vi.waitFor(() => expect(bridge.saveDocument).toHaveBeenCalledTimes(1));
@@ -92,7 +95,7 @@ describe('Studio in-app drafting questions', () => {
   it('supports keyboard close/return without changing the selection or intercepting editor Escape', async () => {
     const bridge = core(); await start(bridge); const from = view().state.doc.toString().indexOf('🐺');
     view().dispatch({selection: {anchor: from, head: from + 2}}); await open(); expect(button('Questions').getAttribute('aria-expanded')).toBe('true');
-    [...panel().querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'Collapse')!.click(); expect(document.activeElement).toBe(view().contentDOM);
+    [...panel().querySelectorAll<HTMLButtonElement>('button')].find(node => node.getAttribute('aria-label') === 'Close Heinlein')!.click(); expect(document.activeElement).toBe(view().contentDOM);
     view().contentDOM.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); expect(panel().hidden).toBe(true); await open();
     const selectionBeforeClose = view().state.selection.main;
     document.querySelector('textarea[aria-label="Your drafting question"]')!.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
@@ -188,7 +191,7 @@ describe('Studio attributed revision workflow', () => {
   it('keeps typing and saving usable during a revision request and prevents reviewing the stale result', async () => {
     const bridge = await revisionCore(); const result = deferred<Awaited<ReturnType<typeof bridge.suggestQuestionRevision>>>(); bridge.suggestQuestionRevision.mockReturnValueOnce(result.promise);
     await beginRevision(bridge); button('Send to OpenAI').click(); await vi.waitFor(() => expect(bridge.suggestQuestionRevision).toHaveBeenCalledTimes(1));
-    expect(view().state.readOnly).toBe(false); [...panel().querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'Collapse')!.click(); view().dispatch({changes: {from: view().state.doc.length, insert: '!'}}); await app!.saveCurrent();
+    expect(view().state.readOnly).toBe(false); [...panel().querySelectorAll<HTMLButtonElement>('button')].find(node => node.getAttribute('aria-label') === 'Close Heinlein')!.click(); view().dispatch({changes: {from: view().state.doc.length, insert: '!'}}); await app!.saveCurrent();
     expect(bridge.saveDocument).toHaveBeenCalledTimes(1); const request = bridge.suggestQuestionRevision.mock.calls[0][0];
     result.resolve({requestId: request.requestId, text: 'Stale explanation remains readable', model: 'mock-model', incomplete: false, proposalId: 'proposal', replacementText: 'new passage.'});
     await vi.waitFor(() => expect(panel().textContent).toContain('Stale explanation')); expect(button('Apply…').disabled).toBe(true); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
