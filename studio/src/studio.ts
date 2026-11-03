@@ -816,6 +816,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     });
   }
   let questionMarkerSignature = '';
+  const questionBackground = new Map<HTMLElement, boolean>();
   draftingQuestions = createQuestionPanel(core, {
     passages: {
       select: (from, to) => {if (readingActive()) setDocumentView('source'); editor?.selectPassage(from, to);},
@@ -854,7 +855,23 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if (problem) throw new Error(problem);
     },
     reviewRevision: async (id, _snapshot, guard, presenter) => {try {await proposals.reviewProposal(id, guard, presenter);} finally {if (!draftingQuestions?.visible()) returnFromQuestions();}},
-    visibilityChanged: visible => {navigation.suspend(visible); layout.classList.toggle('questions-open', visible); questionButton?.setAttribute('aria-expanded', String(visible)); if (!visible) {selectionCaptureVersion++; selectionCapturePending = false;}},
+    // Questions overlays the workspace. Preserve the navigator's layout and the
+    // manuscript's width/position while the dialog is open.
+    visibilityChanged: visible => {
+      navigation.suspend(visible);
+      if (visible) {
+        for (const child of root.children) if (child instanceof HTMLElement && child !== draftingQuestions?.element) {
+          if (!questionBackground.has(child)) questionBackground.set(child, child.inert);
+          child.inert = true;
+        }
+      } else {
+        for (const [child, inert] of questionBackground) child.inert = inert;
+        questionBackground.clear();
+        selectionCaptureVersion++; selectionCapturePending = false;
+      }
+      layout.classList.toggle('questions-open', visible);
+      questionButton?.setAttribute('aria-expanded', String(visible));
+    },
   });
   draftingQuestions.element.id = 'drafting-questions';
   reviewPanel = createReviewPanel(core, {

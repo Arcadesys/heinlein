@@ -223,17 +223,17 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     // Media-query rem units use the browser's initial font size, not app text zoom.
     const textSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
     dedicated = integrated && (Boolean(layoutQuery?.matches) || window.innerWidth < 64 * textSize);
-    element.dataset.presentation = dedicated ? 'dedicated' : 'docked';
-    element.setAttribute('role', dedicated ? 'dialog' : 'complementary');
-    if (dedicated) element.setAttribute('aria-modal', 'true'); else element.removeAttribute('aria-modal');
-    if (dedicated && !element.hidden && !element.contains(document.activeElement)) closeButton.focus({preventScroll: true});
+    element.dataset.presentation = dedicated ? 'dedicated' : 'overlay';
+    element.setAttribute('role', integrated ? 'dialog' : 'complementary');
+    if (integrated) element.setAttribute('aria-modal', 'true'); else element.removeAttribute('aria-modal');
+    if (integrated && !element.hidden && !element.contains(document.activeElement)) closeButton.focus({preventScroll: true});
   }
   layoutQuery?.addEventListener?.('change', presentation); window.addEventListener('resize', presentation); presentation();
   const textObserver = new MutationObserver(presentation);
   textObserver.observe(document.documentElement, {attributes: true, attributeFilter: ['style', 'data-zoom']});
   const headerObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => { element.style.setProperty('--question-header-height', `${header.offsetHeight + 16}px`); }); headerObserver?.observe(header);
   element.addEventListener('keydown', event => {
-    if (event.key !== 'Tab' || !dedicated) return;
+    if (event.key !== 'Tab' || !integrated) return;
     const focusable = [...element.querySelectorAll<HTMLElement>('button, select, textarea, input, summary, [tabindex="0"]')].filter(node => !node.closest('[hidden]') && !node.matches(':disabled') && node.getClientRects().length && !node.closest('details:not([open]) :not(summary)'));
     const first = focusable[0]; const last = focusable.at(-1);
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
