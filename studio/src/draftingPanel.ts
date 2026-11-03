@@ -479,7 +479,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     node.addEventListener('dragleave',event=>{if(event.relatedTarget instanceof Node&&node.contains(event.relatedTarget))return;node.classList.remove('move-drop-active');caption.textContent=label;});
     node.addEventListener('drop',event=>{const target=targetFor(event),active=drag;if(!target||!active)return;event.preventDefault();event.stopImmediatePropagation();const raw=event.dataTransfer!.getData(active.source.kind==='group'?LEGACY_GROUP_DRAG_TYPE:SCENE_DRAG_TYPE);clearDrag();if(raw!==active.token){hooks.report('This move did not come from the current manuscript. Nothing changed.',true);return;}void performMove(active.source,target,active.revision,active.repositoryId);});
   }
-  function acceptDrop(event: DragEvent, beforeId: string | null = null) {
+  function acceptDrop(event: DragEvent, beforeId: string | null = null, parentId?: string | null) {
     if (!event.dataTransfer || !state?.revision || state.recoveryRequired) return;
     event.preventDefault(); event.stopPropagation();
     try {
@@ -489,8 +489,14 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         if (source.repositoryId !== hooks.repository()?.id || !state.scenes.some(scene => scene.id === source.sceneId)) return;
         if (source.sceneId === beforeId) return;
         const scene = state.scenes.find(scene => scene.id === source.sceneId)!;
+        if (parentId !== undefined) {
+          // Dropping a scene where it already sits changes nothing, so it must not write.
+          const entries = libraryEntries(); const current = entries.find(entry => entry.id === scene.id);
+          const siblings = entries.filter(entry => entry.parentId === current?.parentId);
+          if (current?.parentId === parentId && (siblings[siblings.findIndex(entry => entry.id === scene.id) + 1]?.id ?? null) === beforeId) return;
+        }
         if (state.library) {
-          const destination = beforeId ? state.library.find(entry => entry.id === beforeId)?.parentId : null;
+          const destination = parentId !== undefined ? parentId : beforeId ? state.library.find(entry => entry.id === beforeId)?.parentId : null;
           moveLibraryItems([scene.id], destination ?? null, beforeId); return;
         }
         void changeManuscript({kind: 'reorderScene', sceneId: scene.id, beforeId, groupId: scene.groupId}); return;
@@ -504,11 +510,24 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       if (event.dataTransfer.files.length) hooks.report('Use Import files… to authorize these files with the native picker. Browser-provided file paths are not used.', true);
     } catch { hooks.report('This drag could not be read. Use Move… or Import repository files… instead.', true); }
   }
-  function dropTarget(target: HTMLElement, beforeId: string | null = null) {
-    target.addEventListener('dragover', event => {
-      if (event.dataTransfer?.types.some(type => type === REPOSITORY_DRAG_TYPE || type === SCENE_DRAG_TYPE)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; }
+  const DROP_MARKS = ['drop-before', 'drop-after', 'drop-into', 'dragging'];
+  const clearDropMarks = () => element.querySelectorAll(DROP_MARKS.map(mark => `.${mark}`).join(',')).forEach(node => node.classList.remove(...DROP_MARKS));
+  /** A scene row accepts a drop above or below its midline; the marker is a shadow so rows never shift. */
+  function sceneDropTarget(row: HTMLElement, line: HTMLElement, scene: DraftingScene, entries: LibraryEntry[]) {
+    const accepts = (event: DragEvent) => !!event.dataTransfer?.types.some(type => type === REPOSITORY_DRAG_TYPE || type === SCENE_DRAG_TYPE);
+    const half = (event: DragEvent): 'before' | 'after' => { const bounds = line.getBoundingClientRect(); return event.clientY > bounds.top + bounds.height / 2 ? 'after' : 'before'; };
+    row.addEventListener('dragover', event => {
+      if (!accepts(event)) return;
+      event.preventDefault(); event.dataTransfer!.dropEffect = 'move';
+      const side = half(event); row.classList.toggle('drop-before', side === 'before'); row.classList.toggle('drop-after', side === 'after');
     });
-    target.addEventListener('drop', event => acceptDrop(event, beforeId));
+    row.addEventListener('dragleave', event => { if (!(event.relatedTarget instanceof Node && row.contains(event.relatedTarget))) row.classList.remove('drop-before', 'drop-after'); });
+    row.addEventListener('drop', event => {
+      const side = half(event); row.classList.remove('drop-before', 'drop-after');
+      const parentId = entries.find(entry => entry.id === scene.id)?.parentId ?? scene.groupId ?? null;
+      const siblings = entries.filter(entry => entry.parentId === parentId); const at = siblings.findIndex(entry => entry.id === scene.id);
+      acceptDrop(event, side === 'before' ? scene.id : siblings[at + 1]?.id ?? null, parentId);
+    });
   }
   function render() {
     element.replaceChildren(); if (!state) return;
@@ -535,9 +554,13 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       }, 'tree-toggle');
       toggle.dataset.groupId = group.id; toggle.setAttribute('aria-expanded', String(expanded)); toggle.draggable = true;
       toggle.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(GROUP_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()?.id, groupId: group.id})); });
-      toggle.addEventListener('dragover', event => { if (event.dataTransfer?.types.some(type => type === SCENE_DRAG_TYPE || type === GROUP_DRAG_TYPE)) event.preventDefault(); });
+      toggle.addEventListener('dragover', event => {
+        if (!event.dataTransfer?.types.some(type => type === SCENE_DRAG_TYPE || type === GROUP_DRAG_TYPE)) return;
+        event.preventDefault(); line.classList.add('drop-into');
+      });
+      toggle.addEventListener('dragleave', () => line.classList.remove('drop-into'));
       toggle.addEventListener('drop', event => {
-        event.preventDefault(); event.stopPropagation();
+        event.preventDefault(); event.stopPropagation(); line.classList.remove('drop-into');
         try {
           const rawGroup = event.dataTransfer?.getData(GROUP_DRAG_TYPE);
           if (rawGroup) {
@@ -571,7 +594,8 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const open = button(scene.title || 'Untitled scene', () => hooks.open(scene.path), 'scene-open');
       open.dataset.path = scene.path; open.title = scene.path; open.draggable = true;
       if (scene.path === current) open.setAttribute('aria-current', 'true');
-      open.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(SCENE_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()!.id, sceneId: scene.id})); });
+      open.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(SCENE_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()!.id, sceneId: scene.id})); row.classList.add('dragging'); });
+      open.addEventListener('dragend', clearDropMarks);
       const siblings = entries.filter(entry => entry.parentId === scene.groupId); const siblingIndex = siblings.findIndex(entry => entry.id === scene.id);
       const earlier = button('Move earlier', () => state?.library ? reorderLibraryItem(scene.id, -1) : reorder(scene, -1)); earlier.disabled = state!.library ? siblingIndex <= 0 : index === 0;
       const later = button('Move later', () => state?.library ? reorderLibraryItem(scene.id, 1) : reorder(scene, 1)); later.disabled = state!.library ? siblingIndex === siblings.length - 1 : index === state!.scenes.length - 1;
@@ -579,7 +603,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         button('Rename…', () => renameLibraryItem(scene.id, 'scene')), button('Move to…', () => state?.library ? moveSheets([scene.id], scene.groupId) : moveScene(scene)),
         earlier, later, el('p', scene.path, 'scene-path'),
       ]));
-      row.append(line); dropTarget(row, scene.id);
+      row.append(line); sceneDropTarget(row, line, scene, entries);
       return row;
     };
     function draw(parent: string | null, container: HTMLElement, depth: number) {

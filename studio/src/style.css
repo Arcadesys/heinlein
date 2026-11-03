@@ -359,6 +359,11 @@ dialog { color: var(--fg); }
 .scene-open { padding-left: 1.5rem !important; }
 .scene-open[aria-current] { color: var(--accent); font-weight: 600; }
 .scene-open[draggable="true"], .tree-toggle[draggable="true"] { cursor: grab; }
+/* Drop markers are shadows and outlines only, so dragging never reflows the tree. */
+.tree-scene.drop-before > .tree-row { box-shadow: inset 0 3px 0 var(--accent); }
+.tree-scene.drop-after > .tree-row { box-shadow: inset 0 -3px 0 var(--accent); }
+.tree-row.drop-into { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tree-scene.dragging { opacity: .5; }
 .tree-count { flex: none; color: var(--fg-muted); font: 400 .75rem var(--font-mono); padding-inline: .25rem; }
 .scene-path { color: var(--fg-muted); font-family: var(--font-mono); font-size: .75rem; overflow-wrap: anywhere; margin: .35rem .5rem 0; }
 /* Drop captions from the shared move system appear only while a drag is over the row. */
