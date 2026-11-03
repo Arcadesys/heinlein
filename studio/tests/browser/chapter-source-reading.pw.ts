@@ -9,7 +9,7 @@ test('chapter revision reveals a scene left in Reading and keeps its exact selec
   await page.goto('/tests/browser/markdown-reading.html?doc=chapter.md');
   const review = page.getByRole('dialog', {name: 'Heinlein Review', exact: true});
   await expect(review.locator('.review-edit').first()).toBeVisible();
-  await review.getByRole('button', {name: 'Return to writing', exact: true}).click();
+  await review.getByRole('button', {name: 'Close Heinlein', exact: true}).click();
   if (high) await page.evaluate(() => {document.documentElement.dataset.zoom = '200';(window as any).readingFixture.theme();});
   const before = await page.evaluate(() => JSON.stringify((window as any).readingFixture.docs));
   await page.evaluate(() => (window as any).readingFixture.app.showDocument('harbor.md'));
@@ -37,7 +37,7 @@ test('chapter revision reveals a scene left in Reading and keeps its exact selec
   await expect(page.getByRole('textbox', {name: 'Your drafting question', exact: true})).toBeFocused();
   const selection = await page.evaluate(() => {const v = (window as any).readingFixture.view();return v.state.sliceDoc(v.state.selection.main.from, v.state.selection.main.to);});
   expect(selection).toBe('twice');
-  await page.locator('.question-panel').getByRole('button', {name: 'Collapse', exact: true}).click();
+  await page.locator('.question-panel').getByRole('button', {name: 'Close Heinlein', exact: true}).click();
   await expect(content).toBeFocused();
   const visible = () => page.evaluate(() => {
     const v = (window as any).readingFixture.view(), range = v.state.selection.main;

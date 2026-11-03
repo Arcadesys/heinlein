@@ -125,8 +125,8 @@ function mountGuide() {
     help.append(helpTitle);
     add(help, 'p', 'The underlined words in the manuscript are the same suggestions. Click one to open its card. Clicking never applies, rejects or chooses anything.');
     add(help, 'p', 'Marks after an approval appear only when the whole simulated file still matches the review, so they can take a moment.');
-    add(help, 'p', 'Example 1 · Approve: on Suggestion 1, choose Approve this change…, then Confirm and apply. The other suggestions stay waiting.');
-    add(help, 'p', 'Example 2 · Dismiss: on the Example 2 suggestion, choose Reject this change. The source stays the same and the rejection is recorded.');
+    add(help, 'p', 'Example 1 · Approve: on Suggestion 1, choose Accept…, then Confirm and apply. The other suggestions stay waiting.');
+    add(help, 'p', 'Example 2 · Dismiss: on the Example 2 suggestion, choose Keep mine. The source stays the same and the rejection is recorded.');
     add(help, 'p', 'Example 3 · Overlap: choose one Example 3 alternative, then approve it. Approve stays off until you choose, and the other alternative is recorded as not applied.');
     const details = document.createElement('details');
     const summary = document.createElement('summary');
@@ -141,7 +141,7 @@ function mountGuide() {
     box.append(help, details, reset);
     guide = { refresh() { source.textContent = stored.text; state.textContent = stored.text === baseline ? 'Simulated source file: unchanged since reset.' : 'Simulated source file: changed by an approved patch since reset.'; } };
     guide.refresh();
-    document.querySelector('.heinlein-review-panel .review-head')?.after(box);
+    document.querySelector('.heinlein-review-panel .review-body')?.prepend(box);
 }
 if (!demo) {
     const notice = document.createElement('p');

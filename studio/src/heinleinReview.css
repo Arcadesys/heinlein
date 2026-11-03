@@ -1,0 +1,187 @@
+/* Heinlein Review: setup and results. A header, a scrolling body and a pinned footer.
+   The shared Heinlein pane styles .heinlein-head and .heinlein-close; only minimal layout lives here.
+   The panel floats over the manuscript and never changes its layout, except the existing side gutter below. */
+:root { --review-width: min(34rem, 48vw); }
+.heinlein-review-panel { position: fixed; z-index: 12; inset: 5rem 1rem 1rem auto; width: var(--review-width); display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box; background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow); font-size: 1rem; line-height: 1.55; }
+.heinlein-review-panel[hidden], .heinlein-review-panel.review-tucked { display: none; }
+.heinlein-review-panel [hidden] { display: none !important; }
+.heinlein-review-panel.heinlein-integrated { position: fixed; inset: 0; z-index: 20; width: auto; max-height: none; background: var(--bg); border: 0; border-radius: 0; box-shadow: none; }
+@media (min-width: 1400px) { .heinlein-review-panel.heinlein-integrated { inset: 3.5rem 0 0 auto; width: min(42vw, 34rem); border-left: 1px solid var(--border); } }
+:root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel.heinlein-integrated { inset: 0; width: auto; }
+/* Beside the editor when there is room, so the panel never sits on top of the text being reviewed. */
+@media (min-width: 901px) {
+  :root:not([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .studio:not(.standalone-writing):has(> .heinlein-review-panel:not([hidden],.review-tucked,.heinlein-integrated)) .preview { padding-right: calc(var(--review-width) + 2rem); }
+}
+/* A full reading sheet when it is not: narrow windows and large text get the whole viewport, and covered chrome leaves the tab order. */
+@media (max-width: 900px) {
+  .heinlein-review-panel { inset: 0; width: auto; border: 0; border-radius: 0; }
+  .studio:has(> .heinlein-review-panel:not([hidden],.review-tucked,.heinlein-integrated)) > :not(.heinlein-review-panel, dialog) { visibility: hidden; }
+}
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel { inset: 0; width: auto; border: 0; border-radius: 0; }
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .studio:has(> .heinlein-review-panel:not([hidden],.review-tucked,.heinlein-integrated)) > :not(.heinlein-review-panel, dialog) { visibility: hidden; }
+/* With very large text or a short window the whole panel scrolls, so the footer cannot crowd out the cards. */
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel { overflow: auto; }
+:root:is([data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel .review-body { flex: none; overflow: visible; }
+@media (max-height: 32rem) { .heinlein-review-panel { overflow: auto; } .heinlein-review-panel .review-body { flex: none; overflow: visible; } }
+
+/* Shared controls. Targets stay at least 44px and scale with text size. */
+/* :where keeps these defaults below every component rule. */
+.heinlein-review-panel :where(button, summary, select, textarea, input:not([type=checkbox]):not([type=radio])) { min-height: max(44px, 2.75rem); max-width: 100%; font: inherit; box-sizing: border-box; }
+.heinlein-review-panel button { white-space: normal; overflow-wrap: anywhere; }
+.heinlein-review-panel button:disabled { opacity: 1; color: var(--fg-muted); background: transparent; border-style: dashed; border-color: var(--fg-muted); }
+.heinlein-review-panel summary { display: flex; align-items: center; gap: .4rem; cursor: pointer; }
+.heinlein-review-panel :where(input[type=checkbox], input[type=radio]) { width: 1.125rem; height: 1.125rem; flex: 0 0 auto; margin: 0; accent-color: var(--accent); }
+.heinlein-review-panel :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.heinlein-review-panel :is(h3, h4):focus { outline: none; }
+.heinlein-review-panel :is(h3, h4):focus-visible, .heinlein-review-panel .review-conflict:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.heinlein-review-panel :is(p, h3, h4, summary) { overflow-wrap: anywhere; }
+.heinlein-review-panel :is(p, h3, h4, h5) { margin: 0; }
+.heinlein-review-panel textarea { width: 100%; min-height: 6rem; }
+.heinlein-review-panel .review-label { margin: 0 0 .5rem; padding: 0; font: 500 .6875rem/1.4 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--fg-muted); }
+.heinlein-review-panel .review-guidance { font-size: .8125rem; color: var(--fg-muted); }
+.heinlein-review-panel .drafting-warning { margin: 0; padding: .5rem .65rem; font-size: .8125rem; }
+
+/* Header: the shared .heinlein-head is styled by heinleinPane.css; this is only the local fallback row. */
+.heinlein-review-panel:not(.heinlein-integrated) .heinlein-head { flex: none; display: flex; align-items: center; gap: .75rem; padding: .5rem .75rem .5rem 1rem; border-bottom: 1px solid var(--border); }
+.heinlein-review-panel:not(.heinlein-integrated) .heinlein-close { margin-left: auto; min-width: 44px; padding: 0; }
+.heinlein-review-panel .heinlein-head { flex: none; }
+
+/* Shared gutters: centred, readable measure when the panel is wide. */
+.heinlein-review-panel :is(.review-strip, .review-body, .review-footer) { padding-inline: max(1rem, calc((100% - 44rem) / 2)); }
+
+/* Results strip. */
+.review-strip { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding-block: .6rem; border-bottom: 1px solid var(--border); }
+.review-stepper { flex: 0 1 auto; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-left: auto; }
+.review-progress-box { flex: 1 1 9rem; min-width: 0; display: grid; gap: .35rem; }
+.heinlein-review-panel .review-progress { font-size: .8125rem; }
+.review-bar { height: 4px; border-radius: 2px; background: var(--surface-hover); overflow: hidden; }
+.review-bar-fill { height: 100%; min-width: 4px; border-radius: inherit; background: var(--accent); }
+.heinlein-review-panel :is(.review-step, .review-more) { min-width: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.heinlein-review-panel .review-more { border-color: transparent; color: var(--fg-muted); }
+.review-counter { min-width: 4ch; text-align: center; font: 500 .75rem var(--font-mono); color: var(--fg-muted); }
+
+/* The one live line. */
+.heinlein-review-panel .review-status { flex: none; margin: 0; padding: .5rem max(1rem, calc((100% - 44rem) / 2)) 0; font-size: .8125rem; }
+.heinlein-review-panel .review-status:empty { padding: 0; }
+.heinlein-review-panel .review-decision-note { margin: .5rem max(1rem, calc((100% - 44rem) / 2)) 0; padding: .5rem .75rem; font-weight: 500; border: 1px solid var(--border-strong); border-left: 4px solid var(--accent); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+.heinlein-review-panel .review-status-warning { color: var(--warn); border-color: var(--warn); }
+
+/* Body. */
+.review-body { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; align-content: start; gap: 1.25rem; padding-block: 1rem 1.25rem; overscroll-behavior: contain; }
+.review-setup-view, .review-results, .review-edits { display: grid; gap: 1.25rem; min-width: 0; }
+.review-edits { gap: .75rem; }
+
+/* Overflow menu, in flow. */
+.review-more-menu { display: grid; gap: .25rem; padding: .5rem; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); }
+.heinlein-review-panel .review-more-menu > button { width: 100%; text-align: left; font-size: .875rem; border-color: transparent; }
+.review-more-menu details > summary { padding: .4rem .85rem; font-size: .875rem; }
+.review-more-menu details > :not(summary) { margin: .5rem .85rem 0; font-size: .8125rem; }
+.review-more-menu pre { max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: .5rem; font-size: .75rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.review-history-item { display: grid; gap: .35rem; padding-block: .6rem; border-top: 1px solid var(--border); }
+.review-history-item h4 { font-size: .875rem; }
+.review-history-item h5 { font-size: .75rem; color: var(--fg-muted); }
+.review-technical > :not(summary) { margin-top: .35rem; font-size: .75rem; color: var(--fg-muted); }
+.review-technical > summary { font-size: .75rem; color: var(--fg-muted); }
+.review-technical code { display: block; overflow-wrap: anywhere; font-size: .75rem; }
+
+/* Setup: what to review. */
+.review-scope, .review-reviewers, .review-alternatives { min-width: 0; margin: 0; padding: 0; border: 0; }
+.review-scope-cards, .review-targets { display: grid; gap: .5rem; }
+.review-targets:not(:empty) { margin-top: .75rem; }
+.heinlein-review-panel .review-scope-card { display: flex; align-items: center; gap: .75rem; width: 100%; min-height: max(44px, 2.75rem); padding: .6rem .75rem; box-sizing: border-box; text-align: left; color: var(--fg); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.heinlein-review-panel label.review-scope-card:has(input:checked), .review-scope-only { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.heinlein-review-panel .review-scope-only { cursor: default; }
+.review-scope-text { display: grid; gap: .1rem; min-width: 0; }
+.review-scope-name { font-size: .875rem; font-weight: 500; }
+.review-scope-detail { font-size: .75rem; color: var(--fg-muted); overflow-wrap: anywhere; }
+.review-target { display: flex; flex-wrap: wrap; align-items: center; gap: .1rem .6rem; min-height: max(44px, 2.75rem); font-size: .875rem; overflow-wrap: anywhere; }
+
+/* Setup: reviewers. */
+.review-reviewers { display: grid; gap: .5rem; }
+.review-chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+.heinlein-review-panel .review-chip-toggle { display: inline-flex; align-items: center; gap: .4rem; padding: .35rem .8rem; font-size: .8125rem; font-weight: 500; color: var(--fg); border: 1px solid var(--border); border-radius: 999px; }
+.heinlein-review-panel .review-chip-toggle[aria-pressed="true"] { color: var(--fg); background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.heinlein-review-panel :is(.review-note-toggle, .review-reload) { justify-self: start; padding-inline: 0; font-size: .8125rem; color: var(--fg-muted); border-color: transparent; background: none; }
+.heinlein-review-panel :is(.review-note-toggle, .review-reload):hover { color: var(--fg); }
+.heinlein-review-panel .review-note { display: grid; gap: .35rem; font-size: .8125rem; color: var(--fg-muted); }
+.heinlein-review-panel .review-note textarea { color: var(--fg); font-size: .875rem; }
+
+/* Setup: what is sent. */
+.review-send { display: grid; gap: .25rem; padding: .75rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); min-width: 0; }
+.review-send-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 .75rem; }
+.heinlein-review-panel .review-send-summary { font-size: .8125rem; }
+.review-preview { margin-left: auto; min-width: 0; }
+.review-preview[open] { flex-basis: 100%; }
+.heinlein-review-panel .review-preview > summary { width: fit-content; margin-left: auto; font-size: .8125rem; color: var(--accent); list-style: none; }
+.review-preview > summary::-webkit-details-marker { display: none; }
+.review-preview > :not(summary) { margin-top: .5rem; }
+.review-sources, .review-batch-preview { display: grid; gap: .4rem; font-size: .8125rem; }
+.review-sources h3, .review-batch-preview :is(h3, h4) { font-size: .75rem; font-weight: 600; color: var(--fg-muted); }
+.review-sources pre { margin: 0; max-height: 14rem; overflow: auto; padding: .5rem .65rem; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-text); font-size: .875rem; line-height: 1.6; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.heinlein-review-panel .review-send-note { font-size: .75rem; color: var(--fg-muted); }
+.heinlein-review-panel .review-limit { margin-top: .35rem; }
+
+/* Setup: earlier reviews. */
+.review-saved-section { display: grid; gap: .4rem; }
+.review-saved { display: grid; gap: .4rem; }
+.heinlein-review-panel .review-saved-item { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .1rem .75rem; width: 100%; padding: .45rem .75rem; font-size: .8125rem; text-align: left; }
+.heinlein-review-panel .review-saved-item[aria-current] { border-color: var(--accent); }
+.review-saved-what { min-width: 0; overflow-wrap: anywhere; }
+.review-saved-count { color: var(--fg-muted); }
+
+/* Results: cards. */
+.review-card { display: grid; gap: .65rem; min-width: 0; padding: .85rem; border: 1px solid var(--border); border-radius: 10px; }
+.review-card.review-opened { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.review-card.review-decided { opacity: .85; }
+.review-card-meta { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .25rem .75rem; }
+.heinlein-review-panel .review-card-meta h4 { font-size: .75rem; font-weight: 500; color: var(--fg-muted); }
+.review-chip { font-size: .75rem; color: var(--fg-muted); }
+.review-conflict .review-chip { color: var(--fg); }
+.heinlein-review-panel .review-chip-warning { color: var(--warn); }
+.review-card .rendered-markdown { font-family: var(--font-ui, var(--ui-fallback)); font-size: .875rem; line-height: 1.5; }
+.review-card .rendered-markdown > * + * { margin-top: .4rem; }
+.review-alternatives { display: grid; gap: .4rem; }
+.review-alternatives > .review-label { margin-bottom: .1rem; }
+.review-alt { display: grid; gap: .35rem; min-width: 0; }
+.heinlein-review-panel .review-choice { display: flex; align-items: center; gap: .65rem; min-height: max(44px, 2.75rem); padding: .45rem .65rem; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; }
+.heinlein-review-panel .review-choice:has(input:checked) { border-color: var(--accent); }
+
+/* One line of manuscript text: removed words struck in the muted colour, added words highlighted. */
+.review-inline-diff { position: relative; margin: 0; min-width: 0; font-family: var(--font-text); font-size: .9375rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-inline-diff del { color: var(--fg-muted); text-decoration: line-through; text-decoration-thickness: 1px; }
+.review-inline-diff ins { color: var(--fg); text-decoration: none; padding-inline: 2px; border-radius: 2px; background: color-mix(in srgb, #ff8a00 28%, transparent); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.review-inline-diff del + ins { margin-left: .25em; }
+.review-inline-diff :is(del, ins)::before, .review-inline-diff :is(del, ins)::after { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.review-inline-diff del::before { content: " [removed: "; }
+.review-inline-diff ins::before { content: " [added: "; }
+.review-inline-diff :is(del, ins)::after { content: "] "; }
+.review-point { display: inline-block; width: .2rem; height: 1.1em; margin-inline: .1em; vertical-align: text-bottom; background: var(--fg); }
+.review-cut::before { content: "… "; color: var(--fg-muted); }
+.review-cut:last-child::before { content: " …"; }
+
+.review-decision { display: flex; flex-wrap: wrap; gap: .5rem; }
+.heinlein-review-panel .review-approve { padding-inline: .9rem; font-size: .8125rem; font-weight: 600; text-align: center; background: var(--surface-hover); border: 1px solid var(--border-strong); }
+.heinlein-review-panel .review-keep { padding-inline: .9rem; font-size: .8125rem; text-align: center; border: 1px solid var(--border); }
+.heinlein-review-panel .review-conflict .review-approve { flex: 1 1 10rem; }
+.heinlein-review-panel :is(.review-conflict .review-approve, .review-run):not(:disabled) { color: #0a0a14; background: var(--gradient); border: 0; }
+:root[data-theme="paper"] .heinlein-review-panel :is(.review-conflict .review-approve, .review-run):not(:disabled) { color: var(--bg); background: var(--fg); }
+.heinlein-review-panel .review-why { font-size: .8125rem; color: var(--fg-muted); }
+.review-result-actions { display: grid; gap: .5rem; }
+.review-result-actions:not(:has(> :not([hidden]))) { display: none; }
+
+/* Footer. */
+.review-footer { flex: none; display: grid; gap: .5rem; padding-block: .75rem .85rem; border-top: 1px solid var(--border); }
+.heinlein-review-panel .review-connection { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .75rem; font-size: .8125rem; color: var(--warn); }
+.heinlein-review-panel .review-connect { padding: .3rem .8rem; font-size: .8125rem; color: var(--fg); border: 1px solid var(--border-strong); }
+.review-foot-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.review-foot-actions:not(:has(> :not([hidden]))) { display: none; }
+.heinlein-review-panel .review-run { flex: 1 1 100%; justify-content: center; text-align: center; font-size: .875rem; font-weight: 600; }
+.heinlein-review-panel .review-advisory { font-size: .75rem; text-align: center; color: var(--fg-muted); }
+.review-mark-status { display: grid; gap: .25rem; }
+.heinlein-review-panel .review-legend { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem 1rem; font-size: .75rem; color: var(--fg-muted); }
+.review-legend-item { display: inline-flex; align-items: center; gap: .4rem; }
+.review-swatch { display: inline-block; width: 1.125rem; height: .3rem; }
+.review-swatch-change { border-bottom: 2px solid var(--fg); }
+.review-swatch-alt { border-bottom: 2px dotted var(--fg); }
+.review-legend kbd { margin-left: auto; }
+.heinlein-review-panel .review-mark-note { font-size: .75rem; color: var(--fg-muted); }

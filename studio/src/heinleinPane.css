@@ -1,0 +1,124 @@
+/* Heinlein pane: one compact header, a scrolling conversation, and a pinned composer.
+   It is an overlay; opening it or switching views never reflows the manuscript. */
+
+/* ---- Shared header (Passage and Whole scene views) ---------------------------------- */
+.heinlein-head { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .625rem; margin: 0; padding: .625rem clamp(8px, .75rem, 16px) .625rem clamp(12px, 1rem, 20px); border-bottom: 1px solid var(--border); background: var(--surface); }
+/* Controls keep at least their longest word; the row wraps instead of clipping labels. */
+.heinlein-head > h2 { min-width: 0; }
+.heinlein-head h2 { margin: 0; font: 600 .9375rem/1.3 var(--font-ui, var(--ui-fallback)); color: var(--fg); overflow-wrap: anywhere; }
+.heinlein-head h2:focus { outline: none; }
+.heinlein-tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 3px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.heinlein-head .heinlein-tabs button { min-height: 2rem; margin: 0; padding: .3rem clamp(8px, .875rem, 14px); border: 0; border-radius: 6px; background: transparent; color: var(--fg-muted); font: 500 .8125rem/1.3 var(--font-ui, var(--ui-fallback)); text-align: center; text-decoration: none; white-space: normal; overflow-wrap: normal; word-break: normal; }
+.heinlein-head .heinlein-tabs button:hover { color: var(--fg); background: var(--surface); }
+.heinlein-head .heinlein-tabs button[aria-pressed="true"] { background: var(--surface-hover); color: var(--fg); font-weight: 600; }
+.heinlein-head .heinlein-tabs button:focus-visible { outline-offset: 1px; }
+.heinlein-head .heinlein-status { margin-inline-start: auto; display: inline-flex; align-items: center; gap: .375rem; min-height: 2rem; padding: .3rem clamp(6px, .5rem, 10px); border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--fg-muted); font: 500 .75rem/1.3 var(--font-ui, var(--ui-fallback)); white-space: normal; overflow-wrap: normal; }
+.heinlein-head .heinlein-status:hover, .heinlein-head .heinlein-status[aria-expanded="true"] { color: var(--fg); background: var(--surface-hover); border-color: transparent; }
+.heinlein-head .heinlein-status-dot { flex: none; width: .5rem; height: .5rem; border-radius: 50%; background: var(--heinlein-ready, #5fd38d); }
+/* Not colour alone: attention is a hollow warning ring, checking a muted dot. */
+.heinlein-head .heinlein-status[data-state="attention"] .heinlein-status-dot { background: transparent; box-shadow: inset 0 0 0 2px var(--warn); }
+.heinlein-head .heinlein-status[data-state="checking"] .heinlein-status-dot { background: var(--fg-muted); }
+.heinlein-head button.heinlein-close { display: inline-grid; place-items: center; flex: none; width: 2.25rem; height: 2.25rem; min-width: 2.25rem; min-height: 2.25rem; margin: 0; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--fg-muted); }
+.heinlein-head button.heinlein-close:hover { color: var(--fg); background: var(--surface-hover); border-color: transparent; }
+.heinlein-head .heinlein-close svg { width: .875rem; height: .875rem; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+
+/* ---- Pane frame ------------------------------------------------------------------------ */
+.question-panel-integrated { position: fixed; inset: 0 0 0 auto; z-index: 20; width: min(36rem, calc(100vw - 2rem)); display: flex; flex-direction: column; gap: 0; padding: 0; overflow: hidden auto; overscroll-behavior: contain; background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; border: 0; border-inline-start: 1px solid var(--border-strong); border-radius: 0; box-shadow: none; font-size: 1rem; }
+.question-panel-integrated[hidden], .heinlein-pane [hidden] { display: none !important; }
+.question-panel-integrated > * { flex-shrink: 0; min-width: 0; }
+@media (min-width: 1400px) { .question-panel-integrated[data-presentation="overlay"] { top: 3.5rem; width: min(42vw, 34rem); } }
+@media (max-width: 64rem) { .question-panel-integrated { inset: 0; width: auto; border: 0; } }
+.question-panel-integrated[data-presentation="dedicated"] { inset: 0; width: auto; border: 0; }
+.question-panel-integrated :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.question-panel-integrated :is(button, summary, label, h4, p) { overflow-wrap: anywhere; }
+.question-panel-integrated button { max-width: 100%; white-space: normal; }
+
+/* Conversation scrolls between the header and the pinned composer. */
+.heinlein-pane { container: heinlein-pane / size; }
+.heinlein-pane > .heinlein-body { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 1rem; padding: 1.125rem clamp(12px, 1rem, 24px); }
+.heinlein-pane > .heinlein-body > * { flex-shrink: 0; min-width: 0; margin: 0; }
+.heinlein-pane > .heinlein-composer { flex: none; display: flex; flex-direction: column; gap: .625rem; max-height: 60%; overflow-y: auto; margin: 0; padding: .75rem clamp(12px, 1rem, 24px) .875rem; border-top: 1px solid var(--border); background: var(--surface); }
+.heinlein-pane > .heinlein-composer > * { flex-shrink: 0; margin: 0; min-width: 0; max-width: 100%; }
+/* Short panes and enlarged text: one continuous scroll so the composer never hides the thread. */
+@container heinlein-pane (max-height: 34rem) {
+  .heinlein-pane > .heinlein-body { flex: none; overflow: visible; }
+  .heinlein-pane > .heinlein-composer { max-height: none; overflow: visible; }
+  .heinlein-shortcut { display: none; }
+}
+
+/* ---- Thread ------------------------------------------------------------------------------ */
+.heinlein-pane .question-transcript { display: flex; flex-direction: column; gap: 1.5rem; overflow: visible; max-height: none; }
+.heinlein-pane .question-turn { margin: 0; padding: 0; border: 0; }
+.heinlein-pane .question-turn > .question-user-message { display: block; width: fit-content; max-width: 85%; margin: 0 0 .875rem auto; padding: .625rem .75rem; max-height: none; overflow: visible; background: var(--surface-hover); border: 0; border-radius: 12px 12px 4px 12px; color: var(--fg); font: 400 .875rem/1.5 var(--font-ui, var(--ui-fallback)); white-space: pre-wrap; }
+.heinlein-pane .heinlein-answer-label { margin: 0 0 .5rem; font: 500 .6875rem/1.2 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--fg-muted); }
+.heinlein-pane .question-turn > .rendered-markdown { margin: 0 0 .5rem; padding: 0; max-height: none; overflow: visible; border: 0; background: transparent; font: 400 .9375rem/1.65 var(--font-text, var(--text-fallback)); color: var(--fg); }
+.heinlein-pane .question-turn > .muted, .heinlein-pane .question-response-details { font-size: .8125rem; }
+.heinlein-pane .question-response-details { border-top: 0; }
+.heinlein-pane .question-response-details summary { min-height: 2.25rem; padding: .25rem 0; font-size: .8125rem; font-weight: 500; color: var(--fg-muted); }
+.question-panel-integrated .question-turn > button { margin: .5rem .5rem 0 0; min-height: 2.75rem; padding: .5rem 1rem; font-size: .875rem; }
+.question-panel-integrated .question-turn > button:not(.question-full-comparison) { min-width: calc(50% - .6rem); }
+.question-panel-integrated .question-turn > .primary { background: var(--accent); color: var(--on-accent, #000); border-color: var(--accent); }
+.question-panel-integrated .question-turn > .question-full-comparison { display: block; margin: 0; padding-inline: 0; border: 0; background: none; text-align: start; text-decoration: underline; }
+.question-panel-integrated .question-turn > .question-revision-status:empty { display: none; }
+.question-panel-integrated .question-text { max-height: none; overflow: visible; font-style: normal; }
+.question-panel-integrated .question-comparison { display: grid; gap: .75rem; margin-block: .75rem 1rem; }
+.question-panel-integrated .question-comparison > section { min-width: 0; padding: .75rem 1rem; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.question-panel-integrated .question-comparison h4 { margin: 0 0 .5rem; color: var(--fg); font: 600 .875rem/1.4 var(--font-ui, var(--ui-fallback)); letter-spacing: normal; text-transform: none; }
+.question-diff-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font: 400 1rem/1.6 var(--font-text, var(--text-fallback)); tab-size: 4; }
+.question-diff-text mark { color: inherit; background: transparent; text-decoration-line: underline; text-underline-offset: .3em; text-decoration-thickness: .15em; }
+.question-diff-text .question-diff-remove { text-decoration-style: dotted; }
+.question-diff-text .question-diff-add { text-decoration-style: solid; text-decoration-color: var(--accent); }
+.question-diff-legend { margin: 0; font-size: .875rem; line-height: 1.5; }
+.question-passage-picker summary { display: flex; align-items: center; cursor: pointer; font-weight: 600; }
+.question-passage-list { display: grid; gap: .5rem; padding-block: .5rem; }
+.question-passage-list button { text-align: start; white-space: normal; overflow-wrap: anywhere; }
+.question-full-review > button { margin: .5rem .5rem .5rem 0; }
+.question-full-review:focus { outline: none; }
+
+/* Connection and storage details open from the status chip, above the thread. */
+.heinlein-pane .heinlein-settings { display: grid; gap: .75rem; padding: .875rem 1rem; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface); font-size: .875rem; }
+.heinlein-pane .heinlein-settings > * { margin: 0; min-width: 0; }
+.heinlein-pane .heinlein-settings > .question-connection { font-size: .875rem; }
+.heinlein-pane .heinlein-settings .question-settings { margin: 0; padding: 0; border: 0; max-height: none; overflow: visible; }
+
+/* ---- Composer ---------------------------------------------------------------------------- */
+.heinlein-composer .question-passage-quote { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; padding: .125rem 0 .125rem .625rem; border-inline-start: 2px solid var(--accent); color: var(--fg-muted); font: italic 400 .875rem/1.5 var(--font-text, var(--text-fallback)); white-space: pre-wrap; overflow-wrap: anywhere; }
+.heinlein-chips { display: flex; flex-wrap: wrap; gap: .375rem; }
+.heinlein-chips:not(:has(> :not([hidden]))) { display: none; }
+.heinlein-chip { display: inline-flex; align-items: center; gap: .125rem; max-width: 100%; min-height: 1.75rem; padding: .125rem .25rem .125rem .625rem; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-glow); color: var(--fg); font: 500 .75rem/1.3 var(--font-ui, var(--ui-fallback)); overflow-wrap: anywhere; }
+.heinlein-chip:not(:has(> .heinlein-chip-remove:not([hidden]))) { padding-inline-end: .625rem; }
+.heinlein-composer .heinlein-chip-remove { display: inline-grid; place-items: center; flex: none; width: 1.5rem; height: 1.5rem; min-width: 1.5rem; min-height: 1.5rem; margin: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; }
+.heinlein-composer .heinlein-chip-remove:hover { background: var(--surface-hover); }
+.heinlein-chip-remove svg { width: .5625rem; height: .5625rem; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.heinlein-composer .heinlein-chip-add { display: inline-flex; align-items: center; gap: .25rem; min-height: 1.75rem; margin: 0; padding: .125rem .625rem; border: 1px dashed var(--border-strong); border-radius: 999px; background: transparent; color: var(--fg-muted); font: 500 .75rem/1.3 var(--font-ui, var(--ui-fallback)); }
+.heinlein-composer .heinlein-chip-add:hover { color: var(--fg); border-color: var(--accent); }
+.heinlein-composer > label { display: block; }
+.heinlein-composer textarea { display: block; width: 100%; min-height: 4rem; max-height: 12rem; margin: 0; padding: .625rem .75rem; resize: vertical; background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--fg); font: 400 .9375rem/1.5 var(--font-ui, var(--ui-fallback)); }
+.heinlein-composer .heinlein-send-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: 0; }
+.heinlein-composer .heinlein-send-row button { min-height: 2.5rem; margin: 0; padding: .5rem .875rem; font: 500 .8125rem/1.3 var(--font-ui, var(--ui-fallback)); max-width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.heinlein-composer .heinlein-send-row .primary { flex: 0 1 auto; display: inline-flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding-inline: 1rem; font-weight: 600; }
+.heinlein-composer .heinlein-send-row .question-copy-prompt { margin-inline-start: auto; }
+.heinlein-shortcut { font: 500 .6875rem/1 var(--font-mono); color: inherit; letter-spacing: 0; }
+.heinlein-composer .question-request-note { margin: 0; font-size: .8125rem; }
+.heinlein-composer .heinlein-send-note { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .25rem; color: var(--fg-muted); font-size: .75rem; line-height: 1.5; }
+.heinlein-send-note > details { display: block; min-width: 0; }
+.heinlein-send-note > details[open] { flex: 1 0 100%; }
+.heinlein-send-note > details > summary { display: inline; min-height: 0; padding: 0; color: var(--accent); font-size: inherit; font-weight: 500; text-decoration: underline; text-underline-offset: .2em; list-style: none; cursor: pointer; }
+.heinlein-send-note > details > summary::-webkit-details-marker { display: none; }
+.heinlein-send-note > details[open] > :not(summary) { margin-top: .5rem; color: var(--fg); font-size: .8125rem; }
+.heinlein-send-note .question-actions { display: flex; flex-wrap: wrap; gap: .375rem; }
+.heinlein-send-note .question-actions button { min-height: 2.25rem; padding: .375rem .625rem; font-size: .8125rem; }
+.heinlein-composer .question-status { margin: 0; font-size: .8125rem; }
+
+/* Narrow screens and touch: every control keeps a 44px+ target. */
+@media (max-width: 760px), (pointer: coarse) {
+  .heinlein-head .heinlein-tabs button { padding-inline: clamp(6px, .5rem, 10px); }
+  .heinlein-head .heinlein-tabs { order: 5; flex: 1 0 100%; }
+  .heinlein-head .heinlein-tabs button { flex: 1 1 0; }
+  .heinlein-head .heinlein-tabs button, .heinlein-head .heinlein-status { min-height: 48px; }
+  .heinlein-head button.heinlein-close { width: 48px; height: 48px; min-width: 48px; min-height: 48px; }
+  .heinlein-composer .heinlein-send-row button, .question-panel-integrated .question-turn > button, .heinlein-send-note .question-actions button, .heinlein-pane summary { min-height: 48px; }
+  .heinlein-chip, .heinlein-composer .heinlein-chip-add { min-height: 44px; }
+  .heinlein-composer .heinlein-chip-remove { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+  .heinlein-send-note > details > summary { display: inline-flex; align-items: center; }
+}

@@ -2,6 +2,8 @@ import {conversationKey,loadConversation,saveConversation} from './questionHisto
 import {createQuestionComparison} from './questionDiff';
 import type {ProposalReview} from './localCore';
 import {renderMarkdown} from './markdown';
+import {createHeinleinHeader, setHeinleinStatus} from './heinleinHeader';
+import './heinleinPane.css';
 import {captureSelectionQuestion, selectionQuestionAvailability, selectionQuestionProblem, type SelectionQuestionSnapshot, type SelectionQuestionState} from './selectionQuestion';
 import type {LocalCore, QuestionRevisionAnswer, QuestionAnswer, QuestionConnection, QuestionMessage, QuestionRequest, QuestionStatus} from './localCore';
 
@@ -96,10 +98,15 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const fullReview = el('section', '', 'question-full-review'); fullReview.hidden = true; fullReview.setAttribute('aria-label', 'Review whole-scene revision');
   let projectTurns: Turn[] = [];
   const currentTitle = el('p', 'Selected passage', 'question-current-title');
-  const header = el('div', '', 'question-heading');
+  let showSettings = false;
+  const connectionArea = el('section', '', 'question-connection-area'); connectionArea.setAttribute('aria-label', 'Account and storage');
+  const body = el('div', '', 'heinlein-body');
+  const settingsToggle = button(unified ? '' : 'Connect ChatGPT', () => {showSettings = !showSettings; update(); if (showSettings) {body.scrollTop = 0; connectionArea.querySelector<HTMLElement>('button, summary')?.focus({preventScroll:true});}}, 'question-settings-toggle');
+  // The unified pane shares one compact header with Heinlein Review.
+  const header = unified ? createHeinleinHeader({tabs: hooks.headerTabs!, status: settingsToggle, close: () => collapse()}) : el('div', '', 'question-heading');
   const heading = el('div'); heading.append(el('h3', 'Writing conversation'), el('p', 'Project conversation · shared across scenes.', 'muted'));
-  const closeButton = button(integrated ? 'Collapse' : 'Close questions', () => integrated ? collapse() : close(true));
-  if (integrated) header.append(el('h3', unified ? 'Heinlein' : 'Questions'), ...(hooks.headerTabs ? [hooks.headerTabs] : []), closeButton); else header.append(heading, closeButton);
+  const closeButton = unified ? header.querySelector<HTMLButtonElement>('.heinlein-close')! : button(integrated ? 'Collapse' : 'Close questions', () => integrated ? collapse() : close(true));
+  if (unified) {setHeinleinStatus(settingsToggle, 'checking', 'Checking connection');} else if (integrated) header.append(el('h3', 'Questions'), closeButton); else header.append(heading, closeButton);
   const connection = el('p', '', 'question-connection'); connection.setAttribute('role', 'status');
   const refresh = button('Recheck OpenAI setup', () => { void checkStatus(true); });
   const auth = el('details', '', 'question-auth'); auth.setAttribute('aria-label', 'ChatGPT connection'); auth.open = true;
@@ -156,7 +163,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const targetSection = el('section', '', 'question-revision-target'); targetSection.setAttribute('aria-label', 'Revision target'); targetSection.hidden = true;
   const targetText = preview('', 'Exact revision target'); const targetNote = el('p', '', 'muted');
   targetSection.append(el('h4', 'Selected passage to revise'), targetText, targetNote);
-  const questionLabel = el('label', 'Message');
+  const questionLabel = el('label'); questionLabel.append(el('span', 'Message', unified ? 'sr-only' : ''));
   const question = el('textarea'); question.rows = 2; question.setAttribute('aria-label', 'Your drafting question');
   question.placeholder = 'Ask about an idea, a detail, or where to go next…'; questionLabel.append(question);
   const count = el('p', '', 'muted'); const requestNote = el('p', '', 'question-request-note'); requestNote.setAttribute('role', 'status');
@@ -213,25 +220,48 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const composerTop = el('div', '', 'question-composer-top'); composerTop.append(modeLabel);
   const contextSummary = el('p', '', 'question-context-summary');
   composer.append(contextDetails, targetSection, questionLabel, composerTop, requestNote, contextSummary, actions, status);
-  const askButton = button('Ask', () => submitAs('ask'), 'primary');
+  const askButton = button('Ask', () => submitAs('ask'), 'primary heinlein-ask');
   const suggestButton = button('Suggest rewrite', () => submitAs('revision'));
   const passageQuote = el('blockquote', '', 'question-passage-quote'); passageQuote.setAttribute('aria-label', 'Selected passage'); passageQuote.hidden = true;
   const passageNote = el('p', '', 'question-request-note'); passageNote.hidden = true;
-  let showSettings = false;
-  const connectionArea = el('section', '', 'question-connection-area'); connectionArea.setAttribute('aria-label', 'Account and storage');
-  const settingsToggle = button('Connect ChatGPT', () => {showSettings = !showSettings; update(); if (showSettings) connectionArea.querySelector<HTMLElement>('button, summary')?.focus({preventScroll:true});}, 'question-settings-toggle');
   const persistence = el('p', '', 'question-persistence'); persistence.setAttribute('role', 'status');
+  // Context chips summarize what Ask sends; each reuses an existing capture or remove control.
+  const chips = el('div', '', 'heinlein-chips'); chips.setAttribute('role', 'group'); chips.setAttribute('aria-label', 'Context to send');
+  function chip(remove: HTMLButtonElement, label: string) {const node = el('span', '', 'heinlein-chip'); const text = el('span'); const x = button('', () => remove.click(), 'heinlein-chip-remove'); x.setAttribute('aria-label', label); x.append(chipIcon()); node.append(text, x); return {node, text, x};}
+  function chipIcon() {const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 10 10'); svg.setAttribute('aria-hidden', 'true'); const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'M1 1l8 8M9 1L1 9'); svg.append(path); return svg;}
+  function addChip(label: string, action: () => void) {const node = button('', action, 'heinlein-chip-add'); const plus = el('span', '+ '); plus.setAttribute('aria-hidden', 'true'); node.append(plus, el('span', 'Add ', 'sr-only'), document.createTextNode(label)); return node;}
+  const passageChip = chip(removeContext, 'Remove passage'); const sceneChip = chip(removeContext, 'Remove whole scene');
+  const addScene = addChip('Whole scene', () => captureScene.click());
+  const addPassage = addChip('Passage', () => {
+    if (!live() || pending || preparing || authBusy || !activePassage || passageStale(activePassage)) return;
+    contextMode = 'snapshot'; contextVersion++; context = activePassage.scene.source.slice(activePassage.scene.from, activePassage.scene.to); contextLabel = 'Selected passage only'; update();
+  });
+  const sendNote = el('div', '', 'heinlein-send-note'); const sendNoteText = el('span');
   composer.append(persistence);
   if (integrated) {
     welcome.hidden = true; contextHeading.textContent = 'What will be sent';
     contextDetails.classList.add('question-send-preview'); contextDetails.append(targetSection, historyDetails, disclosure);
-    connectionArea.append(connection, auth, settings); if(unified) {header.insertBefore(settingsToggle, closeButton);settings.append(reset);}
+    connectionArea.append(connection, auth, settings); if(unified) settings.append(reset);
     settings.querySelector('summary')!.textContent = 'Storage and revision safety'; settings.append(persistence);
-    if(unified) actions.replaceChildren(askButton, suggestButton, cancel);
-    composer.replaceChildren(...(unified ? [] : [modeLabel]), questionLabel, requestNote, actions, contextSummary, contextDetails, status);
-    if (hooks.copyPrompt) composer.append(button('Copy as prompt…', () => hooks.copyPrompt!(), 'question-copy-prompt'));
+    const copyPrompt = hooks.copyPrompt ? button('Copy as prompt…', () => hooks.copyPrompt!(), 'question-copy-prompt') : null;
     question.placeholder = 'What would you like to know or change?';
-    element.append(header, passageQuote, passageNote, fullReview, passagePicker, transcript, waiting, streaming, composer, connectionArea);
+    if (unified) {
+      // Conversation scrolls; the composer and what it will send stay pinned below it.
+      element.classList.add('heinlein-pane'); connectionArea.classList.add('heinlein-settings');
+      const shortcut = el('kbd', /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘↵' : 'Ctrl+↵', 'heinlein-shortcut'); shortcut.setAttribute('aria-hidden', 'true'); askButton.append(shortcut);
+      askButton.setAttribute('aria-keyshortcuts', 'Meta+Enter Control+Enter'); askButton.title = 'Ask (Cmd/Ctrl+Enter)';
+      if (copyPrompt) copyPrompt.classList.add('ghost');
+      actions.classList.add('heinlein-send-row'); actions.replaceChildren(askButton, suggestButton, cancel, ...(copyPrompt ? [copyPrompt] : []));
+      chips.append(passageChip.node, sceneChip.node, addPassage, addScene);
+      sendNote.append(sendNoteText, contextDetails);
+      composer.classList.add('heinlein-composer'); composer.replaceChildren(passageQuote, passageNote, chips, questionLabel, requestNote, actions, sendNote, status);
+      body.append(el('h3', 'Conversation', 'sr-only'), connectionArea, passagePicker, fullReview, transcript, waiting, streaming);
+      element.append(header, body, composer);
+    } else {
+      composer.replaceChildren(modeLabel, questionLabel, requestNote, actions, contextSummary, contextDetails, status);
+      if (copyPrompt) composer.append(copyPrompt);
+      element.append(header, passageQuote, passageNote, fullReview, passagePicker, transcript, waiting, streaming, composer, connectionArea);
+    }
   } else element.append(header, settings, conversation, composer);
 
   const layoutQuery = window.matchMedia?.('(max-width: 1399px)');
@@ -257,7 +287,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   });
   question.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && !event.isComposing) {event.preventDefault(); if (!send.disabled) void submit();}
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && !event.isComposing) {event.preventDefault(); if (unified) {if (!askButton.disabled) submitAs('ask');} else if (!send.disabled) void submit();}
   });
   send.setAttribute('aria-keyshortcuts', 'Meta+Enter Control+Enter');
   send.title = 'Send (Cmd/Ctrl+Enter)';
@@ -375,8 +405,17 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       passageNote.hidden = !passage || !passageStale(passage);
       passageNote.textContent = passageNote.hidden ? '' : 'This passage changed. Select it again before requesting a rewrite.';
       const ready = connectionReady();
-      settingsToggle.textContent = ready ? `ChatGPT · ${configuration!.model}` : checking ? 'Checking ChatGPT…' : 'Connect ChatGPT';
+      setHeinleinStatus(settingsToggle, ready ? 'ready' : checking ? 'checking' : 'attention', ready ? `Ready · ${configuration!.model}` : checking ? 'Checking connection' : configuration?.usageLimited ? 'Usage limited' : 'Not connected');
       connectionArea.hidden = ready && !showSettings;
+      const snapshotScene = contextMode === 'snapshot' && contextLabel.startsWith('Current scene');
+      const passageText = revising ? (target ? target.source.slice(target.from, target.to) : '') : contextMode === 'snapshot' && !snapshotScene ? context : '';
+      const sceneAttached = !revising && (contextMode === 'scene' || snapshotScene);
+      const words = (text: string) => {const n = text.trim() ? text.trim().split(/\s+/).length : 0; return `${n.toLocaleString()} word${n === 1 ? '' : 's'}`;};
+      passageChip.node.hidden = !passageText; passageChip.text.textContent = `Passage · ${words(passageText)}`; passageChip.x.hidden = revising; passageChip.x.disabled = removeContext.disabled;
+      sceneChip.node.hidden = !sceneAttached; sceneChip.text.textContent = context ? `Whole scene · ${words(context)}` : 'Whole scene · unavailable'; sceneChip.x.disabled = removeContext.disabled;
+      addScene.hidden = revising || contextMode === 'scene'; addScene.disabled = captureScene.disabled;
+      addPassage.hidden = revising || contextMode !== 'none' || !passage || passageStale(passage); addPassage.disabled = captureScene.disabled;
+      sendNoteText.textContent = `Sends your message${passageText ? ' + the passage' : sceneAttached && context ? ' + the whole scene' : ''} to ChatGPT. `;
       settingsToggle.setAttribute('aria-expanded', String(!connectionArea.hidden));
     }
     notifyPassages();
@@ -531,7 +570,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
         const stale = revisionProblem(snapshot); if (stale) throw new Error(stale);
         if (snapshot.sourceHash !== snapshot.sourceSha256) throw new Error('The selected source does not match its saved hash. Save and capture the selection again.');
       }
-      preparing = false; pending = request; pendingRevision = Boolean(snapshot); update();
+      preparing = false; pending = request; pendingRevision = Boolean(snapshot); update(); if (unified) body.scrollTop = body.scrollHeight;
       streaming.hidden = true; streamingText.textContent = ''; streamingLabel.textContent = 'OpenAI · Streaming answer';
       const answer = snapshot
         ? await core.suggestQuestionRevision!(request, binding, {repositoryId: snapshot.repositoryId, path: snapshot.path, sourceHash: snapshot.sourceHash, fromUtf8: snapshot.fromUtf8, toUtf8: snapshot.toUtf8, selectedText: snapshot.selectedText})
@@ -556,7 +595,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       while(turns.reduce((n,t)=>n+(t.revision?questionBytes(t.revision.snapshot.selectedText)+questionBytes(t.revision.replacementText)+questionBytes(t.answer.text):0),0)>QUESTION_LIMITS.memory){const old=turns.find(t=>t.revision);if(!old)break;old.proposalId=old.revision!.proposalId;delete old.revision;}
       question.value = ''; if (integrated) questionLabel.firstChild!.textContent = 'Ask a follow-up'; question.placeholder = 'Ask a follow-up…';
       streaming.hidden = true; streamingText.textContent = ''; streaming.setAttribute('aria-busy', 'false');
-      persist(); renderTranscript();
+      persist(); renderTranscript(); if (unified) body.scrollTop = body.scrollHeight;
       const latest = transcript.lastElementChild as HTMLElement | null;
       if (latest && !integrated && !element.hidden) conversation.scrollTop += latest.getBoundingClientRect().top - conversation.getBoundingClientRect().top - 20;
       status.textContent = revision ? 'Suggested revision recorded. Review it or reject it below. Your manuscript has not been changed.' : answer.incomplete ? 'OpenAI returned an incomplete answer. It is marked below; nothing was retried automatically.' : 'Answer ready. Your manuscript has not been changed.';
@@ -569,11 +608,11 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   }
   function renderTranscript() {
     transcript.replaceChildren(); revisionActions.length = 0;
-    (integrated ? [...turns].reverse() : turns).forEach((turn, index) => {
+    (integrated && !unified ? [...turns].reverse() : turns).forEach((turn, index) => {
       const section = el('section', '', 'question-turn');
       const usage = [turn.answer.inputTokens == null ? null : `${turn.answer.inputTokens.toLocaleString()} input tokens`, turn.answer.outputTokens == null ? null : `${turn.answer.outputTokens.toLocaleString()} output tokens`].filter(Boolean).join(' · ');
       const message = preview(turn.question, `Question ${index + 1}`); message.classList.add('question-user-message');
-      if (integrated) {section.append(message, renderMarkdown(turn.answer.text, `Answer ${index + 1}`)); if (turn.answer.incomplete) section.append(el('p', 'Incomplete answer', 'drafting-warning'));}
+      if (integrated) {section.append(message, ...(unified ? [el('p', 'Heinlein', 'heinlein-answer-label')] : []), renderMarkdown(turn.answer.text, `Answer ${index + 1}`)); if (turn.answer.incomplete) section.append(el('p', 'Incomplete answer', 'drafting-warning'));}
       else section.append(el('h4', 'You'), message, el('h4', turn.answer.incomplete ? 'Heinlein · Incomplete answer' : 'Heinlein'), renderMarkdown(turn.answer.text, `Answer ${index + 1}`));
       const details = el('details', '', 'question-response-details'); details.append(el('summary', 'Response details'), el('p', `${turn.contextBytes.toLocaleString()} UTF-8 bytes of context sent`, 'muted'), el('p', usage || 'Token usage was not returned.', 'muted'));
       const origin = el('p', `Recorded origin: native OpenAI · Model: ${turn.answer.model} · Request: ${turn.answer.requestId}. Provider metadata is not authenticated authorship.`, 'muted'); details.append(origin); section.append(details);
@@ -655,7 +694,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     ({turns, context, contextLabel, contextVersion, target, contextMode} = passage); mode.value = passage.mode; question.value = passage.draft; questionLabel.firstChild!.textContent = turns.length ? 'Ask a follow-up' : 'Your message'; currentTitle.textContent = passage.title; status.textContent = passage.status;
     contextMode = passage.contextMode;
     if (!passageStale(passage)) hooks.passages?.select(passage.scene.from, passage.scene.to);
-    renderTranscript(); open(); passagePicker.open = passages.length > 1; update();
+    renderTranscript(); open(); passagePicker.open = passages.length > 1; update(); if (unified) body.scrollTop = body.scrollHeight;
   }
   function activateSelection(scene: QuestionScene) {
     if (fullReviewCancel) return false;
@@ -673,7 +712,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   function presentReview(view: ProposalReview): Promise<boolean> {
     fullReviewCancel?.();
     return new Promise(resolve => {
-      const prior = [...element.children].filter(child => child !== header && child !== fullReview).map(child => [child as HTMLElement, (child as HTMLElement).hidden] as const);
+      const prior = [...element.children, ...body.children].filter(child => child !== header && child !== fullReview && child !== body).map(child => [child as HTMLElement, (child as HTMLElement).hidden] as const);
       prior.forEach(([child]) => {child.hidden = true;}); fullReview.hidden = false;
       const title = el('h3', 'Review whole-scene revision'); title.tabIndex = -1;
       fullReview.replaceChildren(title, el('p', view.path), createQuestionComparison(view.baseText, view.replacementText, true), el('p', 'Review expires after five minutes. Continue to native author confirmation to apply this exact replacement.', 'muted'));
