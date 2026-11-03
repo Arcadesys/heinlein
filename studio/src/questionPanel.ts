@@ -612,6 +612,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const passage = passages.find(p => p.id === id); if (!passage || disposed || fullReviewCancel) return;
     if ((pending || preparing || authBusy || turns.some(t => t.revision?.busy)) && passage !== activePassage) {open(); status.textContent = 'Wait for the current request or choose Cancel request before opening another passage.'; return;}
     stashPassage();
+    if (passage !== activePassage) { streaming.hidden = true; streamingText.textContent = ''; }
     activePassage = passage;
     ({turns, context, contextLabel, contextVersion, target, contextMode} = passage); mode.value = passage.mode; question.value = passage.draft; questionLabel.firstChild!.textContent = turns.length ? 'Ask a follow-up' : 'Your message'; currentTitle.textContent = passage.title; status.textContent = passage.status;
     contextMode = passage.contextMode;

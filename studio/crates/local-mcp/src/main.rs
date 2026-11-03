@@ -1,5 +1,5 @@
 use futures::{future, StreamExt};
-use heinlein_local_mcp::{LocalMcp, MAX_REQUEST_BYTES};
+use heinlein_local_mcp::{LocalMcp, Selection, MAX_REQUEST_BYTES};
 use rmcp::{
     service::{RxJsonRpcMessage, TxJsonRpcMessage},
     transport::async_rw::JsonRpcMessageCodec,
@@ -8,7 +8,7 @@ use rmcp::{
 use std::path::PathBuf;
 use tokio_util::codec::{FramedRead, FramedWrite};
 
-const USAGE: &str = "Usage: heinlein-local-mcp --studio-selection PRIVATE_ABSOLUTE_DIRECTORY [--client-label LABEL]\nOr: heinlein-local-mcp --repository ABSOLUTE_PATH --proposal-store PRIVATE_ABSOLUTE_PATH --scene RELATIVE_MARKDOWN [--scene RELATIVE_MARKDOWN ...] [--client-label LABEL]\nLocal stdio only. Reads and proposals only; no manuscript writes or approval. This command does not install client configuration or credentials.";
+const USAGE: &str = "Usage: heinlein-local-mcp --studio-selection PRIVATE_ABSOLUTE_DIRECTORY [--client-label LABEL]\nOr: heinlein-local-mcp --repository ABSOLUTE_PATH (--manuscript RELATIVE_INDEX | --scene RELATIVE_MARKDOWN [--scene RELATIVE_MARKDOWN ...]) [--proposal-store PRIVATE_ABSOLUTE_PATH] [--client-label LABEL]\nLocal stdio only. Read-only by default. Optional proposal storage enables suggestions for native Studio review, never manuscript writes or approval. Index: ms/manuscript.json or scene-manifest.json. Restart after index changes. This command does not install client configuration or credentials.";
 
 #[tokio::main]
 async fn main() {
@@ -25,6 +25,7 @@ async fn run() -> Result<(), String> {
     let mut label = None;
     let mut scenes = Vec::new();
     let mut studio_selection = None;
+    let mut manuscript = None;
     while let Some(arg) = args.next() {
         if arg == "--help" || arg == "-h" {
             eprintln!("{USAGE}");
@@ -35,6 +36,7 @@ async fn run() -> Result<(), String> {
             "--repository" if repository.is_none() => repository = Some(PathBuf::from(value)),
             "--proposal-store" if store.is_none() => store = Some(PathBuf::from(value)),
             "--scene" => scenes.push(value),
+            "--manuscript" if manuscript.is_none() => manuscript = Some(value),
             "--client-label" if label.is_none() => label = Some(value),
             "--studio-selection" if studio_selection.is_none() => {
                 studio_selection = Some(PathBuf::from(value))
@@ -44,7 +46,7 @@ async fn run() -> Result<(), String> {
     }
     let client_label = label.unwrap_or_else(|| "unspecified".into());
     let server = if let Some(directory) = studio_selection {
-        if repository.is_some() || store.is_some() || !scenes.is_empty() {
+        if repository.is_some() || store.is_some() || !scenes.is_empty() || manuscript.is_some() {
             return Err(USAGE.into());
         }
         #[cfg(unix)]
@@ -57,10 +59,15 @@ async fn run() -> Result<(), String> {
             return Err("Studio selection is unsupported on this platform".into());
         }
     } else {
-        LocalMcp::open(
+        let selection = match manuscript {
+            Some(path) if scenes.is_empty() => Selection::Manuscript(path),
+            None if !scenes.is_empty() => Selection::Scenes(scenes),
+            _ => return Err(USAGE.into()),
+        };
+        LocalMcp::open_selected(
             &repository.ok_or(USAGE)?,
-            scenes,
-            &store.ok_or(USAGE)?,
+            selection,
+            store.as_deref(),
             client_label,
         )?
     };
