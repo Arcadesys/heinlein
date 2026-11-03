@@ -143,6 +143,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let dirtyBadge: HTMLElement | null = null;
   let guardPending: Promise<boolean> | null = null;
   let quitRefusedUnlisten:(()=>void)|null=null;
+  let checkUpdatesUnlisten:(()=>void)|null=null;
   let quitInProgress=false;
   let closeUnlisten: (() => void) | null = null;
   let dirtySync = Promise.resolve();
@@ -2229,6 +2230,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     }).then(unlisten => { if (disposed) unlisten(); else dropUnlisten = unlisten; }).catch(reportError);
     if (core.onDraftingImportError) void core.onDraftingImportError(message => { if (!disposed) { status.textContent = `Native import failed: ${message}`; status.classList.add('error'); } }).then(unlisten => { if (disposed) unlisten(); else dropErrorUnlisten = unlisten; }).catch(reportError);
     if(core.onQuitRefused)void core.onQuitRefused(message=>{root.inert=false;quitInProgress=false;status.textContent=message;}).then(unlisten=>{if(disposed)unlisten();else quitRefusedUnlisten=unlisten;}).catch(reportError);
+    if(core.onCheckForUpdates)void core.onCheckForUpdates(()=>{if(!disposed)void updates.checkNow().catch(reportError);}).then(unlisten=>{if(disposed)unlisten();else checkUpdatesUnlisten=unlisten;}).catch(reportError);
     void core.onCloseRequested(() => {
       void quitSafely().catch(reportError);
     }).then(unlisten => { if (disposed) unlisten(); else closeUnlisten = unlisten; }).catch(reportError);
@@ -2238,6 +2240,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();editorCommands?.destroy();navigation.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();mcpAccess.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();editorCommands?.destroy();navigation.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();mcpAccess.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); checkUpdatesUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }
