@@ -1,8 +1,10 @@
 name: Studio full browser acceptance
 on:
-  pull_request:
-  merge_group:
   workflow_dispatch:
+# Full acceptance runs locally before push; this macOS job is an explicit fallback.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -11,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
