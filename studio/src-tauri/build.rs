@@ -17,6 +17,7 @@ fn main() {
     }
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "preferences_request",
             "project_request",
             "github_request",
             "update_request",

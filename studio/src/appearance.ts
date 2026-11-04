@@ -1,3 +1,4 @@
+import {preferenceStorage} from './preferences';
 // Theme, accent, measure, leading and writing-mode preferences for the full-screen editor.
 // Values reach CSS only as custom properties set through the CSSOM, never as markup.
 export const THEMES = [
@@ -41,10 +42,10 @@ export function parseAppearance(raw: unknown): Appearance {
   };
 }
 export function loadAppearance(): Appearance {
-  try { return parseAppearance(localStorage.getItem(STORAGE_KEY)); } catch { return { ...DEFAULT_APPEARANCE }; }
+  try { return parseAppearance(preferenceStorage().getItem(STORAGE_KEY)); } catch { return { ...DEFAULT_APPEARANCE }; }
 }
 export function saveAppearance(value: Appearance) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* storage is a convenience only */ }
+  try { preferenceStorage().setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* storage is a convenience only */ }
 }
 
 export function accentColor(value: Pick<Appearance, 'theme' | 'accent'>): string {

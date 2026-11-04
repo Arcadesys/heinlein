@@ -1,3 +1,4 @@
+import type {PreferenceRequest,PreferenceSnapshot} from './preferences';
 import type {ProjectRequest,ProjectResponse,ProjectResume} from './projects';
 import type {McpAccessRequest,McpAccessView} from './mcpAccess';
 import type {DraftRequest,DraftResponse} from './standaloneDrafts';
@@ -86,6 +87,7 @@ export interface ReadingFeedback { overview: string; strengths: string[]; improv
 export interface ReadingFeedbackView { coverageId?: string | null; path: string; reviewer: string; feedback: ReadingFeedback }
 export interface ReviewResult { readingFeedback?: ReadingFeedbackView[]; reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
 export interface LocalCore {
+  preferencesRequest?(request:PreferenceRequest):Promise<PreferenceSnapshot>;
   saveMarkdownExport?(repositoryId: string, filename: string, text: string): Promise<boolean>;
   projectRequest?(request:ProjectRequest):Promise<ProjectResponse>;
   mcpRequest?(request:McpAccessRequest):Promise<McpAccessView>;
@@ -158,6 +160,7 @@ export interface LocalCore {
 // no credentials, filesystem handles, or absolute root paths enter the renderer.
 export const localCore: LocalCore = {
   available: isTauri,
+  preferencesRequest:request=>invoke('preferences_request',{request}),
   saveMarkdownExport: (repositoryId, filename, text) => invoke('save_markdown_export', {repositoryId, filename, text}),
   updateRequest: action=>invoke('update_request',{action}),
   githubRequest: request => invoke('github_request', {request}),

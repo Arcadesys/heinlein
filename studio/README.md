@@ -4,6 +4,45 @@ An additive native desktop editor with local autosave and explicit recovery deci
 folder, browse its files, and use a scene manifest to navigate the manuscript.
 The existing Python publisher and its CLI remain unchanged.
 
+## Markdown Reading
+
+Use **Reading** beside **Source** to read formatted Markdown in project documents
+or standalone drafts. Reading includes your current unsaved text; returning to
+Source keeps your selection and undo history. Switching views does not save or
+change the manuscript. Headings, emphasis, lists, quotes, links and code are
+rendered with your writing appearance settings. Link destinations appear as text,
+embedded images are not loaded, and raw HTML stays literal. Frontmatter remains
+available in Source. Resolve any pending recovery in Source first.
+
+## Preferences and daily progress
+
+The daily counter stays directly available in the writing header. Its width is
+reserved so growing counts do not move or resize the writer; large counts use a
+compact display with exact totals in the accessible label and tooltip.
+
+Native Studio loads preferences before mounting the editor. Appearance, fonts,
+zoom, navigation, accepted custom themes, the daily target/progress and sound
+choice/volume live in one versioned `preferences-v1.json` in Tauri's app-config
+directory (on macOS, `~/Library/Application Support/me.thearcades.heinlein.studio/`).
+Using one atomic envelope keeps the initial target and progress migration together.
+The stable production bundle identifier must be retained when packaging updates.
+
+The first launch imports only allowlisted settings from the current WebKit
+profile; existing native values win. It retains the original payloads for recovery
+and leaves WebKit records untouched. Writes use an OS lock, revision checks,
+atomic replacement, fsync and a previous-file backup. Unreadable/future native
+schemas are preserved and shown as a loading error. Failed writes stay pending,
+are visibly reported, and can be retried. Closing waits for settings writes or
+requires an explicit choice to close with the last saved settings after writing
+has passed its existing save guards. Sound resumes after a user keypress; saved
+sound preferences do not imply audio is already playing.
+
+Browser previews continue to use localStorage. Development/RC profiles remain
+separate; this migration does not guess between conflicting historical profiles.
+Manuscripts, project stores, recovery, credentials, conversations and review agents
+retain their existing separate stores. Preferences do not provide cross-device sync.
+Native builds require Rust 1.89 or newer for OS-backed file locking.
+
 ## 1.7 release packaging
 
 Heinlein Studio is version **1.7.2**. The independent Python

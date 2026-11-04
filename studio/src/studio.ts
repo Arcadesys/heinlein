@@ -1,3 +1,4 @@
+import {bindPreferenceStatus,flushPreferences} from './preferences';
 import {actionMenu} from './actionMenu';
 import {createMarkdownExport} from './markdownExport';
 import {createDocumentTabs,type DocumentTab} from './documentTabs';
@@ -585,12 +586,23 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       const revision = edits,epoch=documentEpoch,session=repository?.id;
       if (!await allowLeave() || disposed || revision !== edits || saving || structuralBusy || selecting || staging) return;
       if(!await rememberProjectPositionAfterLeave())return;
-      root.inert = true;
+      root.inert=true;
       // Closing from standalone writing should return to drafts next time,
       // while retaining each project's individual resume position.
       if(standalone?.active&&core.projectRequest)await core.projectRequest({action:'clearLastOpened'}).catch(()=>{});
       await dirtySync;
+      try{await flushPreferences();}catch{
+        root.inert=false;
+        const discard=await new Promise<boolean>(resolve=>{
+          const prompt=el('dialog','','appearance-dialog');prompt.setAttribute('aria-label','Unsaved settings');
+          const finish=(leave:boolean)=>{prompt.close?.();prompt.remove();resolve(leave);};
+          prompt.append(el('h2','Settings have not been saved'),el('p','Your writing has passed its save checks. Keep the app open to retry saving settings, or close with the last saved settings.'),button('Keep app open',()=>finish(false)),button('Close with last saved settings',()=>finish(true)));
+          prompt.addEventListener('cancel',event=>{event.preventDefault();finish(false);});root.append(prompt);prompt.showModal();
+        });
+        if(!discard)return;
+      }
       if (!disposed && revision === edits && epoch === documentEpoch && session === repository?.id && !projectWritingBlocksLeave() && !saving && !structuralBusy && !selecting && !staging) {
+        root.inert=true;
         await core.requestClose(true);
         requested = true;
       }
@@ -781,9 +793,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   layout.append(navigation.element, preview);
   chromeReady = true;
   resetPreview();
-  appCommands=actionMenu('More actions',[...corner.children,...pill.children].filter(node=>node!==pillProject&&node!==pillSave) as HTMLElement[],root,()=>repository?.name??'Heinlein Studio',refreshHeaderLayout);
-  pill.replaceChildren(pillProject,appCommands.button,appCommands.storage);pill.prepend(navigation.element.querySelector('.navigation-toggle')!);corner.hidden=true;
-  headerMedia=window.matchMedia?.('(max-width:480px)');headerMedia?.addEventListener?.('change',refreshHeaderLayout);
+  appCommands=actionMenu('More actions',[...corner.children,...pill.children].filter(node=>node!==pillProject&&node!==pillSave&&node!==goalButton) as HTMLElement[],root,()=>repository?.name??'Heinlein Studio',refreshHeaderLayout);
+  pill.replaceChildren(pillProject,appCommands.button,goalButton,appCommands.storage);pill.prepend(navigation.element.querySelector('.navigation-toggle')!);corner.hidden=true;
+  headerMedia=window.matchMedia?.('(max-width:760px)');headerMedia?.addEventListener?.('change',refreshHeaderLayout);
   function refreshHeaderLayout(){
     if(!appCommands)return;
     if(standalone?.active)pill.insertBefore(pillSave,appCommands.button);else noticeSlot.prepend(pillSave);
@@ -1324,7 +1336,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const node = button(label, () => showCategory(key), 'settings-category'); categoryButtons.set(key, node); sidebar.append(node);
     const section = el('section', '', 'settings-section'); section.setAttribute('aria-label', label); sections.set(key, section); settingsBody.append(section);
   }
-  sidebar.append(el('span', '', 'settings-spacer'), el('p', 'Saved on this device · esc to close', 'settings-note'));
+  const settingsNote=el('p','Saved on this device · esc to close','settings-note');
+  sidebar.append(el('span', '', 'settings-spacer'), settingsNote);
   function group(section: string, title: string) {
     const node = el('div', '', 'settings-group'); node.append(el('p', title, 'overline')); sections.get(section)!.append(node); return node;
   }
@@ -1659,9 +1672,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const words = standalone?.active ? wordCount(standalone.text) : writingSummary?.sceneWords;
     pillWords.textContent = words == null ? '— words' : `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'}`;
     if (writingSummary) {
-      goalText.textContent = `${writingSummary.credited.toLocaleString()} / ${writingSummary.goal.toLocaleString()}`;
+      const count=(value:number)=>value<10000?value.toLocaleString():new Intl.NumberFormat(undefined,{notation:'compact',maximumFractionDigits:1}).format(value);
+      goalText.textContent = `${count(writingSummary.credited)} / ${count(writingSummary.goal)}`;
       goalFill.style.width = `${Math.min(100, (writingSummary.credited / Math.max(1, writingSummary.goal)) * 100)}%`;
-      goalButton.setAttribute('aria-label', `Daily goal: ${goalText.textContent} words credited today`);
+      const label=`Daily goal: ${writingSummary.credited.toLocaleString()} / ${writingSummary.goal.toLocaleString()} words credited today`;
+      goalButton.setAttribute('aria-label',label);goalButton.title=label;
     }
   }
   renderPill();
@@ -2294,7 +2309,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     open.disabled = true;
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
+  const unbindPreferences=bindPreferenceStatus(root,settingsNote);
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();editorCommands?.destroy();navigation.destroy();markdownExport.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();mcpAccess.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); checkUpdatesUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { unbindPreferences();headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();editorCommands?.destroy();navigation.destroy();markdownExport.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();mcpAccess.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); checkUpdatesUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

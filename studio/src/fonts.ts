@@ -1,3 +1,4 @@
+import {preferenceStorage} from './preferences';
 // Interface / text / monospace font choices, in the manner of Obsidian's Appearance settings.
 // A choice is just a family name; it reaches CSS as a quoted string via the CSSOM, never as markup.
 export const FONT_ROLES = [
@@ -44,10 +45,10 @@ export function parseChoices(raw: unknown): FontChoices {
 }
 
 export function loadChoices(): FontChoices {
-  try { return parseChoices(localStorage.getItem(STORAGE_KEY)); } catch { return {}; }
+  try { return parseChoices(preferenceStorage().getItem(STORAGE_KEY)); } catch { return {}; }
 }
 export function saveChoices(choices: FontChoices) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(choices)); } catch { /* storage is a convenience only */ }
+  try { preferenceStorage().setItem(STORAGE_KEY, JSON.stringify(choices)); } catch { /* storage is a convenience only */ }
 }
 
 export function applyChoices(choices: FontChoices, target: HTMLElement = document.documentElement) {

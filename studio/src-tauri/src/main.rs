@@ -39,6 +39,8 @@ mod quit;
 #[cfg(target_os = "macos")]
 mod quit_macos;
 mod recents;
+mod preferences;
+mod preferences_store;
 #[cfg(test)]
 mod review_integration_tests;
 mod review_state;
@@ -811,6 +813,7 @@ fn production_main() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            preferences::preferences_request,
             markdown_export::save_markdown_export,
             projects::project_request,
             mcp_access::mcp_access_request,

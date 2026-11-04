@@ -12,7 +12,7 @@ export function createWritingPanel(rendered?: (summary: WritingSummary) => void)
   const soundButton = document.createElement('button'); soundButton.type = 'button'; soundButton.textContent = 'Typewriter sound: off'; soundButton.setAttribute('aria-pressed','false');
   const error = document.createElement('span'); error.className = 'writing-error'; error.setAttribute('role','status');
   const help = document.createElement('details'); const summary = document.createElement('summary'); summary.textContent = 'How progress is counted';
-  const explanation = document.createElement('p'); explanation.textContent = 'Daily growth credited above each scene’s earlier peak. Deletions keep earned progress; undo, redo, loading, and recovery earn none. Rewriting below an earlier peak, complex replacements, and multi-cursor edits may not add credit. Opening frontmatter is excluded. Days follow this computer’s local date. Goal history stays on this device; typewriter sounds start off each launch.';
+  const explanation = document.createElement('p'); explanation.textContent = 'Daily growth credited above each scene’s earlier peak. Deletions keep earned progress; undo, redo, loading, and recovery earn none. Rewriting below an earlier peak, complex replacements, and multi-cursor edits may not add credit. Opening frontmatter is excluded. Days follow this computer’s local date. Goal history stays on this device; your sound choice and volume are remembered; sound resumes after a keypress.';
   help.append(summary,explanation); element.append(scene,manuscript,progressLabel,progress,goalLabel,soundButton,error,help);
   const tracker = createDailyGoalTracker(); const sound = createTypewriterSound();
   let active: {projectKey:string; path:string; text:string; count:number; sceneKey:string} | null = null;
@@ -31,13 +31,13 @@ export function createWritingPanel(rendered?: (summary: WritingSummary) => void)
   const soundControls: {button: HTMLButtonElement; slider?: HTMLInputElement}[] = [{button: soundButton}];
   function syncSound() {
     for (const {button, slider} of soundControls) {
-      button.textContent = `Typewriter sound: ${sound.enabled() ? 'on' : 'off'}`;
-      button.setAttribute('aria-pressed', String(sound.enabled()));
+      button.textContent = `Typewriter sound: ${sound.requested() ? 'on' : 'off'}`;
+      button.setAttribute('aria-pressed', String(sound.requested()));
       if (slider) { slider.value = String(Math.round(sound.volume() * 100)); slider.setAttribute('aria-valuetext', `${slider.value}%`); }
     }
   }
   function toggleSound() {
-    const requested = !sound.enabled();
+    const requested = !sound.requested();
     void sound.setEnabled(requested).then(enabled => {
       if (destroyed) return;
       syncSound();
@@ -61,11 +61,12 @@ export function createWritingPanel(rendered?: (summary: WritingSummary) => void)
       slider.addEventListener('change', () => sound.play());
       label.append(slider);
       const note = document.createElement('p'); note.className = 'settings-hint';
-      note.textContent = 'Mechanical clicks, backspace and carriage return. Off each launch. Paste, undo and loading stay silent.';
+      note.textContent = 'Mechanical clicks, backspace and carriage return. Choice and volume are remembered. Sound resumes on a keypress. Paste, undo and loading stay silent.';
       controls.append(toggle, label, note); soundControls.push({button: toggle, slider}); syncSound();
       return controls;
     },
     typed(kind: TypewriterKey) {
+      if(sound.requested()&&!sound.enabled()){void sound.setEnabled(true).then(enabled=>{if(!destroyed&&enabled)sound.play(kind);});return;}
       const enabled = sound.enabled(); sound.play(kind);
       if (enabled && !sound.enabled()) { syncSound(); error.textContent = 'Audio unavailable; writing still works.'; }
     },

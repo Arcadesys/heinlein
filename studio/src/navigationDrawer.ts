@@ -1,13 +1,14 @@
+import {preferenceStorage} from './preferences';
 const STORAGE_KEY = 'heinlein-studio-navigation-v1';
 
 /** One non-modal drawer holding the project navigator; closing it retains the live panel and its state. */
 export function createNavigationDrawer(panel: HTMLElement, changed: (open: boolean) => void) {
   let open = !window.matchMedia?.('(max-width: 760px)').matches;
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null');
+    const saved = JSON.parse(preferenceStorage().getItem(STORAGE_KEY) ?? 'null');
     if (saved && typeof saved.open === 'boolean') open = saved.open;
     else {
-      const legacy = JSON.parse(localStorage.getItem('heinlein-studio-collapsed-v1') ?? '{}');
+      const legacy = JSON.parse(preferenceStorage().getItem('heinlein-studio-collapsed-v1') ?? '{}');
       if (legacy?.files === true && legacy?.manuscript === true && legacy?.scenes !== false) open = false;
     }
   } catch { /* Invalid or unavailable storage must not prevent navigation. */ }
@@ -62,7 +63,7 @@ export function createNavigationDrawer(panel: HTMLElement, changed: (open: boole
     wasShowing = showing;
   }
   function save() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({open})); } catch { /* Convenience only. */ }
+    try { preferenceStorage().setItem(STORAGE_KEY, JSON.stringify({open})); } catch { /* Convenience only. */ }
   }
   function setOpen(value: boolean, focus = false) {
     const containedFocus = drawer.contains(document.activeElement);
