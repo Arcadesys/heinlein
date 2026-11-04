@@ -186,7 +186,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const historyText = el('div'); historyText.setAttribute('aria-label', 'Exact conversation history to send');
   const historyNote = el('p', '', 'muted'); historyDetails.append(historySummary, historyNote, historyText);
   const disclosure = el('p', 'Send shares your exact question, any revision target, the context preview, and the history preview with OpenAI using the selected ChatGPT account and model. Requests consume that plan’s usage allowance; account limits apply. Each request allows up to 2,000 output tokens. Manage ChatGPT usage to review usage or revoke access.', 'drafting-warning');
-  const guidance = el('p', 'Nothing is sent while you type or open this panel. Ask returns advice with wording changes shown as diff chips. Suggest revision prepares exact-text patches in a saved proposal for your review, followed by a separate native author confirmation. It never applies an answer automatically.', 'muted');
+  const guidance = el('p', 'Nothing is sent while you type or open this panel. Ask returns structured advice, quoted evidence and optional wording changes shown as diff chips. Suggest revision prepares exact-text patches in a saved proposal for your review, followed by a separate native author confirmation. It never applies an answer automatically.', 'muted');
   const status = el('p', '', 'question-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const send = button('Send to OpenAI', () => { void submit(); }, 'primary');
   const cancel = button('Cancel request', () => {

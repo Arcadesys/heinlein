@@ -224,9 +224,9 @@ async fn connection_fuzz_lifecycle() {
                             5 => Ok(b"fuzz-secret malformed".to_vec()),
                             6 => {
                                 service.cancel(&id).unwrap();
-                                Ok(answer_bytes())
+                                Ok(structured_answer_bytes())
                             }
-                            _ => Ok(answer_bytes()),
+                            _ => Ok(structured_answer_bytes()),
                         }
                     },
                     Duration::from_millis(1),

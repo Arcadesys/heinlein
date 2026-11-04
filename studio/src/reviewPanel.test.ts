@@ -65,7 +65,7 @@ it('shows reading feedback with targeted diffs for all three improvements', asyn
  expect(panel!.element.querySelectorAll('.review-feedback-list')).toHaveLength(2);
  expect([...panel!.element.querySelectorAll('.review-feedback-list')].map(list => list.children.length)).toEqual([3,3]);
  expect(panel!.element.querySelectorAll('[aria-hidden="true"].review-feedback-marker')).toHaveLength(6);
- expect(panel!.element.textContent).toContain('Three good things'); expect(panel!.element.textContent).toContain('Three points for improvement');
+ expect(panel!.element.textContent).toContain('Strengths'); expect(panel!.element.textContent).toContain('Points for improvement');
  expect(panel!.element.querySelectorAll('.review-improvement-diffs')).toHaveLength(3); expect(core.saveDocument).not.toHaveBeenCalled();
 });
 it('jumps from the diff list without approving or changing the source', async () => {
@@ -80,12 +80,22 @@ it('does not invent reading feedback for older saved results', async () => {
  await start(); await run(); expect(panel!.element.textContent).toContain('Reading feedback is unavailable'); expect(panel!.element.querySelectorAll('.review-feedback-list')).toHaveLength(0);
 });
 it('rejects malformed reading feedback before showing review actions', async () => {
- const core=bridge(); core.requestReview.mockImplementation(async request=>({...response(request), readingFeedback:[{path:'scene.md',reviewer:'Editor',feedback:{...reading,strengths:['Only one']}}]}));
+ const core=bridge(); core.requestReview.mockImplementation(async request=>({...response(request), readingFeedback:[{path:'scene.md',reviewer:'Editor',feedback:{...reading,strengths:['']}}]}));
  await start(core); button('Run review').click(); await vi.waitFor(()=>expect(button('Retry review').hidden).toBe(false)); expect(panel!.element.querySelectorAll('[data-edit-action="accept"]')).toHaveLength(0);
 });
 
-it.each([{editIds: [] as string[]}, {editIds: ['missing']}, {editIds: ['edit-1', 'edit-1']}])('rejects an improvement with invalid diff references: %j', async ({editIds}) => {
+it.each([{editIds: ['missing']}, {editIds: ['edit-1', 'edit-1']}])('rejects an improvement with invalid diff references: %j', async ({editIds}) => {
  const core=bridge(); core.requestReview.mockImplementation(async request=>({...response(request), readingFeedback:[{path:'scene.md',reviewer:'Editor',feedback:{...reading,improvements:[reading.improvements[0], {...reading.improvements[1], editIds}, reading.improvements[2]]}}]}));
  await start(core); button('Run review').click(); await vi.waitFor(()=>expect(button('Retry review').hidden).toBe(false));
- expect(panel!.element.textContent).toContain('Each improvement point needs at least one targeted diff.'); expect(panel!.element.querySelectorAll('[data-edit-action="accept"]')).toHaveLength(0);
+ expect(panel!.element.textContent).toContain('An improvement point contains invalid diff references.'); expect(panel!.element.querySelectorAll('[data-edit-action="accept"]')).toHaveLength(0);
+});
+
+
+it.each([0, 1, 4])('accepts %i grounded improvements without requiring patches', async count => {
+ const feedback={overview:'The scene reads clearly.',strengths:['A clear setting.'],improvements:Array.from({length:count},()=>({text:'Consider a later echo of the image.',evidence:'Bad fox.',editIds:[]}))};
+ const core=bridge();core.requestReview.mockImplementation(async request=>({...response(request),edits:[],readingFeedback:[{path:'scene.md',reviewer:'Editor',feedback}]}));
+ await start(core);button('Run review').click();await vi.waitFor(()=>expect(panel!.element.textContent).toContain(feedback.overview));
+ expect(panel!.element.querySelectorAll('.review-improvement-diffs')).toHaveLength(0);
+ expect(panel!.element.textContent).toContain(count ? 'Evidence: Bad fox.' : 'No improvements suggested.');
+ expect(core.saveDocument).not.toHaveBeenCalled();
 });

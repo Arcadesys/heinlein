@@ -1592,6 +1592,47 @@ mod tests {
         assert_eq!(loaded.view().reading_feedback[0].path, "scenes/one.md");
     }
     #[test]
+    fn grounded_advice_without_patches_survives_saved_workflow() {
+        use drafting_questions::review::LinkedImprovement;
+        for count in [0, 1, 4] {
+            let mut session = workflow_session(1);
+            let mut batch = call(&session, 0, vec![]);
+            batch.calls[0].reading_feedback = Some(ReadingFeedback {
+                overview: "A clear scene.".into(),
+                strengths: vec![],
+                improvements: (0..count)
+                    .map(|_| {
+                        ReadingImprovement::Linked(LinkedImprovement {
+                            text: "Consider echoing the image later.".into(),
+                            edit_ids: vec![],
+                            evidence: Some("An exact quotation 🐺.".into()),
+                        })
+                    })
+                    .collect(),
+            });
+            session.ingest(batch, &Default::default()).unwrap();
+            session.revision = 1;
+            let json = serde_json::to_string(&session).unwrap();
+            let loaded: ReviewSession = serde_json::from_str(&json).unwrap();
+            let loaded = loaded
+                .restore(&"b".repeat(64), "reopened", |_| false)
+                .unwrap();
+            assert!(loaded.view().edits.is_empty());
+            assert_eq!(
+                loaded.view().reading_feedback[0]
+                    .feedback
+                    .improvements
+                    .len(),
+                count
+            );
+            if count > 0 {
+                assert!(serde_json::to_string(&loaded.view())
+                    .unwrap()
+                    .contains("An exact quotation 🐺."));
+            }
+        }
+    }
+    #[test]
     fn improvement_links_follow_consolidated_ids_and_survive_reopen_and_decisions() {
         use drafting_questions::review::LinkedImprovement;
         let edit = session().view().edits[0].edit.clone();
@@ -1606,6 +1647,7 @@ mod tests {
                     ReadingImprovement::Linked(LinkedImprovement {
                         text: format!("Improvement {}", i + 1),
                         edit_ids: vec![provider_id.clone()],
+                        evidence: None,
                     })
                 })
                 .collect(),

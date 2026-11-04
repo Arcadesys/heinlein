@@ -367,18 +367,19 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             if (!Array.isArray(value.readingFeedback) || value.readingFeedback.length > 384 || value.readingFeedback.some(item =>
                 !item || typeof item.path !== 'string' || typeof item.reviewer !== 'string' || !item.feedback
                 || !Array.isArray(item.feedback.strengths) || !Array.isArray(item.feedback.improvements)
-                || item.feedback.strengths.length !== 3 || item.feedback.improvements.length !== 3
+                || item.feedback.strengths.length > 32 || item.feedback.improvements.length > 32
                 || [item.feedback.overview, ...item.feedback.strengths, ...item.feedback.improvements.map(point => typeof point === 'string' ? point : point?.text)].some(text => typeof text !== 'string' || !text.trim() || bytes(text) > 2000)))
                 throw new Error('Invalid reading feedback. Reload the saved review.');
             for (const entry of value.readingFeedback) for (const point of entry.feedback.improvements) {
                 if (typeof point === 'string') {
-                    if (requestId) throw new Error('Each improvement point needs at least one targeted diff. Run the review again.');
+                    if (requestId) throw new Error('An improvement point contains invalid diff references. Run the review again.');
                     continue;
                 }
-                if (!point || !Array.isArray(point.editIds) || !point.editIds.length || point.editIds.length > 32
+                if (!point || !Array.isArray(point.editIds) || point.editIds.length > 32
+                    || (point.evidence !== undefined && (typeof point.evidence !== 'string' || !point.evidence.trim() || bytes(point.evidence) > 2000))
                     || new Set(point.editIds).size !== point.editIds.length
                     || point.editIds.some(id => typeof id !== 'string' || !Array.isArray(value.edits) || !value.edits.some(edit => edit.id === id && edit.original !== edit.replacement)))
-                    throw new Error('Each improvement point needs at least one targeted diff. Run the review again.');
+                    throw new Error('An improvement point contains invalid diff references. Run the review again.');
             }
         }
         if (value?.schemaVersion === 2) {
@@ -421,7 +422,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         section.setAttribute('aria-label', 'Reading feedback');
         const entries = result?.readingFeedback ?? [];
         if (!entries.length) {
-            section.append(el('h3', 'Reading overview'), el('p', 'Reading feedback is unavailable for this saved review. Start a new review to get an overview, three good things and three points for improvement.', 'review-guidance'));
+            section.append(el('h3', 'Reading overview'), el('p', 'Reading feedback is unavailable for this saved review. Start a new review to get an overview, strengths and any warranted improvements.', 'review-guidance'));
             return section;
         }
         const content = el('div');
@@ -430,8 +431,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             content.replaceChildren(el('h3', 'Reading overview'), el('p', entry.feedback.overview));
             if (entries.length > 1) content.append(el('p', `${entry.path} · ${entry.reviewer}. This assessment covers this reviewer’s selected source or chunk.`, 'review-guidance'));
             for (const [title, marker, points] of [
-                ['Three good things', '✅', entry.feedback.strengths],
-                ['Three points for improvement', '❌', entry.feedback.improvements],
+                ['Strengths', '✅', entry.feedback.strengths],
+                ['Points for improvement', '❌', entry.feedback.improvements],
             ] as const) {
                 const list = el('ul', '', 'review-feedback-list');
                 for (const point of points) {
@@ -439,7 +440,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                     emoji.setAttribute('aria-hidden', 'true');
                     const content = el('div');
                     content.append(el('span', typeof point === 'string' ? point : point.text));
-                    if (typeof point !== 'string') {
+                    if (typeof point !== 'string' && point.evidence) content.append(el('p', `Evidence: ${point.evidence}`, 'review-guidance'));
+                    if (typeof point !== 'string' && point.editIds.length) {
                         const links = el('div', '', 'review-improvement-diffs');
                         for (const id of point.editIds) {
                             const index = result!.edits.findIndex(edit => edit.id === id), edit = result!.edits[index];
@@ -452,10 +454,10 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                             }
                         }
                         content.append(links);
-                    } else if (marker === '❌') content.append(el('p', 'This earlier feedback has no linked diff. Run a new review for targeted suggestions.', 'review-guidance'));
+                    } else if (marker === '❌') content.append(el('p', 'Advice only · no text change proposed.', 'review-guidance'));
                     item.append(emoji, content); list.append(item);
                 }
-                content.append(el('h3', title), list);
+                content.append(el('h3', title), points.length ? list : el('p', marker === '❌' ? 'No improvements suggested.' : 'No strengths listed.', 'review-guidance'));
             }
         };
         if (entries.length > 1) {

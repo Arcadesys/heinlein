@@ -20,7 +20,7 @@ for (const zoom of [100, 200]) for (const withEdits of [true, false]) {
     await page.evaluate(withEdits => (window as any).questionsFixture.finishReviewWithFeedback(withEdits), withEdits);
     if (!withEdits) {
       await expect(pane.getByRole('button', {name:'Retry review',exact:true})).toBeVisible();
-      await expect(pane.getByRole('status')).toContainText('Each improvement point needs at least one targeted diff.');
+      await expect(pane.getByRole('status')).toContainText('An improvement point contains invalid diff references.');
       await expect(pane.locator('.review-feedback-list')).toHaveCount(0);
       expect(await shape()).toEqual(before); expect(errors).toEqual([]);
       const state=await page.evaluate(()=>(window as any).questionsFixture.state());
@@ -30,8 +30,8 @@ for (const zoom of [100, 200]) for (const withEdits of [true, false]) {
     await expect(pane.getByRole('heading', {name:'Reading overview', exact:true})).toBeVisible();
     await expect(pane.locator('.review-feedback-list')).toHaveCount(2);
     await expect(pane.locator('.review-feedback-list li')).toHaveCount(6);
-    await expect(pane.getByRole('heading', {name:'Three good things'})).toBeVisible();
-    await expect(pane.getByRole('heading', {name:'Three points for improvement'})).toBeVisible();
+    await expect(pane.getByRole('heading', {name:'Strengths'})).toBeVisible();
+    await expect(pane.getByRole('heading', {name:'Points for improvement'})).toBeVisible();
     await expect(page.locator('vite-error-overlay')).toHaveCount(0);
     expect(await shape()).toEqual(before);
     expect((await new AxeBuilder({page}).include('.heinlein-review-panel').analyze()).violations).toEqual([]);

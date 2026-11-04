@@ -60,6 +60,14 @@ Object.assign(window,{questionsFixture:{
   },
   finishReview(){if(!reviewRequest||!reviewFinish)throw new Error('No review');reviewFinish({schemaVersion:1,reviewId:'synthetic-review',requestId:reviewRequest.requestId,model:'synthetic',scope:reviewRequest.scope,edits:[]});reviewFinish=null;},
   progress(text:string) {progress?.(text);},
+  finishStructuredAnswer() {
+    if(!request||!finish)throw new Error('No pending request');
+    finish({requestId:request.requestId,model:'synthetic',incomplete:false,text:JSON.stringify({schemaVersion:2,answer:'A stronger verb would make the rain more immediate.',strengths:['A clear station setting.'],findings:[{text:'Consider the sound of the rain.',evidence:'Rain tapped the glass roof.',editIds:['e1']}],edits:[{id:'e1',sceneIndex:0,original:'Rain tapped the glass roof.',replacement:'Rain drummed against the glass roof.',reason:'A stronger sound.',role:'editor'}]})});finish=null;
+  },
+  finishGroundedReview(count:number) {
+    if(!reviewRequest||!reviewFinish)throw new Error('No review');
+    reviewFinish({schemaVersion:1,reviewId:'grounded-review',requestId:reviewRequest.requestId,model:'synthetic',scope:reviewRequest.scope,edits:[],readingFeedback:[{path,reviewer:'Editor',feedback:{overview:'A clear, atmospheric scene.',strengths:['The station has a distinct sound.'],improvements:Array.from({length:count},()=>({text:'Consider echoing this image later.',evidence:'Rain tapped the glass roof.',editIds:[]}))}}]});reviewFinish=null;
+  },
   finishAnswer() {if(!request||!finish)throw new Error('No pending request');finish({requestId:request.requestId,text:'Validated final answer.',model:'synthetic',incomplete:false});finish=null;},
   select(text='Rain tapped the glass roof.') {const view=EditorView.findFromDOM(document.querySelector('.cm-content')!)!;const from=view.state.doc.toString().indexOf(text);view.dispatch({selection:{anchor:from,head:from+text.length},scrollIntoView:true});view.focus();},
   async finish() {if(!request||!finish)throw new Error('No pending request');const replacement='Rain drummed against the glass roof.';proposal={id:'native-review',kind:'apply',proposalId:request.requestId,path,baseHash:await hash(source),replacementHash:await hash(source.replace('Rain tapped the glass roof.',replacement)),diffHash:'synthetic-diff',baseText:source,replacementText:source.replace('Rain tapped the glass roof.',replacement),origin,expiresAtMs:Date.now()+300000,parentReceiptId:null};finish({requestId:request.requestId,text:'One possible revision, ready for your review.',model:'synthetic',incomplete:false,proposalId:request.requestId,replacementText:replacement});finish=null;},
