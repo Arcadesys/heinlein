@@ -3,19 +3,36 @@ on:
   merge_group:
   workflow_dispatch:
   pull_request:
-    paths: ['studio/**', 'tests/test_studio_updater.py', '.github/workflows/studio.yml']
-  push:
-    branches: [main]
-    paths: ['studio/**', 'tests/test_studio_updater.py', '.github/workflows/studio.yml']
+    paths: ['studio/**', 'tests/test_studio_updater.py', '.github/workflows/studio.yml', 'tools/validate.py']
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
+  boundaries:
+    name: Security boundary regressions (macos-latest)
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: macos-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/studio/target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Authentication, updater, MCP and native authority regressions
+        run: python3 tools/validate.py boundaries
+
+  # Full native compilation/lint runs locally; hosted macOS is opt-in.
   studio:
+    if: github.event_name == 'workflow_dispatch'
     name: Studio build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [macos-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -30,9 +47,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Install Linux desktop libraries
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

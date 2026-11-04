@@ -177,9 +177,10 @@ See [the architecture boundary](../docs/architecture/studio-ms-drafting.md).
 
 ## Run
 
-macOS and Linux are the first supported platforms. Install Node.js 22+, stable
-Rust (1.90+), and the official [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
-(Xcode command-line tools on macOS; GTK/WebKit development libraries on Linux).
+macOS is the current validation target. Install Node.js 22+, stable Rust
+(1.90+), and the official [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+including Xcode command-line tools. Linux code paths remain, but Ubuntu
+compilation and runtime behavior are no longer validated.
 
 ```sh
 cd studio
@@ -355,7 +356,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 The core tests run without GTK/WebKit. The full workspace/native host requires
-platform desktop dependencies. CI checks both macOS and Linux compilation.
+platform desktop dependencies. Validation now focuses on macOS; the automatic
+security-boundary job and manual hosted fallback builds target macOS only.
 A passing mocked renderer test does **not** establish native picker behavior,
 macOS accessibility, or physical keyboard/screen-reader behavior.
 
@@ -450,18 +452,20 @@ npm run test:browser:smoke
 npm run test:browser:full
 ```
 
-CI build validation runs only the tagged `@smoke` subset: normal renderer startup,
-project navigation with an axe audit, keyboard draft keep/reload/recovery, passage
-selection without manuscript movement at 100% and 200%, and guarded revision apply.
-Both 1280px and 320px viewports run on Linux and macOS; smoke stops on the first
-failure. `npm run build` remains the local TypeScript/Vite build command.
+Local validation is the default for renderer tests, builds, native lint, and
+publishing. From the repository root, run `python3 tools/validate.py quick` for
+renderer/build/smoke or `python3 tools/validate.py studio` for full local Studio
+validation. See [the local validation runbook](../docs/testing/local-validation.md)
+for prerequisites, suites, publishing goldens, and platform limits.
 
-The separate **Full browser acceptance** jobs run the entire suite on pull
-requests, merge-queue entries and manual workflow runs. Their dedicated workflow
-has no path filter, so required checks also report for non-Studio pull requests.
-Pushes to `main` run smoke instead of repeating full acceptance after merge.
-Repository branch protection must require both full browser jobs to enforce the
-merge gate. `test:theme:browser` remains an alias for the full suite.
+Full browser acceptance runs locally before pushing. The macOS hosted browser
+job is an explicit manual fallback for platform comparisons. An automatic
+macOS boundary-regression job preserves auth/updater/MCP/native question/proposal/
+review checks. The complete macOS native build job and publishing workflow
+are also manual hosted fallbacks; pushes to `main` do not repeat them. New PR
+pushes cancel obsolete boundary runs. `test:theme:browser` remains an alias for
+the full suite. GitHub no longer enforces browser results before merge; record
+local acceptance evidence with the pull request.
 
 The full suite includes theme checks in real Chromium at 1280px and 320px: keyboard focus,
 axe contrast/semantics, sample/control states, candidate isolation, apply/revert/
