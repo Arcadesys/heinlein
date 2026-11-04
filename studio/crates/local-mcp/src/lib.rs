@@ -159,13 +159,13 @@ impl LocalMcp {
                     if name=="list_projects" {let _:Empty=decode(arguments)?;return Ok(json!({"projects":[],"dataNotice":DATA_NOTICE,"message":"Choose MCP connection in Heinlein Studio and explicitly allow a project."}));}
                     return Err(("noSelection","No project is allowed. Choose MCP connection in Heinlein Studio."));
                 };
-                let sources=selection.sources().map_err(|_|("selectionUnavailable","Project sources are unavailable or exceed the supported limits"))?;
+                let repo=selection.repository().map_err(|_|("selectionUnavailable","Allowed project moved or is unavailable"))?;
+                let sources=if selection.project_wide {repo.mcp_project_sources().map_err(|_|("selectionUnavailable","Project sources are unavailable or exceed the supported limits"))?}else{selection.scenes.clone()};
                 let key=format!("{generation}:{}",proposal_store::text_hash(&sources.join("\0")));
                 if cache.as_ref().is_none_or(|(previous,_)|previous!=&key){
                     *cache=None;
-                    let repo=selection.repository().map_err(|_|("selectionUnavailable","Allowed project moved or is unavailable"))?;
                     let scope=if selection.project_wide {Selection::Project(sources)} else {Selection::Scenes(sources)};
-                    let server=Pinned::open_selected(repo.root(),scope,Some(&selection.proposal_store),studio.client_label.clone()).map_err(|_|("selectionUnavailable","Allowed sources are unavailable or unsafe"))?;
+                    let server=Pinned::from_repository(repo,scope,Some(&selection.proposal_store),studio.client_label.clone()).map_err(|_|("selectionUnavailable","Allowed sources are unavailable or unsafe"))?;
                     *cache=Some((key,server));
                 }
                 cache.as_ref().ok_or(("noSelection","No project is allowed"))?.1.execute(name,arguments)
@@ -196,6 +196,20 @@ impl Pinned {
     ) -> Result<Self, String> {
         let repository = Repository::open(repository)
             .map_err(|_| "Selected repository is unavailable or unsafe")?;
+        Self::from_repository(repository, selection, store, client_label)
+    }
+    // Retain the already-authorized descriptor. Reopening its path here could
+    // substitute a different directory between grant validation and scope creation.
+    fn from_repository(
+        repository: Repository,
+        selection: Selection,
+        store: Option<&Path>,
+        client_label: String,
+    ) -> Result<Self, String> {
+        #[cfg(unix)]
+        let root_identity = repository
+            .verified_root_identity()
+            .map_err(|_| "Selected repository moved or changed")?;
         let project_wide = matches!(&selection, Selection::Project(_));
         let (scenes, manifest_pin) = match selection {
             Selection::Scenes(scenes) | Selection::Project(scenes) => (scenes, None),
@@ -288,9 +302,13 @@ impl Pinned {
             }
         }
         #[cfg(unix)]
-        let root_identity = repository
+        if repository
             .verified_root_identity()
-            .map_err(|_| "Selected repository moved or changed")?;
+            .map_err(|_| "Selected repository moved or changed")?
+            != root_identity
+        {
+            return Err("Selected repository moved or changed".into());
+        }
         // Check the index again after resolving members; changes never expand scope.
         if let Some((path, hash)) = &manifest_pin {
             if repository
@@ -662,4 +680,40 @@ pub async fn serve_stdio(server: LocalMcp) -> Result<(), String> {
         .await
         .map_err(|_| "MCP session ended unexpectedly")?;
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod bound_repository_tests {
+    use super::*;
+    #[test]
+    fn scope_construction_cannot_reopen_a_replaced_authorized_root() {
+        for project_wide in [false, true] {
+            let t = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+            let root = t.path().join("allowed");
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(root.join("scene.md"), "Allowed bytes").unwrap();
+            let held = Repository::open(&root).unwrap();
+            std::fs::rename(&root, t.path().join("original")).unwrap();
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(root.join("scene.md"), "Unapproved replacement").unwrap();
+            let selection = if project_wide {
+                Selection::Project(vec!["scene.md".into()])
+            } else {
+                Selection::Scenes(vec!["scene.md".into()])
+            };
+            let store = t.path().join("proposals");
+            assert!(
+                Pinned::from_repository(held, selection, Some(&store), "Synthetic".into()).is_err()
+            );
+            assert!(!store.exists());
+            assert_eq!(
+                std::fs::read(t.path().join("original/scene.md")).unwrap(),
+                b"Allowed bytes"
+            );
+            assert_eq!(
+                std::fs::read(root.join("scene.md")).unwrap(),
+                b"Unapproved replacement"
+            );
+        }
+    }
 }
