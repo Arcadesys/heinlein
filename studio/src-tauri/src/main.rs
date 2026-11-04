@@ -26,14 +26,16 @@ compile_error!("Select exactly one native acceptance fixture");
 
 mod custom_reviewers;
 mod drafting;
+mod export_pipeline;
 mod first_story;
 mod github;
-mod markdown_export;
 mod manuscript_export;
-mod export_pipeline;
+mod markdown_export;
 mod mcp_access;
 #[cfg(all(test, unix))]
 mod persistence_tests;
+mod preferences;
+mod preferences_store;
 mod projects;
 mod proposals;
 mod questions;
@@ -41,8 +43,6 @@ mod quit;
 #[cfg(target_os = "macos")]
 mod quit_macos;
 mod recents;
-mod preferences;
-mod preferences_store;
 #[cfg(test)]
 mod review_integration_tests;
 mod review_state;

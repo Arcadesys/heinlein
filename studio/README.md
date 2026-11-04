@@ -45,7 +45,7 @@ Native builds require Rust 1.89 or newer for OS-backed file locking.
 
 ## 1.7 release packaging
 
-Heinlein Studio is version **1.7.2**. The independent Python
+Heinlein Studio is version **1.7.3**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:
