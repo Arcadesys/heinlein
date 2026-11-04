@@ -33,4 +33,19 @@ if (new URLSearchParams(location.search).has('long')) {
     state.library!.push({id,kind:'scene',parentId:'g'});
   }
 }
+if (new URLSearchParams(location.search).has('export')) {
+  const calls: {repositoryId:string;filename:string;text:string}[] = [];
+  core.saveMarkdownExport = async (repositoryId,filename,text) => {calls.push({repositoryId,filename,text});return true;};
+  (window as any).exportFixture = {calls};
+}
+if (new URLSearchParams(location.search).has('reviewers')) {
+  const key = 'synthetic-review-agents';
+  core.listCustomReviewers = async () => JSON.parse(localStorage.getItem(key) ?? '[]');
+  core.saveCustomReviewer = async draft => {
+    const list = await core.listCustomReviewers!(); const previous = list.find(row => row.id === draft.id);
+    const saved = {...draft, id: draft.id || `custom-${crypto.randomUUID()}`, version: previous ? previous.version + 1 : 1};
+    localStorage.setItem(key, JSON.stringify([...list.filter(row => row.id !== saved.id), saved]));return saved;
+  };
+  core.deleteCustomReviewer = async id => {const list = (await core.listCustomReviewers!()).filter(row => row.id !== id);localStorage.setItem(key,JSON.stringify(list));return list;};
+}
 const app=mountStudio(document.querySelector<HTMLElement>('#app')!,core); void app.selectRepository(async()=>session);

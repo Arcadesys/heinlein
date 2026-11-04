@@ -24,9 +24,11 @@
 ))]
 compile_error!("Select exactly one native acceptance fixture");
 
+mod custom_reviewers;
 mod drafting;
 mod first_story;
 mod github;
+mod markdown_export;
 mod mcp_access;
 #[cfg(all(test, unix))]
 mod persistence_tests;
@@ -758,6 +760,7 @@ fn production_main() {
         .manage(BrowserState::default())
         .manage(questions::QuestionHost::default())
         .setup(|app| {
+            let _ = custom_reviewers::refresh(app.handle());
             #[cfg(target_os = "macos")]
             {
                 let handle = app.handle().clone();
@@ -808,6 +811,7 @@ fn production_main() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            markdown_export::save_markdown_export,
             projects::project_request,
             mcp_access::mcp_access_request,
             standalone::standalone_request,
@@ -819,6 +823,9 @@ fn production_main() {
             questions::reject_review_edit,
             questions::get_review,
             questions::review_definitions,
+            custom_reviewers::list_custom_reviewers,
+            custom_reviewers::save_custom_reviewer,
+            custom_reviewers::delete_custom_reviewer,
             questions::preview_review,
             questions::continue_review,
             questions::list_reviews,

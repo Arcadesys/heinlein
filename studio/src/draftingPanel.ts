@@ -27,6 +27,7 @@ interface DraftingHooks {
   runOrganization?(action: () => Promise<void>): Promise<void>;
   show(): void;
   open(path: string): void;
+  exportGroup?(id: string, title: string): void;
   changed(state: DraftingState, previous: DraftingState | null, changes: DraftingFileChange[], focusPath?: string, organizationOnly?: boolean): Promise<void>;
   report(message: string, error?: boolean): void;
 }
@@ -722,6 +723,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       line.prepend(toggle, badge, rowMenu(`Actions for ${group.title}`, [
         button('New scene here', () => { selectedGroup = group.id; newSheet(); }),
         button('New group inside', () => { selectedGroup = group.id; createLibraryGroup(); }),
+        ...(hooks.exportGroup ? [button('Export as Markdown…', () => hooks.exportGroup!(group.id, group.title))] : []),
         button('Rename…', () => renameLibraryItem(group.id, 'group')), button('Move to…', () => moveGroup(group.id)), earlier, later,
         button('Delete group…', () => deleteGroup(group.id)),
       ]));

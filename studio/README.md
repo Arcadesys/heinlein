@@ -6,7 +6,7 @@ The existing Python publisher and its CLI remain unchanged.
 
 ## 1.7 release packaging
 
-Heinlein Studio is version **1.7.1**. The independent Python
+Heinlein Studio is version **1.7.2**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:
@@ -14,7 +14,7 @@ On an Apple Silicon Mac, build the version-pinned app with:
 ```sh
 cd studio
 npm ci
-npm run tauri build -- --config src-tauri/tauri.release.conf.json --bundles app --ci
+OPENSSL_STATIC=1 npm run tauri build -- --config src-tauri/tauri.release.conf.json --bundles app --ci
 ```
 
 This produces **Heinlein Studio.app**, using the stable identifier
@@ -272,7 +272,17 @@ migrates or rearranges your archive.
 Directory-tree imports and asset migration are deferred. Recognized relative
 asset references block directory-changing operations so their bytes are not
 silently rewritten or their references knowingly broken. Incoming links elsewhere
-still need author review after path changes. Export and publication are deferred.
+still need author review after path changes. Publication is deferred.
+
+**Export as Markdown…** in a group’s or project’s actions combines its sheets
+and nested groups into one Markdown file in Library order. In **Source files**,
+use a folder’s actions or **Export this folder as Markdown…** to include its
+subfolders; indexed sheets use Library order, followed by other Markdown files in
+natural filename order. Reference sheets are included. The export adds headings,
+omits YAML metadata and uses current editor text without changing the source.
+Images and attachments are not bundled. The native Save dialog requires a new
+file outside the source project; existing files are never replaced. No file is
+sent to anyone automatically.
 
 ## Tests
 

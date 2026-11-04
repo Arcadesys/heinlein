@@ -74,6 +74,7 @@ export interface QuestionRevisionAnswer extends QuestionAnswer { proposalId: str
 export interface QuestionAnswer { requestId: string; text: string; model: string; inputTokens?: number | null; outputTokens?: number | null; incomplete: boolean }
 export interface ReviewSnapshot { path: string; source: string; sourceHash: string;sceneId?:string|null }
 export interface ReviewerDefinition {id:string; version:number; displayName:string; instructions:string}
+export interface CustomReviewer {id:string; version:number; displayName:string; description:string; instructions:string; output:'notes'|'notes_and_edits'}
 export interface ReviewOptions {reviewers:string[]; context:ReviewSnapshot[]; contextNote:string; ranges:{path:string;fromUtf8:number;toUtf8:number}[];reviewId?:string|null;fullContextOrder?:string[]}
 export interface ReviewCoverage {contextRanges?:{sourceIndex:number;fromUtf8:number;toUtf8:number}[];id:string; sourceIndex:number;fromUtf8:number;toUtf8:number;windowFrom:number;windowTo:number;reviewer:number;status:string;requestId:string|null;error:string|null}
 export interface ReviewRequest { requestId: string; repositoryId: string; scope: 'scene' | 'chapter'; snapshots: ReviewSnapshot[]; workflow?:ReviewOptions|null }
@@ -85,6 +86,7 @@ export interface ReadingFeedback { overview: string; strengths: string[]; improv
 export interface ReadingFeedbackView { coverageId?: string | null; path: string; reviewer: string; feedback: ReadingFeedback }
 export interface ReviewResult { readingFeedback?: ReadingFeedbackView[]; reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
 export interface LocalCore {
+  saveMarkdownExport?(repositoryId: string, filename: string, text: string): Promise<boolean>;
   projectRequest?(request:ProjectRequest):Promise<ProjectResponse>;
   mcpRequest?(request:McpAccessRequest):Promise<McpAccessView>;
   standalone?(request:DraftRequest):Promise<DraftResponse>;
@@ -98,6 +100,9 @@ export interface LocalCore {
   confirmPublishingCopy?(repositoryId: string, previewId: string): Promise<boolean>;
   requestReview?(request: ReviewRequest, connection: QuestionConnection, onProgress?: (progress: ReviewProgress) => void): Promise<ReviewResult>;
   reviewDefinitions?():Promise<ReviewerDefinition[]>;
+  listCustomReviewers?():Promise<CustomReviewer[]>;
+  saveCustomReviewer?(reviewer:CustomReviewer):Promise<CustomReviewer>;
+  deleteCustomReviewer?(id:string):Promise<CustomReviewer[]>;
   previewReview?(request:ReviewRequest):Promise<ReviewCoverage[]>;
   listReviews?(repositoryId:string):Promise<ReviewResult[]>;
   chooseReviewEdit?(repositoryId:string,reviewId:string,editId:string):Promise<ReviewResult>;
@@ -153,6 +158,7 @@ export interface LocalCore {
 // no credentials, filesystem handles, or absolute root paths enter the renderer.
 export const localCore: LocalCore = {
   available: isTauri,
+  saveMarkdownExport: (repositoryId, filename, text) => invoke('save_markdown_export', {repositoryId, filename, text}),
   updateRequest: action=>invoke('update_request',{action}),
   githubRequest: request => invoke('github_request', {request}),
   loadFirstStory: repositoryId => invoke('load_first_story', {repositoryId}),
@@ -166,6 +172,9 @@ export const localCore: LocalCore = {
     return invoke('request_review', {request, connection, onProgress: channel});
   },
   reviewDefinitions:()=>invoke('review_definitions'),
+  listCustomReviewers:()=>invoke('list_custom_reviewers'),
+  saveCustomReviewer:reviewer=>invoke('save_custom_reviewer',{reviewer}),
+  deleteCustomReviewer:id=>invoke('delete_custom_reviewer',{id}),
   previewReview:request=>invoke('preview_review',{request}),
   listReviews:repositoryId=>invoke('list_reviews',{repositoryId}),
   chooseReviewEdit:(repositoryId,reviewId,editId)=>invoke('choose_review_edit',{repositoryId,reviewId,editId}),

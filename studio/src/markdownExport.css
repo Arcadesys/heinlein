@@ -1,0 +1,16 @@
+/* Keep the dialog usable at enlarged text sizes without affecting the manuscript. */
+.markdown-export-dialog > button { max-inline-size: 100%; min-block-size: 48px; }
+@media (max-width: 480px) {
+  .markdown-export-dialog {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    padding: 12px;
+  }
+  .drafting-dialog.markdown-export-dialog > button,
+  .drafting-dialog.markdown-export-dialog > button + button {
+    inline-size: 100%;
+    margin-inline: 0;
+    padding: .5em .65em;
+  }
+}
