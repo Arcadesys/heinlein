@@ -33,3 +33,16 @@ test('project actions puts Export before the recent-project block',async({page})
  await expect(actions.getByRole('button').first()).toHaveText('Export manuscript…');await expect(actions.getByRole('button').first()).toBeInViewport();
  await actions.getByRole('button').first().click();await expect(page.getByRole('dialog',{name:'Export manuscript',exact:true})).toBeVisible();
 });
+test('project export stays reachable after delayed navigator scrolling at 200 percent',async({page})=>{
+ await page.goto('/tests/browser/library-app.html?export&unified');
+ await page.evaluate(async()=>{document.documentElement.dataset.zoom='200';await document.fonts.ready;});
+ const nav=page.getByRole('button',{name:'Navigation',exact:true});if(await nav.isVisible())await nav.click();
+ await page.locator('summary[aria-label="Project actions"]').click();
+ const actions=page.getByRole('group',{name:'Project actions',exact:true}),first=actions.getByRole('button').first();
+ await expect(first).toBeFocused();
+ await page.evaluate(()=>document.querySelector('.navigator')!.dispatchEvent(new Event('scroll')));
+ await expect(first).toBeFocused();await expect(first).toBeInViewport();
+ await page.keyboard.press('End');await expect(actions.getByRole('button').last()).toBeFocused();await expect(actions.getByRole('button').last()).toBeInViewport();
+ await page.keyboard.press('Home');await expect(first).toBeFocused();await page.keyboard.press('Enter');
+ await expect(page.getByRole('dialog',{name:'Export manuscript',exact:true})).toBeVisible();
+});
