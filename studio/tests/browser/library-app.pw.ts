@@ -37,7 +37,11 @@ test('row menus have names, generous targets and keyboard focus',async({page})=>
  await openDrawer(page);
  const more=page.locator('summary[aria-label="Actions for First sheet"]');
  await more.focus(); await expect(more).toBeFocused(); await expect(more).toHaveAttribute('title','Actions for First sheet');
- const box=await more.boundingBox(); expect(box!.width).toBeGreaterThanOrEqual(44); expect(box!.height).toBeGreaterThanOrEqual(44);
+ const box=await more.boundingBox();
+ // Chromium on macOS can report a 44px target as 43.99998474121094px.
+ // Compare at 0.001 CSS-pixel precision while preserving the 44px minimum.
+ expect(Math.round(box!.width*1000)/1000).toBeGreaterThanOrEqual(44);
+ expect(Math.round(box!.height*1000)/1000).toBeGreaterThanOrEqual(44);
  const focus=await more.evaluate(node=>{const style=getComputedStyle(node);return {outline:style.outlineStyle,shadow:style.boxShadow,opacity:style.opacity};});
  expect(focus.outline!=='none'||focus.shadow!=='none').toBe(true); expect(focus.opacity).toBe('1');
  await page.keyboard.press('Enter');
