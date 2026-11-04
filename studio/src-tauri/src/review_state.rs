@@ -582,7 +582,8 @@ impl ReviewSession {
             .is_some_and(|v| v.account_id == account)
             && self.result.model == model
     }
-    /// Explicit continuation retries only transiently failed calls. Completed
+    /// Explicit continuation retries transient failures and interrupted/cancelled calls.
+    /// Caller holds the native single-review permit; no active batch is replaced. Completed
     /// reports, findings and decisions remain immutable. A changed capture needs
     /// a fresh review rather than rebasing old results onto new writing.
     pub fn requeue_failed(
@@ -594,9 +595,15 @@ impl ReviewSession {
             return Ok(false);
         };
         let retry = workflow.coverage.iter().any(|c| {
-            c.status == "failed" && c.error.as_deref().is_some_and(retryable_coverage_error)
+            matches!(c.status.as_str(), "running" | "cancelled")
+                || (c.status == "failed"
+                    && c.error.as_deref().is_some_and(retryable_coverage_error))
         });
-        if !retry {
+        let queued = workflow
+            .coverage
+            .iter()
+            .any(|c| matches!(c.status.as_str(), "queued" | "notRun"));
+        if !retry && !queued {
             return Ok(false);
         }
         if !self
@@ -608,11 +615,15 @@ impl ReviewSession {
         {
             return Err("The captured source or context changed. Start a fresh review; completed results were preserved.".into());
         }
+        if !retry {
+            return Ok(false);
+        }
         for c in &mut self.result.workflow.as_mut().unwrap().coverage {
-            if c.status == "failed"
-                && (c.error.as_deref().is_some_and(retryable_coverage_error)
-                    || (c.id == drafting_questions::review_workflow::CONSOLIDATION_ID
-                        && c.error.as_deref() == Some("incompleteReview")))
+            if matches!(c.status.as_str(), "running" | "cancelled")
+                || (c.status == "failed"
+                    && (c.error.as_deref().is_some_and(retryable_coverage_error)
+                        || (c.id == drafting_questions::review_workflow::CONSOLIDATION_ID
+                            && c.error.as_deref() == Some("incompleteReview"))))
             {
                 c.status = "queued".into();
                 c.error = None;
@@ -1819,11 +1830,33 @@ mod tests {
             serde_json::to_value(s.view()).unwrap()["edits"],
             completed["edits"]
         );
-        assert!(!s.requeue_failed(|_| false).unwrap());
+        assert!(s.requeue_failed(|_| false).is_err());
+        assert!(!s.requeue_failed(|_| true).unwrap());
         // Ingested duplicate successful calls do not duplicate findings or feedback.
         let count = s.finding_count();
         s.ingest(call(&s, 0, vec![]), &Default::default()).unwrap();
         assert_eq!(s.finding_count(), count);
+    }
+    #[test]
+    fn interrupted_or_cancelled_saved_chunk_resumes_without_replaying_completed_chunks() {
+        for status in ["running", "cancelled"] {
+            let mut s = workflow_session(2);
+            s.revision = 1;
+            s.ingest(call(&s, 0, vec![]), &Default::default()).unwrap();
+            let mut interrupted = call(&s, 1, vec![]);
+            interrupted.calls[0].coverage.status = status.into();
+            s.ingest(interrupted, &Default::default()).unwrap();
+            let saved = serde_json::to_string(&s).unwrap();
+            let mut reopened: ReviewSession = serde_json::from_str(&saved).unwrap();
+            reopened = reopened
+                .restore(&"b".repeat(64), "reopened", |_| false)
+                .unwrap();
+            assert!(reopened.requeue_failed(|_| false).is_err());
+            assert!(reopened.requeue_failed(|_| true).unwrap());
+            assert_eq!(reopened.coverage()[0].status, "completed");
+            assert_eq!(reopened.coverage()[1].status, "queued");
+            assert!(reopened.coverage()[1].request_id.is_none());
+        }
     }
     fn call(
         s: &ReviewSession,

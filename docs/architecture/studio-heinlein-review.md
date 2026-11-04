@@ -248,7 +248,10 @@ limit. Oversize plans fail without dropping reviewers.
 The run stops on cancellation, a failed call, an invalid response, or continuation
 without progress or after bounded transient retries are exhausted. Explicit
 **Retry failed chunks** continues the saved review while preserving completed
-results; a changed source/context requires a fresh review. Completed individual
+results. **Resume interrupted chunks** explicitly resumes interrupted/cancelled calls
+after reopening; the native single-review gate prevents replacing an active batch.
+All continuation requires unchanged captured source/context; finish batches before
+applying suggestions, or start a fresh review after changing the capture. Completed individual
 assessments remain persisted in the native review record. Success opens and
 focuses consolidated feedback; Review assessment switches to any individual
 pass. Existing advanced review setup retains explicit batch controls. Review

@@ -537,6 +537,7 @@ Review workflow chunks retry transport interruptions/timeouts and transient
 server failures up to three attempts with cancellation-aware backoff. Successful
 chunks are persisted once and not resent. Quota/auth/invalid-output failures do
 not automatically retry. After exhaustion, **Retry failed chunks** continues the
-same saved review, preserving completed results; changed source/context requires
-a fresh review. Ambiguous transport failures and retries may incur additional
+same saved review, preserving completed results. Interrupted or cancelled chunks
+can resume explicitly after reopening. Any continuation requires unchanged captured
+source/context, so finish remaining batches before applying suggestions. Ambiguous transport failures and retries may incur additional
 plan usage. Nothing is automatically applied to manuscript files.

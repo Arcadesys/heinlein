@@ -226,7 +226,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const edits = el('div', '', 'review-edits');
     const continueBatch = button('Continue next reviewer batch', () => { void submit(true); });
     continueBatch.hidden = true;
-    const continueNote = el('p', 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count.', 'review-guidance');
+    const continueNote = el('p', 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count. Finish the remaining batches before applying suggestions; changed source needs a fresh review.', 'review-guidance');
     continueNote.hidden = true;
     const resultActions = el('div', '', 'review-result-actions');
     resultActions.append(continueNote, continueBatch);
@@ -343,10 +343,11 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         run.textContent = previewing ? 'Preview review' : 'Run review';
         run.disabled = previewing ? Boolean(problem || pending || busy || automaticRunning || checking || !definitions.length) : Boolean(problem || pending || busy || automaticRunning || checking || !ready() || !core.requestReview);
         retry.disabled = Boolean(problem || pending || busy || automaticRunning || checking || !ready() || !core.requestReview || (workflowMode && !preparedRequest));
+        const interruptedChunks = result?.workflow?.coverage.some(c => c.status === 'running' || c.status === 'cancelled');
         const failedChunks = result?.workflow?.coverage.some(c => c.status === 'failed' && retryableCall(c.error));
-        continueBatch.textContent = failedChunks ? 'Retry failed chunks' : 'Continue next reviewer batch';
-        continueBatch.hidden = automaticRunning || !result?.workflow?.coverage.some(c => ((c.status === 'queued' || c.status === 'notRun') && c.error !== 'findingLimit') || (c.status === 'failed' && retryableCall(c.error)));
-        continueNote.textContent = failedChunks ? 'Retry sends only failed chunks and remaining calls, keeping completed results. Each chunk gets up to three attempts. Additional plan usage may count. Changed source requires a fresh review.' : 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count.';
+        continueBatch.textContent = failedChunks ? 'Retry failed chunks' : interruptedChunks ? 'Resume interrupted chunks' : 'Continue next reviewer batch';
+        continueBatch.hidden = automaticRunning || !result?.workflow?.coverage.some(c => ((c.status === 'queued' || c.status === 'notRun') && c.error !== 'findingLimit') || c.status === 'running' || c.status === 'cancelled' || (c.status === 'failed' && retryableCall(c.error)));
+        continueNote.textContent = failedChunks || interruptedChunks ? 'Retry sends only failed chunks and remaining calls, keeping completed results. Each chunk gets up to three attempts. Additional plan usage may count. Changed source requires a fresh review.' : 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count. Finish the remaining batches before applying suggestions; changed source needs a fresh review.';
         continueNote.hidden = continueBatch.hidden;
         continueBatch.disabled = Boolean(pending || busy || checking || !ready());
         setupView.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>('input,select,textarea,button').forEach(e => e.disabled = Boolean(pending || busy || automaticRunning) || e.dataset.full === 'true');

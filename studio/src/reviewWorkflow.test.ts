@@ -362,3 +362,11 @@ it('explicitly resumes failed chunks in the same saved review and retains comple
  expect(f.continuation.mock.calls[0].slice(0,2)).toEqual(['repo','review-stable']);
  expect(panel!.element.textContent).toContain('Individual mechanics assessment.');
 });
+
+
+it.each(['running','cancelled'])('explicitly resumes a saved %s chunk without starting a new review',async status=>{
+ const f=automaticFixture();f.core.requestReview.mockImplementation(async r=>{const value=await f.make(r,1);value.workflow!.coverage[1].status=status;return value;});
+ await panel!.reviewChapter();expect(f.continuation).not.toHaveBeenCalled();
+ await f.click('Resume interrupted chunks');expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.continuation).toHaveBeenCalledOnce();
+ expect(f.continuation.mock.calls[0].slice(0,2)).toEqual(['repo','review-stable']);
+});
