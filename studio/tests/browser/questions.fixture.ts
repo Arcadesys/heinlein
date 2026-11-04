@@ -37,12 +37,20 @@ Object.assign(window,{questionsFixture:{
   ready,
   finishReviewWithFeedback(withEdits=true) {
     if(!reviewRequest||!reviewFinish)throw new Error('No review');
-    const text='Rain tapped the glass roof.', from=source.indexOf(text), fromUtf8=new TextEncoder().encode(source.slice(0,from)).length;
+    const suggestions = [
+      ['The station clock stopped at midnight.', 'The station clock had stopped, its hands fixed at midnight.', 'Clarify that the clock is stopped when Mara arrives.'],
+      ['Mara crossed the empty platform.', 'Mara hurried across the empty platform.', 'Give Mara’s movement more urgency.'],
+      ['Rain tapped the glass roof.', 'Rain drummed against the glass roof.', 'Make the rain sound more forceful.'],
+    ];
+    const edits = suggestions.map(([text,replacement,reason],index) => {
+      const fromUtf8=new TextEncoder().encode(source.slice(0,source.indexOf(text))).length;
+      return {id:`diff-${index+1}`,path,fromUtf8,toUtf8:fromUtf8+new TextEncoder().encode(text).length,original:text,replacement,reason,role:'editor' as const,status:'pending' as const,proposalId:null};
+    });
     reviewFinish({schemaVersion:1,reviewId:'synthetic-review',requestId:reviewRequest.requestId,model:'synthetic',scope:reviewRequest.scope,
       readingFeedback:[{path,reviewer:'Editor',feedback:{overview:'A clear, atmospheric scene. Mara’s quiet wait builds tension around the final carriage.',
         strengths:['The stopped clock establishes an unsettling mood.','Rain against the glass roof gives the station a distinct sound.','The final carriage gives Mara’s waiting a clear focus.'],
-        improvements:['Consider what Mara hopes will happen when the train arrives.','Explore whether one physical detail could make her tension clearer.','Consider how the final image might deepen the question of why she waits.']}}],
-      edits:withEdits?[{id:'diff-1',path,fromUtf8,toUtf8:fromUtf8+text.length,original:text,replacement:'Rain drummed against the glass roof.',reason:'A more forceful sound could sharpen the mood.',role:'editor',status:'pending',proposalId:null}]:[]});
+        improvements:suggestions.map((suggestion,index)=>({text:suggestion[2],editIds:[`diff-${index+1}`]}))}}],
+      edits:withEdits?edits:[]});
     reviewFinish=null;
   },
   finishReview(){if(!reviewRequest||!reviewFinish)throw new Error('No review');reviewFinish({schemaVersion:1,reviewId:'synthetic-review',requestId:reviewRequest.requestId,model:'synthetic',scope:reviewRequest.scope,edits:[]});reviewFinish=null;},

@@ -1378,6 +1378,16 @@ fn no_text_distinguishes_output_limit_from_empty_completed_response() {
 }
 
 #[test]
+fn review_timeout_does_not_expand_ordinary_question_timeout() {
+    let ordinary = config();
+    let review = ordinary
+        .clone()
+        .with_timeout(review::REVIEW_REQUEST_TIMEOUT);
+    assert_eq!(ordinary.request_timeout, Duration::from_secs(60));
+    assert_eq!(review.request_timeout, Duration::from_secs(180));
+}
+
+#[test]
 fn contradictory_terminal_fields_cannot_publish_answer_text() {
     for (field, value) in [
         ("error", json!({"message":"private"})),

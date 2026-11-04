@@ -200,3 +200,9 @@
 .review-diff-jump { display: grid; gap: .4rem; width: 100%; min-height: 48px; padding: .85rem; text-align: left; white-space: normal; overflow-wrap: anywhere; font: inherit; line-height: 1.55; color: var(--fg); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; }
 .review-diff-jump:focus-visible, .review-feedback-picker select:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
 .review-diff-location { font-weight: 700; }
+
+.review-diff-jump ins { text-decoration: underline; text-underline-offset: .15em; }
+
+.review-improvement-diffs { display: grid; gap: .5rem; margin-top: .5rem; }
+.review-improvement-jump { min-height: 44px; width: 100%; padding: .6rem .8rem; font: inherit; line-height: 1.5; text-align: left; white-space: normal; overflow-wrap: anywhere; color: var(--fg); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; }
+.review-improvement-jump:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }

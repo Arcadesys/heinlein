@@ -1,6 +1,6 @@
 //! Verified targeted-edit lineage. Persisted records never mint native apply authority.
 use drafting_questions::review::{
-    ReadingFeedback, ReviewEdit, ReviewOutput, ReviewRequest, ReviewScope,
+    ReadingFeedback, ReadingImprovement, ReviewEdit, ReviewOutput, ReviewRequest, ReviewScope,
 };
 use proposal_store::{diff_hash, text_hash, PendingProposal, ProposalOrigin};
 use serde::{Deserialize, Serialize};
@@ -656,16 +656,28 @@ impl ReviewSession {
             if call.model != self.result.model {
                 return Err("The provider model differs from the selected review model".into());
             }
-            if let Some(feedback) = call.reading_feedback {
-                feedback.validate().map_err(|e| e.to_string())?;
-                self.result.reading_feedback.push(ReadingFeedbackView {
-                    coverage_id: Some(call.coverage.id.clone()),
-                    path: self.request.snapshots[call.coverage.source_index]
-                        .path
-                        .clone(),
-                    reviewer: definition.definition.display_name.clone(),
-                    feedback,
-                });
+            let mut feedback = call.reading_feedback;
+            if let Some(feedback) = &mut feedback {
+                feedback
+                    .validate_links(&call.edits, false)
+                    .map_err(|e| e.to_string())?;
+                let ids = call
+                    .edits
+                    .iter()
+                    .map(|edit| {
+                        (
+                            edit.id.clone(),
+                            format!("finding-{}", &self.fingerprint(edit)[..32]),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
+                for point in &mut feedback.improvements {
+                    if let ReadingImprovement::Linked(point) = point {
+                        for id in &mut point.edit_ids {
+                            *id = ids.get(id).ok_or("Missing improvement diff")?.clone();
+                        }
+                    }
+                }
             }
             for mut edit in call.edits {
                 let single = ReviewOutput {
@@ -745,6 +757,16 @@ impl ReviewSession {
                     selected: false,
                     source_stale: false,
                     location: None,
+                });
+            }
+            if let Some(feedback) = feedback {
+                self.result.reading_feedback.push(ReadingFeedbackView {
+                    coverage_id: Some(call.coverage.id.clone()),
+                    path: self.request.snapshots[call.coverage.source_index]
+                        .path
+                        .clone(),
+                    reviewer: definition.definition.display_name.clone(),
+                    feedback,
                 });
             }
         }
@@ -985,8 +1007,16 @@ impl ReviewSession {
         if self.result.reading_feedback.len() > 384 {
             return Err("Too much reading feedback".into());
         }
+        let feedback_edits = self
+            .result
+            .edits
+            .iter()
+            .map(|edit| edit.edit.clone())
+            .collect::<Vec<_>>();
         for item in &self.result.reading_feedback {
-            item.feedback.validate().map_err(|e| e.to_string())?;
+            item.feedback
+                .validate_links(&feedback_edits, false)
+                .map_err(|e| e.to_string())?;
         }
 
         if self.revision == u64::MAX
@@ -1541,7 +1571,11 @@ mod tests {
         batch.calls[0].reading_feedback = Some(ReadingFeedback {
             overview: "A clear scene with a strong voice.".into(),
             strengths: vec!["Voice".into(), "Setting".into(), "Pacing".into()],
-            improvements: vec!["Opening".into(), "Goal".into(), "Ending".into()],
+            improvements: vec![
+                ReadingImprovement::Legacy("Opening".into()),
+                ReadingImprovement::Legacy("Goal".into()),
+                ReadingImprovement::Legacy("Ending".into()),
+            ],
         });
         session.ingest(batch, &Default::default()).unwrap();
         session.revision = 1;
@@ -1556,6 +1590,62 @@ mod tests {
             "A clear scene with a strong voice."
         );
         assert_eq!(loaded.view().reading_feedback[0].path, "scenes/one.md");
+    }
+    #[test]
+    fn improvement_links_follow_consolidated_ids_and_survive_reopen_and_decisions() {
+        use drafting_questions::review::LinkedImprovement;
+        let edit = session().view().edits[0].edit.clone();
+        let mut session = workflow_session(2);
+        let provider_id = edit.id.clone();
+        let mut batch = call(&session, 0, vec![edit.clone()]);
+        batch.calls[0].reading_feedback = Some(ReadingFeedback {
+            overview: "Three suggestions grounded in a concrete change.".into(),
+            strengths: vec!["Voice".into(), "Setting".into(), "Pacing".into()],
+            improvements: (0..3)
+                .map(|i| {
+                    ReadingImprovement::Linked(LinkedImprovement {
+                        text: format!("Improvement {}", i + 1),
+                        edit_ids: vec![provider_id.clone()],
+                    })
+                })
+                .collect(),
+        });
+        // Another reviewer already found this exact edit; links must resolve to the retained finding.
+        session
+            .ingest(call(&session, 1, vec![edit]), &Default::default())
+            .unwrap();
+        session.ingest(batch, &Default::default()).unwrap();
+        let finding_id = session.view().edits[0].edit.id.clone();
+        assert_ne!(provider_id, finding_id);
+        assert_eq!(session.view().edits.len(), 1);
+        let pending = session
+            .rejection_candidate(&finding_id, &"b".repeat(64))
+            .unwrap();
+        session.prepared(&finding_id, pending.clone()).unwrap();
+        session.rejected_proposal("repo", &pending.id);
+        assert_eq!(session.view().edits[0].status, "rejected");
+        session.revision = 1;
+        let loaded: ReviewSession =
+            serde_json::from_str(&serde_json::to_string(&session).unwrap()).unwrap();
+        let loaded = loaded
+            .restore(&"b".repeat(64), "reopened", |_| false)
+            .unwrap();
+        for point in &loaded.view().reading_feedback[0].feedback.improvements {
+            let ReadingImprovement::Linked(point) = point else {
+                panic!("Expected linked improvement")
+            };
+            assert_eq!(point.edit_ids, vec![finding_id.clone()]);
+        }
+        let mut broken: ReviewSession =
+            serde_json::from_str(&serde_json::to_string(&loaded).unwrap()).unwrap();
+        if let ReadingImprovement::Linked(point) =
+            &mut broken.result.reading_feedback[0].feedback.improvements[0]
+        {
+            point.edit_ids = vec!["missing".into()];
+        }
+        assert!(broken
+            .restore(&"b".repeat(64), "reopened", |_| false)
+            .is_err());
     }
     fn call(
         s: &ReviewSession,

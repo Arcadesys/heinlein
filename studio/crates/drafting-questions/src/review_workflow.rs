@@ -351,14 +351,14 @@ impl QuestionService {
     {
         self.review_batch_with(
             request,
-            config,
+            config.with_timeout(REVIEW_REQUEST_TIMEOUT),
             permit,
             coverage,
             defs,
             remaining,
             progress,
             send_request,
-            REQUEST_TIMEOUT,
+            REVIEW_REQUEST_TIMEOUT,
         )
         .await
     }
@@ -714,6 +714,7 @@ mod tests {
                     calls += 1;
                     let data: serde_json::Value = serde_json::from_slice(&body).unwrap();
                     assert_eq!(data["tools"], serde_json::json!([]));
+                    assert_eq!(data["max_output_tokens"], MAX_REVIEW_OUTPUT_TOKENS);
                     assert!(!data.to_string().contains("private-repo"));
                     let bytes = if calls == 2 {
                         b"broken-json".to_vec()

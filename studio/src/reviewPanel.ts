@@ -39,7 +39,7 @@ function icon(path: string, box = 14) { const ns = 'http://www.w3.org/2000/svg',
 function iconButton(label: string, path: string, action: () => void, cls: string, box = 14) { const n = button('', action, cls); n.setAttribute('aria-label', label); n.append(icon(path, box)); return n; }
 function message(error: unknown) { return error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' ? error.message : 'The review could not be completed. Retry when your connection is ready.'; }
 function callFailure(code: string | null) {
-    const reasons: Record<string, string> = {timeout: 'The response timed out.', cancelled: 'The call was cancelled.', usageLimit: 'ChatGPT usage limit reached.', staleConnection: 'The ChatGPT account or model changed.', invalidReviewOrModel: 'The response did not match the selected model or review format.', invalidResponse: 'The response could not be validated.', protocol: 'The response could not be validated.', findingLimit: 'The retained suggestion limit was reached.'};
+    const reasons: Record<string, string> = {outputLimit: 'The model reached its response token limit before finishing the review.', timeout: 'The response timed out.', cancelled: 'The call was cancelled.', usageLimit: 'ChatGPT usage limit reached.', staleConnection: 'The ChatGPT account or model changed.', invalidReviewOrModel: 'The response did not match the selected model or review format.', invalidResponse: 'The response could not be validated.', protocol: 'The response could not be validated.', findingLimit: 'The retained suggestion limit was reached.'};
     return reasons[code ?? ''] ?? 'The call did not return a valid review.';
 }
 /** Display-only trim of surrounding text so one diff reads as one line. The exact patch is in its details. */
@@ -363,8 +363,18 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 !item || typeof item.path !== 'string' || typeof item.reviewer !== 'string' || !item.feedback
                 || !Array.isArray(item.feedback.strengths) || !Array.isArray(item.feedback.improvements)
                 || item.feedback.strengths.length !== 3 || item.feedback.improvements.length !== 3
-                || [item.feedback.overview, ...item.feedback.strengths, ...item.feedback.improvements].some(text => typeof text !== 'string' || !text.trim() || bytes(text) > 2000)))
+                || [item.feedback.overview, ...item.feedback.strengths, ...item.feedback.improvements.map(point => typeof point === 'string' ? point : point?.text)].some(text => typeof text !== 'string' || !text.trim() || bytes(text) > 2000)))
                 throw new Error('Invalid reading feedback. Reload the saved review.');
+            for (const entry of value.readingFeedback) for (const point of entry.feedback.improvements) {
+                if (typeof point === 'string') {
+                    if (requestId) throw new Error('Each improvement point needs at least one targeted diff. Run the review again.');
+                    continue;
+                }
+                if (!point || !Array.isArray(point.editIds) || !point.editIds.length || point.editIds.length > 32
+                    || new Set(point.editIds).size !== point.editIds.length
+                    || point.editIds.some(id => typeof id !== 'string' || !Array.isArray(value.edits) || !value.edits.some(edit => edit.id === id && edit.original !== edit.replacement)))
+                    throw new Error('Each improvement point needs at least one targeted diff. Run the review again.');
+            }
         }
         if (value?.schemaVersion === 2) {
             if (!value.reviewId || !value.workflow || !Array.isArray(value.edits) || value.edits.length > 1024 || !Array.isArray(value.workflow.coverage) || value.workflow.coverage.length > 384 || (requestId && value.requestId !== requestId) || new Set(value.edits.map(e => e.id)).size !== value.edits.length)
@@ -419,10 +429,26 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 ['Three points for improvement', '❌', entry.feedback.improvements],
             ] as const) {
                 const list = el('ul', '', 'review-feedback-list');
-                for (const text of points) {
+                for (const point of points) {
                     const item = el('li'), emoji = el('span', marker, 'review-feedback-marker');
                     emoji.setAttribute('aria-hidden', 'true');
-                    item.append(emoji, el('span', text)); list.append(item);
+                    const content = el('div');
+                    content.append(el('span', typeof point === 'string' ? point : point.text));
+                    if (typeof point !== 'string') {
+                        const links = el('div', '', 'review-improvement-diffs');
+                        for (const id of point.editIds) {
+                            const index = result!.edits.findIndex(edit => edit.id === id), edit = result!.edits[index];
+                            if (!edit) continue;
+                            if (!waiting(edit)) links.append(el('p', `Diff ${index + 1} · ${decisionLabel(edit.status)}`, 'review-guidance'));
+                            else {
+                                const link = button(`Jump to diff ${index + 1}: ${clip(edit.original, 45) || '(insertion)'} → ${clip(edit.replacement, 45) || '(removal)'}`, () => { void jumpToEdit(edit); }, 'review-improvement-jump');
+                                link.disabled = Boolean(edit.sourceStale) || !hooks.jumpToEdit;
+                                links.append(link);
+                            }
+                        }
+                        content.append(links);
+                    } else if (marker === '❌') content.append(el('p', 'This earlier feedback has no linked diff. Run a new review for targeted suggestions.', 'review-guidance'));
+                    item.append(emoji, content); list.append(item);
                 }
                 content.append(el('h3', title), list);
             }
@@ -820,7 +846,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             activity.scrollIntoView?.({block: 'nearest'});
         }
         timer = setTimeout(() => { if (!live(token) || pending !== requestId)
-            return; cancelRequest(); say('Review timed out locally. Usage may count. Retry when ready; your manuscript was not changed.'); update(); }, workflowMode ? 530000 : 65000);
+            return; cancelRequest(); say('Review timed out locally. Usage may count. Retry when ready; your manuscript was not changed.'); update(); }, workflowMode ? 8 * 185000 + 5000 : 185000);
         try {
             const connection = { generation: config!.generation, accountId: config!.activeAccountId!, model: config!.model! };
             const onProgress = (event: ReviewProgress) => {

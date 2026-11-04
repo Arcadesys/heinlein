@@ -225,6 +225,7 @@ pub struct Configuration {
     cancelled: Option<watch::Receiver<bool>>,
     account_id: String,
     progress: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    request_timeout: Duration,
 }
 
 impl Configuration {
@@ -245,6 +246,7 @@ impl Configuration {
             cancelled: None,
             account_id: String::new(),
             progress: None,
+            request_timeout: REQUEST_TIMEOUT,
         })
     }
 
@@ -256,6 +258,11 @@ impl Configuration {
 
     pub fn model(&self) -> &str {
         &self.model
+    }
+
+    pub(crate) fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
     }
 
     /// Bind this request to the native account/model lease. A changed account,
@@ -1268,7 +1275,7 @@ async fn send_decoded_request(
         .https_only(true)
         .no_proxy()
         .connect_timeout(Duration::from_secs(10))
-        .timeout(REQUEST_TIMEOUT)
+        .timeout(config.request_timeout)
         .build()
         .map_err(|_| QuestionError::unavailable())?;
     let mut response = client
@@ -1440,7 +1447,7 @@ fn parse_response(id: &str, bytes: &[u8]) -> Result<QuestionAnswer, QuestionErro
                 .and_then(serde_json::Value::as_str)
                 == Some("max_output_tokens")
             {
-                ("outputLimit", "OpenAI reached the 2,000-token output limit before producing answer text; the request was not retried")
+                ("outputLimit", "OpenAI reached the response token limit before producing answer text; the request was not retried")
             } else {
                 ("incompleteNoText", "OpenAI returned an incomplete response without answer text; the request was not retried")
             }

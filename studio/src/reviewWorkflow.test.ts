@@ -52,21 +52,21 @@ it('streams activity before completion, ignores stale events, and stops showing 
     progress({...event,receivedBytes:4096});
     expect(panel!.element.textContent).toBe(cancelled);
 });
-it('labels a failed empty result as incomplete and shows its reason instead of claiming a clean review', async () => {
+it.each([['timeout', 'The response timed out.'], ['outputLimit', 'The model reached its response token limit before finishing the review.']])('labels a failed empty result (%s) as incomplete with its reason', async (error, reason) => {
     const f = fixture();
     const original = f.core.requestReview.getMockImplementation()!;
     f.core.requestReview.mockImplementation(async request => {
         const result = await original(request);
         result.edits = [];
         result.workflow!.coverage[0].status = 'failed';
-        result.workflow!.coverage[0].error = 'timeout';
+        result.workflow!.coverage[0].error = error;
         return result;
     });
     panel!.open();
     await vi.waitFor(() => expect(f.button('Preview review').disabled).toBe(false));
     await f.click('Preview review'); await f.click('Run review');
     expect(panel!.element.querySelector('[role=status]')!.textContent).toContain('Review incomplete. 0 of 1 calls completed.');
-    expect(panel!.element.textContent).toContain('The response timed out.');
+    expect(panel!.element.textContent).toContain(reason);
     expect(panel!.element.textContent).not.toContain('No targeted edits suggested.');
     expect(panel!.element.textContent).not.toContain('Review ready.');
     expect(f.core.requestReview).toHaveBeenCalledOnce();
