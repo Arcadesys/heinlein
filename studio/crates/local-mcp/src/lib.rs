@@ -87,6 +87,8 @@ struct Pinned {
 /// Host-selected scope, fixed for the process lifetime. Never supplied by a tool.
 pub enum Selection {
     Scenes(Vec<String>),
+    /// A native-authorized project catalog, refreshed by the Studio adapter.
+    Project(Vec<String>),
     Manuscript(String),
 }
 impl LocalMcp {
@@ -154,14 +156,17 @@ impl LocalMcp {
                 let mut cache=studio.cached.lock().map_err(|_|("busy","Selection state is busy"))?;
                 let Some((generation,selection))=state.and_then(|s|s.selection.map(|selection|(s.generation,selection))) else {
                     *cache=None;
-                    if name=="list_projects" {let _:Empty=decode(arguments)?;return Ok(json!({"projects":[],"dataNotice":DATA_NOTICE,"message":"Choose MCP connection in Heinlein Studio and explicitly allow a source file."}));}
+                    if name=="list_projects" {let _:Empty=decode(arguments)?;return Ok(json!({"projects":[],"dataNotice":DATA_NOTICE,"message":"Choose MCP connection in Heinlein Studio and explicitly allow a project."}));}
                     return Err(("noSelection","No project is allowed. Choose MCP connection in Heinlein Studio."));
                 };
-                if cache.as_ref().is_none_or(|(previous,_)|previous!=&generation){
+                let sources=selection.sources().map_err(|_|("selectionUnavailable","Project sources are unavailable or exceed the supported limits"))?;
+                let key=format!("{generation}:{}",proposal_store::text_hash(&sources.join("\0")));
+                if cache.as_ref().is_none_or(|(previous,_)|previous!=&key){
                     *cache=None;
                     let repo=selection.repository().map_err(|_|("selectionUnavailable","Allowed project moved or is unavailable"))?;
-                    let server=Pinned::open(repo.root(),selection.scenes,&selection.proposal_store,studio.client_label.clone()).map_err(|_|("selectionUnavailable","Allowed sources are unavailable or unsafe"))?;
-                    *cache=Some((generation,server));
+                    let scope=if selection.project_wide {Selection::Project(sources)} else {Selection::Scenes(sources)};
+                    let server=Pinned::open_selected(repo.root(),scope,Some(&selection.proposal_store),studio.client_label.clone()).map_err(|_|("selectionUnavailable","Allowed sources are unavailable or unsafe"))?;
+                    *cache=Some((key,server));
                 }
                 cache.as_ref().ok_or(("noSelection","No project is allowed"))?.1.execute(name,arguments)
             }).map_err(|_|("selectionUnavailable","Studio selection is busy, unavailable, or needs recovery"))?,
@@ -191,8 +196,9 @@ impl Pinned {
     ) -> Result<Self, String> {
         let repository = Repository::open(repository)
             .map_err(|_| "Selected repository is unavailable or unsafe")?;
+        let project_wide = matches!(&selection, Selection::Project(_));
         let (scenes, manifest_pin) = match selection {
-            Selection::Scenes(scenes) => (scenes, None),
+            Selection::Scenes(scenes) | Selection::Project(scenes) => (scenes, None),
             Selection::Manuscript(path) => {
                 let before = repository
                     .read(&path)
@@ -222,13 +228,21 @@ impl Pinned {
                 (scenes, Some((path, before.content_hash)))
             }
         };
-        if scenes.is_empty()
-            || scenes.len() > MAX_SELECTED_SCENES
+        if (!project_wide && scenes.is_empty())
+            || scenes.len()
+                > if project_wide {
+                    4096
+                } else {
+                    MAX_SELECTED_SCENES
+                }
             || client_label.is_empty()
             || client_label.len() > 128
             || client_label.chars().any(char::is_control)
         {
-            return Err("Select 1–128 scenes and a short client label".into());
+            return Err(
+                "Selected sources exceed the supported limits or the client label is invalid"
+                    .into(),
+            );
         }
         // Refuse overlap before opening/creating the private store. MCP setup cannot
         // create storage inside a manuscript directory, even before its first call.
@@ -274,12 +288,9 @@ impl Pinned {
             }
         }
         #[cfg(unix)]
-        let root_identity = {
-            use std::os::unix::fs::MetadataExt;
-            let metadata = std::fs::symlink_metadata(repository.root())
-                .map_err(|_| "Selected repository is unavailable")?;
-            (metadata.dev(), metadata.ino())
-        };
+        let root_identity = repository
+            .verified_root_identity()
+            .map_err(|_| "Selected repository moved or changed")?;
         // Check the index again after resolving members; changes never expand scope.
         if let Some((path, hash)) = &manifest_pin {
             if repository
@@ -317,16 +328,22 @@ impl Pinned {
     }
     fn check_root(&self) -> AppResult<()> {
         #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            let metadata = std::fs::symlink_metadata(self.scope.repository.root())
-                .map_err(|_| source_error(repository_core::Error::NotFound))?;
-            if !metadata.is_dir() || (metadata.dev(), metadata.ino()) != self.scope.root_identity {
-                return Err((
+        if self
+            .scope
+            .repository
+            .verified_root_identity()
+            .map_err(|_| {
+                (
                     "selectionChanged",
                     "Selected repository moved or changed; restart with an explicit selection",
-                ));
-            }
+                )
+            })?
+            != self.scope.root_identity
+        {
+            return Err((
+                "selectionChanged",
+                "Selected repository moved or changed; restart with an explicit selection",
+            ));
         }
         if let Some((path, hash)) = &self.scope.manifest_pin {
             let current = self.scope.repository.read(path).map_err(source_error)?;
@@ -615,4 +632,34 @@ impl ServerHandler for LocalMcp {
         }
         .into())
     }
+}
+
+/// Bounded stdio transport shared by the standalone server and Studio's headless
+/// MCP entry point. This never constructs a GUI or reads authentication settings.
+pub async fn serve_stdio(server: LocalMcp) -> Result<(), String> {
+    use futures::{future, StreamExt};
+    use rmcp::{
+        service::{RxJsonRpcMessage, TxJsonRpcMessage},
+        transport::async_rw::JsonRpcMessageCodec,
+        ServiceExt,
+    };
+    use tokio_util::codec::{FramedRead, FramedWrite};
+    let input = FramedRead::new(
+        tokio::io::stdin(),
+        JsonRpcMessageCodec::<RxJsonRpcMessage<RoleServer>>::new_with_max_length(MAX_REQUEST_BYTES),
+    )
+    .take_while(|message| future::ready(message.is_ok()))
+    .map(Result::unwrap);
+    let output = FramedWrite::new(
+        tokio::io::stdout(),
+        JsonRpcMessageCodec::<TxJsonRpcMessage<RoleServer>>::default(),
+    );
+    server
+        .serve((output, input))
+        .await
+        .map_err(|_| "MCP initialization failed")?
+        .waiting()
+        .await
+        .map_err(|_| "MCP session ended unexpectedly")?;
+    Ok(())
 }

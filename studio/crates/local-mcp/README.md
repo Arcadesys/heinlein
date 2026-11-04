@@ -1,48 +1,62 @@
 # Heinlein local drafting MCP
 
-Local manuscript access for an external Claude/Codex MCP client. Fixed selections
-are **read-only by default**, with optional proposals for explicit author review.
-Studio-following access uses only the files explicitly allowed in Studio.
-This is not granted draft saving or an implementation of the complete ADR-001
-authority contract. No client configuration, credentials, persistent access,
-network listener, provider call, or background service is installed or required.
-MCP transports untrusted manuscript data and pending proposals. Only a later,
-separately authenticated/native Studio author flow may apply them through Core.
+Local saved manuscript access for an external Codex/Claude MCP client. Fixed CLI
+selections are read-only by default; Studio's explicit project grant permits
+reads and pending revision proposals. Only the native author review/apply flow
+can change writing. The server has no network listener, model calls, credential
+setup, approval, publishing or manuscript-save tool.
 
-## Build and explicitly launch
+## Connect from Studio
 
-For one reusable Codex connection, build the server once and use
-`--studio-selection PRIVATE_ABSOLUTE_DIRECTORY`. Point it to Studio's private
-`app_data_dir/mcp-selection-v1` directory. The server starts with no project
-access when that directory has no selection; it does not discover folders.
+1. Open a project. A scene does not need to be open or saved first.
+2. Choose **Codex connection…** in the project navigator, the Project actions
+   menu, or the global More menu.
+3. Choose **Connect Codex** once and confirm the native setup prompt. This uses
+   the installed Studio executable's bounded headless stdio mode; no separate
+   server build is needed. It updates only Codex's `heinlein` MCP entry.
+4. Choose **Allow this project** and confirm the named project. Start a new
+   Codex chat after first-time client setup. Ordinary scene/file changes and
+   later explicit project selections use the same connection without another
+   registration.
 
-In Studio, open any local or managed project and a saved Markdown source file.
-Choose **More actions → MCP connection… → Allow this source file…**, then review
-the native confirmation's complete file list. Add source files one at a time.
-Choosing a source in another project replaces the previous project's selection.
-**Disconnect all project access** revokes the selection without deleting pending
-proposals. Opening a project alone does not share it with MCP.
+If the CLI is unavailable, **Manual setup command** contains the exact quoted
+command for this executable and private profile directory. Copy that command
+rather than guessing installation or Application Support paths. Setup status
+verifies configuration, not a live client session or inference request. Client
+configuration is changed only by the explicit native-confirmed setup action.
 
-The same running connection follows explicitly confirmed selection changes.
-Changes and revocation invalidate cached read snapshots, including when switching
-away and back to the same project. Selection files are private, bounded,
-atomically persisted, tied to the repository's filesystem identity, and separate
-from manuscript storage. MCP tools cannot create or change this selection.
-Revocation and each tool call share a filesystem lock so a successful revocation
-does not leave an old-scope operation running behind it. A stale native
-confirmation cannot overwrite a newer selection or revocation.
+One explicitly selected project is shared at a time. Granting another replaces
+that selection; **Disconnect project access** revokes it. Saved proposals remain
+available for native author review. Project grants and client configuration live
+outside the app bundle and survive application updates at a stable installation
+path, bundle ID and profile location.
 
-For example, after replacing the binary/directory arguments with real absolute
-paths, Codex's one-time registration is:
+Project access includes eligible saved UTF-8 Markdown throughout that project,
+including references and new or renamed files. Hidden/private-internal paths,
+credentials/secrets paths, `.gitignore` exclusions, symbolic links, generated
+compatibility copies, non-UTF-8 files and files over 2 MiB stay excluded. Catalogs
+are bounded to 4,096 sources, 20,000 scanned entries and 64 MiB of source metadata
+sizes. Tracked scenes follow manuscript order, then other sources follow path
+order. Unsaved buffers are never read. Continued source proposals still require
+an exact fresh read and native author review before any application.
 
-```sh
-codex mcp add heinlein -- /absolute/path/to/heinlein-local-mcp \
-  --studio-selection /absolute/private/app_data_dir/mcp-selection-v1 \
-  --client-label 'Codex local drafting'
-```
+Existing version-1 per-file approvals stay limited until the author chooses
+**Allow this project**. That explicit grant writes version 2; older servers fail
+closed rather than misreading it as broader access. Reconfigure/restart an older
+client with the updated Studio executable. Opening this panel or installing an
+update does not expand existing permissions.
 
-The server also retains its fixed selection mode below for isolated clients and
-tests. Do not combine `--studio-selection` with fixed-selection arguments.
+Revocation, selection changes and tool calls share the existing private filesystem
+lock. Stale confirmation cannot overwrite newer revocation. Membership/order
+changes invalidate cached read pins, and repository identity is checked against
+both the held directory descriptor and the selected path. A directory replacement
+cannot turn a saved grant into access to a different project.
+
+## Standalone server (advanced)
+
+The standalone binary also supports `--studio-selection PRIVATE_ABSOLUTE_DIRECTORY`
+for the same explicit Studio grants. Do not combine it with fixed-selection flags.
+Fixed selections below retain their 128-scene bound and do not expand automatically.
 
 macOS/Linux with Rust and Cargo:
 
@@ -150,7 +164,9 @@ Tools and instructions are fixed; manuscript text cannot add permissions.
 Responses flag proposals as requiring author review and never claim approval.
 
 `sceneId` is a deterministic project/path selection identifier, not a stable
-manuscript scene ID. Moving/reordering a path requires a fresh explicit selection.
+manuscript scene ID. Fixed CLI scope changes require a fresh explicit selection.
+Studio project catalogs refresh automatically, invalidating old read snapshots
+when their membership or order changes.
 `baseHash` is SHA-256 of exact persisted bytes, not an authenticated revision
 ledger. Snapshot IDs are random per-process latest-read pins; reading a scene
 again invalidates its earlier pin. Restarting the server invalidates all pins.

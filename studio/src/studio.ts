@@ -645,8 +645,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const updates=createUpdatePanel(core,{quit:quitSafely});
   const updateEntry=button('Updates…',()=>{void updates.open();},'update-entry');updateEntry.setAttribute('aria-haspopup','dialog');
   const openGitHubEntry = button('Open GitHub project…', () => {void github.open(true);}, 'github-open-entry');
-  const mcpAccess=createMcpAccessPanel(core,{current:()=>({session:standalone?.active?null:repository,path:!standalone?.active&&opened&&!opened.generatedCompatibility&&/\.(md|markdown)$/i.test(opened.path)?opened.path:null,problem:dirty||saving||recoveryPending||recoveryErrorMessage||structuralBusy||selecting||repositoryDetached?'Save your writing and resolve recovery before allowing MCP access.':null})});
-  if(mcpAccess.supported){const entry=button('MCP connection…',()=>{void mcpAccess.open();});entry.setAttribute('aria-haspopup','dialog');corner.append(entry);}
+  const mcpAccess=createMcpAccessPanel(core,{current:()=>({session:standalone?.active?null:repository,problem:structuralBusy||selecting||repositoryDetached?'Finish the current project change before allowing access.':null})});
+  if(mcpAccess.supported){const entry=button('Codex connection…',()=>{void mcpAccess.open();});entry.setAttribute('aria-haspopup','dialog');corner.append(entry);const projectEntry=button('Codex connection…',()=>{void mcpAccess.open();},'project-connection-entry');projectEntry.setAttribute('aria-haspopup','dialog');files.insertBefore(projectEntry,filesBody);}
   const reviewerManager=createReviewerManager(core,root);
   if(core.listCustomReviewers&&core.saveCustomReviewer){const entry=button('Review agents…',()=>{void reviewerManager.open();});entry.setAttribute('aria-haspopup','dialog');corner.append(entry);}
   openGitHubEntry.setAttribute('aria-haspopup', 'dialog');
@@ -686,6 +686,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if(repository&&(core.exportManuscript||core.saveMarkdownExport)&&drafting.state?.revision)items.push(button('Export manuscript…',()=>{void markdownExport.open(drafting.state!.project,{kind:'project'});}));
     items.push(projectLibrary.supported ? button('Projects…', () => { void projectLibrary.open(); }) : button('Open project…', () => { void selectRepository(() => core.pickRepository()); }));
     if (repository?.projectId) items.push(button('Project settings', () => { void projectLibrary.settings(repository!.projectId!); }));
+    if(repository&&mcpAccess.supported){const connect=button('Codex connection…',()=>{projectMenu.querySelector<HTMLElement>('summary')?.focus();void mcpAccess.open();});connect.setAttribute('aria-haspopup','dialog');items.push(connect);}
     if (repository) items.push(searchManuscript, button('Source files', () => showNavView('files', true)));
     if(projectEntries.childElementCount)items.push(el('hr'),el('p','Switch project','menu-label'),projectEntries);
     const libraryItems = drafting.menuItems(); if (libraryItems.length) items.push(el('hr'), ...libraryItems);

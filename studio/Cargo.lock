@@ -1905,6 +1905,7 @@ dependencies = [
  "fontdb",
  "github-workspace",
  "heinlein-chatgpt-auth",
+ "heinlein-local-mcp",
  "proposal-store",
  "raw-window-handle",
  "repository-core",

@@ -44,6 +44,8 @@ mod github;
 mod manuscript_export;
 mod markdown_export;
 mod mcp_access;
+mod mcp_cli;
+mod mcp_setup;
 #[cfg(all(test, unix))]
 mod persistence_tests;
 mod preferences;
@@ -704,6 +706,9 @@ async fn list_system_fonts(window: tauri::WebviewWindow) -> Result<Vec<String>, 
     .map_err(|e| e.to_string())
 }
 fn main() {
+    if mcp_cli::run_if_requested() {
+        return;
+    }
     if std::env::args_os().any(|arg| arg == "--scene-native-acceptance") {
         #[cfg(all(feature = "scene-native-acceptance", target_os = "macos"))]
         {

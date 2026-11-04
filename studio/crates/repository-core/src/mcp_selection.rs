@@ -18,15 +18,23 @@ const LIMIT: u64 = 64 * 1024;
 pub struct Selection {
     pub repository: PathBuf,
     pub scenes: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub project_wide: bool,
     pub proposal_store: PathBuf,
     pub device: u64,
     pub inode: u64,
 }
 impl Selection {
+    pub fn sources(&self) -> Result<Vec<String>> {
+        if self.project_wide {
+            self.repository()?.mcp_project_sources()
+        } else {
+            Ok(self.scenes.clone())
+        }
+    }
     pub fn repository(&self) -> Result<Repository> {
         let repo = Repository::open(&self.repository)?;
-        let m = std::fs::symlink_metadata(repo.root()).map_err(|_| Error::RecoveryIo)?;
-        if (m.dev(), m.ino()) != (self.device, self.inode) {
+        if repo.verified_root_identity()? != (self.device, self.inode) {
             return Err(Error::RecoveryIo);
         }
         Ok(repo)
@@ -97,12 +105,15 @@ impl SelectionStore {
             return Err(Error::RecoveryIo);
         }
         let state: State = serde_json::from_slice(&bytes).map_err(|_| Error::RecoveryIo)?;
-        if state.schema_version != 1 || uuid::Uuid::parse_str(&state.generation).is_err() {
+        if !matches!(state.schema_version, 1 | 2)
+            || uuid::Uuid::parse_str(&state.generation).is_err()
+        {
             return Err(Error::RecoveryIo);
         }
         if let Some(s) = &state.selection {
-            if s.scenes.is_empty()
-                || s.scenes.len() > 128
+            if (s.project_wide && (state.schema_version != 2 || !s.scenes.is_empty()))
+                || (!s.project_wide
+                    && (state.schema_version != 1 || s.scenes.is_empty() || s.scenes.len() > 128))
                 || !s.repository.is_absolute()
                 || !s.proposal_store.is_absolute()
                 || s.proposal_store.starts_with(&s.repository)
@@ -127,7 +138,11 @@ impl SelectionStore {
     fn write_locked(&self, selection: Option<Selection>) -> Result<State> {
         self.read_locked()?; // Preserve corrupt or unsupported records for recovery.
         let state = State {
-            schema_version: 1,
+            schema_version: if selection.as_ref().is_some_and(|s| s.project_wide) {
+                2
+            } else {
+                1
+            },
             generation: uuid::Uuid::new_v4().to_string(),
             selection,
         };
@@ -222,13 +237,46 @@ impl SelectionStore {
                 return Err(Error::RecoveryIo);
             }
         }
-        let m = std::fs::symlink_metadata(repo.root()).map_err(|_| Error::RecoveryIo)?;
+        let (device, inode) = repo.verified_root_identity()?;
         self.write_locked(Some(Selection {
             repository: repo.root().to_path_buf(),
             scenes,
+            project_wide: false,
             proposal_store: proposal_store.to_path_buf(),
-            device: m.dev(),
-            inode: m.ino(),
+            device,
+            inode,
+        }))
+    }
+    /// A native author action grants this project, including future saved Markdown.
+    /// Existing per-file selections never expand implicitly. Older clients reject v2.
+    pub fn select_project_checked(
+        &self,
+        repo: &Repository,
+        proposal_store: &Path,
+        expected_generation: Option<&str>,
+    ) -> Result<State> {
+        let _lock = self.lock()?;
+        let current = self.read_locked()?;
+        if current.as_ref().map(|s| s.generation.as_str()) != expected_generation {
+            return Err(Error::Conflict);
+        }
+        if !proposal_store.is_absolute()
+            || proposal_store.starts_with(repo.root())
+            || repo.root().starts_with(proposal_store)
+            || self.path.starts_with(repo.root())
+            || repo.root().starts_with(&self.path)
+        {
+            return Err(Error::RecoveryIo);
+        }
+        repo.mcp_project_sources()?;
+        let (device, inode) = repo.verified_root_identity()?;
+        self.write_locked(Some(Selection {
+            repository: repo.root().to_path_buf(),
+            scenes: vec![],
+            project_wide: true,
+            proposal_store: proposal_store.to_path_buf(),
+            device,
+            inode,
         }))
     }
     pub fn revoke(&self) -> Result<State> {

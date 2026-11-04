@@ -18,10 +18,14 @@ it('allows the real MCP status, source selection and revocation bridge only in t
   vi.mocked(invoke).mockClear();
   await localCore.mcpRequest!({action: 'status'});
   await localCore.mcpRequest!({action: 'useSource', repositoryId: 'synthetic-repository', path: 'scene.md'});
+  await localCore.mcpRequest!({action: 'useProject', repositoryId: 'synthetic-repository'});
+  await localCore.mcpRequest!({action: 'setupCodex'});
   await localCore.mcpRequest!({action: 'revoke'});
   expect(vi.mocked(invoke).mock.calls).toEqual([
     ['mcp_access_request', {request: {action: 'status'}}],
     ['mcp_access_request', {request: {action: 'useSource', repositoryId: 'synthetic-repository', path: 'scene.md'}}],
+    ['mcp_access_request', {request: {action: 'useProject', repositoryId: 'synthetic-repository'}}],
+    ['mcp_access_request', {request: {action: 'setupCodex'}}],
     ['mcp_access_request', {request: {action: 'revoke'}}],
   ]);
   for (const command of ['mcp_access_request', 'list_proposals', 'reject_proposal', 'review_proposal', 'review_proposal_revert', 'apply_proposal_review', 'cancel_proposal_review']) {

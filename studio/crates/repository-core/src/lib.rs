@@ -410,6 +410,17 @@ impl Repository {
             standalone_review: None,
         })
     }
+    /// Verify the selected path still names the directory held by this repository.
+    #[cfg(unix)]
+    pub fn verified_root_identity(&self) -> Result<(u64, u64)> {
+        use std::os::unix::fs::MetadataExt;
+        let held = self.handle("", true)?.metadata().map_err(|_| Error::Io)?;
+        let current = std::fs::symlink_metadata(&self.root).map_err(|_| Error::Io)?;
+        if !current.is_dir() || (held.dev(), held.ino()) != (current.dev(), current.ino()) {
+            return Err(Error::Conflict);
+        }
+        Ok((held.dev(), held.ino()))
+    }
     #[cfg(not(unix))]
     pub fn open(_path: impl AsRef<Path>) -> Result<Self> {
         Err(Error::UnsupportedPlatform)
@@ -830,6 +841,76 @@ impl Repository {
             }
         }
         found.sort();
+        Ok(found)
+    }
+    /// Saved Markdown in an explicitly shared project. Uses the same private,
+    /// ignored, generated-file and descriptor-relative boundaries as browsing.
+    /// Catalog size and each text read are bounded; unsupported text is omitted.
+    pub fn mcp_project_sources(&self) -> Result<Vec<String>> {
+        let mut pending = vec![String::new()];
+        let mut found = Vec::new();
+        let mut scanned = 0;
+        let mut bytes = 0u64;
+        while let Some(path) = pending.pop() {
+            for entry in self.list(&path)? {
+                scanned += 1;
+                if scanned > MAX_SCAN {
+                    return Err(Error::LimitExceeded);
+                }
+                if entry.kind == "directory" {
+                    if parts(&entry.path)?.len() >= MAX_DEPTH {
+                        return Err(Error::LimitExceeded);
+                    }
+                    pending.push(entry.path);
+                } else if matches!(
+                    Path::new(&entry.path)
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .map(str::to_ascii_lowercase)
+                        .as_deref(),
+                    Some("md" | "markdown")
+                ) && entry.size_bytes <= MAX_FILE_BYTES
+                    && !self.is_generated(&entry.path)?
+                {
+                    bytes = bytes
+                        .checked_add(entry.size_bytes)
+                        .ok_or(Error::LimitExceeded)?;
+                    if found.len() >= MAX_ENTRIES || bytes > 64 * 1024 * 1024 {
+                        return Err(Error::LimitExceeded);
+                    }
+                    match self.read(&entry.path) {
+                        Ok(document) if !document.generated_compatibility => {
+                            bytes = bytes
+                                .saturating_sub(entry.size_bytes)
+                                .checked_add(document.size_bytes)
+                                .ok_or(Error::LimitExceeded)?;
+                            if bytes > 64 * 1024 * 1024 {
+                                return Err(Error::LimitExceeded);
+                            }
+                            found.push(entry.path);
+                        }
+                        Ok(_)
+                        | Err(
+                            Error::UnsupportedText
+                            | Error::TooLarge
+                            | Error::NotFound
+                            | Error::Denied,
+                        ) => {}
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
+        }
+        let mut rank = std::collections::HashMap::new();
+        if let Ok(state) = self.load_drafting() {
+            for (i, scene) in state.scenes.into_iter().enumerate() {
+                rank.insert(scene.path, i);
+            }
+        }
+        found.sort_by(|a, b| {
+            (rank.get(a).copied().unwrap_or(usize::MAX), a)
+                .cmp(&(rank.get(b).copied().unwrap_or(usize::MAX), b))
+        });
         Ok(found)
     }
     pub fn manuscript(&self, path: &str) -> Result<Manuscript> {
