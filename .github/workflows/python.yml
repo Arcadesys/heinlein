@@ -1,15 +1,13 @@
 name: Publishing and editorial validation
+# Run locally with: python3 tools/validate.py publishing
+# Hosted publishing remains available explicitly for macOS/toolchain comparisons.
 on:
-  pull_request:
-    paths: ['heinlein/**', 'studio/crates/repository-core/**', 'studio/Cargo.lock', 'studio/Cargo.toml', 'tests/**', 'examples/**', '.codex/hooks/**', 'tools/**', 'editorial/**', 'pyproject.toml', 'uv.lock', '.github/workflows/python.yml']
-  push:
-    branches: [main]
-    paths: ['heinlein/**', 'studio/crates/repository-core/**', 'studio/Cargo.lock', 'studio/Cargo.toml', 'tests/**', 'examples/**', '.codex/hooks/**', 'tools/**', 'editorial/**', 'pyproject.toml', 'uv.lock', '.github/workflows/python.yml']
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   publishing:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     env:
       HEINLEIN_REQUIRE_GOLDENS: '1'
     steps:
@@ -25,12 +23,19 @@ jobs:
       - name: Install fixture-pinned Pandoc and PDF prerequisites
         run: |
           version=$(cat tests/golden/PANDOC_VERSION)
-          curl --fail --location --retry 3 "https://github.com/jgm/pandoc/releases/download/${version}/pandoc-${version}-1-amd64.deb" -o "$RUNNER_TEMP/pandoc.deb"
-          sudo dpkg -i "$RUNNER_TEMP/pandoc.deb"
-          sudo apt-get update
-          sudo apt-get install -y poppler-utils
+          arch=$(uname -m)
+          curl --fail --location --retry 3 "https://github.com/jgm/pandoc/releases/download/${version}/pandoc-${version}-${arch}-macOS.zip" -o "$RUNNER_TEMP/pandoc.zip"
+          unzip -q "$RUNNER_TEMP/pandoc.zip" -d "$RUNNER_TEMP/pinned-pandoc"
+          pandoc_dir=$(find "$RUNNER_TEMP/pinned-pandoc" -type f -name pandoc -exec dirname {} \;)
+          test -n "$pandoc_dir"
+          export PATH="$pandoc_dir:$PATH"
+          echo "$pandoc_dir" >> "$GITHUB_PATH"
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install poppler
           test "$(pandoc --version | head -1)" = "pandoc ${version}"
-          google-chrome --version
+          if ! test -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask google-chrome
+          fi
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version
           pdftotext -v
       - name: Publishing, golden and editorial hook tests
         run: uv run --locked --extra dev pytest -ra
