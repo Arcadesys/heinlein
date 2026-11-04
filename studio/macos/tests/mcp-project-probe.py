@@ -27,7 +27,7 @@ def main():
         selection=base/'selection';selection.mkdir(mode=0o700)
         process=subprocess.Popen([str(binary),'--heinlein-mcp',str(selection)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,start_new_session=True)
         pending=b'';serial=0
-        def request(method,params):
+        def request(method,params,expected_error=None):
             nonlocal serial,pending
             serial+=1;identifier=serial
             payload={'jsonrpc':'2.0','id':identifier,'method':method,'params':params}
@@ -69,7 +69,7 @@ def main():
             assert tool('propose_scene',proposal)['error']['code']=='readRequired'
             read=tool('read_scene',{'projectId':project,'sceneId':scene});proposal.update(snapshotId=read['snapshotId'],baseHash=read['baseHash'])
             assert tool('propose_scene',proposal)['requiresAuthorReview'] is True
-            assert tool('apply_patch',{})['error']['code']=='unknownTool'
+            assert request('tools/call',{'name':'apply_patch','arguments':{}},expected_error=-32601)['errorCode']==-32601
             assert source.read_bytes()==original
             author_selection(False)
             assert tool('list_projects',{})['projects']==[]
