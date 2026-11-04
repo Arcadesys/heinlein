@@ -653,15 +653,16 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const projectTitle = el('h2', 'Open a repository');
   const projectMenu = rowMenu('Project actions', () => {
     const items: HTMLElement[] = [];
-    if (projectEntries.childElementCount) items.push(el('p', 'Switch project', 'menu-label'), projectEntries);
+    if(repository&&(core.exportManuscript||core.saveMarkdownExport)&&drafting.state?.revision)items.push(button('Export manuscript…',()=>{void markdownExport.open(drafting.state!.project,{kind:'project'});}));
     items.push(projectLibrary.supported ? button('Projects…', () => { void projectLibrary.open(); }) : button('Open project…', () => { void selectRepository(() => core.pickRepository()); }));
     if (repository?.projectId) items.push(button('Project settings', () => { void projectLibrary.settings(repository!.projectId!); }));
     if (repository) items.push(searchManuscript, button('Source files', () => showNavView('files', true)));
-    if (repository && core.saveMarkdownExport && drafting.state?.revision) items.push(button('Export as Markdown…', () => {void markdownExport.open(drafting.state!.project, {kind:'project'});}));
+    if(projectEntries.childElementCount)items.push(el('hr'),el('p','Switch project','menu-label'),projectEntries);
     const libraryItems = drafting.menuItems(); if (libraryItems.length) items.push(el('hr'), ...libraryItems);
     return items;
   }, 'project-menu');
-  const projectHead = el('div', '', 'tree-project'); projectHead.append(projectTitle, projectMenu);
+  const projectExport=button('Export manuscript…',()=>{if(drafting.state)void markdownExport.open(drafting.state.project,{kind:'project'});},'project-export');projectExport.hidden=true;
+  const projectHead = el('div', '', 'tree-project'); projectHead.append(projectTitle, projectExport, projectMenu);
   manuscriptBody.append(projectHead, draftingEntry, manifests, outline);
   manuscriptPane.append(manuscriptBody);
   const navPanel = el('section', '', 'panel nav-panel'); navPanel.setAttribute('aria-label', 'Project navigator');
@@ -810,7 +811,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     root, repository: () => standalone?.active?null:repository, run: runStructural, runOrganization: runLibraryOrganization, verify: verifyStructuralBuffer, selectedPath:()=>opened?.path??null,
     show: () => { renderPill(); draftingEntry.hidden = Boolean(drafting.state?.revision); outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
     open: path => { void showDocument(path); }, changed: draftingChanged,
-    exportGroup: core.saveMarkdownExport ? (id, title) => {void markdownExport.open(title, {kind:'group', id});} : undefined,
+    exportGroup: (core.exportManuscript||core.saveMarkdownExport) ? (id, title) => {void markdownExport.open(title, {kind:'group', id});} : undefined,
     report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
   });
   const markdownExport = createMarkdownExport(core, {
@@ -1598,6 +1599,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     }
     const commands: (PaletteItem | false)[] = [
       Boolean(newDraftButton) && {key: 'new-draft', label: 'New Markdown draft', right: !repository || standalone?.active ? formatKeys('⌘N') : undefined, run: () => newDraftButton?.click()},
+      Boolean(repository&&!standalone?.active&&drafting.state?.revision&&(core.exportManuscript||core.saveMarkdownExport))&&{key:'export-manuscript',label:'Export manuscript…',sub:'PDF, EPUB, Markdown, HTML or DOCX',run:()=>{void markdownExport.open(drafting.state!.project,{kind:'project'});}},
       Boolean(searchScope()) && {key: 'find-manuscript', label: 'Find in manuscript', sub: 'Search scene text locally, including the open buffer', right: formatKeys('⌘⇧F'), run: openManuscriptSearch},
       Boolean(editor) && {key: 'ask', label: 'Ask Heinlein about selection', sub: 'Opens Questions with the highlighted passage', right: formatKeys('⌘J'), run: () => askShortcut()},
       Boolean(editor) && {key: 'split', label: 'Split scene at cursor', sub: 'Previews before anything moves', right: formatKeys('⌘⇧B'), run: splitAtCursor},
@@ -1655,6 +1657,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     listing.hidden=standaloneActive;
   }
   function renderPill() {
+    projectExport.hidden=!(repository&&!standalone?.active&&drafting.state?.revision&&(core.exportManuscript||core.saveMarkdownExport));
     if (newDraftButton) {
       if (repository && !standalone?.active) newDraftButton.removeAttribute('aria-keyshortcuts');
       else newDraftButton.setAttribute('aria-keyshortcuts', 'Meta+N Control+N');
@@ -1962,7 +1965,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       listing.replaceChildren();undoFileRename.hidden=!drafting.canUndoRename;
       if (scan?.incomplete) listing.append(el('p', 'Some entries could not be checked; uncertain files and folders remain visible.', 'muted'));
       if (path) listing.append(button('↑ Parent folder', () => { void showDirectory(parentPath(path)); }, 'file-entry parent'));
-      if (core.saveMarkdownExport) listing.append(button('Export this folder as Markdown…', () => {void markdownExport.open(basename(path) || repository!.name, {kind:'folder', path});}));
+      if (core.exportManuscript||core.saveMarkdownExport) listing.append(button('Export folder…', () => {void markdownExport.open(basename(path) || repository!.name, {kind:'folder', path});}));
       for (const entry of entries) {
         const folder = entry.kind === 'directory';
         const name = filtered && !folder ? entry.name.replace(/\.(?:md|markdown)$/i, '') : entry.name;
@@ -1977,9 +1980,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
           const rename=button('Rename…',()=>drafting.renameFile(entry.path),'file-rename');rename.setAttribute('aria-label',`Rename ${entry.name}`);rename.setAttribute('aria-haspopup','dialog');
           item.addEventListener('keydown',event=>{if(event.key==='F2'){event.preventDefault();drafting.renameFile(entry.path);}});item.title+=' · F2 to rename';
           row.append(item,rename);listing.append(row);
-        } else if (folder && core.saveMarkdownExport) {
+        } else if (folder && (core.exportManuscript||core.saveMarkdownExport)) {
           const row = el('div', '', 'file-entry-row');
-          row.append(item, rowMenu(`Actions for folder ${entry.name}`, [button('Export as Markdown…', () => {void markdownExport.open(entry.name, {kind:'folder', path:entry.path});})])); listing.append(row);
+          row.append(item, rowMenu(`Actions for folder ${entry.name}`, [button('Export folder…', () => {void markdownExport.open(entry.name, {kind:'folder', path:entry.path});})])); listing.append(row);
         }else listing.append(item);
       }
       if (!entries.length) listing.append(el('p', 'This folder is empty.', 'empty'));

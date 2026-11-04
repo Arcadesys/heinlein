@@ -1,0 +1,14 @@
+html { color: #1c2024; background: #fff; font-family: Georgia, "Times New Roman", serif; line-height: 1.6; }
+body { max-width: 42rem; margin: 2rem auto; padding: 0 1.5rem; }
+h1, h2, h3, h4 { line-height: 1.25; break-after: avoid; }
+h1 { font-size: 2em; margin-bottom: .4em; }
+h2 { font-size: 1.5em; margin-top: 1.8em; }
+h3 { font-size: 1.2em; margin-top: 1.4em; }
+p { orphans: 3; widows: 3; }
+blockquote { margin-inline: 1em; padding-inline-start: 1em; border-inline-start: 2px solid #aaa; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+img { max-width: 100%; }
+table { border-collapse: collapse; max-width: 100%; }
+td, th { border: 1px solid #aaa; padding: .25em .5em; }
+@page { margin: 20mm; }
+@media print { body { max-width: none; margin: 0; padding: 0; } a { color: inherit; } }

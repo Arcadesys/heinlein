@@ -13,6 +13,7 @@
     "allow-list-directory",
     "allow-read-document",
     "allow-save-markdown-export",
+    "allow-export-manuscript",
     "allow-load-manuscript",
     "allow-list-system-fonts",
     "allow-save-document",

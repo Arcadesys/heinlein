@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/icon.png"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
+    },
+    "resources": {
+      "../../heinlein/": "publishing/heinlein/"
+    }
+  },
+  "productName": "Heinlein Studio Export Preview",
+  "identifier": "me.thearcades.heinlein.studio.export-preview",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Heinlein Studio Export Preview \u00b7 Isolated review build",
+        "width": 1200,
+        "height": 850,
+        "minWidth": 650,
+        "minHeight": 500
+      }
+    ]
+  }
+}

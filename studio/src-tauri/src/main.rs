@@ -29,6 +29,8 @@ mod drafting;
 mod first_story;
 mod github;
 mod markdown_export;
+mod manuscript_export;
+mod export_pipeline;
 mod mcp_access;
 #[cfg(all(test, unix))]
 mod persistence_tests;
@@ -813,6 +815,7 @@ fn production_main() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            manuscript_export::export_manuscript,
             preferences::preferences_request,
             markdown_export::save_markdown_export,
             projects::project_request,

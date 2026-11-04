@@ -313,15 +313,36 @@ asset references block directory-changing operations so their bytes are not
 silently rewritten or their references knowingly broken. Incoming links elsewhere
 still need author review after path changes. Publication is deferred.
 
-**Export as Markdown…** in a group’s or project’s actions combines its sheets
-and nested groups into one Markdown file in Library order. In **Source files**,
-use a folder’s actions or **Export this folder as Markdown…** to include its
-subfolders; indexed sheets use Library order, followed by other Markdown files in
-natural filename order. Reference sheets are included. The export adds headings,
-omits YAML metadata and uses current editor text without changing the source.
-Images and attachments are not bundled. The native Save dialog requires a new
-file outside the source project; existing files are never replaced. No file is
-sent to anyone automatically.
+**Export manuscript…** is a visible button in the Library header, the first
+project action, and a command-palette entry. It opens one dialog for PDF, EPUB,
+Markdown, HTML and DOCX. Group/folder actions use the same dialog with an explicit
+scope label. Reference sheets are excluded by default and can be included with a
+checkbox. Native legacy reading order is preserved even when the host supplies a
+synthesized Library tree. Indexed folder sheets follow that same order.
+
+The dialog captures current editor text, adds headings and omits per-sheet YAML.
+Its optional author field supplies the export byline. It writes a new file outside
+the source project; existing files are never replaced. No source edits or automatic
+uploads occur. Conversion failures and canceled location pickers leave a retryable
+dialog. Local image attachments are not bundled in this version.
+
+Markdown requires no converter. Other formats use the bundled Heinlein publishing
+adapter plus a locally installed Python runtime with Heinlein's dependencies and
+Pandoc; PDF also requires Chrome/Chromium. The adapter reuses the existing Pandoc
+and EPUB/DOCX writers and the Chrome PDF renderer, using plain manuscript styling
+without publication branding or colophon pages. Chrome runs with a disposable
+profile; conversions are staged privately and bounded to three minutes. Missing
+converters produce an actionable error before a destination file is created.
+
+For an isolated review build (separate application identity and user-data profile):
+
+```sh
+OPENSSL_STATIC=1 CARGO_NET_OFFLINE=true npm run tauri build -- --config src-tauri/tauri.export-preview.conf.json --bundles app --ci
+```
+
+This builds **Heinlein Studio Export Preview.app** without replacing the installed
+app or importing its project/account lists. Production release configuration also
+bundles the publishing adapter but retains the stable production identifier.
 
 ## Tests
 

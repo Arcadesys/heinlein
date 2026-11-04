@@ -69,6 +69,7 @@ fn main() {
             "list_directory",
             "read_document",
             "save_markdown_export",
+            "export_manuscript",
             "save_document",
             "read_recovery",
             "stage_recovery",
