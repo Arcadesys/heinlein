@@ -1,0 +1,18 @@
+/* Floating review feedback never changes the manuscript's available width. */
+.review-background { position:fixed; top:4.5rem; right:.75rem; z-index:19; display:grid; grid-template-columns:minmax(0,1fr); justify-items:end; gap:.75rem; width:min(28rem, calc(100vw - 1.5rem)); max-width:calc(100vw - 1.5rem); max-height:calc(100dvh - 5.25rem); overflow:auto; pointer-events:none; color:var(--fg); font:1rem/1.5 var(--font-ui, var(--ui-fallback)); }
+.review-background[hidden], .review-background [hidden] { display:none !important; }
+.review-activity-button, .review-completion-toast { pointer-events:auto; box-sizing:border-box; max-width:100%; background:var(--bg); color:var(--fg); border:2px solid var(--fg); border-radius:var(--radius); box-shadow:var(--shadow); }
+.review-activity-button { display:flex; align-items:center; gap:.75rem; min-height:52px; padding:.65rem .85rem; font:inherit; text-align:left; cursor:pointer; }
+.review-activity-words { display:grid; min-width:0; overflow-wrap:anywhere; font-weight:700; }
+.review-activity-count { font-weight:400; }
+.review-radial { flex:none; display:block; width:2.25rem; height:2.25rem; }
+.review-radial svg { display:block; width:100%; height:100%; transform:rotate(-90deg); fill:none; stroke:currentColor; stroke-width:3; }
+.review-radial-track { stroke-dasharray:1 3; }
+.review-radial-arc { stroke-linecap:round; }
+@media (prefers-reduced-motion:no-preference) { .review-radial-indeterminate svg { animation:review-orbit 2s linear infinite; } }
+@keyframes review-orbit { to { transform:rotate(270deg); } }
+.review-completion-toast { width:100%; min-width:0; padding:1rem; overflow-wrap:anywhere; }
+.review-completion-toast p { margin:0 0 .75rem; font-weight:700; }
+.review-toast-actions { display:flex; flex-wrap:wrap; gap:.6rem; }
+.review-toast-actions button { min-width:0; max-width:100%; min-height:44px; padding:.6rem .8rem; font:inherit; color:var(--fg); background:var(--surface); border:1px solid var(--fg); border-radius:var(--radius); white-space:normal; cursor:pointer; }
+.review-background button:focus-visible { outline:3px solid var(--fg); outline-offset:3px; }

@@ -970,7 +970,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     focusEditor: () => focusWriterView(),
   });
   libraryReviewEntry.hidden=!reviewPanel.librarySupported;reviewPanel.adoptLibraryEntry(libraryReviewEntry);
-  root.append(reviewPanel.element);
+  root.append(reviewPanel.element, reviewPanel.activityElement);
 
   // Marks show only over clean text this exact view can prove it holds. Chapter parts already carry their source mapping.
   function reviewMarkTargets(): ReviewMarkTarget[] | null {
@@ -1714,7 +1714,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     questions?.clear();
     selectionAsk?.destroy(); selectionAsk = null;
     draftingQuestions?.clear(); questionButton = null;
-    if (!reviewApplying) reviewPanel?.clear(); currentChapter = null;
+    if (!reviewApplying) reviewPanel?.documentChanged(); currentChapter = null;
     writing.clearScene();
     cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; recoveryErrorMessage = null; recovery = null; recoveryPending = false; writePaused = null;
     editorCommands?.destroy();editorCommands=null;documentCommandBar.replaceChildren();documentReader = null; documentView = null;
@@ -2027,7 +2027,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     questions?.clear();
     selectionAsk?.destroy(); selectionAsk = null;
     draftingQuestions?.clear(); questionButton = null;
-    if (!reviewApplying) reviewPanel?.clear(); currentChapter = null;
+    if (!reviewApplying) reviewPanel?.documentChanged(); currentChapter = null;
     if (doc.generatedCompatibility) writing.clearScene();
     else writing.openScene(repository?.projectKey ?? '', doc.path, doc.text, drafting.state?.scenes.find(scene => scene.path === doc.path)?.id);
     cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; recoveryErrorMessage = null; recovery = draft; recoveryPending = Boolean(draft && draft.text !== doc.text); writePaused = null; writeBaseHash = doc.contentHash;

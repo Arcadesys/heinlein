@@ -2,24 +2,26 @@ import '../../src/fonts.bundle';
 import '../../src/style.css';
 import {EditorView} from '@codemirror/view';
 import {mountStudio} from '../../src/studio';
-import type {LocalCore, ProposalReview, QuestionRequest, QuestionRevisionAnswer, ReviewRequest, ReviewResult} from '../../src/localCore';
+import type {LocalCore, ProposalReview, QuestionRequest, QuestionRevisionAnswer, ReviewRequest, ReviewResult, ReviewProgress} from '../../src/localCore';
 const session = {id:'fixture',name:'capture-project',manifests:[]};
 let source = '# The Last Train\n\nThe station clock stopped at midnight.\n\nMara crossed the empty platform.\nRain tapped the glass roof.\n\nShe waited by the final carriage.\n';
 const original = source; const path = 'sample-scene.md';
+let otherSource = '# Next scene\n\nA fresh page waits for Mara.\n';
 const hash = async(text:string) => [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(b=>b.toString(16).padStart(2,'0')).join('');
 const documentFor = async()=>({path,text:source,contentHash:await hash(source),sizeBytes:new TextEncoder().encode(source).length,frontmatter:null,generatedCompatibility:false});
 const origin = {kind:'nativeOpenAi' as const,sessionId:'',clientLabel:'',identityAssurance:'unverifiedProviderMetadata' as const,provider:'openai' as const,model:'synthetic',requestId:'synthetic'};
 let request: QuestionRequest | null = null, finish: ((answer:QuestionRevisionAnswer)=>void) | null = null;
 let progress: ((text:string)=>void) | undefined;
+let reviewProgress:((event:ReviewProgress)=>void)|undefined;
 let reviewRequest:ReviewRequest|null=null,reviewFinish:((result:ReviewResult)=>void)|null=null,reviewCalls=0;
 let proposal: ProposalReview | null = null; let applied = 0, canceled = 0, rejected = 0, sent = 0, reviewed = 0;
 const core = {
-  available:()=>true,pickRepository:async()=>session,recentRepositories:async()=>[],listDirectory:async()=>[{path,name:path,kind:'file',sizeBytes:source.length}],readDocument:documentFor,loadManuscript:async()=>null,
-  saveDocument:async(_repo:string,_path:string,_hash:string,text:string)=>{source=text;return documentFor();},loadDrafting:async()=>null,readRecovery:async()=>null,stageRecovery:async(_repo:string,_path:string,baseHash:string,text:string)=>({id:'recovery',path,baseHash,text,updatedAt:0}),discardRecovery:async()=>{},setUnsavedChanges:async()=>{},requestClose:async()=>{},onCloseRequested:async()=>()=>{},listSystemFonts:async()=>[],
+  available:()=>true,pickRepository:async()=>session,recentRepositories:async()=>[],listDirectory:async()=>[{path,name:path,kind:'file',sizeBytes:source.length}],readDocument:async(_repo:string,target:string)=>target==='next-scene.md'?{...(await documentFor()),path:target,text:otherSource,contentHash:await hash(otherSource)}:documentFor(),loadManuscript:async()=>null,
+  saveDocument:async(_repo:string,target:string,_hash:string,text:string)=>{if(target==='next-scene.md'){otherSource=text;return {...(await documentFor()),path:target,text:otherSource,contentHash:await hash(otherSource)};}source=text;return documentFor();},loadDrafting:async()=>null,readRecovery:async()=>null,stageRecovery:async(_repo:string,target:string,baseHash:string,text:string)=>({id:'recovery',path:target,baseHash,text,updatedAt:0}),discardRecovery:async()=>{},setUnsavedChanges:async()=>{},requestClose:async()=>{},onCloseRequested:async()=>()=>{},listSystemFonts:async()=>[],
   questionStatus:async()=>({configured:true,model:'synthetic',selectedModel:'synthetic',models:[{slug:'synthetic',displayName:'Synthetic'}],accounts:[{id:'account',label:'Synthetic',signedIn:true,planEnabled:true}],activeAccountId:'account',generation:1,usageLimited:false,signInPending:false,message:'Ready'}),
   askQuestion:async(r:QuestionRequest,_connection:unknown,onProgress?:(text:string)=>void)=>{sent++;request=r;progress=onProgress;return new Promise<QuestionRevisionAnswer>(resolve=>{finish=resolve;});},
   suggestQuestionRevision:async(r:QuestionRequest)=>{sent++;request=r;return new Promise<QuestionRevisionAnswer>(resolve=>{finish=resolve;});},
-  requestReview:async(r:ReviewRequest)=>{reviewCalls++;reviewRequest=r;return new Promise<ReviewResult>(resolve=>{reviewFinish=resolve;});},
+  requestReview:async(r:ReviewRequest,_connection:unknown,onProgress?:(event:ReviewProgress)=>void)=>{reviewProgress=onProgress;reviewCalls++;reviewRequest=r;return new Promise<ReviewResult>(resolve=>{reviewFinish=resolve;});},
   cancelQuestion:async()=>{canceled++;return true;},
   listProposals:async()=>({pending:[],receipts:[]}),
   reviewProposal:async()=>{reviewed++;if(!proposal)throw new Error('No proposal');return proposal;},
@@ -35,6 +37,9 @@ const app = mountStudio(document.querySelector<HTMLElement>('#app')!,core);
 const ready = app.selectRepository(async()=>session).then(()=>app.showDocument(path));
 Object.assign(window,{questionsFixture:{
   ready,
+  finishReviewInvalid(){if(!reviewFinish)throw new Error('No review');reviewFinish({schemaVersion:999} as unknown as ReviewResult);reviewFinish=null;},
+  showNextScene:()=>app.showDocument('next-scene.md'),
+  reviewStep(){if(!reviewRequest)throw new Error('No review');reviewProgress?.({requestId:reviewRequest.requestId,completedCalls:1,totalCalls:2,reviewer:0,sourceIndex:0,chunkIndex:2,status:'receiving',receivedBytes:120,suggestions:1});},
   finishReviewWithFeedback(withEdits=true) {
     if(!reviewRequest||!reviewFinish)throw new Error('No review');
     const suggestions = [

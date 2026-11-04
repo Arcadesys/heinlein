@@ -1,3 +1,4 @@
+import {createReviewActivity} from './reviewActivity';
 import {renderMarkdown} from './markdown';
 import type { LocalCore, QuestionStatus, ReviewEdit, ReviewResult, ReviewRequest, ReviewerDefinition, ReviewCoverage, ReviewProgress, ProposalOutcome } from './localCore';
 import { changedSpan, decisionLabel, invisibleChangeNote, lineageDelta, patchContext, waiting, type PatchContext } from './reviewComparison';
@@ -63,6 +64,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     let pending: string | null = null;
     let busy = false;
     let disposed = false;
+    const background = createReviewActivity(() => show());
     let checking = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const workflowMode = Boolean(core.reviewDefinitions && core.previewReview);
@@ -302,6 +304,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         refreshReview.disabled = Boolean(busy || pending);
         startNew.disabled = discard.disabled = Boolean(busy);
         cancel.hidden = !pending;
+        keepWriting.hidden = !pending;
         activity.hidden = !pending || !workflowMode;
         connect.disabled = Boolean(pending || busy);
         const blocked = result?.edits.some(waiting) ? hooks.unavailable(false) : null;
@@ -310,6 +313,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         edits.querySelectorAll<HTMLInputElement>('input[type=radio]').forEach(n => { n.disabled = Boolean(busy || pending); });
         edits.querySelectorAll<HTMLElement>('[data-approve-reason]').forEach(n => { const why = n.dataset.approveReason ?? ''; n.textContent = why; n.hidden = !why; });
         updateStrip();
+        background.setVisible(!element.hidden && !element.classList.contains('review-tucked'));
     }
     function updateStrip() {
         const all = result?.edits ?? [];
@@ -338,11 +342,11 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             update();
         }
     } }
-    function cancelRequest() { const id = pending; pending = null; activity.hidden = true; clearTimeout(timer); generation++; checking = false; busy = false; if (id) {
+    function cancelRequest() { const id = pending; if (id) background.cancel(id); pending = null; activity.hidden = true; clearTimeout(timer); generation++; checking = false; busy = false; if (id) {
         void core.cancelQuestion?.(id).catch(() => { });
         retry.hidden = false;
     } }
-    function clear() { suspended=false; cancelRequest(); element.hidden = true; hooks.visibilityChanged?.(false); element.classList.remove('review-tucked'); scope = null; recaptureLibrary = null; result = null; config = null; savedRecords = []; shownReview = null; historyOpen = null; view = 'setup'; receipts.clear(); publishMarks(); saved.replaceChildren(); savedSection.hidden = true; edits.replaceChildren(); historyHost.replaceChildren(); aboutHost.replaceChildren(); sources.replaceChildren(); sourceSignature = ''; batchPreview.replaceChildren(); blob.textContent = ''; say(''); toggleMenu(false); update(); }
+    function clear() { suspended=false; cancelRequest(); background.clear(); element.hidden = true; hooks.visibilityChanged?.(false); element.classList.remove('review-tucked'); scope = null; recaptureLibrary = null; result = null; config = null; savedRecords = []; shownReview = null; historyOpen = null; view = 'setup'; receipts.clear(); publishMarks(); saved.replaceChildren(); savedSection.hidden = true; edits.replaceChildren(); historyHost.replaceChildren(); aboutHost.replaceChildren(); sources.replaceChildren(); sourceSignature = ''; batchPreview.replaceChildren(); blob.textContent = ''; say(''); toggleMenu(false); update(); }
     function untuck() {
         if (element.classList.contains('review-tucked')) {
             element.classList.remove('review-tucked');
@@ -353,6 +357,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     function tuck() {
         if (hooks.headerTabs) {hide(); hooks.focusEditor(); return;}
         element.classList.add('review-tucked');
+        background.setVisible(false);
         const count = result?.edits.filter(waiting).length ?? 0;
         hooks.announce?.(`Heinlein Review stays open${count ? ` with ${count} ${count === 1 ? 'suggestion' : 'suggestions'} waiting` : ''}. Choose Heinlein Review to come back.`);
         hooks.focusEditor();
@@ -832,6 +837,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (workflowMode && !continuing && !preparedRequest)
             return;
         pending = requestId;
+        background.start(requestId, scope.label, workflowMode ? coverage.length || null : 1);
         activityPhase = '';
         activityDetail.textContent = 'Preparing the selected review calls…';
         callProgress.removeAttribute('value');
@@ -846,7 +852,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             activity.scrollIntoView?.({block: 'nearest'});
         }
         timer = setTimeout(() => { if (!live(token) || pending !== requestId)
-            return; cancelRequest(); say('Review timed out locally. Usage may count. Retry when ready; your manuscript was not changed.'); update(); }, workflowMode ? 8 * 185000 + 5000 : 185000);
+            return; background.finish(requestId, 'attention', 'Review timed out. Open the review to retry; your text was not changed.'); cancelRequest(); say('Review timed out locally. Usage may count. Retry when ready; your manuscript was not changed.'); update(); }, workflowMode ? 8 * 185000 + 5000 : 185000);
         try {
             const connection = { generation: config!.generation, accountId: config!.activeAccountId!, model: config!.model! };
             const onProgress = (event: ReviewProgress) => {
@@ -858,6 +864,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 const reviewer = definitions.find(d => d.id === reviewerId)?.displayName ?? 'Reviewer';
                 const phase = event.status === 'running' ? 'waiting for response' : event.status === 'receiving' ? 'receiving response' : event.status === 'completed' ? 'call completed' : event.status === 'cancelled' ? 'call cancelled' : 'call failed';
                 const detail = `${reviewer} · chunk ${event.chunkIndex} of ${event.totalCalls} · ${phase}${event.status === 'receiving' ? ` · ${size(event.receivedBytes)} received` : ''}. ${event.completedCalls} of ${event.totalCalls} calls completed · ${plural(event.suggestions, 'suggestion')} retained.`;
+                background.progress(requestId, event.completedCalls, event.totalCalls);
                 callProgress.max = event.totalCalls;
                 callProgress.value = event.completedCalls;
                 activityDetail.textContent = detail;
@@ -876,6 +883,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             if (completed !== undefined && completed !== total)
                 say(`Review incomplete. ${completed} of ${total} calls completed. ${plural(result.edits.filter(waiting).length, 'suggestion')} retained. Check the call details below.`, 'warning');
             else say(`Review ready. ${plural(result.edits.filter(waiting).length, 'suggestion')} to decide, one at a time.`);
+            background.finish(requestId, completed !== undefined && completed !== total ? 'attention' : 'complete',
+                completed !== undefined && completed !== total ? `Review incomplete. ${completed} of ${total} calls completed.` : `Review complete. ${plural(result.edits.filter(waiting).length, 'suggestion')} ready.`);
             render();
             // Earlier reviews comes from the host's saved records, so the new one appears there too.
             if (workflowMode)
@@ -883,6 +892,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         }
         catch (error) {
             if (live(token)) {
+                background.finish(requestId, 'attention', 'Review could not be completed.');
                 say(message(error), 'warning');
                 retry.hidden = false;
             }
@@ -1255,9 +1265,17 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             void configure();
             title.focus({ preventScroll: true });
         }
-    function hide() { suspended=Boolean(scope); element.hidden=true; toggleMenu(false); hooks.visibilityChanged?.(false); }
+    function hide() { suspended=Boolean(scope); element.hidden=true; toggleMenu(false); hooks.visibilityChanged?.(false); background.setVisible(false); }
     function show() { if (scope && element.hidden && !disposed) {suspended=false; element.hidden=false; element.classList.remove('review-tucked'); hooks.visibilityChanged?.(true); update(); if (!pending && !ready()) void configure(); title.focus({preventScroll:true});} else openScope(); }
-    return { element, show, hide, visible:()=>!element.hidden&&!element.classList.contains('review-tucked'), open: () => openScope(), librarySupported: workflowMode, openLibrary: (captured: ReviewScope, recapture: () => Promise<CapturedLibraryScope>) => { if (workflowMode) { clear(); openScope(captured, recapture); } }, clear, stateChanged: update,
+    const keepWriting = button('Keep writing', () => { hide(); hooks.focusEditor(); });
+    keepWriting.className = 'review-keep-writing';
+    footActions.prepend(keepWriting);
+    const outside = (event: PointerEvent) => {
+        if (hooks.headerTabs && pending && !element.hidden && event.target instanceof Node && !element.contains(event.target)) { hide(); hooks.focusEditor(); }
+    };
+    document.addEventListener('pointerdown', outside, true);
+    return { element, activityElement: background.element, show, hide,
+        documentChanged() { if (pending || result) hide(); else clear(); }, visible:()=>!element.hidden&&!element.classList.contains('review-tucked'), open: () => openScope(), librarySupported: workflowMode, openLibrary: (captured: ReviewScope, recapture: () => Promise<CapturedLibraryScope>) => { if (pending) { show(); say('A review is already running. Wait for it or cancel it before starting another.'); return; } if (workflowMode) { clear(); openScope(captured, recapture); } }, clear, stateChanged: update,
         /** Places the host's library picker entry among the scope choices. Its own handler and guards stay with the host. */
         adoptLibraryEntry(node: HTMLElement) {
             libraryEntry = node;
@@ -1291,5 +1309,5 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 markNote.textContent = 'Highlights are off because the open text changed. Save your text, then choose Refresh review under More review actions to show the ones that still match.';
                 update();
             }
-        }, destroy() { clear(); disposed = true; element.remove(); } };
+        }, destroy() { clear(); disposed = true; document.removeEventListener('pointerdown', outside, true); background.destroy(); element.remove(); } };
 }

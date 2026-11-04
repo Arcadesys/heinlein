@@ -68,6 +68,13 @@ a fresh review if needed. Finding-cap failure retains the whole valid prior
 result, never a silently truncated call. Incomplete coverage is not a complete
 review, and zero findings is valid. An active batch must settle before approval.
 
+Hiding a running review keeps its captured scope and native request alive, including
+when the author opens another scene in the same repository. A fixed top-right radial
+shows completed-call counts without changing manuscript geometry. Completion produces
+a persistent, polite toast with Open review and Dismiss actions; it never steals
+editor focus. Failed or incomplete batches are labeled as needing attention. Repository
+changes, explicit cancellation and disposal still clear the captured review.
+
 Provider JSON is strict and uses indexed sources, not private paths or project
 IDs. Native code validates ranges, exact before text, core scope, protected
 frontmatter/em dashes and selected model. Native call IDs and available provider
