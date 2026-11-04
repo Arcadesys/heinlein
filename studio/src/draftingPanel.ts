@@ -242,14 +242,24 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   function newScene() {
     newSheet();
   }
-  function newSheet() {
+  function newSheet(adjacent?: {sceneId: string; after: boolean}) {
+    const anchor=adjacent?state?.scenes.find(scene=>scene.id===adjacent.sceneId):null;
+    if(adjacent&&!anchor){hooks.report('The scene changed. Open its menu again.',true);return;}
+    const repositoryId=hooks.repository()?.id, revision=state?.revision;
     const opener=document.activeElement as HTMLElement|null;
-    const node = dialog('New scene'); const body = el('form'); const cancel = () => { remove(node); if(opener?.isConnected)opener.focus(); };
+    const node = dialog('New scene'); const body = el('form'); const cancel = () => {
+      remove(node);
+      const target=adjacent?[...element.querySelectorAll<HTMLElement>('[data-scene-id]')].find(row=>row.dataset.sceneId===adjacent.sceneId)?.querySelector<HTMLButtonElement>('.scene-open'):opener;
+      if(target?.isConnected)target.focus();
+    };
+    if(anchor)body.append(el('p',`Add a scene ${adjacent!.after?'below':'above'} ${anchor.title||basename(anchor.path)}.`));
     const name = field(body, 'Scene title', 'Untitled scene');
     submitButton(body, 'Create scene', () => {
+      if(hooks.repository()?.id!==repositoryId||state?.revision!==revision){cancel();hooks.report('The library changed. Start adding the scene again.',true);return;}
       const path = `ms/sheet-${crypto.randomUUID()}.md`;
       const title = name.value.trim(); cancel();
-      void changeManuscript({kind: 'createScene', title, path, groupId: selectedGroup, beforeId: null}, path, undefined, true);
+      const change:DraftingChange=adjacent?{kind:'createSceneAdjacent',title,path,...adjacent}:{kind:'createScene',title,path,groupId:selectedGroup,beforeId:null};
+      void changeManuscript(change, path, undefined, true);
     });
     body.append(button('Cancel', cancel)); node.append(body); display(node, cancel);
   }
@@ -752,6 +762,8 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const later = button('Move later', () => state?.library ? reorderLibraryItem(scene.id, 1) : reorder(scene, 1)); later.disabled = state!.library ? siblingIndex === siblings.length - 1 : index === state!.scenes.length - 1;
       line.prepend(open, rowMenu(`Actions for ${scene.title || basename(scene.path)}`, [
         button('Rename…', () => renameLibraryItem(scene.id, 'scene')), button('Move to…', () => state?.library ? moveSheets([scene.id], scene.groupId) : moveScene(scene)),
+        button('Add scene above', () => newSheet({sceneId:scene.id,after:false})),
+        button('Add scene below', () => newSheet({sceneId:scene.id,after:true})),
         earlier, later,
         button(scene.reference ? 'Make regular sheet' : 'Make reference sheet', () => {
           void changeManuscript({kind: 'setSheetReference', path: scene.path, reference: !scene.reference}, undefined, undefined, true,

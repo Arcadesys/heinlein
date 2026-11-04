@@ -35,6 +35,7 @@ export type DraftingChange =
   | { kind: 'organizeLibrary'; groups: DraftingGroup[]; sceneTitles: {id: string; title: string}[]; entries: LibraryEntry[] }
   | { kind: 'initialize'; project: string }
   | { kind: 'createScene'; title: string; path: string; groupId?: string | null; beforeId?: string | null }
+  | { kind: 'createSceneAdjacent'; title: string; path: string; sceneId: string; after: boolean }
   | { kind: 'renameFile'; sourcePath: string; path: string }
   | { kind: 'splitFile'; sourcePath: string; path: string; expectedHash: string; byteOffset: number }
   | { kind: 'splitScene'; sceneId: string; path: string; title: string; expectedHash: string; byteOffset: number }
