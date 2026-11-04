@@ -33,7 +33,7 @@ async function sendRevision(page:Page) {
   await pane.getByRole('textbox',{name:'Your drafting question'}).fill('Can this sentence feel more immediate?');await pane.getByRole('button',{name:'Suggest edits',exact:true}).click();await expect.poll(async()=>(await state(page)).sent).toBe(1);
 }
 for (const zoom of [100, 200]) {
-  test(`highlighting and clearing a passage keep the manuscript anchored at ${zoom}%`, async({page}, info) => {
+  test(`highlighting and clearing a passage keep the manuscript anchored at ${zoom}%`, {tag: '@smoke'}, async({page}, info) => {
     await page.goto('/tests/browser/questions.html');
     await expect(page).toHaveTitle('Passage Questions fixture');
     await expect(page.locator('vite-error-overlay')).toHaveCount(0);
@@ -81,7 +81,7 @@ for (const zoom of [100, 200]) {
     await page.screenshot({path: `/tmp/heinlein-highlight-${info.project.name}-${zoom}.png`});
   });
 }
-test('passage chip survives collapse, background completion, exact diff and guarded apply',async({page},info)=>{
+test('passage chip survives collapse, background completion, exact diff and guarded apply',{tag:'@smoke'},async({page},info)=>{
   await page.setViewportSize({width:1600,height:1000});const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
   const layout = await openPassage(page);await sendRevision(page);const pane=page.locator('.question-panel');
   await pane.getByRole('button',{name:'Close Heinlein',exact:true}).click();await expect(page.locator('.question-passage-chip[aria-label="Asking… at this passage"]')).toBeVisible();

@@ -445,10 +445,25 @@ and explicit preview/apply flow. No raw agent CSS is executed.
 ```sh
 npm ci
 npx playwright install --with-deps chromium
-npm run test:theme:browser
+npm run test:browser:smoke
+# Full acceptance before merging a pull request (also available on demand):
+npm run test:browser:full
 ```
 
-This feature smoke runs real Chromium at 1280px and 320px, checks keyboard focus,
+CI build validation runs only the tagged `@smoke` subset: normal renderer startup,
+project navigation with an axe audit, keyboard draft keep/reload/recovery, passage
+selection without manuscript movement at 100% and 200%, and guarded revision apply.
+Both 1280px and 320px viewports run on Linux and macOS; smoke stops on the first
+failure. `npm run build` remains the local TypeScript/Vite build command.
+
+The separate **Full browser acceptance** jobs run the entire suite on pull
+requests, merge-queue entries and manual workflow runs. Their dedicated workflow
+has no path filter, so required checks also report for non-Studio pull requests.
+Pushes to `main` run smoke instead of repeating full acceptance after merge.
+Repository branch protection must require both full browser jobs to enforce the
+merge gate. `test:theme:browser` remains an alias for the full suite.
+
+The full suite includes theme checks in real Chromium at 1280px and 320px: keyboard focus,
 axe contrast/semantics, sample/control states, candidate isolation, apply/revert/
 reset, reload persistence, provider failure and storage failure. It also opens the
 normal renderer. Generation checks use an explicitly labeled synthetic provider

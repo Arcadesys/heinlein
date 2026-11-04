@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "tauri": "tauri",
-    "test:theme:browser": "playwright test"
+    "test:browser:smoke": "playwright test --grep @smoke --max-failures=1",
+    "test:browser:full": "playwright test",
+    "test:theme:browser": "npm run test:browser:full"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

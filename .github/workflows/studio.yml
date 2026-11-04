@@ -1,5 +1,7 @@
 name: Studio drafting validation
 on:
+  merge_group:
+  workflow_dispatch:
   pull_request:
     paths: ['studio/**', 'tests/test_studio_updater.py', '.github/workflows/studio.yml']
   push:
@@ -42,10 +44,10 @@ jobs:
         run: cargo test --locked --manifest-path macos/tests/keychain-probe/Cargo.toml
       - run: npm ci
       - run: npm test
-      - name: Install theme smoke browser
+      - name: Install smoke browser
         run: npx playwright install --with-deps chromium
-      - name: Theme browser acceptance (synthetic provider, desktop and 320px)
-        run: npm run test:theme:browser
+      - name: Browser smoke build gate (synthetic fixtures, desktop and 320px)
+        run: npm run test:browser:smoke
         # playwright.config.ts writes results under $TMPDIR; keep them where the upload step looks.
         env:
           TMPDIR: ${{ runner.temp }}
