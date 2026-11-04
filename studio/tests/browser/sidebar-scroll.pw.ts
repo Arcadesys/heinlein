@@ -1,0 +1,42 @@
+import {test, expect} from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+
+for (const scale of [100, 200]) test(`sidebar keeps its position through selection and reopening at ${scale}% text`, async ({page}, info) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/tests/browser/library-app.html?long');
+  await expect(page.locator('.scene-open')).toHaveCount(82);
+  const toggle = page.locator('.navigation-toggle');
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+  await page.getByRole('button', {name: 'First sheet', exact: true}).click();
+  await expect(page.getByRole('tab', {name: 'First sheet', exact: true})).toHaveAttribute('aria-selected', 'true');
+  await page.evaluate(scale => { document.documentElement.style.fontSize = `${scale}%`; }, scale);
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+  const panel = page.locator('.nav-panel');
+  const scrollPosition = () => panel.evaluate(node => node.scrollTop + (node.closest('dialog')?.scrollTop ?? 0));
+  const sheet = page.getByRole('button', {name: 'Sheet 40', exact: true});
+  await sheet.scrollIntoViewIfNeeded();
+  const before = await scrollPosition();
+  expect(before).toBeGreaterThan(500);
+  const width = await page.locator('.preview').evaluate(node => node.getBoundingClientRect().width);
+  await sheet.click();
+  await expect(page.getByRole('tab', {name: 'Sheet 40', exact: true})).toHaveAttribute('aria-selected', 'true');
+  // Narrow layouts close the drawer after opening a document. Reopening must retain its position.
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+  await expect.poll(scrollPosition).toBe(before);
+  await sheet.focus();
+  await page.keyboard.press('Enter');
+  if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+  await expect.poll(scrollPosition).toBe(before);
+  await page.keyboard.press('Escape'); await toggle.click();
+  await expect.poll(scrollPosition).toBe(before);
+  if (info.project.name === 'desktop') expect(await page.locator('.preview').evaluate(node => node.getBoundingClientRect().width)).toBe(width);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await sheet.focus(); await expect(sheet).toBeFocused();
+  const focus = await sheet.evaluate(node => { const style = getComputedStyle(node); return style.outlineStyle !== 'none' || style.boxShadow !== 'none'; });
+  expect(focus).toBe(true);
+  expect(await sheet.evaluate(node => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+  expect((await new AxeBuilder({page}).include('.navigation-drawer').analyze()).violations).toEqual([]);
+  expect(errors).toEqual([]);
+  await page.screenshot({path: info.outputPath(`sidebar-scroll-${scale}.png`)});
+});

@@ -26,4 +26,11 @@ if (new URLSearchParams(location.search).has('references')) {
     return {state:structuredClone(state),undoId:'undo'};
   };
 }
+if (new URLSearchParams(location.search).has('long')) {
+  for (let index = 0; index < 80; index++) {
+    const id = `long-${index}`;
+    state.scenes.push({id,title:`Sheet ${index}`,path:`ms/${id}.md`,groupId:'g'});
+    state.library!.push({id,kind:'scene',parentId:'g'});
+  }
+}
 const app=mountStudio(document.querySelector<HTMLElement>('#app')!,core); void app.selectRepository(async()=>session);
