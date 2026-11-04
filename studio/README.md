@@ -6,7 +6,7 @@ The existing Python publisher and its CLI remain unchanged.
 
 ## 1.7 release packaging
 
-Heinlein Studio is version **1.7.1**. The independent Python
+Heinlein Studio is version **1.7.2**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:
@@ -14,7 +14,7 @@ On an Apple Silicon Mac, build the version-pinned app with:
 ```sh
 cd studio
 npm ci
-npm run tauri build -- --config src-tauri/tauri.release.conf.json --bundles app --ci
+OPENSSL_STATIC=1 npm run tauri build -- --config src-tauri/tauri.release.conf.json --bundles app --ci
 ```
 
 This produces **Heinlein Studio.app**, using the stable identifier

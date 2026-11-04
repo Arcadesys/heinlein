@@ -36,6 +36,7 @@ export function reviewerEditorForm(core: LocalCore, draft: CustomReviewer, on: {
         select.append(blank);
         reviewerTemplates.forEach((t, i) => { const o = el('option', t.name); o.value = String(i); select.append(o); });
         select.onchange = () => {
+            if (!select.value) { draft.displayName = ''; draft.instructions = ''; name.value = ''; area.value = ''; return; }
             const t = reviewerTemplates[Number(select.value)];
             if (!t) return;
             draft.displayName = t.name; draft.instructions = t.text;
