@@ -17,7 +17,7 @@ let unavailable: string | null;
 const reviewProposal = vi.fn(async (_id: string, _guard: () => string | null) => {});
 const openConnection = vi.fn(); const focusEditor = vi.fn();
 function button(label: string) {const found = [...document.querySelectorAll('button')].find(node => node.textContent === label); if (!found) throw new Error(`Missing ${label}: ${document.body.textContent}`); return found;}
-async function start(core = bridge()) {panel = createReviewPanel(core as unknown as LocalCore, {capture: () => scope, unavailable: () => unavailable, reviewProposal, openConnection, focusEditor}); document.body.append(panel.element); panel.open(); await vi.waitFor(() => expect(panel!.element.querySelector<HTMLElement>('.review-connection')!.dataset.state).not.toBe('checking')); return core;}
+async function start(core = bridge(), extra: Partial<Parameters<typeof createReviewPanel>[1]> = {}) {panel = createReviewPanel(core as unknown as LocalCore, {capture: () => scope, unavailable: () => unavailable, reviewProposal, openConnection, focusEditor, ...extra}); document.body.append(panel.element); panel.open(); await vi.waitFor(() => expect(panel!.element.querySelector<HTMLElement>('.review-connection')!.dataset.state).not.toBe('checking')); return core;}
 async function run() {button('Run review').click(); await vi.waitFor(() => expect(button('Accept…')).toBeTruthy());}
 beforeEach(() => {vi.stubGlobal('crypto', webcrypto); document.body.replaceChildren(); localStorage.clear(); scope = {repositoryId: 'repo-1', scope: 'scene', snapshots: [{path: 'scene.md', source, sourceHash: 'a'.repeat(64)}], label: 'Current scene'}; unavailable = null; reviewProposal.mockClear(); openConnection.mockClear(); focusEditor.mockClear();});
 afterEach(() => {panel?.destroy(); panel = undefined; vi.unstubAllGlobals();});
@@ -98,4 +98,56 @@ it.each([0, 1, 4])('accepts %i grounded improvements without requiring patches',
  expect(panel!.element.querySelectorAll('.review-improvement-diffs')).toHaveLength(0);
  expect(panel!.element.textContent).toContain(count ? 'Evidence: Bad fox.' : 'No improvements suggested.');
  expect(core.saveDocument).not.toHaveBeenCalled();
+});
+
+it('opens the consolidated pros and cons while retaining every individual pass', async () => {
+ const core=bridge();
+ const assessment={strengths:'The opening image anchors the scene.',improvements:'No change is warranted: the image is clear and the action stays focused.'};
+ core.requestReview.mockImplementation(async request=>({...response(request),edits:[],readingFeedback:[
+  {coverageId:'mechanical',path:'scene.md',reviewer:'Mechanical review',feedback:{overview:'No mechanical errors.',strengths:[],improvements:[]}},
+  {coverageId:'contextual',path:'scene.md',reviewer:'Story and clarity review',feedback:reading},
+  {coverageId:'consolidation',path:'Selected review scope',reviewer:'Consolidated review',feedback:{overview:'An overall assessment across both reviewers.',assessment,strengths:[],improvements:[]}}
+ ].map(entry=>({...entry,feedback:{...entry.feedback,improvements:[]}}))}));
+ await start(core);button('Run review').click();await vi.waitFor(()=>expect(panel!.element.textContent).toContain(assessment.strengths));
+ expect(panel!.element.textContent).toContain(assessment.improvements);
+ expect(panel!.element.textContent).not.toContain('No strengths listed.');
+ const select=panel!.element.querySelector<HTMLSelectElement>('.review-feedback-picker select')!;
+ expect(select.value).toBe('2');expect(select.options).toHaveLength(3);
+ select.value='0';select.dispatchEvent(new Event('change'));
+ expect(panel!.element.textContent).toContain('No mechanical errors.');
+ select.value='1';select.dispatchEvent(new Event('change'));
+ expect(panel!.element.textContent).toContain(reading.overview);
+ expect(core.saveDocument).not.toHaveBeenCalled();expect(core.applyProposalReview).not.toHaveBeenCalled();
+});
+it.each([{strengths:'',improvements:'Clear.'},{strengths:'Clear.',improvements:' '},{strengths:'Clear.'},null])('rejects malformed explicit assessment %j', async assessment => {
+ const core=bridge();core.requestReview.mockImplementation(async request=>({...response(request),readingFeedback:[{path:'scene.md',reviewer:'Editor',feedback:{...reading,assessment}}]} as never));
+ await start(core);button('Run review').click();await vi.waitFor(()=>expect(button('Retry review').hidden).toBe(false));
+ expect(panel!.element.querySelectorAll('[data-edit-action="accept"]')).toHaveLength(0);
+});
+
+
+describe('completed review returns to the manuscript', () => {
+  it('closes the rail after success while retaining marks and the saved review', async () => {
+    const closePane = vi.fn(), marksChanged = vi.fn(), announce = vi.fn();
+    const core = await start(bridge(), {rail:true, closePane, marksChanged, announce});
+    await run();
+    await vi.waitFor(() => expect(closePane).toHaveBeenCalledTimes(1));
+    expect(panel!.visible()).toBe(false);
+    expect(marksChanged.mock.calls.at(-1)?.[0]?.edits[0].id).toBe('edit-1');
+    panel!.show();
+    expect(panel!.visible()).toBe(true);
+    expect(button('Accept…')).toBeTruthy();
+    expect(core.requestReview).toHaveBeenCalledTimes(1);
+    expect(core.saveDocument).not.toHaveBeenCalled();
+    expect(announce).toHaveBeenCalledWith(expect.stringContaining('Chats closed'));
+  });
+  it('keeps errors visible instead of closing the rail', async () => {
+    const closePane = vi.fn(), core = bridge();
+    core.requestReview.mockRejectedValueOnce(new Error('Connection lost'));
+    await start(core, {rail:true, closePane});
+    button('Run review').click();
+    await vi.waitFor(() => expect(panel!.element.textContent).toContain('Connection lost'));
+    expect(panel!.visible()).toBe(true);
+    expect(closePane).not.toHaveBeenCalled();
+  });
 });

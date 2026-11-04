@@ -43,6 +43,7 @@ impl Fixture {
                 scene_id: None,
             }],
             workflow: Some(Options {
+                consolidate: false,
                 reviewers: vec!["contextual".into()],
                 context: vec![],
                 context_note: String::new(),
@@ -810,4 +811,74 @@ fn manifest_free_raw_source_review_persists_without_writes_until_guarded_approva
         .map(|e| e.unwrap().file_name())
         .collect();
     assert_eq!(inventory, original_inventory);
+}
+
+#[test]
+fn consolidated_assessment_and_individual_passes_survive_disk_reopen_without_source_changes() {
+    use drafting_questions::review::{ReadingAssessment, ReadingFeedback};
+    let mut f = Fixture::new(vec![]);
+    let mut request = f.session.request.clone();
+    request.workflow.as_mut().unwrap().consolidate = true;
+    f.session = ReviewSession::workflow(
+        request,
+        f.repo.project_key(),
+        "test-model".into(),
+        "synthetic-account".into(),
+        1,
+    )
+    .unwrap();
+    let coverage = f.session.coverage();
+    for (index, mut coverage) in coverage.into_iter().enumerate() {
+        coverage.status = "completed".into();
+        coverage.request_id = Some(format!("call-{index}"));
+        let feedback = ReadingFeedback {
+            overview: if index == 0 {
+                "Individual assessment"
+            } else {
+                "Combined assessment"
+            }
+            .into(),
+            assessment: Some(ReadingAssessment {
+                strengths: "The direct opening establishes voice.".into(),
+                improvements:
+                    "No change warranted: the opening conveys the intended action clearly.".into(),
+            }),
+            strengths: vec![],
+            improvements: vec![],
+        };
+        f.session
+            .ingest(
+                Batch {
+                    calls: vec![CallResult {
+                        coverage,
+                        reading_feedback: Some(feedback),
+                        provider_response_id: None,
+                        edits: vec![],
+                        model: "test-model".into(),
+                    }],
+                    cancelled: false,
+                    limit_reached: false,
+                },
+                &Default::default(),
+            )
+            .unwrap();
+        f.session.persist(&f.records, &f.repo).unwrap();
+    }
+    f.reopen();
+    let result = f.view();
+    assert_eq!(result["readingFeedback"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        result["readingFeedback"][0]["feedback"]["overview"],
+        "Individual assessment"
+    );
+    assert_eq!(result["readingFeedback"][1]["coverageId"], "consolidation");
+    assert!(
+        result["readingFeedback"][1]["feedback"]["assessment"]["improvements"]
+            .as_str()
+            .unwrap()
+            .starts_with("No change warranted")
+    );
+    assert_eq!(f.session.reviewer_reports().len(), 1);
+    assert_eq!(f.repo.read("scene.md").unwrap().text, BEFORE);
+    assert!(f.ids().is_empty());
 }

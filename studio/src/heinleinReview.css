@@ -227,3 +227,13 @@
   .review-agents-dialog button { max-width: 100%; margin-inline: 0; }
   .review-agents-dialog .review-agent-actions button { width: 100%; }
 }
+
+/* A top-layer diff over the passage; opening it never resizes the manuscript. */
+.review-suggestion-dialog { box-sizing: border-box; width: min(44rem, calc(100vw - 1rem)); max-width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); overflow: auto; padding: clamp(.75rem, 3vw, 1.5rem); border: 2px solid var(--fg); border-radius: 12px; color: var(--fg); background: var(--bg); font-size: max(18px, 1rem); line-height: 1.6; box-shadow: var(--shadow); }
+.review-suggestion-dialog::backdrop { background: #0009; }
+.review-suggestion-dialog [hidden] { display: none !important; }
+.review-suggestion-dialog h2 { margin-top: 0; font-size: 1.5em; }
+.review-suggestion-dialog :is(button, summary) { min-height: 48px; min-width: 48px; font: inherit; white-space: normal; }
+.review-suggestion-dialog :is(p, h4, pre, button, summary, code) { overflow-wrap: anywhere; }
+.review-suggestion-dialog pre { white-space: pre-wrap; }
+.review-suggestion-dialog :focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }

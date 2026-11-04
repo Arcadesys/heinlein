@@ -7,7 +7,7 @@ test('chapter revision reveals a scene left in Reading and keeps its exact selec
   page.on('request', request => {if (new URL(request.url()).origin !== allowedOrigin) external.push(request.url());});
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/tests/browser/markdown-reading.html?doc=chapter.md');
-  const review = page.getByRole('dialog', {name: 'Heinlein Review', exact: true});
+  const review = page.getByRole('region', {name: 'Heinlein Review', exact: true});
   await expect(review.locator('.review-edit').first()).toBeVisible();
   await review.getByRole('button', {name: 'Close Heinlein', exact: true}).click();
   if (high) await page.evaluate(() => {document.documentElement.dataset.zoom = '200';(window as any).readingFixture.theme();});

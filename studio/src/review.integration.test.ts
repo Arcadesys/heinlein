@@ -25,6 +25,72 @@ async function open() {const launch=[...document.querySelectorAll<HTMLButtonElem
 beforeEach(() => {vi.stubGlobal('crypto', webcrypto); localStorage.clear(); document.body.replaceChildren(); Range.prototype.getClientRects = () => [] as unknown as DOMRectList; Range.prototype.getBoundingClientRect = () => new DOMRect();});
 afterEach(() => {app?.destroy(); app = undefined; vi.unstubAllGlobals();});
 describe('Studio Heinlein Review integration', () => {
+  it('captures the entire chapter from its second scene without navigating, sending, or changing source', async () => {
+    const core = bridge();
+    await start(core); await app!.showDocument('other.md'); await open();
+    const editor = view(), selection = editor.state.selection;
+    const capture = [...panel().querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.startsWith('Entire chapter…'))!;
+    expect(capture).toBeTruthy(); capture.click();
+    await vi.waitFor(() => expect(panel().textContent).toContain('Entire chapter captured.'));
+    expect(view()).toBe(editor); expect(view().state.selection).toBe(selection); expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n'));
+    expect(core.requestReview).not.toHaveBeenCalled(); expect(core.saveDocument).not.toHaveBeenCalled(); expect(core.applyProposalReview).not.toHaveBeenCalled();
+    button('Run review').click(); await vi.waitFor(() => expect(core.requestReview).toHaveBeenCalledOnce());
+    expect(core.requestReview.mock.calls[0][0]).toMatchObject({scope: 'chapter', snapshots: [{path: 'scene.md', source: original}, {path: 'other.md', source: original}]});
+    expect(core.readDocument.mock.calls.some(call => call[1] === 'chapter.md')).toBe(false);
+  });
+  it('discards chapter capture if the active document changes while sources are loading', async () => {
+    const core = bridge(); await start(core); await open();
+    const loading = deferred<Awaited<ReturnType<typeof core.readDocument>>>();
+    core.readDocument.mockReturnValueOnce(loading.promise);
+    [...panel().querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.startsWith('Entire chapter…'))!.click();
+    await app!.showDocument('outside.md');
+    loading.resolve({path: 'scene.md', text: original, contentHash: 'a'.repeat(64), sizeBytes: original.length, frontmatter: null, generatedCompatibility: false});
+    await Promise.resolve(); await Promise.resolve();
+    expect(core.requestReview).not.toHaveBeenCalled(); expect(core.saveDocument).not.toHaveBeenCalled();
+    expect(panel().hidden).toBe(true); expect(view().state.readOnly).toBe(false);
+    await open(); expect(panel().textContent).not.toContain('Entire chapter…');
+  });
+  it('keeps scene review available when a chapter source cannot be read', async () => {
+    const core = bridge(); await start(core); await open();
+    core.readDocument.mockRejectedValueOnce(new Error('A source scene is missing.'));
+    [...panel().querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.startsWith('Entire chapter…'))!.click();
+    await vi.waitFor(() => expect(panel().textContent).toContain('A source scene is missing.'));
+    expect(core.requestReview).not.toHaveBeenCalled();
+    button('Run review').click(); await vi.waitFor(() => expect(core.requestReview).toHaveBeenCalledOnce());
+    expect(core.requestReview.mock.calls[0][0].scope).toBe('scene');
+  });
+  it('uses current drafting chapter order when there is no legacy manuscript', async () => {
+    const core = bridge();
+    const native = {...core, loadDrafting: vi.fn(async () => ({manifestPath: 'ms/manuscript.json', revision: 'current-draft', project: 'Synthetic', groups: [{id: 'chapter-a', title: 'Chapter A'}], scenes: [
+      {id: 'two', title: 'Second', path: 'other.md', groupId: 'chapter-a'},
+      {id: 'one', title: 'First', path: 'scene.md', groupId: 'chapter-a'},
+      {id: 'outside', title: 'Outside', path: 'outside.md', groupId: null},
+    ], untrackedPaths: [], missingPaths: []})), previewDraftingChange: vi.fn(), applyDraftingChange: vi.fn(), undoDraftingChange: vi.fn()};
+    app = mountStudio(document.body, native); await app.selectRepository(async () => ({...session, manifests: []})); await app.showDocument('scene.md'); await open();
+    const capture = [...panel().querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.startsWith('Entire chapter…'))!;
+    expect(capture.textContent).toContain('Chapter A'); capture.click();
+    await vi.waitFor(() => expect(panel().textContent).toContain('Entire chapter captured.'));
+    button('Run review').click(); await vi.waitFor(() => expect(core.requestReview).toHaveBeenCalledOnce());
+    expect(core.requestReview.mock.calls[0][0].snapshots.map(s => s.path)).toEqual(['other.md', 'scene.md']);
+    expect(core.saveDocument).not.toHaveBeenCalled();
+  });
+  it('rejects assembled outputs in a chapter source mapping without partially replacing the scene scope', async () => {
+    const core = bridge(); await start(core); await open();
+    core.readDocument.mockResolvedValueOnce({path: 'scene.md', text: original, contentHash: 'a'.repeat(64), sizeBytes: original.length, frontmatter: null, generatedCompatibility: true});
+    [...panel().querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.startsWith('Entire chapter…'))!.click();
+    await vi.waitFor(() => expect(panel().textContent).toContain('A chapter source is unavailable or is an assembled output.'));
+    expect(core.requestReview).not.toHaveBeenCalled();
+    button('Run review').click(); await vi.waitFor(() => expect(core.requestReview).toHaveBeenCalledOnce());
+    expect(core.requestReview.mock.calls[0][0].scope).toBe('scene');
+  });
+  it('rejects disk drift rather than pairing the open editor text with a different saved hash', async () => {
+    const core = bridge(); await start(core); await open();
+    core.readDocument.mockResolvedValueOnce({path: 'scene.md', text: 'Changed on disk', contentHash: 'b'.repeat(64), sizeBytes: 15, frontmatter: null, generatedCompatibility: false});
+    [...panel().querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.startsWith('Entire chapter…'))!.click();
+    await vi.waitFor(() => expect(panel().textContent).toContain('The open source changed on disk.'));
+    expect(core.requestReview).not.toHaveBeenCalled(); expect(core.saveDocument).not.toHaveBeenCalled();
+    expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n'));
+  });
   it('reviews an unmapped Markdown source with explicit batch consent and reopens the saved review without rerunning', async () => {
     const raw = '---\r\ntitle: "Écriture 🦊"\nvoice: "Keep — interruptions."\r\n---\nA deliberately short fragment.\r\n尾声 — exact.\n';
     const path = 'chapters/unmapped.markdown';
@@ -83,7 +149,7 @@ describe('Studio Heinlein Review integration', () => {
     expect(core.requestReview).toHaveBeenCalledOnce(); expect(core.applyProposalReview).not.toHaveBeenCalled();
   });
   it('clears and cancels pending review on repository navigation', async () => {const core = bridge(); const pending = deferred<ReviewResult>(); core.requestReview.mockReturnValueOnce(pending.promise); await start(core); await open(); button('Run review').click(); await vi.waitFor(() => expect(core.requestReview).toHaveBeenCalledOnce()); const request = core.requestReview.mock.calls[0][0]; await app!.selectRepository(async () => ({...session, id: 'another-repository'})); expect(core.cancelQuestion).toHaveBeenCalledWith(request.requestId); expect(panel().hidden).toBe(true); pending.resolve(result(request)); await Promise.resolve(); expect(panel().textContent).not.toContain(original);});
-  it('captures ordered source scenes for assembled chapter review, never the generated export', async () => {const core = bridge(); await start(core); await app!.showDocument('chapter.md'); expect(view().state.readOnly).toBe(true); await open(); expect(core.requestReview).not.toHaveBeenCalled(); button('Run review').click(); await vi.waitFor(() => expect(core.requestReview).toHaveBeenCalledOnce()); const request = core.requestReview.mock.calls[0][0]; expect(request.scope).toBe('chapter'); expect(request.snapshots.map(snapshot => snapshot.path)).toEqual(['scene.md', 'other.md']); expect(request.snapshots.map(snapshot => snapshot.source)).toEqual([original, original]); expect(core.readDocument.mock.calls.some(call => call[1] === 'chapter.md')).toBe(false); expect(core.saveDocument).not.toHaveBeenCalled();});
+  it('captures ordered source scenes for assembled chapter review, never the generated export', async () => {const core = bridge(); await start(core); await app!.showDocument('chapter.md'); expect(view().state.readOnly).toBe(false); await open(); expect(core.requestReview).not.toHaveBeenCalled(); button('Run review').click(); await vi.waitFor(() => expect(core.requestReview).toHaveBeenCalledOnce()); const request = core.requestReview.mock.calls[0][0]; expect(request.scope).toBe('chapter'); expect(request.snapshots.map(snapshot => snapshot.path)).toEqual(['scene.md', 'other.md']); expect(request.snapshots.map(snapshot => snapshot.source)).toEqual([original, original]); expect(core.readDocument.mock.calls.some(call => call[1] === 'chapter.md')).toBe(false); expect(core.saveDocument).not.toHaveBeenCalled();});
   it('requires separate native confirmation for each accepted edit and preserves the remaining review after source reload', async () => {
     const core = bridge(); let disk = original; let accepted = 0; let request!: ReviewRequest;
     const origin = {kind: 'nativeOpenAi' as const, sessionId: '', clientLabel: '', identityAssurance: 'unverifiedProviderMetadata' as const, provider: 'openai' as const, model: 'mock-model', requestId: 'native-request'};
@@ -125,8 +191,8 @@ describe('Studio Heinlein Review integration', () => {
       const marks = reviewMarksIn(view().state);
       expect(marks.map(mark => mark.id)).toEqual(['other.md-passage']);
       const body = 'A 🐺 passage.\nLast line';
-      expect(view().state.doc.toString()).toBe(`${body}\n\n${body}`);
-      expect(marks[0].from).toBe(body.length + 2 + body.indexOf('passage'));
+      expect(view().state.doc.toString()).toBe(`${body}\n\n---\n\n${body}`);
+      expect(marks[0].from).toBe(body.length + 7 + body.indexOf('passage'));
     });
     it('clears on a typed edit and does not return until a refreshed review proves the match', async () => {
       const core = bridge(); await start(core);

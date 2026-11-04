@@ -10,7 +10,7 @@ gate, and no reviewer can save, publish, expand context or choose another accoun
    chapter. The captured text includes unsaved editor text; no implicit save or
    provider request occurs. Generated/unmapped exports cannot be edit targets.
 2. Choose editable source files; unchecked captured files are read-only context.
-   Optional author notes are also read-only. Choose one to three reviewer
+   Optional author notes are also read-only. Choose one to 52 reviewer
    instances (one initially), then **Preview reviewer batch**. Inspect the exact
    sources, core/context byte ranges, reviewer definitions and call count.
 3. **Run Heinlein Review** sends at most eight serial calls through the existing
@@ -52,7 +52,7 @@ A definition change cannot rewrite an existing run's provenance.
 
 Combined selected text, read-only context and notes are limited to 1 MiB; notes
 are at most 4,000 UTF-8 bytes. There are at most 128 editable/context windows
-(384 calls with three reviewers) and 1,024 retained findings. Oversize inputs
+(384 individual reviewer/chunk calls, plus one consolidation call) and 1,024 retained findings. Oversize inputs
 fail explicitly without truncation. Each call keeps the existing 16,000-byte
 text bound, 32 edits, 4,000 bytes per before/replacement and bounded output. Core
 and neighboring context boundaries preserve UTF-8/CRLF. Read-only context is
@@ -205,3 +205,99 @@ blocks render as read-only chips; malformed blocks stay literal text. Ask chips
 cannot apply edits or create proposals. All generated strings stay inert text or
 pass through the existing safe Markdown renderer. Chips live inside the overlay
 and do not change manuscript layout.
+
+
+### Consolidated reading assessment
+
+New Studio workflow requests set `workflow.consolidate`. The plan appends a
+`consolidation` coverage row after all reviewer/chunk calls. It counts toward the
+same eight-call native batch limit and uses the same account, model,
+cancellation and progress handling. Older saved plans omit the flag and retain
+their original coverage.
+
+The final pass receives the validated, persisted individual assessments rather
+than another copy of the manuscript. It combines repeated observations, retains
+important disagreements and scope limits, and must provide substantive strengths
+and improvement assessments. An explanation that no change is warranted is valid;
+empty findings and edits remain valid. Consolidation cannot create or decide
+patches. Its schema and parser reject edits and findings with edit authority.
+
+The consolidated assessment is the default result. The labelled Review assessment
+selector retains every individual reviewer/chunk assessment, including its
+existing diff links. All assessments survive saved-review reopening. If an
+individual pass fails or an assessment is missing, consolidation is marked
+incomplete without sending partial reports. A consolidation failure, cancellation
+or input exceeding the 200,000-byte request cap retains individual results and
+is shown in call details. There are no automatic retries or silent truncation.
+
+
+### One-action chapter review
+
+The chapter toolbar keeps **Review chapter** visible beside Source/Reading. It
+captures all chapter sheets, selects both built-in reviewers (mechanical and
+story/clarity) and every saved custom agent, previews internally, and sends using
+the selected ChatGPT account and model. Completed batches continue automatically through the final
+consolidation without requiring Preview, Run or Continue clicks. The saved
+custom-agent catalog is refreshed before capturing definitions; a
+catalog-loading failure stops the run before sending. Up to 52 reviewers are
+supported (50 custom plus two built-ins), within the existing 384 individual-call
+limit. Oversize plans fail without dropping reviewers.
+
+The run stops on cancellation, a failed call, an invalid response, or continuation
+without progress; it does not retry calls automatically. Completed individual
+assessments remain persisted in the native review record. Success opens and
+focuses consolidated feedback; Review assessment switches to any individual
+pass. Existing advanced review setup retains explicit batch controls. Review
+chapter starts a new run; it never applies manuscript edits.
+
+### Scene and chapter threads
+
+The left navigator selects scenes and chapter/group manuscripts. Each chapter
+name opens its descendant source sheets in library order; its separate expansion
+button changes only the scene tree. Legacy chapter entries use their explicit
+source mapping. Reference-sheet exclusions remain in force.
+
+Chats live in a separate right rail. A scene shows its own conversations and
+reviews. A chapter aggregates its own threads and those of descendant scenes and
+nested sections. Opening a scene thread from a chapter keeps the chapter selected;
+that chat uses its own sheet as context. Back to threads restores the chapter list.
+
+The rail docks only when the manuscript's actual geometry leaves enough space.
+Otherwise it opens as a right-side dialog. Opening or closing it never resizes
+manuscript text. The native dialog owns focus/inert behavior on narrow layouts;
+the dock leaves navigation and writing available on wide layouts.
+
+`threadStore.ts` keeps a bounded, project-specific local metadata index. Threads
+have explicit open/resolved status, independent of patch decisions. Resolve keeps
+the underlying conversation or native review; Show resolved threads exposes Reopen.
+Sending a new question reopens a resolved discussion. The index grants no proposal
+authority. Individual reviewer assessments remain available alongside consolidation.
+
+New conversations use independent local history keys per thread and account/model,
+with the existing per-conversation storage bounds. Other threads are not sent as
+history. Earlier project chat retains its project scope. Saved replies restore
+text and advisory diffs only, never source snapshots or approval controls. Threads
+from another account/model can be read locally but cannot send with the current
+connection.
+
+### Editable chapter manuscript
+
+A chapter is a source-mapped editor projection, joined by `\n\n---\n\n` breaks.
+Frontmatter stays in its original sheet and is hidden in the projection. Body edits
+map by position, preserving untouched raw bytes, mixed line endings, and authorial
+style. Sheet joins are protected against edits that would silently merge sheet
+ownership. Undo/redo restores exact per-sheet source bytes.
+
+Chapter saves stage all changed sheets in local recovery, preflight their disk
+hashes, then save them individually through the existing guarded native command.
+This is not an atomic multi-file transaction: a later write failure can leave
+previous sheets saved, while remaining edits and recovery drafts stay available.
+Newer typing during a save is retained and staged against the updated hashes.
+Recovery drafts or unreadable recovery records block chapter editing until the
+writer resolves them in their source sheets. The synthetic chapter path is never
+written as manuscript source.
+
+Chapter reviews retain per-sheet editable ranges and use bounded read-only context
+from adjacent sheets, separated by `---`. Full selected-context mode retains its
+existing explicit bounds. Final consolidation combines individual assessments;
+no model output automatically changes the chapter or its source sheets.

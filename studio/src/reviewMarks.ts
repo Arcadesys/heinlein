@@ -1,6 +1,6 @@
 // Inline review highlights. These are CodeMirror decorations only: they never touch the
 // document, selection authority or review state. Clicking one only asks the panel to show a card.
-import { StateEffect, StateField, EditorSelection, type Extension, type EditorState } from '@codemirror/state';
+import { StateEffect, StateField, EditorSelection, Prec, type Extension, type EditorState } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, keymap, type DecorationSet } from '@codemirror/view';
 import type { ReviewEdit } from './localCore';
 import { lineageDelta, waiting } from './reviewComparison';
@@ -137,7 +137,7 @@ export function createReviewMarkPublisher(hooks: {view(): EditorView | null; tar
 class PointWidget extends WidgetType {
   constructor(readonly id: string) { super(); }
   eq(other: PointWidget) { return other.id === this.id; }
-  toDOM() { const node = document.createElement('span'); node.className = 'cm-review-point'; node.dataset.reviewId = this.id; node.title = 'Suggested insertion. Click to open it.'; return node; }
+  toDOM() { const node = document.createElement('span'); node.className = 'cm-review-point'; node.dataset.reviewId = this.id; node.title = 'Suggested insertion. Click to open it.'; node.tabIndex = 0; node.setAttribute('role', 'button'); node.setAttribute('aria-label', 'Suggested insertion. Open diff'); node.setAttribute('aria-haspopup', 'dialog'); return node; }
   ignoreEvent() { return false; }
 }
 function decorate(state: EditorState, marks: readonly ReviewMark[]): DecorationSet {
@@ -145,7 +145,7 @@ function decorate(state: EditorState, marks: readonly ReviewMark[]): DecorationS
     // A range of only line breaks has no glyph to underline, so it gets the same point marker.
     if (mark.from === mark.to || /^\n+$/.test(state.sliceDoc(mark.from, mark.to))) return [Decoration.widget({widget: new PointWidget(mark.id), side: 1}).range(mark.from)];
     const label = mark.group ? 'Competing suggestions.' : mark.kind === 'delete' ? 'Suggested removal.' : 'Suggested change.';
-    return [Decoration.mark({class: `cm-review-mark cm-review-${mark.group ? 'overlap' : mark.kind}`, attributes: {'data-review-id': mark.id, title: `${label} Click to open it.`}}).range(mark.from, mark.to)];
+    return [Decoration.mark({class: `cm-review-mark cm-review-${mark.group ? 'overlap' : mark.kind}`, attributes: {'data-review-id': mark.id, title: `${label} Click to open it.`, role: 'button', tabindex: '0', 'aria-haspopup': 'dialog', 'aria-label': `${label} Open diff`}}).range(mark.from, mark.to)];
   });
   return Decoration.set(ranges, true);
 }
@@ -195,8 +195,13 @@ export function reviewMarkExtension(hooks: {open(id: string): void; invalidated(
         return true;
       }},
     ]),
-    EditorView.domEventHandlers({
+    Prec.highest(EditorView.domEventHandlers({
       // The press names the mark: focusing the editor can scroll it before release, which retargets the click.
+      keydown(event) {
+        const id = (event.target as HTMLElement).closest?.<HTMLElement>('[data-review-id]')?.dataset.reviewId;
+        if (id && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); hooks.open(id); return true; }
+        return false;
+      },
       mousedown(event) {
         const id = (event.target as HTMLElement).closest?.<HTMLElement>('[data-review-id]')?.dataset.reviewId;
         pressed = id && event.button === 0 && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey ? {id, x: event.clientX, y: event.clientY} : null;
@@ -207,10 +212,10 @@ export function reviewMarkExtension(hooks: {open(id: string): void; invalidated(
         const press = pressed;
         pressed = null;
         if (!press || view.compositionStarted || !view.state.selection.main.empty || Math.abs(event.clientX - press.x) > 4 || Math.abs(event.clientY - press.y) > 4) return false;
-        if (reviewMarksIn(view.state).some(mark => mark.id === press.id)) hooks.open(press.id);
+        if (reviewMarksIn(view.state).some(mark => mark.id === press.id)) { view.focus(); hooks.open(press.id); }
         return false;
       },
-    }),
+    })),
     EditorView.updateListener.of(update => { if (update.docChanged && reviewMarksIn(update.startState).length) hooks.invalidated(); }),
   ];
 }

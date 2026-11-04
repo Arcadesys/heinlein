@@ -929,8 +929,10 @@ dialog { color: var(--fg); }
 .studio:not(.standalone-writing):has(.document-workspace) .document-workspace { height:100%; min-block-size:0; display:flex; flex-direction:column; padding:0; }
 .document-workspace .document-tabs { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:4px; padding:4px; min-inline-size:0; container-type:normal; }
 .document-workspace .document-tab-area { display:block; flex:1 1 10ch; max-block-size:none; min-inline-size:0; overflow-x:auto; overflow-y:hidden; padding:3px; }
-.document-workspace .document-tabs [role=tablist] { display:flex; flex-wrap:nowrap; gap:6px; width:max-content; max-width:none; }
-.document-workspace .document-tabs [role=tab] { display:block; width:auto; flex:none; white-space:nowrap; min-block-size:48px; font-size:1rem; padding:4px 12px; }
+.document-tab-strip { display:grid; grid-template-columns:repeat(var(--tab-count),max-content 54px); width:max-content; }
+.document-workspace .document-tabs [role=tablist],.document-tab-closes { display:grid; grid-template-columns:subgrid; grid-column:1 / -1; grid-row:1; gap:0; width:auto; max-width:none; pointer-events:none; }
+.document-workspace .document-tabs [role=tab] { display:block; width:auto; white-space:nowrap; min-block-size:48px; font-size:1rem; padding:4px 12px; border-start-end-radius:0; border-end-end-radius:0; pointer-events:auto; }
+.document-workspace .document-tab-close { min-inline-size:48px; min-block-size:48px; margin-inline-end:6px; padding:0; font-size:1.5rem; line-height:1; text-align:center; border-start-start-radius:0; border-end-start-radius:0; pointer-events:auto; }
 .document-tab-actions { display:flex; flex:0 0 auto; flex-wrap:wrap; gap:4px; max-inline-size:100%; }
 .document-workspace .document-tab-actions button { min-block-size:48px; font-size:1rem; padding:4px 12px; }
 .document-workspace .document-reading-panes { flex:1; min-block-size:0; display:grid; grid-template-rows:minmax(0,1fr); align-items:stretch; overflow:hidden; }
@@ -1128,3 +1130,6 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 .update-notice button:focus-visible { outline:3px solid var(--fg); outline-offset:3px; }
 
 .studio:not(.standalone-writing):has(.document-workspace) > .status-pill > .pill-goal { padding-inline:4px; }
+/* Inline suggestion chips use paint only: no padding, font or line-height changes. */
+.cm-review-mark { border-radius: .2em; background: var(--surface); box-shadow: 0 0 0 1px var(--fg); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.cm-review-mark:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }

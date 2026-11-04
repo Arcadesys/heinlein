@@ -518,7 +518,7 @@ impl ReviewSession {
         let context_notice = if options.full_context_order.is_some() {
             "Each call receives the complete selected context in library order. Each target is reviewed separately. At most eight calls run per explicit batch; incomplete coverage is not a complete review."
         } else {
-            "Each call sees one editable core, bounded neighboring prose and an explicit window of the selected read-only context. It does not see the whole work at once. At most eight calls run per explicit batch; incomplete coverage is not a complete review."
+            "Each call sees one editable core, bounded neighboring prose (including adjacent sheets for chapter reviews) and an explicit window of the selected read-only context. It does not see the whole work at once. At most eight calls run per explicit batch; incomplete coverage is not a complete review."
         }.into();
         let result = ReviewResult {
             review_id: uuid::Uuid::new_v4().to_string(),
@@ -609,6 +609,24 @@ impl ReviewSession {
             .unwrap(),
         )
     }
+    pub fn reviewer_reports(&self) -> Vec<drafting_questions::review_workflow::ReviewerReport> {
+        self.result
+            .reading_feedback
+            .iter()
+            .filter_map(|entry| {
+                let coverage_id = entry.coverage_id.as_ref()?;
+                if coverage_id == drafting_questions::review_workflow::CONSOLIDATION_ID {
+                    return None;
+                }
+                Some(drafting_questions::review_workflow::ReviewerReport {
+                    coverage_id: coverage_id.clone(),
+                    path: entry.path.clone(),
+                    reviewer: entry.reviewer.clone(),
+                    feedback: entry.feedback.clone(),
+                })
+            })
+            .collect()
+    }
     pub fn ingest(
         &mut self,
         batch: drafting_questions::review_workflow::Batch,
@@ -643,6 +661,38 @@ impl ReviewSession {
                 || captured.context_ranges != call.coverage.context_ranges
             {
                 return Err("Chunk coverage changed".into());
+            }
+            if call.coverage.id == drafting_questions::review_workflow::CONSOLIDATION_ID {
+                if !call.edits.is_empty() || call.model != self.result.model {
+                    return Err("Invalid consolidation".into());
+                }
+                if call.coverage.status == "completed" {
+                    if workflow
+                        .coverage
+                        .iter()
+                        .any(|c| c.id != call.coverage.id && c.status != "completed")
+                    {
+                        return Err("Consolidation requires complete individual assessments".into());
+                    }
+                    let feedback = call
+                        .reading_feedback
+                        .as_ref()
+                        .ok_or("Missing consolidation")?;
+                    if feedback.assessment.is_none() {
+                        return Err("Missing consolidated pros and cons".into());
+                    }
+                    feedback
+                        .validate_links(&[], false)
+                        .map_err(|e| e.to_string())?;
+                    self.result.reading_feedback.push(ReadingFeedbackView {
+                        coverage_id: Some(call.coverage.id.clone()),
+                        path: "Selected review scope".into(),
+                        reviewer: "Consolidated review".into(),
+                        feedback: feedback.clone(),
+                    });
+                }
+                workflow.coverage[index] = call.coverage;
+                continue;
             }
             let definition = workflow
                 .definitions
@@ -1004,7 +1054,7 @@ impl ReviewSession {
             return Err("Invalid consolidated review record".into());
         }
         self.request.validate().map_err(|e| e.to_string())?;
-        if self.result.reading_feedback.len() > 384 {
+        if self.result.reading_feedback.len() > 385 {
             return Err("Too much reading feedback".into());
         }
         let feedback_edits = self
@@ -1548,6 +1598,7 @@ mod tests {
         let seed = session();
         let mut request = seed.request.clone();
         request.workflow = Some(drafting_questions::review_workflow::Options {
+            consolidate: false,
             reviewers: vec!["contextual".into(); reviewers],
             context: vec![],
             context_note: String::new(),
@@ -1565,10 +1616,21 @@ mod tests {
         .unwrap()
     }
     #[test]
+    fn more_than_three_reviewers_survive_saved_workflow_reopen() {
+        let mut session = workflow_session(8);
+        session.revision = 1;
+        let json = serde_json::to_string(&session).unwrap();
+        let loaded: ReviewSession = serde_json::from_str(&json).unwrap();
+        let loaded = loaded.restore(&"b".repeat(64), "reopened", |_| false).unwrap();
+        assert_eq!(loaded.view().workflow.as_ref().unwrap().definitions.len(), 8);
+        assert_eq!(loaded.view().workflow.as_ref().unwrap().coverage.len(), 8);
+    }
+    #[test]
     fn reading_feedback_survives_saved_workflow_without_findings() {
         let mut session = workflow_session(1);
         let mut batch = call(&session, 0, vec![]);
         batch.calls[0].reading_feedback = Some(ReadingFeedback {
+            assessment: None,
             overview: "A clear scene with a strong voice.".into(),
             strengths: vec!["Voice".into(), "Setting".into(), "Pacing".into()],
             improvements: vec![
@@ -1598,6 +1660,7 @@ mod tests {
             let mut session = workflow_session(1);
             let mut batch = call(&session, 0, vec![]);
             batch.calls[0].reading_feedback = Some(ReadingFeedback {
+                assessment: None,
                 overview: "A clear scene.".into(),
                 strengths: vec![],
                 improvements: (0..count)
@@ -1640,6 +1703,7 @@ mod tests {
         let provider_id = edit.id.clone();
         let mut batch = call(&session, 0, vec![edit.clone()]);
         batch.calls[0].reading_feedback = Some(ReadingFeedback {
+            assessment: None,
             overview: "Three suggestions grounded in a concrete change.".into(),
             strengths: vec!["Voice".into(), "Setting".into(), "Pacing".into()],
             improvements: (0..3)

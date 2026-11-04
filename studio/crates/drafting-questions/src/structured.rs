@@ -9,6 +9,8 @@ pub const INSTRUCTIONS: &str = "Return only the shared schemaVersion 2 JSON obje
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Response {
     pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assessment: Option<crate::review::ReadingAssessment>,
     pub answer: String,
     pub strengths: Vec<String>,
     pub findings: Vec<Finding>,
@@ -73,6 +75,9 @@ impl Response {
             || result.strengths.iter().any(|s| !valid_text(s, 2000))
         {
             return Err(invalid());
+        }
+        if let Some(assessment) = &result.assessment {
+            assessment.validate()?;
         }
         let mut ids = HashSet::new();
         for edit in &result.edits {
@@ -152,7 +157,7 @@ mod tests {
     use super::*;
     use serde_json::{json, Value};
     fn advice() -> Value {
-        json!({"schemaVersion":2,"answer":"Clear scene.","strengths":[],"findings":[{"text":"Use a stronger verb.","evidence":"Rain tapped.","editIds":["e1"]}],"edits":[{"id":"e1","sceneIndex":0,"original":"Rain tapped.","replacement":"Rain drummed.","reason":"More immediate.","role":"editor"}]})
+        json!({"schemaVersion":2,"assessment":{"strengths":"The rain gives the scene a distinct sound.","improvements":"A stronger verb could make the sound more immediate."},"answer":"Clear scene.","strengths":[],"findings":[{"text":"Use a stronger verb.","evidence":"Rain tapped.","editIds":["e1"]}],"edits":[{"id":"e1","sceneIndex":0,"original":"Rain tapped.","replacement":"Rain drummed.","reason":"More immediate.","role":"editor"}]})
     }
     fn envelope(value: &Value) -> Vec<u8> {
         let mut response = crate::tests::answer_value();
@@ -160,7 +165,7 @@ mod tests {
         serde_json::to_vec(&response).unwrap()
     }
     #[test]
-    fn same_schema_for_ask_and_review_without_generated_offsets_or_count_minimums() {
+    fn review_requires_both_assessments_without_forcing_findings_or_edits() {
         let ask: Value = serde_json::from_slice(
             &crate::request_body(&crate::tests::request("ask"), "model").unwrap(),
         )
@@ -169,7 +174,17 @@ mod tests {
             &crate::review::request_body(&review_request("Rain tapped."), "model").unwrap(),
         )
         .unwrap();
-        assert_eq!(ask["text"], review["text"]);
+        assert!(ask["text"]["format"]["schema"]["properties"]
+            .get("assessment")
+            .is_none());
+        assert!(review["text"]["format"]["schema"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("assessment")));
+        assert_eq!(
+            review["text"]["format"]["schema"]["properties"]["assessment"]["required"],
+            json!(["strengths", "improvements"])
+        );
         assert!(
             ask["text"]["format"]["schema"]["properties"]["edits"]["items"]["properties"]
                 .get("fromUtf8")
@@ -204,6 +219,29 @@ mod tests {
                 scene_id: None,
             }],
             workflow: None,
+        }
+    }
+    #[test]
+    fn review_rejects_missing_or_empty_assessments_but_ask_does_not_require_them() {
+        let mut value = advice();
+        value.as_object_mut().unwrap().remove("assessment");
+        assert!(Response::parse(&value.to_string()).is_ok());
+        assert!(
+            crate::review::parse_review(&review_request("Rain tapped."), &envelope(&value))
+                .is_err()
+        );
+        for invalid in [
+            json!(null),
+            json!({"strengths":" ", "improvements":"Clear."}),
+            json!({"strengths":"Clear.", "improvements":""}),
+            json!({"strengths":"Clear.", "improvements":"x".repeat(2001)}),
+        ] {
+            value["assessment"] = invalid;
+            assert!(crate::review::parse_review(
+                &review_request("Rain tapped."),
+                &envelope(&value)
+            )
+            .is_err());
         }
     }
     #[test]
@@ -253,6 +291,7 @@ mod tests {
         let mut request = review_request("É🦊\r\nRain tapped.");
         request.snapshots[0].source_hash = "a".repeat(64);
         request.workflow = Some(Options {
+            consolidate: false,
             reviewers: vec!["contextual".into()],
             context: vec![crate::review::ReviewSnapshot {
                 path: "context.md".into(),
@@ -278,7 +317,7 @@ mod tests {
             &crate::review::workflow_body(&request, "model", "Contextual review").unwrap(),
         )
         .unwrap();
-        assert_eq!(body["text"]["format"], format());
+        assert_eq!(body["text"]["format"], crate::review::review_format());
         request.workflow.as_mut().unwrap().ranges[0].from_utf8 = 9;
         assert!(crate::review::parse_review(&request, &envelope(&value)).is_err());
         request.workflow.as_mut().unwrap().ranges[0].from_utf8 = 8;

@@ -2,6 +2,14 @@
 import {describe,it,expect,vi} from 'vitest';
 import {createDocumentTabs} from './documentTabs';
 describe('document navigation metadata',()=>{
+ it('closes the named sheet without activating it and blocks close buttons during guarded work',()=>{
+  const open=vi.fn(async()=>{}),close=vi.fn(async()=>{});const tabs=createDocumentTabs({open,close,read:()=>{}});document.body.replaceChildren(tabs.element);
+  const first=tabs.mount({path:'one.md',kind:'source',sceneId:'one',title:'Opening'});tabs.mount({path:'two.md',kind:'source',sceneId:'two',title:'Opening'});
+  const button=()=>tabs.element.querySelector<HTMLButtonElement>('[aria-label="Close sheet Opening · 1"]')!;
+  expect(button().textContent).toBe('×');expect(button().closest('[role=tablist]')).toBeNull();button().click();expect(close).toHaveBeenCalledWith(first);expect(open).not.toHaveBeenCalled();
+  tabs.setBlocked(true);expect(button().disabled).toBe(true);button().click();expect(close).toHaveBeenCalledOnce();
+  tabs.setBlocked(false);tabs.invalidate(first.path,true);const unavailable=tabs.element.querySelector<HTMLButtonElement>('[aria-label="Close sheet Opening · 1 · Unavailable"]')!;expect(unavailable.disabled).toBe(false);unavailable.click();expect(close).toHaveBeenLastCalledWith(first);
+ });
  it('uses sheet titles for tabs and actions while keeping generated paths in Details',()=>{
   const read=vi.fn(),close=vi.fn(async()=>{}),tabs=createDocumentTabs({open:async()=>{},close,read});document.body.replaceChildren(tabs.element);
   const path='ms/sheet-e639a476-5de0-4c85-90f8-9b9638baf869.md';const tab=tabs.mount({path,kind:'source',sceneId:'sheet',title:'Harvest Moon'});

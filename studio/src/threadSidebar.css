@@ -1,0 +1,11 @@
+.thread-sidebar {padding:1rem; border-top:2px solid var(--border);overflow-wrap:anywhere;}
+.thread-sidebar h3 {font-size:1.2em;margin:.25rem 0;}
+.thread-sidebar .thread-scope {font-weight:700;}
+.thread-sidebar button {min-height:44px;max-width:100%;white-space:normal;text-align:left;}
+.thread-sidebar label {display:flex;align-items:center;gap:.6rem;min-height:44px;}
+.thread-sidebar input {width:24px;height:24px;flex-shrink:0;}
+.thread-sidebar ul {list-style:none;padding:0;}
+.thread-sidebar li {display:flex;flex-direction:column;gap:.4rem;padding:.7rem 0;border-bottom:1px solid var(--border);}
+.thread-open {display:flex;flex-direction:column;gap:.5rem;width:100%;}
+.thread-detail {font-size:.9em;}
+.thread-sidebar :focus-visible {outline:3px solid currentColor;outline-offset:3px;}

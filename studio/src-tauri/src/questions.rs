@@ -1216,7 +1216,7 @@ async fn request_review_workflow(
     }
     let _active = Active(&host.review_active);
     let capture_repository = request.repository_id.clone();
-    let(defs,coverage,remaining)=super::with_repository(&app,&capture_repository,|repo|{
+    let(defs,coverage,remaining,reports)=super::with_repository(&app,&capture_repository,|repo|{
   let mut slot=host.review.lock().map_err(|_|"Review unavailable")?;
   if let Some(id)=request.workflow.as_ref().and_then(|o|o.review_id.as_ref()){
    ensure_review(&app,&mut slot,repo,&request.repository_id,id)?;
@@ -1231,7 +1231,7 @@ async fn request_review_workflow(
    for snapshot in request.snapshots.iter().chain(request.workflow.as_ref().unwrap().context.iter()) {let current=repo.read(&snapshot.path).map_err(|e|e.to_string())?;if current.generated_compatibility||(current.content_hash!=snapshot.source_hash&&current.text!=snapshot.source){return Err("A selected source/context changed; capture the review again".into())}}
    let mut session=crate::review_state::ReviewSession::workflow(request.clone(),repo.project_key(),connection.model.clone(),connection.account_id.clone(),connection.generation)?;session.persist(&review_records(&app)?,repo)?;*slot=Some(session);
   }
-  let session=slot.as_ref().ok_or("Review unavailable")?;Ok((session.definitions(),session.coverage(),session.remaining_findings()))
+  let session=slot.as_ref().ok_or("Review unavailable")?;Ok((session.definitions(),session.coverage(),session.remaining_findings(),session.reviewer_reports()))
  }).map_err(NativeError::revision)?;
     if remaining == 0 {
         return Err(NativeError::revision("The retained finding limit is reached. Start a smaller explicit review; no call was sent."));
@@ -1317,6 +1317,7 @@ async fn request_review_workflow(
             coverage,
             defs,
             remaining,
+            reports,
             progress,
         )
         .await?;

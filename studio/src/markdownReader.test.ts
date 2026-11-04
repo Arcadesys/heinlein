@@ -140,7 +140,7 @@ describe('Markdown reader view', () => {
     key(reader.element, 'KeyO');
     expect(open).toHaveBeenLastCalledWith('dot');
     expect(reader.element.querySelector('.md-review-current')!.textContent).toBe('.');
-    expect(reader.element.querySelectorAll('[tabindex]:not(.md-table)')).toHaveLength(0);
+    expect(reader.element.querySelectorAll('[data-review-id][tabindex="0"]')).toHaveLength(2);
   });
   it('falls back to Source over the Reading limit, cutting nothing and rendering nothing', () => {
     const text = 'x'.repeat(READING_LIMIT_BYTES + 1);

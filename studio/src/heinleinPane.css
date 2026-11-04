@@ -173,3 +173,20 @@
 .question-chip-exact strong { display: block; margin-block: .5rem .25rem; font-size: .8125rem; }
 .question-chip-exact :is(del, ins) { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 1rem/1.6 var(--font-text, var(--text-fallback)); }
 .question-chip-exact ins { text-decoration: underline solid var(--accent); text-underline-offset: .2em; }
+
+/* Keep expanded settings inside their own scroll region above the composer,
+   even when legacy question-panel layout rules load later in the cascade. */
+.question-panel.question-panel-integrated.heinlein-pane {
+  display: flex;
+  grid-template-rows: none;
+  overflow: hidden;
+}
+.question-panel.question-panel-integrated.heinlein-pane > .heinlein-body {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+@container heinlein-pane (max-height: 34rem) {
+  .question-panel.question-panel-integrated.heinlein-pane { overflow-y: auto; }
+  .question-panel.question-panel-integrated.heinlein-pane > .heinlein-body { overflow: visible; }
+}

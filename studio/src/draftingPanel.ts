@@ -23,10 +23,12 @@ interface DraftingHooks {
   repository(): RepositorySession | null;
   verify?(): void;
   selectedPath?(): string | null;
+  currentGroup?():string|null;
   run(action: () => Promise<void>): Promise<void>;
   runOrganization?(action: () => Promise<void>): Promise<void>;
   show(): void;
   open(path: string): void;
+  selectGroup?(id:string):void;
   exportGroup?(id: string, title: string): void;
   changed(state: DraftingState, previous: DraftingState | null, changes: DraftingFileChange[], focusPath?: string, organizationOnly?: boolean): Promise<void>;
   report(message: string, error?: boolean): void;
@@ -690,11 +692,11 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const group = state!.groups.find(item => item.id === entry.id); if (!group) return null;
       const expanded = !collapsedGroups.has(group.id);
       const row = el('li', '', 'tree-group'); const line = el('div', '', 'tree-row'); line.style.setProperty('--depth', String(depth));
-      const toggle = button(group.title, () => {
-        if (expanded) collapsedGroups.add(group.id); else collapsedGroups.delete(group.id);
-        render(); [...element.querySelectorAll<HTMLButtonElement>('[data-group-id]')].find(node => node.dataset.groupId === group.id)?.focus();
-      }, 'tree-toggle');
-      toggle.dataset.groupId = group.id; toggle.setAttribute('aria-expanded', String(expanded)); pointerMoves.bind(toggle, {kind: 'group', id: group.id});
+      const expand=button(expanded?'▾':'▸',()=>{if(expanded)collapsedGroups.add(group.id);else collapsedGroups.delete(group.id);render();[...element.querySelectorAll<HTMLButtonElement>('[data-expand-group]')].find(node=>node.dataset.expandGroup===group.id)?.focus();},'tree-group-expand');
+      expand.dataset.expandGroup=group.id;expand.setAttribute('aria-label',`${expanded?'Collapse':'Expand'} ${group.title}`);expand.setAttribute('aria-expanded',String(expanded));
+      const toggle = button(group.title, () => {selectedGroup=group.id;hooks.selectGroup?.(group.id);}, 'tree-toggle');
+      if(hooks.currentGroup?.()===group.id)toggle.setAttribute('aria-current','true');
+      toggle.dataset.groupId = group.id; pointerMoves.bind(toggle, {kind: 'group', id: group.id});
       toggle.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(GROUP_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()?.id, groupId: group.id})); });
       toggle.addEventListener('dragover', event => {
         if (!event.dataTransfer?.types.some(type => type === SCENE_DRAG_TYPE || type === GROUP_DRAG_TYPE)) return;
@@ -720,7 +722,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const siblings = entries.filter(item => item.parentId === entry.parentId); const at = siblings.findIndex(item => item.id === group.id);
       const earlier = button('Move earlier', () => reorderLibraryItem(group.id, -1)); earlier.disabled = at <= 0;
       const later = button('Move later', () => reorderLibraryItem(group.id, 1)); later.disabled = at === siblings.length - 1;
-      line.prepend(toggle, badge, rowMenu(`Actions for ${group.title}`, [
+      line.prepend(expand,toggle, badge, rowMenu(`Actions for ${group.title}`, [
         button('New scene here', () => { selectedGroup = group.id; newSheet(); }),
         button('New group inside', () => { selectedGroup = group.id; createLibraryGroup(); }),
         ...(hooks.exportGroup ? [button('Export group…', () => hooks.exportGroup!(group.id, group.title))] : []),
@@ -814,7 +816,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       button('Refresh from disk', () => { void hooks.run(async () => { try { const loaded = await load(); if (loaded) { await hooks.changed(loaded, null, []); hooks.report('Manuscript refreshed from disk.'); } } catch (error) { hooks.report(`Refresh failed: ${String(error)}`, true); } }); }));
     return items;
   }
-  return { element, supported, clear, load, menuItems, initialize, importExternal, splitScene, splitFile, renameFile, bindMoveSource, bindMoveTarget: moveDrop, updateBuffer, get state() { return state; },
+  return { element, supported, clear, load, refreshSelection(){activeBuffer=null;render();},menuItems, initialize, importExternal, splitScene, splitFile, renameFile, bindMoveSource, bindMoveTarget: moveDrop, updateBuffer, get state() { return state; },
     /** The same previewed, confirmed reorder as the ↑/↓ buttons. Resolves once the change settles. */
     async reorderScene(sceneId: string, delta: -1 | 1) { const scene = state?.scenes.find(item => item.id === sceneId); if (scene && state?.revision && !dialogs.size) await (state.library ? reorderLibraryItem(sceneId, delta) : reorder(scene, delta)); },
     newScene() { if (state?.revision && !dialogs.size) newScene(); },
