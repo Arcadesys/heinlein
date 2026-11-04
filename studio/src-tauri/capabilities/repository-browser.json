@@ -7,6 +7,7 @@
   "permissions": [
     "allow-preferences-request",
     "allow-project-request",
+    "allow-mcp-access-request",
     "allow-pick-repository",
     "allow-recent-repositories",
     "allow-open-recent-repository",
