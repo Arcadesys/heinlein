@@ -609,6 +609,11 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       if (event.dataTransfer.files.length) hooks.report('Use Import files… to authorize these files with the native picker. Browser-provided file paths are not used.', true);
     } catch { hooks.report('This drag could not be read. Use Move… or Import repository files… instead.', true); }
   }
+  // Previews make rows taller; a drop on a title still uses that title's midpoint.
+  function sceneDropBounds(line: HTMLElement, target: Element | null): DOMRect {
+    const title = target?.closest<HTMLElement>('.scene-open');
+    return (title && line.contains(title) ? title : line).getBoundingClientRect();
+  }
   function pointerDestination(source: LibraryDragSource, x: number, y: number): LibraryDropTarget | null {
     if (!state) return null;
     const hit = document.elementFromPoint(x, y); if (!hit || !element.contains(hit)) return null;
@@ -619,7 +624,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const id = sceneRow.dataset.sceneId!; if (id === source.id) return null;
       const entry = entries.find(e => e.id === id); if (!entry) return null;
       const line = sceneRow.querySelector<HTMLElement>(':scope > .tree-row')!;
-      const b = line.getBoundingClientRect(), before = y <= b.top + b.height / 2;
+      const b = sceneDropBounds(line, hit), before = y <= b.top + b.height / 2;
       const siblings = entries.filter(e => e.parentId === entry.parentId), at = siblings.findIndex(e => e.id === id);
       return {parentId: entry.parentId, beforeId: before ? id : siblings[at + 1]?.id ?? null, marker: line, side: before ? 'before' : 'after', label: `Move “${name}” ${before ? 'before' : 'after'} “${state.scenes.find(s => s.id === id)?.title}”`};
     }
@@ -652,7 +657,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   /** A scene row accepts a drop above or below its midline; the marker is a shadow so rows never shift. */
   function sceneDropTarget(row: HTMLElement, line: HTMLElement, scene: DraftingScene, entries: LibraryEntry[]) {
     const accepts = (event: DragEvent) => !!event.dataTransfer?.types.some(type => type === REPOSITORY_DRAG_TYPE || type === SCENE_DRAG_TYPE);
-    const half = (event: DragEvent): 'before' | 'after' => { const bounds = line.getBoundingClientRect(); return event.clientY > bounds.top + bounds.height / 2 ? 'after' : 'before'; };
+    const half = (event: DragEvent): 'before' | 'after' => { const bounds = sceneDropBounds(line, event.target instanceof Element ? event.target : null); return event.clientY > bounds.top + bounds.height / 2 ? 'after' : 'before'; };
     row.addEventListener('dragover', event => {
       if (!accepts(event)) return;
       event.preventDefault(); event.dataTransfer!.dropEffect = 'move';
