@@ -30,3 +30,12 @@
 .tree-row > :is(.tree-toggle,.scene-open)[aria-current=true] {border-inline-start:4px solid currentColor;font-weight:700;}
 
 .tree-row > :is(.tree-toggle,.tree-group-expand) {font-size:1rem;min-block-size:48px;}
+
+/* A compact narrow-screen launcher keeps reference controls and their labels
+   exposed without reserving height or changing the writer's line wrapping. */
+.conversation-rail-toggle svg {display:none;}
+@media (max-width:760px) {
+  .conversation-rail-toggle {right:8px;bottom:8px;display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;min-width:48px;min-height:48px;padding:8px;}
+  .conversation-rail-toggle svg {display:block;flex:none;width:24px;height:24px;}
+  .conversation-rail-toggle .chat-launcher-label {position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}
+}

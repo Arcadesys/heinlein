@@ -1,7 +1,10 @@
 import './conversationRail.css';
 export function createConversationRail(list:HTMLElement,measure:()=>HTMLElement|null,returnToWriter?:()=>void,modalChanged?:(modal:boolean)=>void) {
   const root=document.createElement('div');root.className='conversation-rail-root';
-  const toggle=document.createElement('button');toggle.type='button';toggle.className='conversation-rail-toggle';toggle.textContent='Chats';toggle.setAttribute('aria-controls','conversation-rail');
+  const toggle=document.createElement('button');toggle.type='button';toggle.className='conversation-rail-toggle';toggle.setAttribute('aria-label','Chats');toggle.title='Open chats';toggle.setAttribute('aria-controls','conversation-rail');
+  const toggleLabel=document.createElement('span');toggleLabel.className='chat-launcher-label';toggleLabel.textContent='Chats';
+  const ns='http://www.w3.org/2000/svg',chatIcon=document.createElementNS(ns,'svg'),chatPath=document.createElementNS(ns,'path');
+  chatIcon.setAttribute('viewBox','0 0 24 24');chatIcon.setAttribute('aria-hidden','true');chatIcon.setAttribute('focusable','false');chatPath.setAttribute('d','M4 4h16v12H9l-5 4V4Z');chatPath.setAttribute('fill','none');chatPath.setAttribute('stroke','currentColor');chatPath.setAttribute('stroke-width','2');chatPath.setAttribute('stroke-linejoin','round');chatIcon.append(chatPath);toggle.append(toggleLabel,chatIcon);
   const dock=document.createElement('aside');dock.className='conversation-rail-dock';dock.setAttribute('aria-label','Scene and chapter chats');
   const modal=document.createElement('dialog');modal.className='conversation-rail-dialog';modal.setAttribute('aria-label','Scene and chapter chats');
   const panel=document.createElement('section');panel.id='conversation-rail';panel.className='conversation-rail';panel.setAttribute('aria-label','Chats');
