@@ -6,7 +6,7 @@ The existing Python publisher and its CLI remain unchanged.
 
 ## 1.7 release packaging
 
-Heinlein Studio is version **1.7.0**. The independent Python
+Heinlein Studio is version **1.7.1**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:
@@ -27,6 +27,13 @@ Expand the ZIP, or open the DMG and copy the app to Applications. Existing manag
 source-update installations in `~/Applications` should use their own updater
 instead of replacing their launcher with the standalone release app. The fixed
 release app does not include that source-update launcher.
+
+Standalone apps check published GitHub releases shortly after launch and hourly
+while visible. **Update available…** or **Update needs attention…** appears without
+changing the manuscript layout or keyboard focus. **Heinlein Studio → Check for
+Updates…** also checks explicitly. Release downloads are installed manually after
+saving and quitting; unpublished source changes are not release updates. Managed
+source installations retain their separate source check and next-launch updater.
 
 The build is ARM64 for Apple Silicon, ad-hoc signed, and not notarized or signed
 with a Developer ID certificate. The declared packaging minimum is macOS 11;
@@ -265,7 +272,17 @@ migrates or rearranges your archive.
 Directory-tree imports and asset migration are deferred. Recognized relative
 asset references block directory-changing operations so their bytes are not
 silently rewritten or their references knowingly broken. Incoming links elsewhere
-still need author review after path changes. Export and publication are deferred.
+still need author review after path changes. Publication is deferred.
+
+**Export as Markdown…** in a group’s or project’s actions combines its sheets
+and nested groups into one Markdown file in Library order. In **Source files**,
+use a folder’s actions or **Export this folder as Markdown…** to include its
+subfolders; indexed sheets use Library order, followed by other Markdown files in
+natural filename order. Reference sheets are included. The export adds headings,
+omits YAML metadata and uses current editor text without changing the source.
+Images and attachments are not bundled. The native Save dialog requires a new
+file outside the source project; existing files are never replaced. No file is
+sent to anyone automatically.
 
 ## Tests
 

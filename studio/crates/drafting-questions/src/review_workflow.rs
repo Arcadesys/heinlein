@@ -8,7 +8,80 @@ pub struct ReviewerDefinition {
     pub display_name: String,
     pub instructions: String,
 }
+/// Author-defined reviewers, stored once per user and usable in every project.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CustomReviewer {
+    pub id: String,
+    pub version: u32,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: String,
+    pub instructions: String,
+    /// `notes` gives advice only; `notes_and_edits` may also propose text replacements.
+    pub output: String,
+}
+pub const CUSTOM_PREFIX: &str = "custom-";
+pub const CUSTOM_INSTRUCTIONS_MAX: usize = 2000;
+const NOTES_ONLY: &str = " Give advice only: describe the issue and why it matters, and do not propose replacement text.";
+const NOTES_AND_EDITS: &str = " Suggest a small replacement only when it clearly serves this focus. Advice without an edit is fine.";
+impl CustomReviewer {
+    pub fn validate(&self) -> Result<(), QuestionError> {
+        let bad = |m: &'static str| QuestionError::new("invalidReviewer", m);
+        if !self.id.starts_with(CUSTOM_PREFIX) || !valid_id(&self.id) {
+            return Err(bad("Reviewer id is invalid."));
+        }
+        if self.version == 0 {
+            return Err(bad("Reviewer version is invalid."));
+        }
+        let name = self.display_name.trim();
+        if name.is_empty() || name.chars().count() > 60 {
+            return Err(bad("Give the reviewer a name of 60 characters or fewer."));
+        }
+        if self.description.chars().count() > 200 {
+            return Err(bad("Keep the description to 200 characters."));
+        }
+        let text = self.instructions.trim();
+        if text.is_empty() || text.chars().count() > CUSTOM_INSTRUCTIONS_MAX {
+            return Err(bad("Describe what to look for in up to 2,000 characters."));
+        }
+        if self.output != "notes" && self.output != "notes_and_edits" {
+            return Err(bad("Output must be notes or notes and edits."));
+        }
+        Ok(())
+    }
+    /// Fixed wording is appended after the author's text; it can narrow, never widen, the safety rules.
+    pub fn definition(&self) -> ReviewerDefinition {
+        let tail = if self.output == "notes" {
+            NOTES_ONLY
+        } else {
+            NOTES_AND_EDITS
+        };
+        ReviewerDefinition {
+            id: self.id.clone(),
+            version: self.version,
+            display_name: self.display_name.trim().to_string(),
+            instructions: format!("{}{} No findings is valid.", self.instructions.trim(), tail),
+        }
+    }
+}
+static CUSTOM: std::sync::RwLock<Vec<ReviewerDefinition>> = std::sync::RwLock::new(Vec::new());
+pub fn set_custom_reviewers(list: &[CustomReviewer]) {
+    let defs = list.iter().map(CustomReviewer::definition).collect();
+    *CUSTOM.write().unwrap_or_else(|e| e.into_inner()) = defs;
+}
 pub fn definitions() -> Vec<ReviewerDefinition> {
+    let mut all = built_in_definitions();
+    all.extend(
+        CUSTOM
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .cloned(),
+    );
+    all
+}
+pub fn built_in_definitions() -> Vec<ReviewerDefinition> {
     vec![ReviewerDefinition{id:"mechanical".into(),version:1,display_name:"Mechanical review".into(),instructions:"Suggest only clear mechanical corrections. Preserve intentional style and expressive choices. No findings is valid.".into()},ReviewerDefinition{id:"contextual".into(),version:1,display_name:"Story and clarity review".into(),instructions:"Suggest small contextual clarity improvements. Consider continuity and story intent; do not invent canon or rewrite intentional voice. No findings is valid.".into()}]
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -884,5 +957,39 @@ mod tests {
         );
         assert!(result.calls[0].edits.is_empty());
         assert_eq!(statuses, vec!["running", "failed"]);
+    }
+}
+
+#[cfg(test)]
+mod custom_reviewer_tests {
+    use super::*;
+    fn sample() -> CustomReviewer {
+        CustomReviewer {
+            id: "custom-punch".into(),
+            version: 1,
+            display_name: "Emotional punch".into(),
+            description: String::new(),
+            instructions: "Find beats that should land harder.".into(),
+            output: "notes".into(),
+        }
+    }
+    #[test]
+    fn validates_and_composes() {
+        let r = sample();
+        r.validate().unwrap();
+        assert!(r
+            .definition()
+            .instructions
+            .contains("do not propose replacement text"));
+        let mut b = sample();
+        b.id = "contextual".into();
+        assert!(b.validate().is_err());
+        let mut b = sample();
+        b.instructions = "x".repeat(2001);
+        assert!(b.validate().is_err());
+        let mut b = sample();
+        b.output = "rewrite".into();
+        assert!(b.validate().is_err());
+        assert!(r.definition().instructions.len() <= 4000);
     }
 }

@@ -33,4 +33,9 @@ if (new URLSearchParams(location.search).has('long')) {
     state.library!.push({id,kind:'scene',parentId:'g'});
   }
 }
+if (new URLSearchParams(location.search).has('export')) {
+  const calls: {repositoryId:string;filename:string;text:string}[] = [];
+  core.saveMarkdownExport = async (repositoryId,filename,text) => {calls.push({repositoryId,filename,text});return true;};
+  (window as any).exportFixture = {calls};
+}
 const app=mountStudio(document.querySelector<HTMLElement>('#app')!,core); void app.selectRepository(async()=>session);

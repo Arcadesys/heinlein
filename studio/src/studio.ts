@@ -1,4 +1,5 @@
 import {actionMenu} from './actionMenu';
+import {createMarkdownExport} from './markdownExport';
 import {createDocumentTabs,type DocumentTab} from './documentTabs';
 import {createReferencePane,REFERENCE_ACTION_MESSAGE} from './referencePane';
 import {requestGitHub} from './githubRequests';
@@ -11,6 +12,7 @@ import {createUpdatePanel} from './updatePanel';
 import {createGitHubPanel} from './githubPanel';
 import {createFirstStory} from './firstStory';
 import { createReviewPanel } from './reviewPanel';
+import { createReviewerManager } from './reviewerEditor';
 import { createMarkdownReader, type ReaderContent } from './markdownReader';
 import { computeReviewMarks, createReviewMarkPublisher, reviewMarkExtension, reviewMarksIn, setReviewMarks, type ReviewMarkTarget } from './reviewMarks';
 import { createDocumentDetails } from './documentDetails';
@@ -143,6 +145,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   let dirtyBadge: HTMLElement | null = null;
   let guardPending: Promise<boolean> | null = null;
   let quitRefusedUnlisten:(()=>void)|null=null;
+  let checkUpdatesUnlisten:(()=>void)|null=null;
   let quitInProgress=false;
   let closeUnlisten: (() => void) | null = null;
   let dirtySync = Promise.resolve();
@@ -604,6 +607,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const openGitHubEntry = button('Open GitHub project…', () => {void github.open(true);}, 'github-open-entry');
   const mcpAccess=createMcpAccessPanel(core,{current:()=>({session:standalone?.active?null:repository,path:!standalone?.active&&opened&&!opened.generatedCompatibility&&/\.(md|markdown)$/i.test(opened.path)?opened.path:null,problem:dirty||saving||recoveryPending||recoveryErrorMessage||structuralBusy||selecting||repositoryDetached?'Save your writing and resolve recovery before allowing MCP access.':null})});
   if(mcpAccess.supported){const entry=button('MCP connection…',()=>{void mcpAccess.open();});entry.setAttribute('aria-haspopup','dialog');corner.append(entry);}
+  const reviewerManager=createReviewerManager(core,root);
+  if(core.listCustomReviewers&&core.saveCustomReviewer){const entry=button('Review agents…',()=>{void reviewerManager.open();});entry.setAttribute('aria-haspopup','dialog');corner.append(entry);}
   openGitHubEntry.setAttribute('aria-haspopup', 'dialog');
   const githubEntry = button('GitHub actions…', () => {void github.open();}, 'github-entry');
   githubEntry.setAttribute('aria-haspopup', 'dialog');
@@ -640,6 +645,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     items.push(projectLibrary.supported ? button('Projects…', () => { void projectLibrary.open(); }) : button('Open project…', () => { void selectRepository(() => core.pickRepository()); }));
     if (repository?.projectId) items.push(button('Project settings', () => { void projectLibrary.settings(repository!.projectId!); }));
     if (repository) items.push(searchManuscript, button('Source files', () => showNavView('files', true)));
+    if (repository && core.saveMarkdownExport && drafting.state?.revision) items.push(button('Export as Markdown…', () => {void markdownExport.open(drafting.state!.project, {kind:'project'});}));
     const libraryItems = drafting.menuItems(); if (libraryItems.length) items.push(el('hr'), ...libraryItems);
     return items;
   }, 'project-menu');
@@ -787,12 +793,23 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     appCommands.button.textContent=compact?'More':'More actions';
     appCommands.button.setAttribute('aria-label','More actions');
   }
-  root.replaceChildren(glow, ...(projectLibrary.supported ? [pill, layout] : [layout, pill]), noticeSlot, goalCard, corner, firstStory.element, github.element, updates.element, projectLibrary.element,mcpAccess.element);
+  root.replaceChildren(glow, ...(projectLibrary.supported ? [pill, layout] : [layout, pill]), noticeSlot, goalCard, corner, firstStory.element, github.element, updates.element, updates.notice, projectLibrary.element,mcpAccess.element);
   const drafting = createDraftingPanel(core, {
     root, repository: () => standalone?.active?null:repository, run: runStructural, runOrganization: runLibraryOrganization, verify: verifyStructuralBuffer, selectedPath:()=>opened?.path??null,
     show: () => { renderPill(); draftingEntry.hidden = Boolean(drafting.state?.revision); outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
     open: path => { void showDocument(path); }, changed: draftingChanged,
+    exportGroup: core.saveMarkdownExport ? (id, title) => {void markdownExport.open(title, {kind:'group', id});} : undefined,
     report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
+  });
+  const markdownExport = createMarkdownExport(core, {
+    root,
+    snapshot: () => {
+      if (!repository || standalone?.active || repositoryDetached || recoveryPending || selecting || structuralBusy || proposalBusy || guardPending) return null;
+      const buffers = new Map<string, Document>();
+      if (opened && editor && !opened.generatedCompatibility) buffers.set(opened.path, {...opened, text: editor.text()});
+      return {repositoryId: repository.id, state: drafting.state ? structuredClone(drafting.state) : null, buffers};
+    },
+    report: (message, error = false) => {status.textContent = message; status.classList.toggle('error', error);},
   });
   draftingStarted = true;
   const proposals = createProposalPanel(core, {
@@ -1930,6 +1947,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       listing.replaceChildren();undoFileRename.hidden=!drafting.canUndoRename;
       if (scan?.incomplete) listing.append(el('p', 'Some entries could not be checked; uncertain files and folders remain visible.', 'muted'));
       if (path) listing.append(button('↑ Parent folder', () => { void showDirectory(parentPath(path)); }, 'file-entry parent'));
+      if (core.saveMarkdownExport) listing.append(button('Export this folder as Markdown…', () => {void markdownExport.open(basename(path) || repository!.name, {kind:'folder', path});}));
       for (const entry of entries) {
         const folder = entry.kind === 'directory';
         const name = filtered && !folder ? entry.name.replace(/\.(?:md|markdown)$/i, '') : entry.name;
@@ -1944,6 +1962,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
           const rename=button('Rename…',()=>drafting.renameFile(entry.path),'file-rename');rename.setAttribute('aria-label',`Rename ${entry.name}`);rename.setAttribute('aria-haspopup','dialog');
           item.addEventListener('keydown',event=>{if(event.key==='F2'){event.preventDefault();drafting.renameFile(entry.path);}});item.title+=' · F2 to rename';
           row.append(item,rename);listing.append(row);
+        } else if (folder && core.saveMarkdownExport) {
+          const row = el('div', '', 'file-entry-row');
+          row.append(item, rowMenu(`Actions for folder ${entry.name}`, [button('Export as Markdown…', () => {void markdownExport.open(entry.name, {kind:'folder', path:entry.path});})])); listing.append(row);
         }else listing.append(item);
       }
       if (!entries.length) listing.append(el('p', 'This folder is empty.', 'empty'));
@@ -2254,6 +2275,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     }
   }
   if (core.available()) {
+    updates.startChecking();
     initialHistory=refreshRecent();
     // Hosts without standalone drafts still restore project sessions.
     queueMicrotask(()=>{if(!repository&&!disposed)void startInitialSession();});
@@ -2263,6 +2285,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     }).then(unlisten => { if (disposed) unlisten(); else dropUnlisten = unlisten; }).catch(reportError);
     if (core.onDraftingImportError) void core.onDraftingImportError(message => { if (!disposed) { status.textContent = `Native import failed: ${message}`; status.classList.add('error'); } }).then(unlisten => { if (disposed) unlisten(); else dropErrorUnlisten = unlisten; }).catch(reportError);
     if(core.onQuitRefused)void core.onQuitRefused(message=>{root.inert=false;quitInProgress=false;status.textContent=message;}).then(unlisten=>{if(disposed)unlisten();else quitRefusedUnlisten=unlisten;}).catch(reportError);
+    if(core.onCheckForUpdates)void core.onCheckForUpdates(()=>{if(!disposed)void updates.checkNow().catch(reportError);}).then(unlisten=>{if(disposed)unlisten();else checkUpdatesUnlisten=unlisten;}).catch(reportError);
     void core.onCloseRequested(() => {
       void quitSafely().catch(reportError);
     }).then(unlisten => { if (disposed) unlisten(); else closeUnlisten = unlisten; }).catch(reportError);
@@ -2272,6 +2295,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.textContent = 'Open Heinlein Studio in its native desktop app to choose local folders. Browser preview has no filesystem access.';
   }
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();editorCommands?.destroy();navigation.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();mcpAccess.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();editorCommands?.destroy();navigation.destroy();markdownExport.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();mcpAccess.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); checkUpdatesUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

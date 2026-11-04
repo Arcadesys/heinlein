@@ -1,12 +1,13 @@
 import {createReviewActivity} from './reviewActivity';
 import {renderMarkdown} from './markdown';
-import type { LocalCore, QuestionStatus, ReviewEdit, ReviewResult, ReviewRequest, ReviewerDefinition, ReviewCoverage, ReviewProgress, ProposalOutcome } from './localCore';
+import type { LocalCore, QuestionStatus, ReviewEdit, ReviewResult, ReviewRequest, ReviewerDefinition, CustomReviewer, ReviewCoverage, ReviewProgress, ProposalOutcome } from './localCore';
 import { changedSpan, decisionLabel, invisibleChangeNote, lineageDelta, patchContext, waiting, type PatchContext } from './reviewComparison';
 import type { ReviewMarkInput } from './reviewMarks';
 import { formatKeys } from './shortcuts';
 import type {CapturedLibraryScope} from './librarySnapshot';
 import {createHeinleinHeader, setHeinleinStatus} from './heinleinHeader';
 import './heinleinReview.css';
+import { reviewerEditorForm, blankReviewer } from './reviewerEditor';
 export interface ReviewScope {
     repositoryId: string;
     scope: 'scene' | 'chapter';
@@ -69,6 +70,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const workflowMode = Boolean(core.reviewDefinitions && core.previewReview);
     let definitions: ReviewerDefinition[] = [];
+    let customReviewers: CustomReviewer[] = [];
+    let editing: CustomReviewer | null = null;
     let reviewerIds = ['contextual'];
     let selectedPaths = new Set<string>();
     let useSelection = false;
@@ -1072,6 +1075,20 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             targets.append(label);
         }
     }
+    async function reloadReviewers(selectId?: string) {
+        const token = generation;
+        const [values, custom] = await Promise.all([core.reviewDefinitions!(), core.listCustomReviewers?.() ?? Promise.resolve([] as CustomReviewer[])]);
+        if (!live(token))
+            return;
+        definitions = values;
+        customReviewers = custom;
+        reviewerIds = reviewerIds.filter(id => definitions.some(d => d.id === id));
+        if (selectId && !reviewerIds.includes(selectId) && reviewerIds.length < 3)
+            reviewerIds = definitions.map(d => d.id).filter(id => id === selectId || reviewerIds.includes(id));
+        if (!reviewerIds.length)
+            reviewerIds = [definitions[0]?.id ?? ''];
+        invalidatePreview();
+    }
     function settings() {
         setup.replaceChildren();
         if (!workflowMode) return;
@@ -1093,8 +1110,16 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             chip.append(document.createTextNode(d.displayName));
             if (!on && reviewerIds.length >= 3) chip.dataset.full = 'true';
             chips.append(chip);
+            const custom = customReviewers.find(c => c.id === d.id);
+            if (custom && core.saveCustomReviewer) chips.append(iconButton(`Edit ${d.displayName}`, 'M2 12l1-3.5L9.5 2l2.5 2.5L5.5 11 2 12z', () => { editing = {...custom}; settings(); setup.querySelector<HTMLElement>('.review-agent-name')?.focus(); }, 'review-chip-edit'));
         }
+        if (core.saveCustomReviewer && !editing) chips.append(button('+ New reviewer', () => { editing = blankReviewer(); settings(); setup.querySelector<HTMLElement>('.review-agent-name')?.focus(); }, 'review-chip-toggle review-chip-new'));
         set.append(chips);
+        if (editing) set.append(reviewerEditorForm(core, editing, {
+            saved: async saved => { await reloadReviewers(saved.id); editing = null; settings(); update(); },
+            deleted: async () => { await reloadReviewers(); editing = null; settings(); update(); },
+            cancel: () => { editing = null; settings(); update(); },
+        }));
         if (definitions.length > 1) set.append(el('p', 'Choose 1 to 3. Each reviewer is a separate advisory pass.', 'review-scope-detail'));
         const noteToggle = button(noteOpen ? '− Note for reviewers' : '+ Note for reviewers', () => { noteOpen = !noteOpen; settings(); update(); (noteOpen ? setup.querySelector<HTMLElement>('textarea') : setup.querySelector<HTMLElement>('.review-note-toggle'))?.focus(); }, 'review-note-toggle');
         noteToggle.setAttribute('aria-expanded', String(noteOpen));
@@ -1114,6 +1139,9 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (!live(token))
             return;
         definitions = values;
+        customReviewers = await core.listCustomReviewers?.().catch(() => [] as CustomReviewer[]) ?? [];
+        if (!live(token))
+            return;
         if (!definitions.some(d => d.id === reviewerIds[0]))
             reviewerIds = [definitions[0]?.id ?? ''];
         settings();

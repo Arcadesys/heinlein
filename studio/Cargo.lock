@@ -1897,7 +1897,7 @@ dependencies = [
 
 [[package]]
 name = "heinlein-studio"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "cc",
  "drafting-questions",
@@ -1907,7 +1907,9 @@ dependencies = [
  "proposal-store",
  "raw-window-handle",
  "repository-core",
+ "reqwest",
  "rustix",
+ "semver",
  "serde",
  "serde_json",
  "tauri",

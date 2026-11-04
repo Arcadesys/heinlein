@@ -240,3 +240,20 @@ it('starts a new review from results and lists earlier reviews as compact rows',
  expect(panel!.element.querySelector<HTMLElement>('.review-results')!.hidden).toBe(false);
  expect(f.core.requestReview).toHaveBeenCalledOnce();
 });
+it('creates a custom reviewer from a template and selects it', async () => {
+    const f = fixture();
+    const saved: import('./localCore').CustomReviewer[] = [];
+    const core = f.core as unknown as Record<string, unknown>;
+    core.listCustomReviewers = vi.fn(async () => [...saved]);
+    core.saveCustomReviewer = vi.fn(async (r: import('./localCore').CustomReviewer) => { const s = {...r, id: 'custom-abc'}; saved.push(s); (core.reviewDefinitions as ReturnType<typeof vi.fn>).mockImplementation(async () => [...defs, {id: s.id, version: 1, displayName: s.displayName, instructions: s.instructions}]); return s; });
+    panel!.open();
+    await vi.waitFor(() => expect(f.button('+ New reviewer')).toBeTruthy());
+    await f.click('+ New reviewer');
+    const select = panel!.element.querySelector('.review-agent-editor select') as HTMLSelectElement;
+    select.value = '0'; select.dispatchEvent(new Event('change'));
+    expect((panel!.element.querySelector('.review-agent-name') as HTMLInputElement).value).toBe('Emotional punch');
+    await f.click('Save reviewer');
+    await vi.waitFor(() => expect(panel!.element.querySelector('[data-reviewer="custom-abc"][aria-pressed="true"]')).toBeTruthy());
+    expect(panel!.element.querySelector('.review-agent-editor')).toBeNull();
+    expect(f.button('Edit Emotional punch')).toBeTruthy();
+});
