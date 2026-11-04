@@ -6,7 +6,7 @@ The existing Python publisher and its CLI remain unchanged.
 
 ## 1.7 release packaging
 
-Heinlein Studio is version **1.7.0**. The independent Python
+Heinlein Studio is version **1.7.1**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:
@@ -27,6 +27,13 @@ Expand the ZIP, or open the DMG and copy the app to Applications. Existing manag
 source-update installations in `~/Applications` should use their own updater
 instead of replacing their launcher with the standalone release app. The fixed
 release app does not include that source-update launcher.
+
+Standalone apps check published GitHub releases shortly after launch and hourly
+while visible. **Update available…** or **Update needs attention…** appears without
+changing the manuscript layout or keyboard focus. **Heinlein Studio → Check for
+Updates…** also checks explicitly. Release downloads are installed manually after
+saving and quitting; unpublished source changes are not release updates. Managed
+source installations retain their separate source check and next-launch updater.
 
 The build is ARM64 for Apple Silicon, ad-hoc signed, and not notarized or signed
 with a Developer ID certificate. The declared packaging minimum is macOS 11;

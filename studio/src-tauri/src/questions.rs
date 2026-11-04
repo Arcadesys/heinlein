@@ -1243,7 +1243,10 @@ async fn request_review_workflow(
     {
         return Err(QuestionError::stale_connection().into());
     }
-    let reporter = Arc::new(Mutex::new(Reporter::new(request.request_id.clone(), Some(on_progress))));
+    let reporter = Arc::new(Mutex::new(Reporter::new(
+        request.request_id.clone(),
+        Some(on_progress),
+    )));
     let stream_reporter = Arc::clone(&reporter);
     let config = Configuration::new(&credentials.access_token, &credentials.model)?
         .with_account(&credentials.account_id)?
@@ -1263,42 +1266,43 @@ async fn request_review_workflow(
             {
                 return Err(QuestionError::stale_connection());
             }
-            let (coverage, suggestions) = super::with_repository(&app, &request.repository_id, |repo| {
-                let store = review_records(&app)?;
-                let saved: Vec<crate::review_state::ReviewSession> =
-                    store.list(repo).map_err(|e| e.to_string())?;
-                let mut tombstones = saved
-                    .iter()
-                    .flat_map(|r| r.tombstones())
-                    .collect::<std::collections::HashSet<_>>();
-                for receipt in super::proposals::review_receipts(&app, repo)? {
-                    if receipt.kind == "reject" && receipt.status == "rejected" {
-                        if let Some(a) = receipt.origin.review {
-                            tombstones.insert(a.fingerprint);
+            let (coverage, suggestions) =
+                super::with_repository(&app, &request.repository_id, |repo| {
+                    let store = review_records(&app)?;
+                    let saved: Vec<crate::review_state::ReviewSession> =
+                        store.list(repo).map_err(|e| e.to_string())?;
+                    let mut tombstones = saved
+                        .iter()
+                        .flat_map(|r| r.tombstones())
+                        .collect::<std::collections::HashSet<_>>();
+                    for receipt in super::proposals::review_receipts(&app, repo)? {
+                        if receipt.kind == "reject" && receipt.status == "rejected" {
+                            if let Some(a) = receipt.origin.review {
+                                tombstones.insert(a.fingerprint);
+                            }
                         }
                     }
-                }
-                let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
-                let id = slot
-                    .as_ref()
-                    .filter(|r| r.request.request_id == request.request_id)
-                    .ok_or("Review changed")?
-                    .id()
-                    .to_owned();
-                ensure_review(&app, &mut slot, repo, &request.repository_id, &id)?;
-                let session = review_session(&mut slot, &request.repository_id, &id)?;
-                session.ingest(
-                    drafting_questions::review_workflow::Batch {
-                        calls: vec![call.clone()],
-                        cancelled: false,
-                        limit_reached: false,
-                    },
-                    &tombstones,
-                )?;
-                session.persist(&store, repo)?;
-                Ok((session.coverage(), session.finding_count()))
-            })
-            .map_err(|_| QuestionError::review_persistence())?;
+                    let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
+                    let id = slot
+                        .as_ref()
+                        .filter(|r| r.request.request_id == request.request_id)
+                        .ok_or("Review changed")?
+                        .id()
+                        .to_owned();
+                    ensure_review(&app, &mut slot, repo, &request.repository_id, &id)?;
+                    let session = review_session(&mut slot, &request.repository_id, &id)?;
+                    session.ingest(
+                        drafting_questions::review_workflow::Batch {
+                            calls: vec![call.clone()],
+                            cancelled: false,
+                            limit_reached: false,
+                        },
+                        &tombstones,
+                    )?;
+                    session.persist(&store, repo)?;
+                    Ok((session.coverage(), session.finding_count()))
+                })
+                .map_err(|_| QuestionError::review_persistence())?;
             if let Ok(mut reporter) = reporter.lock() {
                 reporter.transition(&call.coverage, &coverage, suggestions);
             }

@@ -1110,3 +1110,9 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 
 /* Activity/count text must not wrap the editor toolbar and move the manuscript. */
 .document-command-bar button[aria-controls="drafting-questions"] {flex:0 0 12ch;inline-size:12ch;max-inline-size:12ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+/* A fixed update notice preserves manuscript width, line wraps and focus. */
+.update-notice { position:fixed; right:.75rem; bottom:.75rem; z-index:12; max-width:calc(100vw - 1.5rem); }
+.update-notice[hidden] { display:none; }
+.update-notice button { min-height:48px; max-width:100%; padding:.75rem 1rem; border:2px solid var(--fg); background:var(--bg); color:var(--fg); font:600 1rem var(--font-ui, var(--ui-fallback)); white-space:normal; }
+.update-notice button:focus-visible { outline:3px solid var(--fg); outline-offset:3px; }

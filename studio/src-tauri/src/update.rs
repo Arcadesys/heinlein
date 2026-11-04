@@ -14,6 +14,8 @@ pub(crate) struct Runtime {
     bundle: Option<PathBuf>,
     cache: Option<PathBuf>,
     operation: Mutex<()>,
+    release_enabled: bool,
+    release_status: Mutex<Option<Status>>,
     #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
     synthetic: Option<std::sync::Arc<super::update_native_script::Script>>,
     exiting: std::sync::atomic::AtomicBool,
@@ -24,8 +26,9 @@ pub(crate) enum Action {
     Status,
     Check,
     Schedule,
+    OpenRelease,
 }
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Status {
     state: String,
@@ -41,6 +44,12 @@ pub(crate) struct Status {
     generation: Option<u64>,
     #[serde(default)]
     step: Option<String>,
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default)]
+    current_version: Option<String>,
+    #[serde(default)]
+    available_version: Option<String>,
 }
 fn unavailable() -> Status {
     Status {
@@ -51,6 +60,9 @@ fn unavailable() -> Status {
         available_tree: None,
         generation: None,
         step: None,
+        channel: None,
+        current_version: None,
+        available_version: None,
     }
 }
 fn parse_status(bytes: &[u8]) -> Result<Status, String> {
@@ -104,7 +116,10 @@ impl Runtime {
             };
             let manifest = bundle.join("Contents/Resources/source-update.json");
             if !manifest.is_file() {
-                return Ok(Some(Self::default()));
+                return Ok(Some(Self {
+                    release_enabled: bundle.extension().is_some_and(|ext| ext == "app"),
+                    ..Self::default()
+                }));
             }
             let metadata: serde_json::Value = serde_json::from_slice(
                 &std::fs::read(&manifest).map_err(|_| "Update metadata unavailable")?,
@@ -182,6 +197,8 @@ impl Runtime {
                 #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
                 synthetic: None,
                 operation: Mutex::new(()),
+                release_enabled: false,
+                release_status: Mutex::new(None),
                 exiting: std::sync::atomic::AtomicBool::new(false),
             }))
         }
@@ -241,7 +258,7 @@ impl Runtime {
         }
     }
     fn execute(&self, action: Action) -> Result<Status, String> {
-        if self.bundle.is_none() {
+        if self.bundle.is_none() && !self.release_enabled {
             #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
             let synthetic = self.synthetic.is_some();
             #[cfg(not(all(feature = "update-native-acceptance", target_os = "macos")))]
@@ -262,6 +279,28 @@ impl Runtime {
             // Synthetic bytes travel through the real operation/exiting gates and parser.
             // Never fall through to codesign, Python or a real updater path.
             return parse_status(&script.respond(action)?);
+        }
+        if self.release_enabled {
+            return match action {
+                Action::Status => Ok(self
+                    .release_status
+                    .lock()
+                    .map_err(|_| "Update status unavailable")?
+                    .clone()
+                    .unwrap_or_else(release_not_checked)),
+                Action::Check => {
+                    let status = check_release().unwrap_or_else(|_| Status {
+                        state: "release-check-failed".into(),
+                        ..release_not_checked()
+                    });
+                    *self
+                        .release_status
+                        .lock()
+                        .map_err(|_| "Update status unavailable")? = Some(status.clone());
+                    Ok(status)
+                }
+                _ => Err("Use the release download page for this app".into()),
+            };
         }
         let bundle = self.bundle.as_ref().ok_or("Managed bundle unavailable")?;
         // Use OS verification before executing bundled updater code. No deep re-sign.
@@ -288,6 +327,9 @@ impl Runtime {
             Action::Status => "status",
             Action::Check => "check",
             Action::Schedule => "schedule",
+            Action::OpenRelease => {
+                return Err("Release downloads do not replace managed source apps".into())
+            }
         };
         let output = std::process::Command::new(python)
             .env_clear()
@@ -307,6 +349,79 @@ impl Runtime {
             .map_err(|_| "Update check unavailable")?;
         parse_status(&output.stdout)
     }
+}
+const RELEASE_PAGE: &str = "https://github.com/Arcadesys/heinlein/releases/latest";
+fn release_not_checked() -> Status {
+    Status {
+        state: "release-not-checked".into(),
+        channel: Some("release".into()),
+        current_version: Some(env!("CARGO_PKG_VERSION").into()),
+        ..unavailable()
+    }
+}
+#[derive(Deserialize)]
+struct Release {
+    tag_name: String,
+    draft: bool,
+    prerelease: bool,
+    assets: Vec<ReleaseAsset>,
+}
+#[derive(Deserialize)]
+struct ReleaseAsset {
+    name: String,
+}
+fn release_status(release: Release, installed: &str) -> Result<Status, String> {
+    let version = release
+        .tag_name
+        .strip_prefix('v')
+        .ok_or("Invalid release version")?;
+    let latest = semver::Version::parse(version).map_err(|_| "Invalid release version")?;
+    let current = semver::Version::parse(installed).map_err(|_| "Invalid installed version")?;
+    // Publisher-only tags and incomplete/prerelease downloads are not app updates.
+    if release.draft
+        || release.prerelease
+        || !latest.pre.is_empty()
+        || !release
+            .assets
+            .iter()
+            .any(|a| a.name == format!("Heinlein-Studio-{version}-macos-arm64.dmg"))
+    {
+        return Err("No stable app release available".into());
+    }
+    Ok(Status {
+        state: if latest > current {
+            "release-available"
+        } else {
+            "release-current"
+        }
+        .into(),
+        current_version: Some(installed.into()),
+        available_version: Some(latest.to_string()),
+        ..release_not_checked()
+    })
+}
+fn check_release() -> Result<Status, String> {
+    use std::io::Read;
+    let response = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "Release check unavailable")?
+        .get("https://api.github.com/repos/Arcadesys/heinlein/releases/latest")
+        .header(reqwest::header::USER_AGENT, "Heinlein-Studio-update-check")
+        .send()
+        .and_then(|r| r.error_for_status())
+        .map_err(|_| "Release check unavailable")?;
+    let mut bytes = Vec::new();
+    response
+        .take(1_048_577)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Release check unavailable")?;
+    if bytes.len() > 1_048_576 {
+        return Err("Release response too large".into());
+    }
+    let release = serde_json::from_slice(&bytes).map_err(|_| "Release metadata unavailable")?;
+    release_status(release, env!("CARGO_PKG_VERSION"))
 }
 fn atomic(path: &Path, value: &serde_json::Value) -> Result<(), String> {
     use std::io::Write;
@@ -357,6 +472,24 @@ pub(crate) async fn update_request(
             return Err("Heinlein is quitting".into());
         }
         state.mutation_gate.note_activity();
+        if matches!(action, Action::OpenRelease) {
+            let runtime = app.state::<Runtime>();
+            let _gate = runtime.idle()?;
+            if !runtime.release_enabled || runtime.exiting.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err("Release downloads unavailable".into());
+            }
+            use tauri_plugin_opener::OpenerExt;
+            app.opener()
+                .open_url(RELEASE_PAGE, None::<&str>)
+                .map_err(|_| "Release page unavailable")?;
+            return Ok(runtime
+                .release_status
+                .lock()
+                .map_err(|_| "Update status unavailable")?
+                .clone()
+                .unwrap_or_else(release_not_checked));
+        }
         app.state::<Runtime>().execute(action)
     })
     .await
@@ -365,6 +498,51 @@ pub(crate) async fn update_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn release(version: &str) -> Release {
+        Release {
+            tag_name: format!("v{version}"),
+            draft: false,
+            prerelease: false,
+            assets: vec![ReleaseAsset {
+                name: format!("Heinlein-Studio-{version}-macos-arm64.dmg"),
+            }],
+        }
+    }
+    #[test]
+    fn published_app_versions_never_downgrade_local_builds() {
+        assert_eq!(
+            release_status(release("1.8.0"), "1.7.0").unwrap().state,
+            "release-available"
+        );
+        assert_eq!(
+            release_status(release("1.7.0"), "1.7.0").unwrap().state,
+            "release-current"
+        );
+        assert_eq!(
+            release_status(release("1.6.0"), "1.7.0").unwrap().state,
+            "release-current"
+        );
+        assert_eq!(
+            release_status(release("1.10.0"), "1.9.0").unwrap().state,
+            "release-available"
+        );
+    }
+    #[test]
+    fn incomplete_publisher_and_prerelease_downloads_are_not_app_updates() {
+        let mut value = release("1.8.0");
+        value.draft = true;
+        assert!(release_status(value, "1.7.0").is_err());
+        let mut value = release("1.8.0");
+        value.prerelease = true;
+        assert!(release_status(value, "1.7.0").is_err());
+        assert!(release_status(release("1.8.0-beta.1"), "1.7.0").is_err());
+        let mut value = release("1.8.0");
+        value.assets.clear();
+        assert!(release_status(value, "1.7.0").is_err());
+        let mut value = release("1.8.0");
+        value.tag_name = "invalid".into();
+        assert!(release_status(value, "1.7.0").is_err());
+    }
     #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
     #[test]
     fn synthetic_backend_obeys_real_operation_and_exiting_guards_and_parser() {

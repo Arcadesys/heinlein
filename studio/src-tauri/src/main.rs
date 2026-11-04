@@ -772,6 +772,9 @@ fn production_main() {
                 .map_err(std::io::Error::other)?;
             }
 
+            #[cfg(target_os = "macos")]
+            install_update_menu(app.handle()).map_err(std::io::Error::other)?;
+
             let path = recent_file(app.handle()).map_err(std::io::Error::other)?;
             *app.state::<BrowserState>()
                 .recents
@@ -782,6 +785,15 @@ fn production_main() {
                 .ready(app.handle())
                 .map_err(std::io::Error::other)?;
             Ok(())
+        })
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == "check-for-updates" {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    let _ = window.emit("check-for-updates", ());
+                }
+            }
         })
         .on_window_event(|window, event| {
             if window.label() == "main" {
@@ -902,4 +914,29 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
             }
         },
     );
+}
+
+/// Adds "Check for Updates…" under the app name in Tauri's default macOS menu,
+/// keeping the standard Edit/Window items intact.
+#[cfg(target_os = "macos")]
+fn install_update_menu(app: &tauri::AppHandle) -> Result<(), String> {
+    use tauri::menu::{MenuItem, MenuItemKind, PredefinedMenuItem};
+    let menu = app.menu().ok_or("Menu unavailable")?;
+    let item = MenuItem::with_id(
+        app,
+        "check-for-updates",
+        "Check for Updates…",
+        true,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
+    for kind in menu.items().map_err(|e| e.to_string())? {
+        if let MenuItemKind::Submenu(submenu) = kind {
+            let separator = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+            submenu.insert(&item, 1).map_err(|e| e.to_string())?;
+            submenu.insert(&separator, 2).map_err(|e| e.to_string())?;
+            break;
+        }
+    }
+    Ok(())
 }

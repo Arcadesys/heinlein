@@ -89,7 +89,7 @@ export interface LocalCore {
   mcpRequest?(request:McpAccessRequest):Promise<McpAccessView>;
   standalone?(request:DraftRequest):Promise<DraftResponse>;
   available(): boolean;
-  updateRequest?(action: 'status'|'check'|'schedule'):Promise<UpdateStatus>;
+  updateRequest?(action: 'status'|'check'|'schedule'|'openRelease'):Promise<UpdateStatus>;
   githubRequest?(request: GitHubRequest): Promise<GitHubResponse>;
   loadFirstStory?(repositoryId: string): Promise<FirstStoryState>;
   saveFirstStory?(repositoryId: string, guide: FirstStoryState, markProof: boolean): Promise<FirstStoryState>;
@@ -147,6 +147,7 @@ export interface LocalCore {
   finishQuitRequest?():Promise<void>;
   onQuitRefused?(callback:(message:string)=>void):Promise<()=>void>;
   onCloseRequested(callback: () => void): Promise<() => void>;
+  onCheckForUpdates?(callback:()=>void):Promise<()=>void>;
 }
 // Root selection and guarded file writes belong to the native host;
 // no credentials, filesystem handles, or absolute root paths enter the renderer.
@@ -216,6 +217,7 @@ export const localCore: LocalCore = {
   finishQuitRequest:()=>invoke('quit_request_finished'),
   onQuitRefused:callback=>listen<string>('quit-refused',event=>callback(event.payload)),
   onCloseRequested: callback => listen('close-requested', callback),
+  onCheckForUpdates:callback=>listen('check-for-updates',callback),
   projectRequest:request=>invoke('project_request',{request}),
   mcpRequest:request=>invoke('mcp_access_request',{request}),
   pickRepository: () => invoke('pick_repository'),
