@@ -364,7 +364,12 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
     function close() { generation++; guided = false; cancelPlan(); element.close(); opener?.focus(); }
     element.addEventListener('cancel', e => { e.preventDefault(); if (!busy)
         close(); });
-    element.addEventListener('close', () => { generation++; cancelPlan(); });
+    element.addEventListener('close', () => {
+        // close() queues this event. A fast reopen can already own a new view
+        // and preview by the time the previous dialog's notification arrives.
+        if (element.open) return;
+        generation++; cancelPlan();
+    });
     function shell() { element.replaceChildren(); const title = node('h2', 'GitHub projects'); title.id = 'github-panel-title'; title.tabIndex = -1; const exit = button('Close', async () => close()); exit.setAttribute('aria-label', 'Close GitHub projects'); element.append(title, message, exit, body); }
     return { element, async openSend(){opener=document.activeElement as HTMLElement;generation++;shell();element.showModal();await act(async()=>{await load();await renderSend();});}, async open(chooseRepository = false) { opener = document.activeElement as HTMLElement; generation++; shell(); element.showModal(); await act(load); if(chooseRepository&&snapshot?.auth?.confirmed){body.querySelectorAll<HTMLButtonElement>('button').forEach(b=>{if(b.textContent==='Load repositories')b.click();});} element.querySelector<HTMLElement>('h2')?.focus(); }, clear() { generation++; source++; cancelPlan(); project = null; snapshot = null; if (element.open)
             element.close(); }, sourceChanged() { source++; cancelPlan(); if (element.open) {
