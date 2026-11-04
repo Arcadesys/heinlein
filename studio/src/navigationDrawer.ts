@@ -25,7 +25,7 @@ export function createNavigationDrawer(panel: HTMLElement, changed: (open: boole
   const modal=document.createElement('dialog');modal.className='appearance-dialog navigation-modal';modal.setAttribute('aria-label','Navigation');const back=document.createElement('button');back.type='button';back.textContent='Return to writing';back.addEventListener('click',()=>setOpen(false,true));modal.append(back);
   drawer.append(panel); element.append(toggle, drawer,modal);
   modal.addEventListener('cancel',event=>{event.preventDefault();setOpen(false,true);});
-  toggle.addEventListener('click', () => setOpen(!open, true));
+  toggle.addEventListener('click', () => setOpen(!isVisible(), true));
   element.addEventListener('keydown', event => {
     if (event.key === 'Escape' && open && !event.isComposing && !(event.target as HTMLElement).closest?.('details[open].row-menu')) {
       event.preventDefault(); event.stopPropagation(); setOpen(false, true);
@@ -36,6 +36,7 @@ export function createNavigationDrawer(panel: HTMLElement, changed: (open: boole
     event.preventDefault(); setOpen(false, true);
   };
   document.addEventListener('keydown', closeFromPage);
+  function isVisible(){return open && !suspended && !(narrowSuppressed && small?.matches);}
   function render() {
     // Read only while laid out: a hidden drawer reports zero. Keep the author's
     // position across narrow-screen modal moves and suspension for Questions.
@@ -43,7 +44,7 @@ export function createNavigationDrawer(panel: HTMLElement, changed: (open: boole
       scrollTop = panel.scrollTop + (modal.open ? modal.scrollTop : 0);
       scrollLeft = panel.scrollLeft + (modal.open ? modal.scrollLeft : 0);
     }
-    const showing = open && !suspended && !(narrowSuppressed && small?.matches);
+    const showing = isVisible();
     // Suspend interaction and narrow-screen dialogs without taking space away
     // from the desktop navigator while Questions overlays the manuscript.
     const occupying = showing || (suspended && open && !small?.matches);
@@ -70,7 +71,13 @@ export function createNavigationDrawer(panel: HTMLElement, changed: (open: boole
     narrowSuppressed = false; open = value; render(); save();
     if (focus || containedFocus) (open ? panel : toggle).focus({preventScroll: true});
   }
-  const resize=()=>render();small?.addEventListener?.('change',resize);
+  const resize=()=>{
+    // A desktop preference must not open a modal over an active writer when
+    // the window narrows. Keep navigation available by explicit choice, and
+    // retain its desktop preference and any focus already inside the drawer.
+    if(small?.matches&&!drawer.contains(document.activeElement))narrowSuppressed=true;
+    render();
+  };small?.addEventListener?.('change',resize);
   render();queueMicrotask(()=>{if(element.isConnected)render();});
-  return {element, suspend(value: boolean) {if (suspended && !value && small?.matches) narrowSuppressed = true; suspended = value; render();}, close:()=>setOpen(false), destroy:()=>{document.removeEventListener('keydown', closeFromPage);small?.removeEventListener?.('change',resize);if(modal.open&&modal.close)modal.close();modal.remove();}, select: (focus = true) => setOpen(true, focus), toggle: () => setOpen(!open, true), visible: () => open && !suspended && !(narrowSuppressed && small?.matches)};
+  return {element, suspend(value: boolean) {if (suspended && !value && small?.matches) narrowSuppressed = true; suspended = value; render();}, close:()=>setOpen(false), destroy:()=>{document.removeEventListener('keydown', closeFromPage);small?.removeEventListener?.('change',resize);if(modal.open&&modal.close)modal.close();modal.remove();}, select: (focus = true) => setOpen(true, focus), toggle: () => setOpen(!isVisible(), true), visible: isVisible};
 }

@@ -68,4 +68,18 @@ describe('project navigation drawer', () => {
     expect(library.closest('dialog.navigation-modal')).not.toBeNull(); expect(drawer.visible()).toBe(true);
     drawer.destroy();
   });
+  it('does not open a modal or steal writer focus when a desktop window narrows', () => {
+    let small=false;const listeners=new Set<()=>void>();
+    vi.stubGlobal('matchMedia',()=>({get matches(){return small;},addEventListener:(_event:string,callback:()=>void)=>listeners.add(callback),removeEventListener:(_event:string,callback:()=>void)=>listeners.delete(callback)}));
+    const {drawer,toggle}=setup();drawer.select(false);
+    const writer=document.createElement('textarea');document.body.append(writer);writer.focus();
+    const saved=localStorage.getItem('heinlein-studio-navigation-v1');
+    small=true;listeners.forEach(callback=>callback());
+    expect(document.activeElement).toBe(writer);expect(drawer.visible()).toBe(false);
+    expect(document.querySelector('dialog[open]')).toBeNull();
+    expect(localStorage.getItem('heinlein-studio-navigation-v1')).toBe(saved);
+    small=false;listeners.forEach(callback=>callback());expect(drawer.visible()).toBe(true);
+    small=true;listeners.forEach(callback=>callback());toggle.click();
+    expect(drawer.visible()).toBe(true);expect(document.querySelector('dialog[open]')).not.toBeNull();drawer.destroy();
+  });
 });
