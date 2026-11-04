@@ -69,6 +69,7 @@ describe('project navigation drawer', () => {
     drawer.destroy();
   });
   it('does not open a modal or steal writer focus when a desktop window narrows', () => {
+    HTMLDialogElement.prototype.showModal ??= function (this: HTMLDialogElement) { this.setAttribute('open', ''); };
     let small=false;const listeners=new Set<()=>void>();
     vi.stubGlobal('matchMedia',()=>({get matches(){return small;},addEventListener:(_event:string,callback:()=>void)=>listeners.add(callback),removeEventListener:(_event:string,callback:()=>void)=>listeners.delete(callback)}));
     const {drawer,toggle}=setup();drawer.select(false);
