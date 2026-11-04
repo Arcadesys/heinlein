@@ -12,7 +12,7 @@ import {createGitHubPanel} from './githubPanel';
 import {createFirstStory} from './firstStory';
 import { createReviewPanel } from './reviewPanel';
 import { createMarkdownReader, type ReaderContent } from './markdownReader';
-import { createReviewMarkPublisher, reviewMarkExtension, reviewMarksIn, setReviewMarks, type ReviewMarkTarget } from './reviewMarks';
+import { computeReviewMarks, createReviewMarkPublisher, reviewMarkExtension, reviewMarksIn, setReviewMarks, type ReviewMarkTarget } from './reviewMarks';
 import { createDocumentDetails } from './documentDetails';
 import { sceneBreaks } from './sceneNavigator';
 import { rowMenu } from './rowMenu';
@@ -952,6 +952,20 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     approveReview: async (run,guard)=>{reviewApplying=true;let outcome:import('./localCore').ProposalOutcome|null=null;try{await runProposal(async()=>{const problem=guard();if(problem)throw new Error(problem);outcome=await run();if(outcome&&outcome.receipt.status!=='failed')await proposalChanged(outcome.receipt.path);});return outcome;}finally{reviewApplying=false;}},
     openConnection: () => {if(draftingQuestions){root.append(draftingQuestions.element);openHeinlein('passage');}},
     announce: text => {status.classList.remove('error'); status.textContent = text;},
+    jumpToEdit: async (input, edit) => {
+      const owns = () => input.repositoryId === repository?.id && (!input.projectKey || !repository.projectKey || input.projectKey === repository.projectKey);
+      if (!owns() || dirty || selecting || structuralBusy || recoveryPending || repositoryDetached) return false;
+      if (!reviewMarkTargets()?.some(target => target.path === edit.path) && !await showDocument(edit.path)) return false;
+      const target = (chapterEditor ?? editor)?.view;
+      const targets = reviewMarkTargets();
+      if (!target || !targets || !owns()) return false;
+      const doc = target.state.doc;
+      const mark = (await computeReviewMarks(input, targets)).find(mark => mark.id === edit.id);
+      if (!mark || target !== (chapterEditor ?? editor)?.view || target.state.doc !== doc || !owns()) return false;
+      setDocumentView('source');
+      target.dispatch({selection: {anchor: mark.from, head: mark.to}, scrollIntoView: true});
+      return true;
+    },
     marksChanged: (input, report) => reviewMarkPublisher.publish(input, report),
     focusEditor: () => focusWriterView(),
   });
@@ -1127,7 +1141,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (!organizationOnly) verifyStructuralBuffer(); github.sourceChanged(); firstStory.sourceChanged();
     showAllLabel.hidden = !state.revision;
     currentBook = null; searchScopeRevision++; manuscriptSearch.invalidate();
-    if (organizationOnly) { await writing.setManuscript(core, repository!, state); return; }
+    if (organizationOnly) {
+      const sheet = state.scenes.find(scene => scene.path === opened?.path);
+      const eyebrow = activeDocumentPane.querySelector<HTMLElement>('.page > .eyebrow');
+      if (sheet && eyebrow) {
+        const regular = state.scenes.filter(scene => !scene.reference);
+        eyebrow.textContent = sheet.reference ? 'Reference sheet' : `Scene ${regular.indexOf(sheet) + 1} of ${regular.length}`;
+      }
+      await writing.setManuscript(core, repository!, state); return;
+    }
     const oldPath=opened?.path,oldText=opened?.text;
     const renamingActive=changes.some(change=>(change.kind==='renameFile'||change.kind==='Undo renameFile')&&change.source===oldPath);
     const renamePosition=renamingActive&&editor?{anchor:editor.view.state.selection.main.anchor,head:editor.view.state.selection.main.head,scrollTop:writerScrollTop()}:null;
@@ -1136,12 +1158,21 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const sameScene=oldScene?state.scenes.find(scene=>scene.id===oldScene.id):undefined;
     documentTabs.reconcile(state.scenes);reference.reconcile(state.scenes);
     for(const change of changes){
+      if(change.kind==='deleteSheet'&&change.source){documentTabs.invalidate(change.source,true);reference.markUnavailable(change.source);}
       if((change.kind==='renameFile'||change.kind==='Undo renameFile')&&change.source&&change.destination){documentTabs.renamePath(change.source,change.destination);reference.renamePath(change.source,change.destination);}
       if(change.source){reference.markChanged(change.source);documentTabs.invalidate(change.source);}
       if(change.destination){reference.markChanged(change.destination);documentTabs.invalidate(change.destination);}
       if(change.source&&(change.kind==='Undo splitFile'||(change.kind==='rollback'&&!change.destination))){documentTabs.invalidate(change.source,true);reference.markUnavailable(change.source);}
     }
     splitReadingOffer.replaceChildren();splitReadingOffer.hidden=true;
+    if(changes.some(change=>change.kind==='deleteSheet'||change.kind==='Undo deleteSheet')){
+      if(changes.some(change=>change.kind==='deleteSheet'&&change.source===opened?.path))resetPreview();
+      await showDirectory(directoryPath.textContent==='/'?'':directoryPath.textContent||'');
+      await writing.setManuscript(core,repository!,state);
+      const restored=changes.find(change=>change.kind==='Undo deleteSheet')?.destination;
+      if(!opened&&restored&&await showDocument(restored,true))structuralFocusPath=restored;
+      return;
+    }
     const split=changes.find(change=>['split','splitFile'].includes(change.kind)&&change.source&&change.destination);
     const original=split&&previous?.scenes.find(scene=>scene.path===split.source);
     const retained=original&&state.scenes.find(scene=>scene.id===original.id&&scene.path===split?.source);
@@ -1946,6 +1977,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         }
       }
       if (chapter) {
+        const references = new Set(drafting.state?.scenes.filter(scene => scene.reference).map(scene => scene.path));
+        chapter = {...chapter, scenes: chapter.scenes.filter(scene => !references.has(scene.path))};
         if (!chapter.scenes.length || chapter.scenes.length > 500) throw new Error('Open source scenes individually; this chapter has no bounded source mapping.');
         const sources: Document[] = [];
         let totalChars = 0;
@@ -2001,7 +2034,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     editor?.destroy(); editor = null; opened = doc; saveButton = null; dirtyBadge = null; setDirty(false);
     if (!assembled) drafting.updateBuffer(doc.path, doc.text);
     const sceneInfo = drafting.state?.scenes.find(scene => scene.path === doc.path);
-    const sceneIndex = sceneInfo ? drafting.state!.scenes.indexOf(sceneInfo) : -1;
+    const regularScenes = drafting.state?.scenes.filter(scene => !scene.reference) ?? [];
+    const sceneIndex = sceneInfo ? regularScenes.indexOf(sceneInfo) : -1;
     const sourceKind = sceneInfo || currentBook?.volumes.some(volume => volume.chapters.some(chapter => chapter.scenes.some(scene => scene.path === doc.path))) ? 'Source scene' : 'Source file';
     const title = el('h2', assembled?.chapter.title || sceneInfo?.title || basename(doc.path).replace(/\.(?:md|markdown)$/i, ''), 'page-title');
     title.tabIndex = -1;
@@ -2016,7 +2050,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     // Never interpret manuscript HTML, scripts, links, or embedded instructions.
     const meta = el('div', '', 'page-meta'); meta.append(documentRole, source, badge);
     const page = el('div', '', 'page');
-    page.append(el('p', assembled ? 'Assembled chapter' : sceneIndex >= 0 ? `Scene ${sceneIndex + 1} of ${drafting.state!.scenes.length}` : sourceKind, 'eyebrow'), title, meta, metadata, text);
+    page.append(el('p', assembled ? 'Assembled chapter' : sceneInfo?.reference ? 'Reference sheet' : sceneIndex >= 0 ? `Scene ${sceneIndex + 1} of ${regularScenes.length}` : sourceKind, 'eyebrow'), title, meta, metadata, text);
     const mountedTab=documentTabs.mount({path:doc.path,title:assembled?.chapter.title || sceneInfo?.title,kind:doc.generatedCompatibility?'assembled':'source',sceneId:sceneInfo?.id,chapter:assembled?structuredClone(assembled.chapter):undefined});
     if(mountedTab)activeDocumentPane.setAttribute('aria-labelledby',mountedTab.id);
     reference.activateWriter();mountActive(page);

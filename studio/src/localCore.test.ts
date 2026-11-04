@@ -1,9 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@tauri-apps/api/core', () => ({Channel: class { onmessage = (_text: string) => {}; }, invoke: vi.fn(async () => null), isTauri: vi.fn(() => true)}));
 import { invoke } from '@tauri-apps/api/core';
-import { localCore } from './localCore';
+import { localCore, type ReviewProgress } from './localCore';
 describe('local Core bridge contract', () => {
   beforeEach(() => vi.mocked(invoke).mockClear());
+  it('streams review activity through separate native channels for initial and continued batches', async () => {
+    const request = {requestId: 'batch', repositoryId: 'repo', scope: 'scene' as const, snapshots: []};
+    const connection = {generation: 1, accountId: 'account', model: 'model'};
+    const progress = vi.fn();
+    await localCore.requestReview!(request, connection, progress);
+    await localCore.continueReview!('repo', 'review', 'next-batch', connection, progress);
+    const event: ReviewProgress = {requestId:'batch',completedCalls:0,totalCalls:1,reviewer:0,sourceIndex:0,chunkIndex:1,status:'receiving',receivedBytes:42,suggestions:0};
+    const calls = vi.mocked(invoke).mock.calls;
+    const first = calls[0][1] as {onProgress:{onmessage:(p:ReviewProgress)=>void}};
+    const next = calls[1][1] as typeof first;
+    first.onProgress.onmessage(event);
+    next.onProgress.onmessage({...event,requestId:'next-batch'});
+    expect(progress.mock.calls).toEqual([[event],[{...event,requestId:'next-batch'}]]);
+    expect(first.onProgress).not.toBe(next.onProgress);
+    expect(calls[0]).toEqual(['request_review',{request,connection,onProgress:expect.any(Object)}]);
+    expect(calls[1]).toEqual(['continue_review',{repositoryId:'repo',reviewId:'review',requestId:'next-batch',connection,onProgress:expect.any(Object)}]);
+  });
   it('uses guarded writes and narrow close commands', async () => {
     await localCore.saveDocument('session', 'scene.md', 'sha256', 'exact text');
     await localCore.setUnsavedChanges(true); await localCore.requestClose(true);

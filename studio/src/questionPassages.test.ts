@@ -19,7 +19,7 @@ async function start(core=bridge(), review: NonNullable<QuestionPanelHooks['revi
   document.body.append(panel.element); panel.openSelection({...state,canCapture:true});
   write(); await vi.waitFor(()=>expect(btn('Send to OpenAI').disabled).toBe(false)); return core;
 }
-async function revision() {const select=document.querySelector<HTMLSelectElement>('[aria-label="Response mode"]')!;select.value='revision';select.dispatchEvent(new Event('change'));write();btn('Send to OpenAI').click();await vi.waitFor(()=>expect(btn('Apply…')).toBeDefined());}
+async function revision() {const select=document.querySelector<HTMLSelectElement>('[aria-label="Response mode"]')!;select.value='revision';select.dispatchEvent(new Event('change'));write();btn('Send to OpenAI').click();await vi.waitFor(()=>expect(btn('Review changes…')).toBeDefined());}
 beforeEach(async()=>{
   vi.stubGlobal('crypto',webcrypto);document.body.replaceChildren();localStorage.clear();changed.mockClear();focus.mockClear();
   const source='The station clock stopped.\r\nRain tapped the glass roof.\r\nShe waited — alone.';
@@ -40,12 +40,12 @@ describe('passage-linked Questions',()=>{
     await start();await revision();const first=panel.passageItems()[0].id;
     state={...state,from:0,to:10};panel.stateChanged();expect(panel.openSelection({...state,canCapture:true})).toBe(true);write('Another passage');
     expect(panel.passageItems()).toHaveLength(2);panel.activatePassage(first);
-    expect(state.source.slice(state.from,state.to)).toBe('Rain tapped the glass roof.');expect(btn('Apply…').disabled).toBe(false);
-    expect(panel.element.querySelector('[aria-label="Original passage"]')?.textContent).toBe('Rain tapped the glass roof.');
+    expect(state.source.slice(state.from,state.to)).toBe('Rain tapped the glass roof.');expect(btn('Review changes…').disabled).toBe(false);
+    expect(panel.element.querySelector('.question-diff-chip del')?.textContent).toBe('tapped');
   });
   it('invalidates source edits even after edit and undo and keeps a stale picker entry',async()=>{
     await start();await revision();state={...state,revision:2};panel.stateChanged();
-    expect(panel.passageItems()[0].stale).toBe(true);expect(btn('Apply…').disabled).toBe(true);expect(panel.element.textContent).toContain('Source changed');
+    expect(panel.passageItems()[0].stale).toBe(true);expect(btn('Review changes…').disabled).toBe(true);expect(panel.element.textContent).toContain('Source changed');
   });
   it('cancels and ignores delayed results after a document change',async()=>{
     const core=bridge();const waiting=deferred<Awaited<ReturnType<typeof core.askQuestion>>>();core.askQuestion.mockImplementation(()=>waiting.promise);await start(core);btn('Send to OpenAI').click();await vi.waitFor(()=>expect(core.askQuestion).toHaveBeenCalled());const request=core.askQuestion.mock.calls[0][0];
@@ -58,7 +58,7 @@ describe('passage-linked Questions',()=>{
   it('dismisses through the existing receipt command',async()=>{const core=await start();await revision();btn('Dismiss').click();await vi.waitFor(()=>expect(core.rejectProposal).toHaveBeenCalledOnce());await vi.waitFor(()=>expect(panel.passageItems()[0].label).toBe('Answer ready'));expect(state.source).toContain('Rain tapped');});
   it('presents whole-scene review in the pane and collapse cancels review only',async()=>{
     const review=vi.fn(async(_id:string,_snapshot:unknown,_guard:()=>string|null,presenter?:(view:ProposalReview)=>Promise<boolean>)=>{await presenter!({id:'review',kind:'apply',proposalId:'proposal',path:'scene.md',baseText:state.source,replacementText:state.source.replace('tapped','drummed'),baseHash:'base',replacementHash:'new',diffHash:'diff',origin} as ProposalReview);});
-    const core=await start(bridge(),review);await revision();btn('Apply…').click();await vi.waitFor(()=>expect(btn('Continue to native confirmation')).toBeDefined());
+    const core=await start(bridge(),review);await revision();btn('Review changes…').click();await vi.waitFor(()=>expect(btn('Continue to native confirmation')).toBeDefined());
     expect(document.querySelector('dialog')).toBeNull();expect(panel.element.querySelector('[aria-label="Original full scene"]')?.textContent).toBe(state.source);
     btn('Collapse').click();await vi.waitFor(()=>expect(btn('Continue to native confirmation')).toBeUndefined());expect(core.cancelQuestion).not.toHaveBeenCalled();
   });

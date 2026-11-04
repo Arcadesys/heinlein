@@ -1,5 +1,5 @@
 import {renderMarkdown} from './markdown';
-import type { LocalCore, QuestionStatus, ReviewEdit, ReviewResult, ReviewRequest, ReviewerDefinition, ReviewCoverage, ProposalOutcome } from './localCore';
+import type { LocalCore, QuestionStatus, ReviewEdit, ReviewResult, ReviewRequest, ReviewerDefinition, ReviewCoverage, ReviewProgress, ProposalOutcome } from './localCore';
 import { changedSpan, decisionLabel, invisibleChangeNote, lineageDelta, patchContext, waiting, type PatchContext } from './reviewComparison';
 import type { ReviewMarkInput } from './reviewMarks';
 import { formatKeys } from './shortcuts';
@@ -25,6 +25,7 @@ interface Hooks {
     visibilityChanged?(visible: boolean): void;
     approveReview?(run: () => Promise<ProposalOutcome | null>, guard: () => string | null): Promise<ProposalOutcome | null>;
     announce?(text: string): void;
+    jumpToEdit?(input: ReviewMarkInput, edit: ReviewEdit): Promise<boolean>;
     marksChanged?(input: ReviewMarkInput | null, report: (count: number | null) => void): void;
 }
 const bytes = (s: string) => new TextEncoder().encode(s).length;
@@ -37,6 +38,10 @@ function button(text: string, action: () => void, cls = '') { const n = el('butt
 function icon(path: string, box = 14) { const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg'), p = document.createElementNS(ns, 'path'); svg.setAttribute('viewBox', `0 0 ${box} ${box}`); svg.setAttribute('width', String(box)); svg.setAttribute('height', String(box)); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false'); p.setAttribute('d', path); p.setAttribute('fill', 'none'); p.setAttribute('stroke', 'currentColor'); p.setAttribute('stroke-width', '1.6'); p.setAttribute('stroke-linecap', 'round'); p.setAttribute('stroke-linejoin', 'round'); svg.append(p); return svg; }
 function iconButton(label: string, path: string, action: () => void, cls: string, box = 14) { const n = button('', action, cls); n.setAttribute('aria-label', label); n.append(icon(path, box)); return n; }
 function message(error: unknown) { return error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' ? error.message : 'The review could not be completed. Retry when your connection is ready.'; }
+function callFailure(code: string | null) {
+    const reasons: Record<string, string> = {timeout: 'The response timed out.', cancelled: 'The call was cancelled.', usageLimit: 'ChatGPT usage limit reached.', staleConnection: 'The ChatGPT account or model changed.', invalidReviewOrModel: 'The response did not match the selected model or review format.', invalidResponse: 'The response could not be validated.', protocol: 'The response could not be validated.', findingLimit: 'The retained suggestion limit was reached.'};
+    return reasons[code ?? ''] ?? 'The call did not return a valid review.';
+}
 /** Display-only trim of surrounding text so one diff reads as one line. The exact patch is in its details. */
 function trimmed(before: string, after: string, limit: number) {
     let b = [...before], a = [...after], cutBefore = false, cutAfter = false;
@@ -108,6 +113,19 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
     function say(text: string, kind: 'note' | 'warning' | '' = '') { status.textContent = text; status.className = `review-status${kind ? ' review-decision-note' : ''}${kind === 'warning' ? ' review-status-warning' : ''}`; }
+
+    const activity = el('div', '', 'review-activity');
+    activity.hidden = true;
+    activity.tabIndex = -1;
+    activity.setAttribute('role', 'group');
+    activity.setAttribute('aria-label', 'Live review progress');
+    const callProgress = el('progress');
+    callProgress.setAttribute('aria-label', 'Review calls completed');
+    const activityDetail = el('p');
+    // Byte counts update visually; the existing polite status announces phase changes only.
+    activityDetail.setAttribute('aria-live', 'off');
+    activity.append(callProgress, activityDetail);
+    let activityPhase = '';
 
     const body = el('div', '', 'review-body');
 
@@ -187,7 +205,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     markStatus.append(legend, markNote);
     markStatus.hidden = true;
     footer.append(connection, footActions, advisory, markStatus);
-    element.append(head, strip, status, body, footer);
+    element.append(head, strip, status, activity, body, footer);
 
     element.addEventListener('keydown', event => { if (event.key === 'Escape' && !event.isComposing) {
         event.preventDefault();
@@ -284,6 +302,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         refreshReview.disabled = Boolean(busy || pending);
         startNew.disabled = discard.disabled = Boolean(busy);
         cancel.hidden = !pending;
+        activity.hidden = !pending || !workflowMode;
         connect.disabled = Boolean(pending || busy);
         const blocked = result?.edits.some(waiting) ? hooks.unavailable(false) : null;
         edits.querySelectorAll<HTMLElement>('[data-blocked]').forEach(n => { n.textContent = blocked ?? ''; n.hidden = !blocked; });
@@ -319,7 +338,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             update();
         }
     } }
-    function cancelRequest() { const id = pending; pending = null; clearTimeout(timer); generation++; checking = false; busy = false; if (id) {
+    function cancelRequest() { const id = pending; pending = null; activity.hidden = true; clearTimeout(timer); generation++; checking = false; busy = false; if (id) {
         void core.cancelQuestion?.(id).catch(() => { });
         retry.hidden = false;
     } }
@@ -339,6 +358,14 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         hooks.focusEditor();
     }
     function validate(value: ReviewResult, requestId?: string) {
+        if (value?.readingFeedback !== undefined) {
+            if (!Array.isArray(value.readingFeedback) || value.readingFeedback.length > 384 || value.readingFeedback.some(item =>
+                !item || typeof item.path !== 'string' || typeof item.reviewer !== 'string' || !item.feedback
+                || !Array.isArray(item.feedback.strengths) || !Array.isArray(item.feedback.improvements)
+                || item.feedback.strengths.length !== 3 || item.feedback.improvements.length !== 3
+                || [item.feedback.overview, ...item.feedback.strengths, ...item.feedback.improvements].some(text => typeof text !== 'string' || !text.trim() || bytes(text) > 2000)))
+                throw new Error('Invalid reading feedback. Reload the saved review.');
+        }
         if (value?.schemaVersion === 2) {
             if (!value.reviewId || !value.workflow || !Array.isArray(value.edits) || value.edits.length > 1024 || !Array.isArray(value.workflow.coverage) || value.workflow.coverage.length > 384 || (requestId && value.requestId !== requestId) || new Set(value.edits.map(e => e.id)).size !== value.edits.length)
                 throw new Error('Invalid consolidated review. Reload the saved record.');
@@ -373,6 +400,72 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             ranges.set(edit.path, prior);
         }
         return value;
+    }
+    function readingFeedback() {
+        const section = el('section', '', 'review-reading-feedback');
+        section.setAttribute('aria-label', 'Reading feedback');
+        const entries = result?.readingFeedback ?? [];
+        if (!entries.length) {
+            section.append(el('h3', 'Reading overview'), el('p', 'Reading feedback is unavailable for this saved review. Start a new review to get an overview, three good things and three points for improvement.', 'review-guidance'));
+            return section;
+        }
+        const content = el('div');
+        const render = (index: number) => {
+            const entry = entries[index];
+            content.replaceChildren(el('h3', 'Reading overview'), el('p', entry.feedback.overview));
+            if (entries.length > 1) content.append(el('p', `${entry.path} · ${entry.reviewer}. This assessment covers this reviewer’s selected source or chunk.`, 'review-guidance'));
+            for (const [title, marker, points] of [
+                ['Three good things', '✅', entry.feedback.strengths],
+                ['Three points for improvement', '❌', entry.feedback.improvements],
+            ] as const) {
+                const list = el('ul', '', 'review-feedback-list');
+                for (const text of points) {
+                    const item = el('li'), emoji = el('span', marker, 'review-feedback-marker');
+                    emoji.setAttribute('aria-hidden', 'true');
+                    item.append(emoji, el('span', text)); list.append(item);
+                }
+                content.append(el('h3', title), list);
+            }
+        };
+        if (entries.length > 1) {
+            const label = el('label', 'Reading feedback for', 'review-feedback-picker'), select = el('select');
+            entries.forEach((entry, index) => { const option = el('option', `${entry.path} · ${entry.reviewer} · assessment ${index + 1}`); option.value = String(index); select.append(option); });
+            select.onchange = () => render(Number(select.value));
+            label.append(select); section.append(label);
+        }
+        render(0); section.append(content); return section;
+    }
+    async function jumpToEdit(edit: ReviewEdit) {
+        if (!result || !scope || !hooks.jumpToEdit) return;
+        const shown = result;
+        try {
+            const jumped = await hooks.jumpToEdit({repositoryId: scope.repositoryId, projectKey: shown.projectKey ?? null,
+                edits: shown.edits, baselineHash: path => shown.workflow?.sources.find(s => s.path === path)?.sourceHash ?? scope?.snapshots.find(s => s.path === path)?.sourceHash}, edit);
+            if (result !== shown || disposed) return;
+            if (jumped) { tuck(); hooks.focusEditor(); hooks.announce?.(`Jumped to suggestion in ${edit.path}.`); }
+            else say('This suggestion could not be located in the current text. Open the matching saved source or refresh the review.', 'warning');
+        } catch { if (result === shown) say('This suggestion could not be located in the current text. Refresh the review and try again.', 'warning'); }
+    }
+    function diffList() {
+        const section = el('section', '', 'review-diff-list');
+        section.setAttribute('aria-label', 'Diffs');
+        section.append(el('h3', 'Diffs'));
+        const pending = result!.edits.filter(waiting);
+        if (!pending.length) section.append(el('p', result!.workflow?.coverage.some(call => call.status !== 'completed') ? 'No diffs retained yet.' : result!.edits.length ? 'No diffs awaiting your decision.' : 'No targeted edits suggested.', 'review-guidance'));
+        else {
+            section.append(el('p', 'Choose a diff to jump to that spot in your text.', 'review-guidance'));
+            const list = el('ol');
+            pending.forEach((edit, index) => {
+                const item = el('li'), jump = button('', () => { void jumpToEdit(edit); }, 'review-diff-jump');
+                jump.setAttribute('aria-description', clip(edit.reason, 160));
+                jump.disabled = Boolean(edit.sourceStale) || !hooks.jumpToEdit;
+                const preview = el('span', '', 'review-inline-diff'); preview.append(...inlineDiff(edit, contextFor(edit, hooks.capture()), 24).childNodes);
+                jump.append(el('span', `Jump to diff ${index + 1}: ${meta(edit)}`, 'review-diff-location'), preview);
+                item.append(jump); list.append(item);
+            });
+            section.append(list);
+        }
+        return section;
     }
     function renderSaved() {
         saved.replaceChildren();
@@ -573,15 +666,23 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         const blocked = el('p', '', 'drafting-warning review-blocked');
         blocked.dataset.blocked = 'true';
         blocked.hidden = true;
-        edits.append(heading, blocked);
-        if (!result.edits.length)
-            edits.append(el('p', 'No targeted edits suggested. This is advisory feedback, not a publication approval.', 'review-guidance'));
+        edits.append(heading, blocked, readingFeedback(), diffList());
+        const incomplete = result.workflow && !result.workflow.coverage.every(c => c.status === 'completed');
+        if (!result.edits.length && incomplete)
+            edits.append(el('p', 'No suggestions have been retained from this incomplete review.', 'review-guidance'));
         const rejected = result.edits.filter(edit => edit.status === 'rejected').length;
         if (rejected && result.schemaVersion !== 2)
             edits.append(el('p', `${rejected} suggestion(s) dismissed. Rejected · local receipt retained.`, 'review-guidance'));
         const w = result.workflow;
-        if (w && !w.coverage.every(c => c.status === 'completed'))
-            edits.append(el('p', 'This review is incomplete. A running call may be interrupted; it is never automatically retried.', 'drafting-warning'));
+        if (w && incomplete) {
+            edits.append(el('p', 'This review is incomplete. Failed or interrupted calls are never automatically retried.', 'drafting-warning'));
+            w.coverage.forEach((call, index) => {
+                if (['failed', 'cancelled', 'running', 'interrupted'].includes(call.status)) {
+                    const reviewer = w.definitions[call.reviewer]?.definition.displayName ?? 'Reviewer';
+                    edits.append(el('p', `${reviewer} · chunk ${index + 1} of ${w.coverage.length}: ${call.status === 'running' || call.status === 'interrupted' ? 'This call was interrupted.' : callFailure(call.error)}`, 'drafting-warning'));
+                }
+            });
+        }
         const listed = result.edits.filter(edit => result!.schemaVersion === 2 ? waiting(edit) : edit.status !== 'rejected');
         if (result.edits.length && !listed.length)
             edits.append(el('p', 'Every suggestion is decided. Your choices are recorded under More review actions.', 'review-guidance'));
@@ -705,21 +806,50 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (workflowMode && !continuing && !preparedRequest)
             return;
         pending = requestId;
+        activityPhase = '';
+        activityDetail.textContent = 'Preparing the selected review calls…';
+        callProgress.removeAttribute('value');
         if (!continuing)
             result = null;
         render();
         retry.hidden = true;
         say(workflowMode ? 'Your selected reviewers are reviewing this captured scope. You can keep writing.' : 'Proofreader and editor are reviewing this snapshot. You can keep writing.');
         update();
+        if (workflowMode) {
+            activity.focus({preventScroll: true});
+            activity.scrollIntoView?.({block: 'nearest'});
+        }
         timer = setTimeout(() => { if (!live(token) || pending !== requestId)
             return; cancelRequest(); say('Review timed out locally. Usage may count. Retry when ready; your manuscript was not changed.'); update(); }, workflowMode ? 530000 : 65000);
         try {
             const connection = { generation: config!.generation, accountId: config!.activeAccountId!, model: config!.model! };
-            const answer = continuing && oldResult && core.continueReview ? await core.continueReview(scope.repositoryId, oldResult.reviewId, requestId, connection) : await core.requestReview(request, connection);
+            const onProgress = (event: ReviewProgress) => {
+                if (!live(token) || pending !== requestId || event.requestId !== requestId || !scope || !event.totalCalls ||
+                    ![event.completedCalls, event.totalCalls, event.reviewer, event.sourceIndex, event.chunkIndex, event.receivedBytes, event.suggestions].every(n => Number.isSafeInteger(n) && n >= 0) ||
+                    event.completedCalls > event.totalCalls || event.chunkIndex < 1 || event.chunkIndex > event.totalCalls ||
+                    !['running', 'receiving', 'completed', 'failed', 'cancelled'].includes(event.status)) return;
+                const reviewerId = (continuing ? oldResult?.workflow?.definitions.map(d => d.definition.id) : preparedRequest?.workflow?.reviewers)?.[event.reviewer];
+                const reviewer = definitions.find(d => d.id === reviewerId)?.displayName ?? 'Reviewer';
+                const phase = event.status === 'running' ? 'waiting for response' : event.status === 'receiving' ? 'receiving response' : event.status === 'completed' ? 'call completed' : event.status === 'cancelled' ? 'call cancelled' : 'call failed';
+                const detail = `${reviewer} · chunk ${event.chunkIndex} of ${event.totalCalls} · ${phase}${event.status === 'receiving' ? ` · ${size(event.receivedBytes)} received` : ''}. ${event.completedCalls} of ${event.totalCalls} calls completed · ${plural(event.suggestions, 'suggestion')} retained.`;
+                callProgress.max = event.totalCalls;
+                callProgress.value = event.completedCalls;
+                activityDetail.textContent = detail;
+                const key = `${event.chunkIndex}:${event.status}`;
+                if (key !== activityPhase) {
+                    activityPhase = key;
+                    say(`${reviewer} · chunk ${event.chunkIndex} of ${event.totalCalls} · ${phase}. ${event.completedCalls} of ${event.totalCalls} calls completed.`);
+                }
+            };
+            const answer = continuing && oldResult && core.continueReview ? await core.continueReview(scope.repositoryId, oldResult.reviewId, requestId, connection, onProgress) : await core.requestReview(request, connection, onProgress);
             if (!live(token) || pending !== requestId)
                 return;
             result = validate(answer, requestId);
-            say(`Review ready. ${plural(result.edits.filter(waiting).length, 'suggestion')} to decide, one at a time.`);
+            const completed = result.workflow?.coverage.filter(c => c.status === 'completed').length;
+            const total = result.workflow?.coverage.length;
+            if (completed !== undefined && completed !== total)
+                say(`Review incomplete. ${completed} of ${total} calls completed. ${plural(result.edits.filter(waiting).length, 'suggestion')} retained. Check the call details below.`, 'warning');
+            else say(`Review ready. ${plural(result.edits.filter(waiting).length, 'suggestion')} to decide, one at a time.`);
             render();
             // Earlier reviews comes from the host's saved records, so the new one appears there too.
             if (workflowMode)
@@ -953,7 +1083,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     }
     catch (error) {
         if (live(token))
-            say(message(error), 'warning');
+            say('Reviewers could not be loaded. Close and reopen Whole scene to retry. If this continues, check for a Heinlein Studio update.', 'warning');
     }
     finally {
         if (live(token))

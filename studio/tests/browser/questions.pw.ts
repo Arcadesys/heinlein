@@ -30,7 +30,7 @@ async function openPassage(page:Page) {
 }
 async function sendRevision(page:Page) {
   const pane=page.locator('.question-panel');
-  await pane.getByRole('textbox',{name:'Your drafting question'}).fill('Can this sentence feel more immediate?');await pane.getByRole('button',{name:'Suggest rewrite',exact:true}).click();await expect.poll(async()=>(await state(page)).sent).toBe(1);
+  await pane.getByRole('textbox',{name:'Your drafting question'}).fill('Can this sentence feel more immediate?');await pane.getByRole('button',{name:'Suggest edits',exact:true}).click();await expect.poll(async()=>(await state(page)).sent).toBe(1);
 }
 for (const zoom of [100, 200]) {
   test(`highlighting and clearing a passage keep the manuscript anchored at ${zoom}%`, async({page}, info) => {
@@ -95,18 +95,21 @@ test('passage chip survives collapse, background completion, exact diff and guar
   await expect(page.locator('.cm-content')).toBeFocused();
   await page.locator('.question-passage-chip[aria-label="1 suggestion at this passage"]').click();
   await expect.poll(() => textLayout(page)).toEqual(layout);
-  await expect(pane.getByLabel('Original passage',{exact:true})).toHaveText('Rain tapped the glass roof.');await expect(pane.getByLabel('Suggested passage',{exact:true})).toHaveText('Rain drummed against the glass roof.');
-  await expect(pane.locator('.question-diff-remove')).toHaveText('tapped');await expect(pane.locator('.question-diff-add')).toHaveText('drummed against');
+  await expect(pane.locator('.question-diff-chip')).toHaveCount(1);
+  await pane.locator('.question-diff-chip summary').focus(); await page.keyboard.press('Enter');
+  await expect(pane.locator('.question-diff-chip')).toHaveAttribute('open', '');
+  await expect.poll(() => textLayout(page)).toEqual(layout);
+  await expect(pane.locator('.question-diff-chip del')).toHaveText('tapped');await expect(pane.locator('.question-diff-chip ins')).toHaveText('drummed against');
   expect((await state(page)).source).toBe((await state(page)).original);
   expect((await new AxeBuilder({page}).include('.question-panel').analyze()).violations).toEqual([]);
   await page.screenshot({path:`/tmp/heinlein-questions-${info.project.name}-wide.png`});
-  await pane.getByRole('button',{name:'Apply…',exact:true}).click();await expect(pane.getByRole('button',{name:'Continue to native confirmation'})).toBeEnabled();
+  await pane.getByRole('button',{name:'Review changes…',exact:true}).click();await expect(pane.getByRole('button',{name:'Continue to native confirmation'})).toBeEnabled();
   await expect(page.locator('dialog[open]')).toHaveCount(0);await expect(pane.getByLabel('Original full scene')).toContainText('The station clock');expect((await state(page)).applied).toBe(0);
   await pane.getByRole('button',{name:'Continue to native confirmation'}).click();await expect.poll(async()=>(await state(page)).applied).toBe(1);
   expect((await state(page)).source).toContain('Rain drummed against');expect(errors).toEqual([]);
 });
 test('narrow and enlarged text retain keyboard access, diff labels and no overflow',async({page},info)=>{
-  await openPassage(page);await sendRevision(page);await fixture(page,'finish');const pane=page.locator('.question-panel');await expect(pane.getByRole('button',{name:'Apply…',exact:true})).toBeVisible();
+  await openPassage(page);await sendRevision(page);await fixture(page,'finish');const pane=page.locator('.question-panel');await expect(pane.getByRole('button',{name:'Review changes…',exact:true})).toBeVisible();
   await page.setViewportSize({width:1600,height:1000});await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});await expect(pane).toHaveAttribute('aria-modal','true');
   expect(await pane.evaluate(node=>node.getBoundingClientRect().left)).toBe(0);
   await page.evaluate(()=>{document.documentElement.style.fontSize='100%';});await expect(pane).toHaveAttribute('role','dialog');await expect(pane).toHaveAttribute('aria-modal','true');
@@ -122,7 +125,7 @@ test('narrow and enlarged text retain keyboard access, diff labels and no overfl
   expect((await new AxeBuilder({page}).include('.question-panel').analyze()).violations).toEqual([]);
   await page.screenshot({path:`/tmp/heinlein-questions-${info.project.name}-narrow.png`});
   await page.keyboard.press('Escape');await expect(pane).toBeHidden();await expect(page.locator('.cm-content')).toBeFocused();
-  await page.keyboard.press('Control+j');await expect(pane).toBeVisible();await expect(pane.getByLabel('Suggested passage',{exact:true})).toContainText('drummed');
+  await page.keyboard.press('Control+j');await expect(pane).toBeVisible();await expect(pane.locator('.question-diff-chip summary')).toContainText('drummed');
 });
 test('dismiss records rejection without applying',async({page})=>{
   await openPassage(page);await sendRevision(page);await fixture(page,'finish');const pane=page.locator('.question-panel');await pane.getByRole('button',{name:'Dismiss',exact:true}).click();
@@ -130,9 +133,9 @@ test('dismiss records rejection without applying',async({page})=>{
 });
 
 test('editing the manuscript removes stale anchors and disables applying the old suggestion',async({page})=>{
-  await page.setViewportSize({width:1600,height:1000});await openPassage(page);await sendRevision(page);await fixture(page,'finish');const pane=page.locator('.question-panel');await expect(pane.getByRole('button',{name:'Apply…',exact:true})).toBeVisible();
+  await page.setViewportSize({width:1600,height:1000});await openPassage(page);await sendRevision(page);await fixture(page,'finish');const pane=page.locator('.question-panel');await expect(pane.getByRole('button',{name:'Review changes…',exact:true})).toBeVisible();
   await pane.getByRole('button',{name:'Close Heinlein',exact:true}).click();await page.keyboard.press('ArrowRight');await page.keyboard.type('!');
   await expect(page.locator('.question-passage-chip[aria-label="1 suggestion at this passage"]')).toHaveCount(0);
   await page.locator('.editor-toolbar button[aria-controls="drafting-questions"]').click();await pane.locator('.question-passage-picker > summary').click();
-  await expect(pane.getByRole('button',{name:/Passage 1 · Source changed/})).toBeVisible();await expect(pane.getByRole('button',{name:'Apply…',exact:true})).toBeDisabled();expect((await state(page)).sent).toBe(1);expect((await state(page)).applied).toBe(0);
+  await expect(pane.getByRole('button',{name:/Passage 1 · Source changed/})).toBeVisible();await expect(pane.getByRole('button',{name:'Review changes…',exact:true})).toBeDisabled();expect((await state(page)).sent).toBe(1);expect((await state(page)).applied).toBe(0);
 });

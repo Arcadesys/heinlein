@@ -39,7 +39,7 @@ describe('assembled chapter to proposed revision', () => {
     expect(view().state.readOnly).toBe(false);
     expect(document.querySelector('.page-meta .path')?.textContent).toBe('two.md');
     expect(view().state.sliceDoc(view().state.selection.main.from, view().state.selection.main.to)).toBe('Repeated 🦊—passage.');
-    expect([...document.querySelectorAll('button')].some(b=>b.textContent==='Suggest rewrite')).toBe(true);
+    expect([...document.querySelectorAll('button')].some(b=>b.textContent==='Suggest edits')).toBe(true);
     expect(document.querySelector('[aria-label="Exact revision target"]')?.textContent).toBe('Repeated 🦊—passage.');
     expect(core.saveDocument).not.toHaveBeenCalled(); expect(core.stageRecovery).not.toHaveBeenCalled(); expect(core.askQuestion).not.toHaveBeenCalled();
     view().dispatch({changes: {from: 0, to: 8, insert: 'Revised'}});

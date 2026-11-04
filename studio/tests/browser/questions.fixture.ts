@@ -35,6 +35,16 @@ const app = mountStudio(document.querySelector<HTMLElement>('#app')!,core);
 const ready = app.selectRepository(async()=>session).then(()=>app.showDocument(path));
 Object.assign(window,{questionsFixture:{
   ready,
+  finishReviewWithFeedback(withEdits=true) {
+    if(!reviewRequest||!reviewFinish)throw new Error('No review');
+    const text='Rain tapped the glass roof.', from=source.indexOf(text), fromUtf8=new TextEncoder().encode(source.slice(0,from)).length;
+    reviewFinish({schemaVersion:1,reviewId:'synthetic-review',requestId:reviewRequest.requestId,model:'synthetic',scope:reviewRequest.scope,
+      readingFeedback:[{path,reviewer:'Editor',feedback:{overview:'A clear, atmospheric scene. Mara’s quiet wait builds tension around the final carriage.',
+        strengths:['The stopped clock establishes an unsettling mood.','Rain against the glass roof gives the station a distinct sound.','The final carriage gives Mara’s waiting a clear focus.'],
+        improvements:['Consider what Mara hopes will happen when the train arrives.','Explore whether one physical detail could make her tension clearer.','Consider how the final image might deepen the question of why she waits.']}}],
+      edits:withEdits?[{id:'diff-1',path,fromUtf8,toUtf8:fromUtf8+text.length,original:text,replacement:'Rain drummed against the glass roof.',reason:'A more forceful sound could sharpen the mood.',role:'editor',status:'pending',proposalId:null}]:[]});
+    reviewFinish=null;
+  },
   finishReview(){if(!reviewRequest||!reviewFinish)throw new Error('No review');reviewFinish({schemaVersion:1,reviewId:'synthetic-review',requestId:reviewRequest.requestId,model:'synthetic',scope:reviewRequest.scope,edits:[]});reviewFinish=null;},
   progress(text:string) {progress?.(text);},
   finishAnswer() {if(!request||!finish)throw new Error('No pending request');finish({requestId:request.requestId,text:'Validated final answer.',model:'synthetic',incomplete:false});finish=null;},

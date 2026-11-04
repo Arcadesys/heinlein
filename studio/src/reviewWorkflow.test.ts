@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createReviewPanel } from './reviewPanel';
-import type { LocalCore, ReviewResult, ReviewRequest, ReviewerDefinition, ProposalOutcome } from './localCore';
+import type { LocalCore, ReviewResult, ReviewRequest, ReviewProgress, ReviewerDefinition, ProposalOutcome } from './localCore';
 const defs: ReviewerDefinition[] = [{ id: 'contextual', version: 1, displayName: 'Story and clarity review', instructions: 'Keep intentional voice.' }, { id: 'mechanical', version: 1, displayName: 'Mechanical review', instructions: 'Clear mechanical issues only.' }];
 const source = '🐺 bad / bad / keep — exactly.\r\n';
 const scope = { repositoryId: 'repo', scope: 'scene' as const, label: 'scene.md', snapshots: [{ path: 'scene.md', source, sourceHash: 'a'.repeat(64) }] };
@@ -22,7 +22,99 @@ function fixture() {
 }
 beforeEach(() => { HTMLElement.prototype.scrollIntoView = vi.fn(); document.body.replaceChildren(); });
 afterEach(() => { panel?.destroy(); panel = undefined; });
+it('streams activity before completion, ignores stale events, and stops showing progress on cancellation', async () => {
+    const f = fixture();
+    let progress!: (event: ReviewProgress) => void;
+    let request!: ReviewRequest;
+    f.core.requestReview.mockImplementation((...args: unknown[]) => {
+        request = args[0] as ReviewRequest;
+        progress = args[2] as typeof progress;
+        return new Promise<ReviewResult>(() => {});
+    });
+    panel!.open();
+    await vi.waitFor(() => expect(f.button('Preview review').disabled).toBe(false));
+    await f.click('Preview review'); await f.click('Run review');
+    const event: ReviewProgress = {requestId:request.requestId,completedCalls:0,totalCalls:2,reviewer:0,sourceIndex:0,chunkIndex:1,status:'receiving',receivedBytes:1024,suggestions:0};
+    progress({...event,requestId:'old-request'});
+    expect(panel!.element.textContent).not.toContain('1.0 KB received');
+    progress(event);
+    expect(panel!.element.querySelector('.review-activity')!.textContent).toContain('Story and clarity review · chunk 1 of 2 · receiving response · 1.0 KB received');
+    const announced = panel!.element.querySelector('[role=status]')!.textContent;
+    progress({...event,receivedBytes:2048});
+    expect(panel!.element.querySelector('[role=status]')!.textContent).toBe(announced);
+    expect(panel!.element.querySelector('.review-activity')!.textContent).toContain('2.0 KB received');
+    progress({...event,completedCalls:1,status:'completed',suggestions:2});
+    expect(panel!.element.querySelector('progress')!.value).toBe(1);
+    expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(0);
+    await f.click('Cancel review');
+    expect((panel!.element.querySelector('.review-activity') as HTMLElement).hidden).toBe(true);
+    const cancelled = panel!.element.textContent;
+    progress({...event,receivedBytes:4096});
+    expect(panel!.element.textContent).toBe(cancelled);
+});
+it('labels a failed empty result as incomplete and shows its reason instead of claiming a clean review', async () => {
+    const f = fixture();
+    const original = f.core.requestReview.getMockImplementation()!;
+    f.core.requestReview.mockImplementation(async request => {
+        const result = await original(request);
+        result.edits = [];
+        result.workflow!.coverage[0].status = 'failed';
+        result.workflow!.coverage[0].error = 'timeout';
+        return result;
+    });
+    panel!.open();
+    await vi.waitFor(() => expect(f.button('Preview review').disabled).toBe(false));
+    await f.click('Preview review'); await f.click('Run review');
+    expect(panel!.element.querySelector('[role=status]')!.textContent).toContain('Review incomplete. 0 of 1 calls completed.');
+    expect(panel!.element.textContent).toContain('The response timed out.');
+    expect(panel!.element.textContent).not.toContain('No targeted edits suggested.');
+    expect(panel!.element.textContent).not.toContain('Review ready.');
+    expect(f.core.requestReview).toHaveBeenCalledOnce();
+});
+it('streams a continued batch and ignores its late progress after final validation', async () => {
+    const f = fixture();
+    const original = f.core.requestReview.getMockImplementation()!;
+    f.core.requestReview.mockImplementation(async request => {
+        const result = await original(request);
+        result.workflow!.coverage.push({...result.workflow!.coverage[0],id:'second',status:'notRun',requestId:null});
+        return result;
+    });
+    let progress!: (event: ReviewProgress) => void;
+    let finish!: (result: ReviewResult) => void;
+    let requestId = '';
+    (f.core as unknown as LocalCore).continueReview = vi.fn(async (_repo,_review,id,_connection,onProgress) => {
+        progress = onProgress!; requestId = id;
+        return new Promise<ReviewResult>(resolve => {finish=resolve;});
+    });
+    await f.start();
+    await f.click('Continue next reviewer batch');
+    const event: ReviewProgress = {requestId,completedCalls:1,totalCalls:2,reviewer:0,sourceIndex:0,chunkIndex:2,status:'receiving',receivedBytes:1024,suggestions:3};
+    progress(event);
+    expect(panel!.element.querySelector('.review-activity')!.textContent).toContain('1 of 2 calls completed');
+    const result = structuredClone(f.record());
+    result.requestId = requestId;
+    result.workflow!.coverage = [{...result.workflow!.coverage[0],status:'completed'},{...result.workflow!.coverage[0],id:'second',status:'completed'}];
+    finish(result);
+    await vi.waitFor(() => expect(panel!.element.querySelector('[role=status]')!.textContent).toContain('Review ready.'));
+    expect((panel!.element.querySelector('.review-activity') as HTMLElement).hidden).toBe(true);
+    const ready = panel!.element.textContent;
+    progress({...event,status:'failed'});
+    expect(panel!.element.textContent).toBe(ready);
+});
 it('requires explicit scope/reviewer batch preview and uses only selected connection', async () => { const f = fixture(); panel!.open(); await vi.waitFor(() => expect(panel!.element.querySelector('.review-reviewers [aria-pressed="true"]')).toBeTruthy()); expect(f.button('Run review')).toBeUndefined(); expect(f.button('Preview review').disabled).toBe(false); f.button('Mechanical review').click(); expect(panel!.element.querySelector('[data-reviewer="mechanical"]')!.getAttribute('aria-pressed')).toBe('true'); await f.click('Preview review'); expect(f.core.requestReview).not.toHaveBeenCalled(); await f.click('Run review'); expect(f.core.requestReview.mock.calls[0][0].workflow!.reviewers).toEqual(['contextual', 'mechanical']); expect((f.core.requestReview.mock.calls[0] as unknown[])[1]).toMatchObject({ accountId: 'selected-account', model: 'chosen-model', generation: 3 }); });
+it('explains a reviewer-loading failure without blaming the ChatGPT connection and recovers on reopen', async () => {
+    const f = fixture();
+    f.core.reviewDefinitions.mockRejectedValueOnce('review_definitions not allowed');
+    panel!.open();
+    await vi.waitFor(() => expect(panel!.element.textContent).toContain('Reviewers could not be loaded.'));
+    expect(panel!.element.textContent).not.toContain('Retry when your connection is ready');
+    expect(f.button('Preview review').disabled).toBe(true);
+    expect(f.core.requestReview).not.toHaveBeenCalled();
+    panel!.clear();
+    panel!.open();
+    await vi.waitFor(() => expect(f.button('Preview review').disabled).toBe(false));
+    expect(panel!.element.querySelectorAll('[data-reviewer]')).toHaveLength(2);
+});
 it('requires explicit conflict choice and approves directly through native exact-patch route', async () => { const f = fixture(); await f.start(); const group = panel!.element.querySelector<HTMLElement>('.review-conflict')!; expect(group.querySelectorAll('[data-finding-id]')).toHaveLength(2); const accept = group.querySelector<HTMLButtonElement>('[data-edit-action="accept"]')!; expect(accept.disabled).toBe(true); expect(accept.textContent).toBe('Choose an alternative first'); expect(panel!.element.querySelectorAll('input[type=radio]:checked')).toHaveLength(0); group.querySelector<HTMLInputElement>('[data-finding-id="first"] input[type=radio]')!.click(); await tick(); expect(f.core.approveReviewEdit).not.toHaveBeenCalled(); group.remove(); const chosen = panel!.element.querySelector<HTMLElement>('.review-conflict')!; expect(chosen.querySelector<HTMLInputElement>('[data-finding-id="first"] input[type=radio]')!.checked).toBe(true); const approve = chosen.querySelector<HTMLButtonElement>('[data-edit-action="accept"]')!; expect(approve.textContent).toBe('Accept “good”…'); expect(approve.disabled).toBe(false); approve.click(); await tick(); expect(f.core.approveReviewEdit).toHaveBeenCalledWith('repo', 'review-stable', 'first'); expect(f.hooks.reviewProposal).not.toHaveBeenCalled(); expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(1); expect(panel!.element.textContent).toContain('supersededByAuthorChoice'); });
 it('waits for durable rejection before hiding, keeps errors visible, then reopens dismissed state without rerun', async () => {
     const f = fixture();

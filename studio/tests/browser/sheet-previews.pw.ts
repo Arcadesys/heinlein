@@ -1,0 +1,40 @@
+import {test, expect} from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+
+for (const scale of [100, 200]) test(`unopened sheets show accessible cached previews at ${scale}% text`,async({page},info)=>{
+  const errors:string[]=[]; page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('/tests/browser/library-app.html');
+  await page.evaluate(scale=>{document.documentElement.style.fontSize=`${scale}%`;document.documentElement.dataset.theme='contrast';},scale);
+  const toggle=page.locator('.navigation-toggle');
+  if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();
+  const first=page.getByRole('button',{name:'First sheet',exact:true});
+  const second=page.getByRole('button',{name:'Second sheet',exact:true});
+  const preview=page.locator('.scene-excerpt[data-path="ms/second.md"]');
+  await expect(preview).toHaveText('Synthetic opening.');
+  await expect(preview).toBeVisible();
+  await expect(second).toHaveAccessibleDescription('Synthetic opening.');
+  await expect(page.locator('.document-tabs [role="tab"]')).toHaveCount(0);
+  // Collapsing and expanding uses the same excerpts, without selecting a sheet.
+  const group=page.locator('.tree-toggle');await group.click();await group.click();
+  await expect(preview).toHaveText('Synthetic opening.');
+  await first.focus();await expect(first).toBeFocused();
+  expect(await first.evaluate(node=>getComputedStyle(node).outlineStyle)).not.toBe('none');
+  expect(await first.evaluate(node=>node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+  expect(await preview.evaluate(node=>Number.parseFloat(getComputedStyle(node).fontSize))).toBeGreaterThanOrEqual(16*scale/100);
+  expect((await new AxeBuilder({page}).include('.drafting-panel').analyze()).violations).toEqual([]);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
+  await page.screenshot({path:info.outputPath(`sheet-previews-${scale}.png`)});
+  await first.click();
+  const editor=page.getByRole('textbox',{name:'Markdown editor'});await expect(editor).toBeVisible();
+  const before=await editor.evaluate(node=>({width:node.getBoundingClientRect().width,text:node.textContent}));
+  if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();
+  await group.click();await group.click();
+  expect(await editor.textContent()).toBe(before.text);
+  if(info.project.name==='desktop')expect(await editor.evaluate(node=>node.getBoundingClientRect().width)).toBe(before.width);
+  if(info.project.name==='narrow')await page.getByRole('button',{name:'Return to writing',exact:true}).click();
+  await editor.click();await page.keyboard.press('End');await page.keyboard.insertText(' Unsaved — exact.');
+  if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click();
+  await expect(first).toHaveAccessibleDescription('Synthetic opening. Unsaved — exact.');
+  await expect(preview).toHaveText('Synthetic opening.');
+  expect(errors).toEqual([]);
+});

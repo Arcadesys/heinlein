@@ -39,3 +39,36 @@ export function createQuestionComparison(before: string, after: string, fullScen
   }
   const legend = document.createElement('p'); legend.className = 'question-diff-legend'; legend.textContent = 'Dotted underline: removed text. Solid underline: added text.'; node.append(legend); return node;
 }
+
+/** Compact, keyboard accessible diff chips. Expanding a chip reveals exact
+ * changed text; unchanged manuscript prose stays out of the response. */
+export function createQuestionDiffChips(before: string, after: string) {
+  const list = document.createElement('section'); list.className = 'question-diff-chips';
+  list.setAttribute('aria-label', 'Proposed changes');
+  const parts = questionDiff(before, after);
+  const changes: {removed: string; added: string}[] = [];
+  for (let i = 0; i < parts.length;) {
+    if (parts[i].kind === 'equal') {i++; continue;}
+    const change = {removed: '', added: ''};
+    while (i < parts.length && parts[i].kind !== 'equal') {
+      const part = parts[i++]; change[part.kind === 'remove' ? 'removed' : 'added'] += part.text;
+    }
+    changes.push(change);
+  }
+  if (!changes.length) {list.textContent = 'No text changes suggested.'; return list;}
+  const clip = (text: string) => {const chars = [...text.replace(/\s+/gu, ' ').trim()]; return chars.length > 48 ? chars.slice(0, 47).join('') + '…' : chars.join('') || 'whitespace';};
+  changes.forEach((change, index) => {
+    const chip = document.createElement('details'); chip.className = 'question-diff-chip';
+    const summary = document.createElement('summary');
+    summary.textContent = `${index + 1}. ${change.removed ? `− ${clip(change.removed)}` : 'Insert'}${change.added ? ` → + ${clip(change.added)}` : ' → Delete'}`;
+    const diff = document.createElement('div'); diff.className = 'question-chip-exact';
+    for (const [label, text, tag] of [['Remove', change.removed, 'del'], ['Add', change.added, 'ins']] as const) {
+      if (!text) continue;
+      const row = document.createElement('div'); const title = document.createElement('strong'); title.textContent = label;
+      const value = document.createElement(tag); value.textContent = text;
+      row.append(title, value); diff.append(row);
+    }
+    chip.append(summary, diff); list.append(chip);
+  });
+  return list;
+}

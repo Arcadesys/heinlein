@@ -14,11 +14,12 @@ export interface RecoveryDraft { id: string; path: string; baseHash: string; tex
 export interface Chapter { number: number; title: string; path: string; source: string; scenes: {path: string}[] }
 export interface Manuscript { path: string; project: string; schemaVersion: number; volumes: {number: number; title: string; path: string; chapters: Chapter[]}[] }
 export interface DraftingGroup { id: string; title: string }
-export interface DraftingScene { id: string; title: string; path: string; groupId: string | null }
+export interface DraftingScene { id: string; title: string; path: string; groupId: string | null; reference?: boolean }
 export interface LibraryEntry { id: string; kind: 'group' | 'scene'; parentId: string | null }
 export interface DraftingState {
   manifestPath: string; revision: string | null; project: string;
   groups: DraftingGroup[]; scenes: DraftingScene[];
+  referenceSheets?: DraftingScene[];
   library?: LibraryEntry[];
   libraryLegacy?: boolean;
   untrackedPaths: string[]; missingPaths: string[]; recoveryRequired?: boolean;
@@ -26,6 +27,9 @@ export interface DraftingState {
 }
 export type SceneDestination = {kind:'before'|'after';sceneId:string;groupId:string|null}|{kind:'groupEnd';groupId:string}|{kind:'ungroupedEnd'};
 export type DraftingChange =
+  | { kind: 'deleteGroup'; groupId: string }
+  | { kind: 'deleteSheet'; path: string }
+  | { kind: 'setSheetReference'; path: string; reference: boolean }
   | { kind: 'organizeLibrary'; groups: DraftingGroup[]; sceneTitles: {id: string; title: string}[]; entries: LibraryEntry[] }
   | { kind: 'initialize'; project: string }
   | { kind: 'createScene'; title: string; path: string; groupId?: string | null; beforeId?: string | null }
@@ -73,8 +77,12 @@ export interface ReviewerDefinition {id:string; version:number; displayName:stri
 export interface ReviewOptions {reviewers:string[]; context:ReviewSnapshot[]; contextNote:string; ranges:{path:string;fromUtf8:number;toUtf8:number}[];reviewId?:string|null;fullContextOrder?:string[]}
 export interface ReviewCoverage {contextRanges?:{sourceIndex:number;fromUtf8:number;toUtf8:number}[];id:string; sourceIndex:number;fromUtf8:number;toUtf8:number;windowFrom:number;windowTo:number;reviewer:number;status:string;requestId:string|null;error:string|null}
 export interface ReviewRequest { requestId: string; repositoryId: string; scope: 'scene' | 'chapter'; snapshots: ReviewSnapshot[]; workflow?:ReviewOptions|null }
+/** Activity only: streamed provider text is never an actionable review result. */
+export interface ReviewProgress {requestId:string; completedCalls:number; totalCalls:number; reviewer:number; sourceIndex:number; chunkIndex:number; status:string; receivedBytes:number; suggestions:number}
 export interface ReviewEdit { location?:{line:number;column:number}; id: string; path: string; fromUtf8: number; toUtf8: number; original: string; replacement: string; reason: string; role: 'proofreader' | 'editor'; status: 'pending' | 'prepared' | 'accepted' | 'rejected' | 'supersededByAuthorChoice' | 'blockedByAppliedDecision'; proposalId: string | null; fingerprint?:string;comments?:string[];provenance?:{instanceId:string;definitionId:string;definitionVersion:number;displayName:string;requestId:string;model:string;accountId:string;accountGeneration:number}[];patch?:string;patchHash?:string;conflictGroup?:string|null;selected?:boolean;sourceStale?:boolean }
-export interface ReviewResult { reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
+export interface ReadingFeedback { overview: string; strengths: string[]; improvements: string[] }
+export interface ReadingFeedbackView { coverageId?: string | null; path: string; reviewer: string; feedback: ReadingFeedback }
+export interface ReviewResult { readingFeedback?: ReadingFeedbackView[]; reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
 export interface LocalCore {
   projectRequest?(request:ProjectRequest):Promise<ProjectResponse>;
   mcpRequest?(request:McpAccessRequest):Promise<McpAccessView>;
@@ -87,13 +95,13 @@ export interface LocalCore {
   resetFirstStory?(repositoryId: string): Promise<FirstStoryState | null>;
   previewPublishingCopy?(repositoryId: string, metadata: PublishingMetadata): Promise<PublishingCopy | null>;
   confirmPublishingCopy?(repositoryId: string, previewId: string): Promise<boolean>;
-  requestReview?(request: ReviewRequest, connection: QuestionConnection): Promise<ReviewResult>;
+  requestReview?(request: ReviewRequest, connection: QuestionConnection, onProgress?: (progress: ReviewProgress) => void): Promise<ReviewResult>;
   reviewDefinitions?():Promise<ReviewerDefinition[]>;
   previewReview?(request:ReviewRequest):Promise<ReviewCoverage[]>;
   listReviews?(repositoryId:string):Promise<ReviewResult[]>;
   chooseReviewEdit?(repositoryId:string,reviewId:string,editId:string):Promise<ReviewResult>;
   approveReviewEdit?(repositoryId:string,reviewId:string,editId:string):Promise<ProposalOutcome|null>;
-  continueReview?(repositoryId:string,reviewId:string,requestId:string,connection:QuestionConnection):Promise<ReviewResult>;
+  continueReview?(repositoryId:string,reviewId:string,requestId:string,connection:QuestionConnection,onProgress?: (progress: ReviewProgress) => void):Promise<ReviewResult>;
   prepareReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<{proposalId: string}>;
   rejectReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<ReviewResult>;
   getReview?(repositoryId: string, reviewId: string): Promise<ReviewResult>;
@@ -150,13 +158,21 @@ export const localCore: LocalCore = {
   resetFirstStory: repositoryId => invoke('reset_first_story', {repositoryId}),
   previewPublishingCopy: (repositoryId, metadata) => invoke('preview_publishing_copy', {repositoryId, metadata}),
   confirmPublishingCopy: (repositoryId, previewId) => invoke('confirm_publishing_copy', {repositoryId, previewId}),
-  requestReview: (request, connection) => invoke('request_review', {request, connection}),
+  requestReview: (request, connection, onProgress) => {
+    const channel = new Channel<ReviewProgress>();
+    channel.onmessage = progress => onProgress?.(progress);
+    return invoke('request_review', {request, connection, onProgress: channel});
+  },
   reviewDefinitions:()=>invoke('review_definitions'),
   previewReview:request=>invoke('preview_review',{request}),
   listReviews:repositoryId=>invoke('list_reviews',{repositoryId}),
   chooseReviewEdit:(repositoryId,reviewId,editId)=>invoke('choose_review_edit',{repositoryId,reviewId,editId}),
   approveReviewEdit:(repositoryId,reviewId,editId)=>invoke('approve_review_edit',{repositoryId,reviewId,editId}),
-  continueReview:(repositoryId,reviewId,requestId,connection)=>invoke('continue_review',{repositoryId,reviewId,requestId,connection}),
+  continueReview:(repositoryId,reviewId,requestId,connection,onProgress)=>{
+    const channel = new Channel<ReviewProgress>();
+    channel.onmessage = progress => onProgress?.(progress);
+    return invoke('continue_review',{repositoryId,reviewId,requestId,connection,onProgress:channel});
+  },
   prepareReviewEdit: (repositoryId, reviewId, editId) => invoke('prepare_review_edit', {repositoryId, reviewId, editId}),
   rejectReviewEdit: (repositoryId, reviewId, editId) => invoke('reject_review_edit', {repositoryId, reviewId, editId}),
   getReview: (repositoryId, reviewId) => invoke('get_review', {repositoryId, reviewId}),

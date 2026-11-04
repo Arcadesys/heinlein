@@ -31,6 +31,8 @@ pub struct DraftingScene {
     pub title: String,
     pub path: String,
     pub group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reference: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -80,6 +82,7 @@ pub struct DraftingState {
     pub project: String,
     pub groups: Vec<DraftingGroup>,
     pub scenes: Vec<DraftingScene>,
+    pub reference_sheets: Vec<DraftingScene>,
     pub library: Vec<LibraryEntry>,
     pub library_legacy: bool,
     pub untracked_paths: Vec<String>,
@@ -116,6 +119,16 @@ pub enum SceneDestination {
     deny_unknown_fields
 )]
 pub enum DraftingChange {
+    DeleteGroup {
+        group_id: String,
+    },
+    DeleteSheet {
+        path: String,
+    },
+    SetSheetReference {
+        path: String,
+        reference: bool,
+    },
     OrganizeLibrary {
         groups: Vec<DraftingGroup>,
         scene_titles: Vec<LibrarySceneTitle>,
@@ -515,6 +528,59 @@ fn legacy_library(manifest: &Manifest) -> Vec<LibraryEntry> {
         }))
         .collect()
 }
+// Existing chapter reference folders remain source files. Surface them without
+// changing an index merely because a project was opened.
+fn discovered_reference_sheets(manifest: &Manifest, members: &[String]) -> Vec<DraftingScene> {
+    members
+        .iter()
+        .filter(|path| {
+            path.split('/')
+                .rev()
+                .skip(1)
+                .any(|part| part.eq_ignore_ascii_case("reference"))
+                && !manifest
+                    .scenes
+                    .iter()
+                    .any(|scene| scene.path.eq_ignore_ascii_case(path))
+        })
+        .map(|path| {
+            let group_id = reference_group(manifest, path);
+            let hash = content_hash(&format!("reference-sheet:{path}"));
+            DraftingScene {
+                id: uuid::Uuid::parse_str(&hash[..32])
+                    .expect("hash is hexadecimal")
+                    .to_string(),
+                title: scene_title(path),
+                path: path.clone(),
+                group_id,
+                reference: true,
+            }
+        })
+        .collect()
+}
+fn reference_group(manifest: &Manifest, path: &str) -> Option<String> {
+    let candidates: Vec<_> = manifest
+        .scenes
+        .iter()
+        .filter(|scene| {
+            scene.group_id.is_some() && path.starts_with(&format!("{}/", parent(&scene.path)))
+        })
+        .collect();
+    let depth = candidates
+        .iter()
+        .map(|scene| parent(&scene.path).len())
+        .max()?;
+    let groups: HashSet<_> = candidates
+        .iter()
+        .filter(|scene| parent(&scene.path).len() == depth)
+        .filter_map(|scene| scene.group_id.clone())
+        .collect();
+    if groups.len() == 1 {
+        groups.into_iter().next()
+    } else {
+        None
+    }
+}
 /// Validate a GitHub incoming schema-v2 candidate without writing any files.
 pub fn parse_workspace_manifest(text: &str) -> Result<Manifest> {
     if text.len() as u64 > MAX_MANIFEST_BYTES {
@@ -563,10 +629,10 @@ fn insert_scene(
     Ok(())
 }
 fn group_order_issue(manifest: &Manifest) -> Option<String> {
+    let scenes: Vec<_> = manifest.scenes.iter().filter(|s| !s.reference).collect();
     let mut encountered = Vec::new();
     for group in &manifest.groups {
-        let positions: Vec<_> = manifest
-            .scenes
+        let positions: Vec<_> = scenes
             .iter()
             .enumerate()
             .filter(|(_, s)| s.group_id.as_deref() == Some(&group.id))
@@ -574,7 +640,7 @@ fn group_order_issue(manifest: &Manifest) -> Option<String> {
             .collect();
         if let (Some(first), Some(last)) = (positions.first(), positions.last()) {
             if last - first + 1 != positions.len() {
-                let gap = manifest.scenes[*first..=*last]
+                let gap = scenes[*first..=*last]
                     .iter()
                     .find(|s| s.group_id.as_deref() != Some(&group.id))
                     .unwrap();
@@ -583,7 +649,7 @@ fn group_order_issue(manifest: &Manifest) -> Option<String> {
             }
         }
     }
-    for scene in &manifest.scenes {
+    for scene in &scenes {
         if let Some(id) = &scene.group_id {
             if encountered.last() != Some(id) {
                 encountered.push(id.clone());
@@ -593,12 +659,7 @@ fn group_order_issue(manifest: &Manifest) -> Option<String> {
     let expected: Vec<_> = manifest
         .groups
         .iter()
-        .filter(|g| {
-            manifest
-                .scenes
-                .iter()
-                .any(|s| s.group_id.as_ref() == Some(&g.id))
-        })
+        .filter(|g| scenes.iter().any(|s| s.group_id.as_ref() == Some(&g.id)))
         .map(|g| g.id.clone())
         .collect();
     if encountered != expected {
@@ -813,6 +874,7 @@ fn validate_split_journal(journal: &Journal) -> Result<()> {
     let new = after.scenes.get(position + 1).ok_or_else(invalid)?;
     if new.path != target.path
         || new.group_id != before.scenes[position].group_id
+        || new.reference != before.scenes[position].reference
         || before.scenes.iter().any(|s| s.id == new.id)
     {
         return Err(invalid());
@@ -967,6 +1029,11 @@ impl Repository {
             .as_ref()
             .map_or_else(Vec::new, |m| m.scenes.clone());
         let tracked: HashSet<_> = scenes.iter().map(|s| s.path.as_str()).collect();
+        let reference_sheets = manifest
+            .as_ref()
+            .map_or_else(Vec::new, |m| discovered_reference_sheets(m, &members));
+        let reference_paths: HashSet<_> =
+            reference_sheets.iter().map(|s| s.path.as_str()).collect();
         let actual: HashSet<_> = members.iter().map(String::as_str).collect();
         let recovery_required = match self.handle(JOURNAL, true) {
             Ok(_) => true,
@@ -990,7 +1057,7 @@ impl Repository {
                 .is_some_and(|m| m.library.is_none() || m.preserve_flat_order),
             untracked_paths: members
                 .iter()
-                .filter(|p| !tracked.contains(p.as_str()))
+                .filter(|p| !tracked.contains(p.as_str()) && !reference_paths.contains(p.as_str()))
                 .cloned()
                 .collect(),
             missing_paths: scenes
@@ -999,6 +1066,7 @@ impl Repository {
                 .map(|s| s.path.clone())
                 .collect(),
             scenes,
+            reference_sheets,
             recovery_required,
             group_move_issue: manifest.as_ref().and_then(group_order_issue),
         })
@@ -1063,6 +1131,7 @@ impl Repository {
             _ => None,
         };
         let file_only = matches!(change, DraftingChange::SplitFile { .. })
+            || matches!(&change, DraftingChange::DeleteSheet { path } if !existing.as_ref().is_some_and(|m| m.scenes.iter().any(|s| s.path == *path)))
             || (matches!(change, DraftingChange::RenameFile { .. }) && rename_member.is_none());
         let members = self.drafting_members()?;
         let mut manifest = existing.clone().unwrap_or(Manifest {
@@ -1091,11 +1160,19 @@ impl Repository {
         {
             return Err(Error::DraftingCollision);
         }
+        // A registered-scene split only adds its suffix to the index; unrelated
+        // drift stays untouched. verify_plan still guards changes after preview.
         if (!state.untracked_paths.is_empty() || !state.missing_paths.is_empty())
             && !file_only
             && !matches!(
                 change,
-                DraftingChange::Reconcile {} | DraftingChange::Initialize { .. }
+                DraftingChange::Reconcile {}
+                    | DraftingChange::Initialize { .. }
+                    | DraftingChange::SetSheetReference { .. }
+                    | DraftingChange::OrganizeLibrary { .. }
+                    | DraftingChange::SplitScene { .. }
+                    | DraftingChange::DeleteSheet { .. }
+                    | DraftingChange::DeleteGroup { .. }
             )
         {
             return Err(Error::DraftingChanged);
@@ -1129,13 +1206,135 @@ impl Repository {
             } => Some((scene_id.clone(), before_id.clone())),
             _ => None,
         };
-        let organized = matches!(&change, DraftingChange::OrganizeLibrary { .. });
+        let organized = matches!(
+            &change,
+            DraftingChange::OrganizeLibrary { .. } | DraftingChange::DeleteGroup { .. }
+        );
         match change {
+            DraftingChange::DeleteGroup { group_id } => {
+                let group = manifest
+                    .groups
+                    .iter()
+                    .find(|g| g.id == group_id)
+                    .ok_or(Error::DraftingChanged)?;
+                let name = group.title.clone();
+                let mut entries = manifest
+                    .library
+                    .clone()
+                    .unwrap_or_else(|| legacy_library(&manifest));
+                let position = entries
+                    .iter()
+                    .position(|e| e.id == group_id && e.kind == LibraryEntryKind::Group)
+                    .ok_or(Error::DraftingChanged)?;
+                let parent_id = entries[position].parent_id.clone();
+                let insertion = entries[..position]
+                    .iter()
+                    .filter(|e| e.parent_id.as_deref() != Some(&group_id))
+                    .count();
+                let children: Vec<_> = entries
+                    .iter()
+                    .filter(|e| e.parent_id.as_deref() == Some(&group_id))
+                    .cloned()
+                    .map(|mut e| {
+                        e.parent_id = parent_id.clone();
+                        e
+                    })
+                    .collect();
+                entries.retain(|e| e.id != group_id && e.parent_id.as_deref() != Some(&group_id));
+                entries.splice(insertion..insertion, children);
+                for scene in &mut manifest.scenes {
+                    if scene.group_id.as_deref() == Some(&group_id) {
+                        scene.group_id = parent_id.clone();
+                    }
+                }
+                manifest.groups.retain(|g| g.id != group_id);
+                manifest.preserve_flat_order |= manifest.library.is_none();
+                manifest.library = Some(entries);
+                plan.preview.summary = format!("Delete group “{name}”");
+                plan.preview.changes.push(DraftingChangeView {
+                    kind: "deleteGroup".into(),
+                    source: None,
+                    destination: None,
+                });
+                plan.preview.warnings.push("Keeps all sheets and nested groups. They move up one level in the same order. No sheet files are deleted or moved. Undo is available during this session.".into());
+            }
+            DraftingChange::DeleteSheet { path } => {
+                scene_path(&path)?;
+                self.allowed(&path, false)?;
+                self.check_write_manifests(&path)?;
+                self.refuse_legacy_scene_move(&path)?;
+                let scene = manifest.scenes.iter().find(|s| s.path == path);
+                let name = scene.map_or_else(|| scene_title(&path), |s| s.title.clone());
+                let before = self.snapshot(&path)?;
+                if before.is_none() && scene.is_none() {
+                    return Err(Error::NotFound);
+                }
+                if let Some(before) = before {
+                    if before.mode & 0o222 == 0 {
+                        return Err(Error::Denied);
+                    }
+                    plan.edits.push(Edit {
+                        path: path.clone(),
+                        before: Some(before),
+                        after: None,
+                    });
+                }
+                manifest.scenes.retain(|s| s.path != path);
+                plan.recovery_paths.push(path.clone());
+                plan.preview.summary = format!("Delete sheet “{name}”");
+                plan.preview.changes.push(DraftingChangeView {
+                    kind: "deleteSheet".into(),
+                    source: Some(path),
+                    destination: None,
+                });
+                plan.preview.warnings.push("Deletes this sheet’s Markdown file from this Mac and removes it from the library. Undo is available during this session. Links to this sheet are not rewritten.".into());
+            }
+            DraftingChange::SetSheetReference { path, reference } => {
+                scene_path(&path)?;
+                if let Some(scene) = manifest.scenes.iter_mut().find(|s| s.path == path) {
+                    scene.reference = reference;
+                } else {
+                    if !members.contains(&path) {
+                        return Err(Error::NotFound);
+                    }
+                    let discovered = discovered_reference_sheets(&manifest, &members)
+                        .into_iter()
+                        .find(|s| s.path == path);
+                    let mut scene = discovered.unwrap_or_else(|| DraftingScene {
+                        id: uuid(),
+                        title: scene_title(&path),
+                        group_id: reference_group(&manifest, &path),
+                        path: path.clone(),
+                        reference,
+                    });
+                    scene.reference = reference;
+                    manifest.scenes.push(scene);
+                }
+                plan.preview.summary = if reference {
+                    "Make reference sheet"
+                } else {
+                    "Make regular sheet"
+                }
+                .into();
+            }
             DraftingChange::OrganizeLibrary {
                 groups,
                 scene_titles,
                 entries,
             } => {
+                // A menu move/rename may explicitly adopt a discovered reference.
+                for scene in discovered_reference_sheets(&manifest, &members) {
+                    if scene_titles.iter().any(|item| item.id == scene.id) {
+                        if let Some(entries) = manifest.library.as_mut() {
+                            entries.push(LibraryEntry {
+                                id: scene.id.clone(),
+                                kind: LibraryEntryKind::Scene,
+                                parent_id: scene.group_id.clone(),
+                            });
+                        }
+                        manifest.scenes.push(scene);
+                    }
+                }
                 let was_flat = manifest.library.is_none() || manifest.preserve_flat_order;
                 let previous = manifest
                     .library
@@ -1196,6 +1395,7 @@ impl Repository {
                             title: scene.title.clone(),
                             path: scene.path.clone(),
                             group_id: None,
+                            reference: false,
                         },
                         &None,
                     )?;
@@ -1234,6 +1434,7 @@ impl Repository {
                         title: name,
                         path,
                         group_id,
+                        reference: false,
                     },
                     &before_id,
                 )?;
@@ -1389,6 +1590,7 @@ impl Repository {
                         title: name,
                         path,
                         group_id: scene.group_id,
+                        reference: scene.reference,
                     },
                 );
                 plan.preview.summary =
@@ -1691,6 +1893,7 @@ impl Repository {
                                 title: scene_title(&name),
                                 path: target,
                                 group_id: group_id.clone(),
+                                reference: false,
                             }
                         }
                     } else {
@@ -1699,6 +1902,7 @@ impl Repository {
                             title: scene_title(&name),
                             path: target,
                             group_id: group_id.clone(),
+                            reference: false,
                         }
                     };
                     insert_scene(&mut manifest, scene, &before_id)?;
@@ -1737,6 +1941,7 @@ impl Repository {
                             title: scene_title(&source.name),
                             path: target,
                             group_id: group_id.clone(),
+                            reference: false,
                         },
                         &before_id,
                     )?;
@@ -1776,6 +1981,7 @@ impl Repository {
                                 title: scene_title(&target),
                                 path: target,
                                 group_id: Some(group.id.clone()),
+                                reference: false,
                             });
                         }
                         manifest.groups.push(group);
@@ -1870,7 +2076,19 @@ impl Repository {
                     id: uuid(),
                     title: scene_title(path),
                     path: path.clone(),
-                    group_id: None,
+                    group_id: if path
+                        .split('/')
+                        .any(|part| part.eq_ignore_ascii_case("reference"))
+                    {
+                        reference_group(manifest, path)
+                    } else {
+                        None
+                    },
+                    reference: path
+                        .split('/')
+                        .rev()
+                        .skip(1)
+                        .any(|part| part.eq_ignore_ascii_case("reference")),
                 });
                 plan.preview.changes.push(DraftingChangeView {
                     kind: "index".into(),
@@ -4071,6 +4289,10 @@ mod tests {
     }
     include!("drafting_moves_tests.rs");
     include!("drafting_file_split_tests.rs");
+    include!("drafting_split_drift_tests.rs");
+    include!("drafting_delete_sheet_tests.rs");
+    include!("drafting_delete_group_tests.rs");
+    include!("reference_sheet_tests.rs");
 }
 
 #[cfg(all(test, unix))]

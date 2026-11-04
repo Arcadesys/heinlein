@@ -60,6 +60,8 @@ pub struct Coverage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CallResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading_feedback: Option<crate::review::ReadingFeedback>,
     #[serde(default)]
     pub provider_response_id: Option<String>,
     pub coverage: Coverage,
@@ -468,6 +470,7 @@ impl QuestionService {
             let body = crate::review::workflow_body(&sub, &config.model, &def.instructions)?;
             coverage.status = "running".into();
             progress(&CallResult {
+                reading_feedback: None,
                 provider_response_id: None,
                 coverage: coverage.clone(),
                 edits: vec![],
@@ -486,6 +489,7 @@ impl QuestionService {
                         coverage.status = "failed".into();
                         coverage.error = Some("invalidReviewOrModel".into());
                         calls.push(CallResult {
+                            reading_feedback: None,
                             provider_response_id: provider_response_id.clone(),
                             coverage,
                             edits: vec![],
@@ -499,6 +503,7 @@ impl QuestionService {
                         coverage.status = "failed".into();
                         coverage.error = Some("findingLimit".into());
                         calls.push(CallResult {
+                            reading_feedback: None,
                             provider_response_id: provider_response_id.clone(),
                             coverage,
                             edits: vec![],
@@ -510,6 +515,7 @@ impl QuestionService {
                     remaining -= output.edits.len();
                     coverage.status = "completed".into();
                     calls.push(CallResult {
+                        reading_feedback: output.reading_feedback,
                         provider_response_id,
                         coverage,
                         edits: output.edits,
@@ -520,6 +526,7 @@ impl QuestionService {
                     coverage.status = if cancelled { "cancelled" } else { "failed" }.into();
                     coverage.error = Some(e.code.to_string());
                     calls.push(CallResult {
+                        reading_feedback: None,
                         provider_response_id: e.provider_request_id.clone(),
                         coverage,
                         edits: vec![],

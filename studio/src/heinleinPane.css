@@ -162,3 +162,14 @@
   .heinlein-composer .heinlein-chip-remove { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
   .heinlein-send-note > details > summary { display: inline-flex; align-items: center; }
 }
+
+/* Diff chips live inside the existing overlay; editor geometry is untouched. */
+.question-diff-chips { display: flex; flex-wrap: wrap; align-items: start; gap: .5rem; margin-block: .75rem; }
+.question-diff-chip { max-width: 100%; min-width: 0; border: 1px solid var(--border-strong); border-radius: .75rem; background: var(--surface); }
+.question-diff-chip summary { padding: .625rem .75rem; min-height: 2.75rem; box-sizing: border-box; cursor: pointer; overflow-wrap: anywhere; font: 500 .875rem/1.5 var(--font-ui, var(--ui-fallback)); color: var(--fg); }
+.question-diff-chip summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; border-radius: .75rem; }
+.question-diff-chip[open] { flex-basis: 100%; }
+.question-chip-exact { padding: 0 .75rem .75rem; }
+.question-chip-exact strong { display: block; margin-block: .5rem .25rem; font-size: .8125rem; }
+.question-chip-exact :is(del, ins) { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 1rem/1.6 var(--font-text, var(--text-fallback)); }
+.question-chip-exact ins { text-decoration: underline solid var(--accent); text-underline-offset: .2em; }

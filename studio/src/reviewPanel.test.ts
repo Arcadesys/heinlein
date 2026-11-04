@@ -56,3 +56,30 @@ it('dismisses a durably rejected suggestion from pending cards while retaining i
  expect(panel!.element.textContent).toContain('"status": "rejected"');
  expect(core.applyProposalReview).not.toHaveBeenCalled();
 });
+
+const reading = {overview: 'The scene reads with a clear voice and growing tension.', strengths: ['A distinct voice.', 'A grounded setting.', 'A well paced turn.'], improvements: ['Consider the opening beat.', 'Clarify the immediate goal.', 'Explore the final image.']};
+it('shows reading feedback with three labeled strengths and improvements even without edits', async () => {
+ const core = bridge(); core.requestReview.mockImplementation(async request => ({...response(request), edits: [], readingFeedback: [{path: 'scene.md', reviewer: 'Editor', feedback: reading}]}));
+ await start(core); button('Run review').click();
+ await vi.waitFor(() => expect(panel!.element.textContent).toContain(reading.overview));
+ expect(panel!.element.querySelectorAll('.review-feedback-list')).toHaveLength(2);
+ expect([...panel!.element.querySelectorAll('.review-feedback-list')].map(list => list.children.length)).toEqual([3,3]);
+ expect(panel!.element.querySelectorAll('[aria-hidden="true"].review-feedback-marker')).toHaveLength(6);
+ expect(panel!.element.textContent).toContain('Three good things'); expect(panel!.element.textContent).toContain('Three points for improvement');
+ expect(panel!.element.textContent).toContain('No targeted edits suggested.'); expect(core.saveDocument).not.toHaveBeenCalled();
+});
+it('jumps from the diff list without approving or changing the source', async () => {
+ const core = bridge(), jumpToEdit = vi.fn(async () => true);
+ panel = createReviewPanel(core as unknown as LocalCore, {capture: () => scope, unavailable: () => unavailable, reviewProposal, openConnection, focusEditor, jumpToEdit});
+ document.body.append(panel.element); panel.open(); await vi.waitFor(() => expect(button('Run review').disabled).toBe(false)); await run();
+ (panel.element.querySelector('.review-diff-jump') as HTMLButtonElement).click();
+ await vi.waitFor(() => expect(jumpToEdit).toHaveBeenCalledOnce());
+ expect(jumpToEdit.mock.calls[0]).toBeDefined(); expect(core.prepareReviewEdit).not.toHaveBeenCalled(); expect(core.saveDocument).not.toHaveBeenCalled(); expect(core.applyProposalReview).not.toHaveBeenCalled();
+});
+it('does not invent reading feedback for older saved results', async () => {
+ await start(); await run(); expect(panel!.element.textContent).toContain('Reading feedback is unavailable'); expect(panel!.element.querySelectorAll('.review-feedback-list')).toHaveLength(0);
+});
+it('rejects malformed reading feedback before showing review actions', async () => {
+ const core=bridge(); core.requestReview.mockImplementation(async request=>({...response(request), readingFeedback:[{path:'scene.md',reviewer:'Editor',feedback:{...reading,strengths:['Only one']}}]}));
+ await start(core); button('Run review').click(); await vi.waitFor(()=>expect(button('Retry review').hidden).toBe(false)); expect(panel!.element.querySelectorAll('[data-edit-action="accept"]')).toHaveLength(0);
+});

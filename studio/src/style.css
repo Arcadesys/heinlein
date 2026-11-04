@@ -356,7 +356,14 @@ dialog { color: var(--fg); }
 .tree-toggle { font-weight: 600; }
 .tree-toggle::before { content: ''; display: inline-block; width: .35rem; height: .35rem; margin: 0 .6rem .1rem .15rem; border-right: 2px solid var(--fg-muted); border-bottom: 2px solid var(--fg-muted); transform: rotate(-45deg); transition: transform .15s ease; }
 .tree-toggle[aria-expanded="true"]::before { transform: rotate(45deg); }
-.scene-open { padding-left: 1.5rem !important; }
+.scene-open { position: relative; padding-left: 1.5rem !important; }
+/* A dotted grip says the row can be picked up; it brightens on hover and focus. */
+.scene-open::before { content: ''; position: absolute; left: .45rem; top: 50%; width: .5rem; height: .85rem; transform: translateY(-50%); background: radial-gradient(circle, currentColor 1.1px, transparent 1.4px) 0 0 / .5rem .285rem; opacity: .3; }
+.tree-row:hover .scene-open::before, .scene-open:focus::before { opacity: .75; }
+.scene-excerpt { flex: 1 1 100%; order: 3; margin: 0; padding: 0 .5rem .5rem 1.5rem; height: 4.2em; box-sizing: content-box; color: var(--fg-muted); font-size: 1rem; line-height: 1.4; cursor: grab; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.scene-excerpt.is-empty { font-style: italic; opacity: .7; }
+.scene-excerpt.is-pending { color: transparent; }
+.tree-scene:not(:last-child) > .tree-row { border-bottom: 1px solid var(--border); border-radius: 0; }
 .scene-open[aria-current] { color: var(--accent); font-weight: 600; }
 .scene-open[draggable="true"], .tree-toggle[draggable="true"] { cursor: grab; }
 /* Drop markers are shadows and outlines only, so dragging never reflows the tree. */
@@ -389,6 +396,12 @@ dialog { color: var(--fg); }
 .row-menu-items .recent { flex-direction: column; align-items: stretch; gap: 0; margin: 0; }
 @media (hover: none) { .tree-row .row-menu > summary { opacity: 1; } }
 .drafting-dialog > p { margin-block: .8rem; }
+.drafting-delete-dialog { box-sizing:border-box; width:min(36rem,calc(100vw - 16px)); max-width:calc(100vw - 16px); max-height:calc(100dvh - 16px); padding:clamp(12px,2vw,24px); }
+.drafting-dialog.drafting-delete-dialog > button { min-height:48px; overflow-wrap:normal; word-break:normal; }
+.drafting-delete-dialog button:focus { outline: 3px solid var(--accent); outline-offset: 3px; }
+@media (max-width:42rem) {
+  .drafting-dialog.drafting-delete-dialog > button, .drafting-dialog.drafting-delete-dialog > button + button { display:block; width:100%; margin:.65rem 0 0; }
+}
 .drafting-dialog form { display: flex; flex-wrap: wrap; gap: .7rem; }
 .drafting-dialog form > p, .drafting-dialog form > ul { flex-basis: 100%; }
 .drafting-dialog button + button { margin-left: .4rem; }
