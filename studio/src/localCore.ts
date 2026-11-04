@@ -35,6 +35,7 @@ export type DraftingChange =
   | { kind: 'organizeLibrary'; groups: DraftingGroup[]; sceneTitles: {id: string; title: string}[]; entries: LibraryEntry[] }
   | { kind: 'initialize'; project: string }
   | { kind: 'createScene'; title: string; path: string; groupId?: string | null; beforeId?: string | null }
+  | { kind: 'createSceneAdjacent'; title: string; path: string; sceneId: string; after: boolean }
   | { kind: 'renameFile'; sourcePath: string; path: string }
   | { kind: 'splitFile'; sourcePath: string; path: string; expectedHash: string; byteOffset: number }
   | { kind: 'splitScene'; sceneId: string; path: string; title: string; expectedHash: string; byteOffset: number }
@@ -77,14 +78,14 @@ export interface QuestionAnswer { requestId: string; text: string; model: string
 export interface ReviewSnapshot { path: string; source: string; sourceHash: string;sceneId?:string|null }
 export interface ReviewerDefinition {id:string; version:number; displayName:string; instructions:string}
 export interface CustomReviewer {id:string; version:number; displayName:string; description:string; instructions:string; output:'notes'|'notes_and_edits'}
-export interface ReviewOptions {reviewers:string[]; context:ReviewSnapshot[]; contextNote:string; ranges:{path:string;fromUtf8:number;toUtf8:number}[];reviewId?:string|null;fullContextOrder?:string[]}
+export interface ReviewOptions {consolidate?:boolean;reviewers:string[]; context:ReviewSnapshot[]; contextNote:string; ranges:{path:string;fromUtf8:number;toUtf8:number}[];reviewId?:string|null;fullContextOrder?:string[]}
 export interface ReviewCoverage {contextRanges?:{sourceIndex:number;fromUtf8:number;toUtf8:number}[];id:string; sourceIndex:number;fromUtf8:number;toUtf8:number;windowFrom:number;windowTo:number;reviewer:number;status:string;requestId:string|null;error:string|null}
 export interface ReviewRequest { requestId: string; repositoryId: string; scope: 'scene' | 'chapter'; snapshots: ReviewSnapshot[]; workflow?:ReviewOptions|null }
 /** Activity only: streamed provider text is never an actionable review result. */
 export interface ReviewProgress {requestId:string; completedCalls:number; totalCalls:number; reviewer:number; sourceIndex:number; chunkIndex:number; status:string; receivedBytes:number; suggestions:number}
 export interface ReviewEdit { location?:{line:number;column:number}; id: string; path: string; fromUtf8: number; toUtf8: number; original: string; replacement: string; reason: string; role: 'proofreader' | 'editor'; status: 'pending' | 'prepared' | 'accepted' | 'rejected' | 'supersededByAuthorChoice' | 'blockedByAppliedDecision'; proposalId: string | null; fingerprint?:string;comments?:string[];provenance?:{instanceId:string;definitionId:string;definitionVersion:number;displayName:string;requestId:string;model:string;accountId:string;accountGeneration:number}[];patch?:string;patchHash?:string;conflictGroup?:string|null;selected?:boolean;sourceStale?:boolean }
 export interface ReadingImprovement { text: string; editIds: string[]; evidence?: string }
-export interface ReadingFeedback { overview: string; strengths: string[]; improvements: (ReadingImprovement | string)[] }
+export interface ReadingFeedback { assessment?: { strengths: string; improvements: string }; overview: string; strengths: string[]; improvements: (ReadingImprovement | string)[] }
 export interface ReadingFeedbackView { coverageId?: string | null; path: string; reviewer: string; feedback: ReadingFeedback }
 export interface ReviewResult { readingFeedback?: ReadingFeedbackView[]; reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
 export interface LocalCore {
@@ -124,6 +125,7 @@ export interface LocalCore {
   selectQuestionAccount?(accountId: string): Promise<QuestionStatus>;
   selectQuestionModel?(slug: string): Promise<QuestionStatus>;
   refreshQuestionConnection?(): Promise<QuestionStatus>;
+  restoreQuestionConnection?(): Promise<QuestionStatus>;
   signOutQuestionAccount?(accountId?: string): Promise<QuestionStatus>;
   openQuestionUsage?(): Promise<void>;
   listProposals?(repositoryId: string): Promise<ProposalListing>;
@@ -206,6 +208,7 @@ export const localCore: LocalCore = {
   selectQuestionAccount: accountId => invoke('select_question_account', {accountId}),
   selectQuestionModel: slug => invoke('select_question_model', {slug}),
   refreshQuestionConnection: () => invoke('refresh_question_connection'),
+  restoreQuestionConnection: () => invoke('restore_question_connection'),
   signOutQuestionAccount: accountId => invoke('sign_out_question_account', {accountId: accountId ?? null}),
   openQuestionUsage: () => invoke('open_question_usage'),
   listProposals: repositoryId => invoke('list_proposals', {repositoryId}),

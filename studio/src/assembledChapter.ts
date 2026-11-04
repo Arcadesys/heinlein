@@ -1,7 +1,7 @@
 import type { Chapter, Document } from './localCore';
 
 export interface ChapterPart { document: Document; from: number; to: number; bodyFrom: number }
-export interface AssembledChapter { chapter: Chapter; text: string; parts: ChapterPart[] }
+export interface AssembledChapter { recoveryNotices?:{path:string;message:string}[]; chapter: Chapter; text: string; parts: ChapterPart[] }
 export const normalizeChapterText = (text: string) => text.replace(/\r\n|\r/g, '\n');
 
 /** Where the body starts in normalized text: 0 without frontmatter, null when frontmatter is left unfinished. */
@@ -26,7 +26,7 @@ export function assembleChapter(chapter: Chapter, documents: Document[]): Assemb
     const source = normalizeChapterText(document.text);
     const bodyFrom = frontmatterEnd(source);
     if (bodyFrom === null) throw new Error('A source scene has unfinished frontmatter. Open that source scene to resolve it.');
-    if (index) text += '\n\n';
+    if (index) text += '\n\n---\n\n';
     const from = text.length;
     text += source.slice(bodyFrom);
     parts.push({document, from, to: text.length, bodyFrom});

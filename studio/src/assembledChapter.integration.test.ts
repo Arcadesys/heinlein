@@ -31,8 +31,8 @@ const passages = () => { document.body.dispatchEvent(new KeyboardEvent('keydown'
 describe('assembled chapter to proposed revision', () => {
   it('opens a live chapter without reading its export and selects repeated prose in the correct editable source', async () => {
     const {core} = bridge(); await start(core);
-    expect(view().state.readOnly).toBe(true); expect(document.body.textContent).toContain('Assembled chapter');
-    expect(core.readRecovery).not.toHaveBeenCalled();
+    expect(view().state.readOnly).toBe(false); expect(document.body.textContent).toContain('Assembled chapter');
+    expect(vi.mocked(core.readRecovery).mock.calls.map(call=>call[1])).toEqual(['one.md','two.md']);
     const source = view().state.doc.toString(); const from = source.lastIndexOf('Repeated');
     view().dispatch({selection: {anchor: from, head: source.length}});
     button('Revise source passage').click(); await settle(); await settle();
@@ -66,20 +66,20 @@ describe('assembled chapter to proposed revision', () => {
     await app.showDocument('one.md');
     expect(view().state.readOnly).toBe(false); expect(view().state.doc.toString()).toContain('title: First');
     button('Read assembled chapter').click(); await settle();
-    expect(view().state.readOnly).toBe(true); expect(view().state.doc.toString()).not.toContain('title: First');
+    expect(view().state.readOnly).toBe(false); expect(view().state.doc.toString()).not.toContain('title: First');
     expect(view().state.doc.toString().match(/Repeated/g)).toHaveLength(2);
     button('Open source scene 1 · one.md').click(); await settle();
     expect(view().state.readOnly).toBe(false); expect(document.querySelector('.page-meta .path')?.textContent).toBe('one.md');
     const assembledTab=[...document.querySelectorAll<HTMLButtonElement>('.document-tabs [role=tab]')].find(tab=>tab.getAttribute('aria-label')?.includes('Assembled'))!;assembledTab.click();await settle();
-    expect(view().state.readOnly).toBe(true);expect(view().state.doc.toString().match(/Repeated/g)).toHaveLength(2);expect(core.saveDocument).not.toHaveBeenCalled();
+    expect(view().state.readOnly).toBe(false);expect(view().state.doc.toString().match(/Repeated/g)).toHaveLength(2);expect(core.saveDocument).not.toHaveBeenCalled();
   });
   it('navigates breaks in an assembled chapter by exact position', async () => {
     const {core, files} = bridge(); files.set('one.md', 'Opening.\n---\nRepeated line.\n---\nRepeated line.');
     await start(core);
     const entries = passages();
-    expect(entries).toHaveLength(2); entries[1].click();
+    expect(entries).toHaveLength(3); entries[1].click();
     expect(view().state.selection.main.from).toBe(view().state.doc.toString().lastIndexOf('Repeated line.'));
-    expect(view().state.readOnly).toBe(true); expect(core.saveDocument).not.toHaveBeenCalled();
+    expect(view().state.readOnly).toBe(false); expect(core.saveDocument).not.toHaveBeenCalled();
   });
   it('opens source scenes directly for ordinary editing', async () => {
     const {core} = bridge(); await start(core); button('Open source scene 1 · one.md').click(); await settle();

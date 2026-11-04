@@ -37,7 +37,11 @@ test('row menus have names, generous targets and keyboard focus',async({page})=>
  await openDrawer(page);
  const more=page.locator('summary[aria-label="Actions for First sheet"]');
  await more.focus(); await expect(more).toBeFocused(); await expect(more).toHaveAttribute('title','Actions for First sheet');
- const box=await more.boundingBox(); expect(box!.width).toBeGreaterThanOrEqual(44); expect(box!.height).toBeGreaterThanOrEqual(44);
+ const box=await more.boundingBox();
+ // Chromium on macOS can report a 44px target as 43.99998474121094px.
+ // Compare at 0.001 CSS-pixel precision while preserving the 44px minimum.
+ expect(Math.round(box!.width*1000)/1000).toBeGreaterThanOrEqual(44);
+ expect(Math.round(box!.height*1000)/1000).toBeGreaterThanOrEqual(44);
  const focus=await more.evaluate(node=>{const style=getComputedStyle(node);return {outline:style.outlineStyle,shadow:style.boxShadow,opacity:style.opacity};});
  expect(focus.outline!=='none'||focus.shadow!=='none').toBe(true); expect(focus.opacity).toBe('1');
  await page.keyboard.press('Enter');
@@ -52,12 +56,12 @@ test('library review picker separates context and target without sending',async(
  await page.goto('/tests/browser/library-app.html');
  await openDrawer(page);
  await page.getByRole('button',{name:'First sheet',exact:true}).click();
- await openHeinleinReview(page);await page.getByRole('dialog',{name:'Heinlein Review'}).getByRole('button',{name:/^Several sheets…/}).click();
+ await openHeinleinReview(page);await page.getByRole('region',{name:'Heinlein Review'}).getByRole('button',{name:/^Several sheets…/}).click();
  const dialog=page.getByRole('dialog',{name:'Choose revision context and targets'});
  await dialog.getByRole('group',{name:'Additional context sheets'}).getByRole('checkbox',{name:'Second sheet'}).check();
  expect((await new AxeBuilder({page}).include('dialog[aria-label="Choose revision context and targets"]').analyze()).violations).toEqual([]);
  await dialog.getByRole('button',{name:'Prepare review'}).click();
- const review=page.getByRole('dialog',{name:'Heinlein Review'}); await expect(review).toBeVisible();
+ const review=page.getByRole('region',{name:'Heinlein Review'}); await expect(review).toBeVisible();
  await expect(review.locator('.review-send-summary')).toHaveText(/^Sends 1 sheet \+ 1 context · /);
  await expect(review.getByRole('checkbox',{name:/Suggest edits in ms\/first.md/})).toBeChecked();
  await expect(review.getByRole('checkbox',{name:/Suggest edits in ms\/second.md/})).not.toBeChecked();
@@ -76,7 +80,7 @@ test('library reflows with enlarged text and retains a visible focus indicator',
 test('groups collapse and expand in place and keep focus',async({page})=>{
  await page.goto('/tests/browser/library-app.html');
  await openDrawer(page);
- const group=page.getByRole('button',{name:'Group',exact:true}); await expect(group).toHaveAttribute('aria-expanded','true');
+ const group=page.locator('[data-expand-group="g"]'); await expect(group).toHaveAttribute('aria-expanded','true');
  await group.click(); await expect(group).toHaveAttribute('aria-expanded','false'); await expect(group).toBeFocused();
  await expect(page.getByRole('button',{name:'First sheet',exact:true})).toHaveCount(0);
  await page.keyboard.press('Enter'); await expect(group).toHaveAttribute('aria-expanded','true');

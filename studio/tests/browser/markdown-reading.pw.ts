@@ -3,7 +3,7 @@ import AxeBuilder from '@axe-core/playwright';
 // Invented text and a simulated backend, through the production panel, reader and writer.
 const url = '/tests/browser/markdown-reading.html';
 const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
-const panelOf = (page: Page) => page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
+const panelOf = (page: Page) => page.getByRole('region', { name: 'Heinlein Review', exact: true });
 // By class, not role: an open review panel is a full sheet on narrow windows, which hides the page beneath it.
 const reader = (page: Page) => page.locator('.active-document-pane .markdown-reader');
 const source = (page: Page, path = 'opening.md') => page.evaluate(p => (window as any).readingFixture.docs[p] as string, path);
@@ -17,17 +17,19 @@ async function start(page: Page, path = url) {
   await expect(panelOf(page).locator('.review-mark-status')).toHaveAttribute('data-marked', /^[1-9]/);
 }
 async function openReading(page: Page) {
-  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
+  await closeReview(page);
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Reading', exact: true }).click();
   await expect(reader(page)).toBeVisible();
 }
+const suggestion = (page: Page) => page.getByRole('dialog', {name:'Review suggestion', exact:true});
+const closeReview = async (page: Page) => { const dialog = suggestion(page); if(await dialog.isVisible()) await dialog.getByRole('button', {name:'Close suggestion'}).click(); else await panelOf(page).getByRole('button', {name:'Close Heinlein', exact:true}).click(); };
 const mark = (page: Page, id: string) => reader(page).locator(`[data-review-id="${id}"]`);
 
 test('Reading is explicit, formats safely, makes no requests and leaves source bytes alone', async ({ page }) => {
   const external: string[] = [];
   page.on('request', request => { if (!request.url().startsWith('http://127.0.0.1')) external.push(request.url()); });
   await start(page);
-  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
+  await closeReview(page);
   const group = page.getByRole('group', { name: 'Document view' });
   await expect(group.getByRole('button', { name: 'Source', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(reader(page)).toBeHidden();
@@ -74,9 +76,8 @@ test('Clicking a Reading mark opens exactly its card, and nothing is applied', a
   await expect(mark(page, 'example-dismiss')).toHaveText('Nobody looked up.');
   await mark(page, 'example-approve').click();
   const panel = panelOf(page);
-  const card = panel.locator('[data-finding-id="example-approve"]');
-  await expect(card.locator('h4')).toBeFocused();
-  await expect(card).toHaveClass(/review-opened/);
+  const card = suggestion(page).locator('[data-finding-id="example-approve"]');
+  await expect(suggestion(page).getByRole('button', {name:'Close suggestion'})).toBeFocused();
   await expect(card).toBeInViewport();
   expect(await source(page)).toBe(before);
   expect(await decisionCalls(page)).toEqual([]);
@@ -88,8 +89,8 @@ test('An overlap opens its group with nothing chosen, and stale or other-file su
   await expect(mark(page, 'example-harbor')).toHaveCount(0);
   await expect(reader(page).locator('[data-review-id="example-overlap-phrase"] [data-review-id="example-overlap-word"]')).toHaveText('grey');
   await mark(page, 'example-overlap-word').click();
-  const group = panelOf(page).locator('.review-conflict');
-  await expect(group).toBeFocused();
+  const group = suggestion(page).locator('.review-conflict');
+  await expect(suggestion(page).getByRole('button', {name:'Close suggestion'})).toBeFocused();
   await expect(group.locator('input[type=radio]:checked')).toHaveCount(0);
   await expect(group.getByRole('button', { name: 'Choose an alternative first', exact: true })).toBeDisabled();
   expect(await decisionCalls(page)).toEqual([]);
@@ -108,25 +109,25 @@ test('Markup-only suggestions use an honest control and an insertion shows a poi
   expect(await point.evaluate(n => n.getBoundingClientRect().width)).toBe(0);
   await heading.focus();
   await page.keyboard.press('Enter');
-  await expect(panelOf(page).locator('[data-finding-id="example-heading-mark"] h4')).toBeFocused();
-  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
-  await expect(reader(page)).toBeFocused();
+  await expect(suggestion(page).locator('[data-finding-id="example-heading-mark"]')).toBeVisible();
+  await closeReview(page);
+  await expect(heading).toBeFocused();
   await mark(page, 'example-frontmatter').click();
-  await expect(panelOf(page).locator('[data-finding-id="example-frontmatter"] h4')).toBeFocused();
+  await expect(suggestion(page).locator('[data-finding-id="example-frontmatter"]')).toBeVisible();
 });
-test('Keyboard steps through every Reading suggestion and opens the one reached, with no extra tab stops in the prose', async ({ page }) => {
+test('Keyboard steps through every Reading suggestion and opens the one reached, with keyboard reachable chips', async ({ page }) => {
   await start(page);
   await openReading(page);
   await reader(page).focus();
-  expect(await reader(page).locator('.markdown-reader-content span[tabindex], .markdown-reader-content em[tabindex]').count()).toBe(0);
+  expect(await reader(page).locator('[data-review-id][tabindex="0"]').count()).toBeGreaterThan(0);
   for (const id of ['example-frontmatter', 'example-insert', 'example-approve', 'example-heading-mark', 'example-overlap-phrase', 'example-overlap-word', 'example-dismiss']) {
     await reader(page).focus();
     await page.keyboard.press(`${modifier}+Alt+]`);
     await page.keyboard.press(`${modifier}+Alt+o`);
-    const card = panelOf(page).locator(`[data-finding-id="${id}"]`);
-    if (id.startsWith('example-overlap')) await expect(panelOf(page).locator('.review-conflict')).toBeFocused();
-    else await expect(card.locator('h4')).toBeFocused();
-    await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
+    const card = suggestion(page).locator(`[data-finding-id="${id}"]`);
+    await expect(card).toBeVisible();
+    await expect(suggestion(page).getByRole('button', {name:'Close suggestion'})).toBeFocused();
+    await closeReview(page);
   }
   expect(await decisionCalls(page)).toEqual([]);
 });
@@ -164,7 +165,7 @@ test('Selecting in Reading cannot ask, split, undo or find through the hidden ed
 });
 test('Toggling keeps one writer: unsaved text shows in Reading, caret and bytes survive, and marks stop after an edit', async ({ page }) => {
   await start(page);
-  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
+  await closeReview(page);
   const group = page.getByRole('group', { name: 'Document view' });
   const editor = page.locator('.cm-content');
   await editor.click();
@@ -192,21 +193,22 @@ test('Approving from Reading stays in Reading and removes only resolved marks, w
   await openReading(page);
   await mark(page, 'example-approve').click();
   const panel = panelOf(page);
-  await panel.locator('[data-finding-id="example-approve"]').getByRole('button', { name: 'Accept…', exact: true }).click();
+  await suggestion(page).locator('[data-finding-id="example-approve"]').getByRole('button', { name: 'Accept…', exact: true }).click();
   await page.getByRole('dialog', { name: 'Simulated final confirmation' }).getByRole('button', { name: 'Confirm and apply', exact: true }).click();
-  await expect(panel.locator('.review-decision-note')).toContainText('Applied to opening.md');
+  await expect(page.locator('.heinlein-review-panel .review-decision-note')).toContainText('Applied to opening.md');
   await expect(reader(page)).not.toHaveAttribute('hidden', '');
   await expect(reader(page)).toContainText('The manifest was wrong');
   await expect(mark(page, 'example-approve')).toHaveCount(0);
   await expect(mark(page, 'example-dismiss')).toHaveText('Nobody looked up.');
   await expect(mark(page, 'example-overlap-word')).toHaveText('grey');
-  await panel.locator('[data-finding-id="example-dismiss"]').getByRole('button', { name: 'Keep mine', exact: true }).click();
+  await mark(page, 'example-dismiss').click();
+  await suggestion(page).getByRole('button', { name: 'Reject', exact: true }).click();
   await expect(mark(page, 'example-dismiss')).toHaveCount(0);
   await expect(mark(page, 'example-overlap-word')).toHaveText('grey');
 });
 test('A saved reference reads as formatted text with no marks, and stays exact in Source', async ({ page }) => {
   await start(page);
-  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
+  await closeReview(page);
   const documents=page.getByRole('button',{name:'Documents',exact:true});if(await documents.isVisible())await documents.click();
   await page.getByRole('button',{name:'Read beside…',exact:true}).click();await page.getByRole('button', { name: 'Read beside active document: opening.md', exact: true }).click();
   const pane = page.getByRole('region', { name: 'Saved source reference', exact: true });
@@ -233,14 +235,14 @@ test('An assembled chapter reads part by part, and each mark opens the card for 
   await expect(mark(page, 'example-harbor')).toHaveText('twice');
   await expect(mark(page, 'example-approve')).toHaveText('were');
   await mark(page, 'example-harbor').click();
-  await expect(panelOf(page).locator('[data-finding-id="example-harbor"] h4')).toBeFocused();
+  await expect(suggestion(page).locator('[data-finding-id="example-harbor"]')).toBeVisible();
   const revise = page.getByRole('button', { name: 'Revise source passage', exact: true });
   await expect(revise).toBeHidden();
   const hint = page.locator('.active-document-pane .page > p.muted').first();
-  await expect(hint).toHaveText('A formatted, read-only copy of the current source scenes. Switch to Source to select a passage and revise it.');
-  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
+  await expect(hint).toHaveText('Reading the current chapter. Switch to Source to edit its sheets together.');
+  await closeReview(page);
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Source', exact: true }).click();
-  await expect(hint).toContainText('Select a passage, then choose Revise source passage.');
+  await expect(hint).toContainText('Edit this chapter as one manuscript.');
   await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).click(); await expect(revise).toBeVisible();
 });
 test('The role label follows the view, and the preview entry opens ready in Reading', async ({ page }) => {
@@ -248,7 +250,7 @@ test('The role label follows the view, and the preview entry opens ready in Read
   const role = page.locator('.document-command-bar .document-role');
   await expect(role).toHaveText('Reading');
   await expect(reader(page)).not.toHaveAttribute('hidden', '');
-  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
+  await closeReview(page);
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Source', exact: true }).click();
   await expect(role).toHaveText('Editing');
   await expect(page.locator('.cm-content')).toBeFocused();
@@ -260,7 +262,7 @@ test('Reading and AI advice keep separate policies on one screen, and manuscript
   await openReading(page);
   expect(await reader(page).locator('a').count()).toBe(0);
   await mark(page, 'example-approve').click();
-  const card = panelOf(page).locator('[data-finding-id="example-approve"]');
+  const card = suggestion(page).locator('[data-finding-id="example-approve"]');
   const advice = card.locator('.rendered-markdown');
   await expect(advice.locator('strong')).toHaveText('singular');
   const link = advice.getByRole('link', { name: 'a usage note' });
@@ -282,7 +284,7 @@ test('This fixture keeps to its own storage key', async ({ page }) => {
 
 test('scene navigation reveals Source and focuses the exact passage with keyboard access', async ({ page }, info) => {
   await start(page, `${url}?sceneNavigation`);
-  await panelOf(page).getByRole('button', { name: 'Close Heinlein', exact: true }).click();
+  await closeReview(page);
   const editor = page.locator('.active-document-pane .cm-content');
   await editor.click();
   await page.keyboard.press(`${modifier}+End`);

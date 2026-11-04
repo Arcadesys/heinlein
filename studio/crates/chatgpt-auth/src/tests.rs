@@ -644,15 +644,16 @@ async fn lost_refresh_response_blocks_replay_after_restart_without_erasing_ident
 #[cfg(unix)]
 #[tokio::test]
 async fn failed_rotated_token_commit_leaves_durable_replay_guard() {
-    use std::os::unix::fs::PermissionsExt;
     let (temp, service, fake) = connected().await;
     expire_soon(&service);
     let generation = service.status().unwrap().generation;
-    let record = temp.path().join("auth/auth.json");
-    let hook_path = record.clone();
+    let vault = credential_store::test_vault(&temp.path().join("auth"));
+    let hook_vault = vault.clone();
     *fake.on_request.lock().unwrap() = Some(Box::new(move |request| {
         if request.url == http::TOKEN {
-            std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            hook_vault
+                .fail_write
+                .store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }));
     fake.keys();
@@ -661,7 +662,9 @@ async fn failed_rotated_token_commit_leaves_durable_replay_guard() {
         service.credentials(generation).await,
         Err(AuthError::Storage)
     ));
-    std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o600)).unwrap();
+    vault
+        .fail_write
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     let db = service.load().unwrap();
     assert!(db.account(CLIENT).unwrap().refresh_pending);
     assert_eq!(
@@ -791,3 +794,120 @@ async fn cancelled_refresh_still_persists_rotation_without_returning_stale_lease
 
 #[path = "connection_fuzz.rs"]
 mod connection_fuzz;
+
+#[tokio::test]
+async fn restart_automatically_validates_saved_model_once_without_inference() {
+    let (temp, _service, fake) = connected().await;
+    let reopened = AuthService::with_transport(temp.path().join("auth"), fake.clone()).unwrap();
+    assert!(reopened.status().unwrap().models.is_empty());
+    let before = fake.requests.lock().unwrap().len();
+    fake.catalog();
+    let (a, b) = tokio::join!(reopened.restore_saved(), reopened.restore_saved());
+    assert_eq!(a.unwrap().models.len(), 1);
+    assert_eq!(
+        b.unwrap().selected_model.as_deref(),
+        Some("synthetic-model")
+    );
+    assert_eq!(fake.requests.lock().unwrap().len(), before + 1);
+    assert!(reopened
+        .credentials(reopened.status().unwrap().generation)
+        .await
+        .is_ok());
+}
+#[tokio::test]
+async fn restore_failure_keeps_saved_choice_and_explicit_recheck_can_recover() {
+    let (temp, _service, fake) = connected().await;
+    let reopened = AuthService::with_transport(temp.path().join("auth"), fake.clone()).unwrap();
+    fake.push(503, json!({}));
+    let status = reopened.restore_saved().await.unwrap();
+    assert!(status.models.is_empty());
+    assert!(status.message.unwrap().contains("could not be verified"));
+    assert_eq!(status.selected_model.as_deref(), Some("synthetic-model"));
+    let before = fake.requests.lock().unwrap().len();
+    reopened.restore_saved().await.unwrap();
+    assert_eq!(before, fake.requests.lock().unwrap().len());
+    fake.push(
+        200,
+        json!({"models":[{"slug":"different-model","display_name":"Other","visibility":"list"}]}),
+    );
+    let status = reopened.refresh_models().await.unwrap();
+    assert_eq!(status.selected_model.as_deref(), Some("synthetic-model"));
+    assert!(matches!(
+        reopened.credentials(status.generation).await,
+        Err(AuthError::Model)
+    ));
+    fake.catalog();
+    assert_eq!(
+        reopened
+            .refresh_models()
+            .await
+            .unwrap()
+            .selected_model
+            .as_deref(),
+        Some("synthetic-model")
+    );
+}
+#[tokio::test]
+async fn restore_refreshes_expiring_credentials_and_persists_rotation_across_restart() {
+    let (temp, service, fake) = connected().await;
+    expire_soon(&service);
+    let reopened = AuthService::with_transport(temp.path().join("auth"), fake.clone()).unwrap();
+    fake.keys();
+    fake.push(200,json!({"access_token":"synthetic-rotated-access","refresh_token":"synthetic-rotated-refresh","token_type":"Bearer","expires_in":3600}));
+    fake.catalog();
+    assert_eq!(reopened.restore_saved().await.unwrap().models.len(), 1);
+    let next = AuthService::with_transport(temp.path().join("auth"), fake.clone()).unwrap();
+    assert_eq!(
+        next.load()
+            .unwrap()
+            .account(CLIENT)
+            .unwrap()
+            .tokens
+            .as_ref()
+            .unwrap()
+            .refresh_token
+            .as_deref(),
+        Some("synthetic-rotated-refresh")
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn rotated_vault_survives_interrupted_public_metadata_cleanup() {
+    use std::os::unix::fs::PermissionsExt;
+    let (temp, service, fake) = connected().await;
+    expire_soon(&service);
+    let record = temp.path().join("auth/auth.json");
+    let hook = record.clone();
+    *fake.on_request.lock().unwrap() = Some(Box::new(move |request| {
+        if request.url == http::TOKEN {
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+    }));
+    fake.keys();
+    fake.push(200,json!({"access_token":"synthetic-new-access","refresh_token":"synthetic-new-refresh","token_type":"Bearer","expires_in":3600}));
+    assert!(matches!(
+        service
+            .credentials(service.status().unwrap().generation)
+            .await,
+        Err(AuthError::Storage)
+    ));
+    std::fs::set_permissions(&record, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let reopened = AuthService::with_transport(temp.path().join("auth"), fake).unwrap();
+    let saved = reopened.load().unwrap();
+    assert!(!saved.account(CLIENT).unwrap().refresh_pending);
+    assert_eq!(
+        saved
+            .account(CLIENT)
+            .unwrap()
+            .tokens
+            .as_ref()
+            .unwrap()
+            .refresh_token
+            .as_deref(),
+        Some("synthetic-new-refresh")
+    );
+    assert!(!String::from_utf8(std::fs::read(record).unwrap())
+        .unwrap()
+        .contains("synthetic-new-refresh"));
+}

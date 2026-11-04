@@ -257,3 +257,30 @@ describe('saved project conversations and live scene context',()=>{
  it('allows deliberately omitting unavailable scene context',async()=>{
    const core=await start();scene!.canCapture=false;write('A general question');expect(button('Send to OpenAI').disabled).toBe(true);expect(button('Remove context').disabled).toBe(false);button('Remove context').click();button('Send to OpenAI').click();await vi.waitFor(()=>expect(core.askQuestion).toHaveBeenCalledTimes(1));expect(core.askQuestion.mock.calls[0][0].context).toBe('');
  });
+
+describe('saved ChatGPT connection restoration', () => {
+  it('verifies the saved connection before enabling Send, without inference or choosing a model', async () => {
+    const core=bridge();const restored=deferred<QuestionStatus>();
+    core.questionStatus.mockResolvedValue({...ready, configured:false, models:[]});
+    const restoreQuestionConnection=vi.fn(() => restored.promise);
+    const merged={...core,restoreQuestionConnection};
+    panel=createQuestionPanel(merged as unknown as LocalCore,{current:()=>scene,focusEditor});document.body.append(panel.element);panel.open();
+    await vi.waitFor(()=>expect(restoreQuestionConnection).toHaveBeenCalledTimes(1));
+    write('Question');expect(button('Send to OpenAI').disabled).toBe(true);
+    expect(core.askQuestion).not.toHaveBeenCalled();expect(document.body.textContent).toContain('Restoring saved');
+    restored.resolve(ready);await vi.waitFor(()=>expect(button('Send to OpenAI').disabled).toBe(false));
+    expect(core.askQuestion).not.toHaveBeenCalled();
+  });
+  it.each(['signed out','usage limited','no choice'])('does not auto restore %s',async reason=>{
+    const core=bridge();core.questionStatus.mockResolvedValue({...ready,configured:false,models:[],
+      ...(reason==='usage limited'?{usageLimited:true}:reason==='no choice'?{selectedModel:null}:{accounts:ready.accounts.map(a=>({...a,signedIn:false}))})});
+    const restoreQuestionConnection=vi.fn(async()=>ready);const merged={...core,restoreQuestionConnection};await start(merged);
+    expect(restoreQuestionConnection).not.toHaveBeenCalled();expect(core.askQuestion).not.toHaveBeenCalled();
+  });
+  it('keeps Send disabled on failed verification',async()=>{
+    const core=bridge();core.questionStatus.mockResolvedValue({...ready,configured:false,models:[]});
+    const restoreQuestionConnection=vi.fn(async()=>({...ready,configured:false,models:[],message:'Saved connection could not be verified. Recheck.'}));
+    const merged={...core,restoreQuestionConnection};await start(merged);write('Question');expect(button('Send to OpenAI').disabled).toBe(true);
+    expect(document.body.textContent).toContain('could not be verified');expect(core.askQuestion).not.toHaveBeenCalled();
+  });
+});

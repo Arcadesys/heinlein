@@ -51,12 +51,12 @@ describe('local Core bridge contract', () => {
     await localCore.connectQuestionAccount!({allowChatgptPlan: true});
     await localCore.connectQuestionAccount!({allowChatgptPlan: true, accountId: 'account-2'});
     await localCore.cancelQuestionSignIn!(); await localCore.selectQuestionAccount!('account-2');
-    await localCore.selectQuestionModel!('mock-model'); await localCore.refreshQuestionConnection!();
+    await localCore.selectQuestionModel!('mock-model'); await localCore.refreshQuestionConnection!(); await localCore.restoreQuestionConnection!();
     await localCore.signOutQuestionAccount!('account-2'); await localCore.openQuestionUsage!();
     expect(vi.mocked(invoke).mock.calls).toEqual([
       ['connect_question_account', {allowChatgptPlan: true}], ['connect_question_account', {allowChatgptPlan: true, accountId: 'account-2'}],
       ['cancel_question_sign_in'], ['select_question_account', {accountId: 'account-2'}], ['select_question_model', {slug: 'mock-model'}],
-      ['refresh_question_connection'], ['sign_out_question_account', {accountId: 'account-2'}], ['open_question_usage'],
+      ['refresh_question_connection'], ['restore_question_connection'], ['sign_out_question_account', {accountId: 'account-2'}], ['open_question_usage'],
     ]);
   });
   it('uses session-scoped recovery commands and compare-and-delete identifiers', async () => {

@@ -512,3 +512,32 @@ Use **Open from GitHub…** in Repository navigation (or **Choose a GitHub repos
 Send to GitHub is a separate, explicit action beside the active repository status. It can save an exact-file local version internally, then asks for native confirmation before uploading all unsent versions. Earlier unsent files are included in the preview even when not selected for the new version. Local autosave never sends; failed or uncertain uploads retain local work and require explicit recovery/reconciliation.
 
 AI answers and review comments render Markdown headings, emphasis, lists, quotations, code, tables, and links. Raw HTML remains visible text; embedded images show their description without fetching an image. Only HTTP, HTTPS, and email links are active. Questions, manuscript editors, context snapshots, and proposed replacement comparisons retain their exact source text.
+
+ChatGPT connection persistence: native OAuth access/refresh/ID tokens and the
+refresh replay guard are stored in macOS Keychain (Linux: Secret Service) under
+`me.thearcades.heinlein.studio.chatgpt`, scoped to a hash of the stable native
+auth-directory path. Non-secret registrations, account/model choices and host
+identity remain in private app-data `chatgpt-auth/auth.json`. A locked one-time
+migration verifies the vault write before sanitizing the old JSON. Vault failure
+leaves the legacy file intact and fails closed; no plaintext fallback is used.
+Migrated metadata uses schema 2 so older clients refuse it rather than overwriting
+the vault-backed profile on downgrade. Back up private app-data before downgrading;
+older app versions cannot use these securely stored sessions.
+An interrupted cleanup uses the newer vault state, never the old refresh token.
+Keep the bundle identifier, app-data path and signing identity stable across
+updates. Keychain prompts/access continuity require validation with the signed
+release app; synthetic tests do not exercise the user's actual Keychain.
+
+Opening ChatGPT questions or Review restores an existing authorized connection
+and verifies the saved model catalog once per process. This does not sign in,
+choose a replacement model, clear usage limits or send manuscript text. Offline
+or unavailable models keep Send disabled; explicit Recheck can recover.
+
+Review workflow chunks retry transport interruptions/timeouts and transient
+server failures up to three attempts with cancellation-aware backoff. Successful
+chunks are persisted once and not resent. Quota/auth/invalid-output failures do
+not automatically retry. After exhaustion, **Retry failed chunks** continues the
+same saved review, preserving completed results. Interrupted or cancelled chunks
+can resume explicitly after reopening. Any continuation requires unchanged captured
+source/context, so finish remaining batches before applying suggestions. Ambiguous transport failures and retries may incur additional
+plan usage. Nothing is automatically applied to manuscript files.

@@ -32,7 +32,7 @@ test('one Heinlein pane keeps a pending whole-scene review across tab switches',
  await page.goto('/tests/browser/questions.html');await page.evaluate(async()=>{await (window as any).questionsFixture.ready;document.documentElement.dataset.zoom='200';(window as any).questionsFixture.select();});
  const geometry=()=>page.locator('.cm-content').evaluate(el=>{const r=el.getBoundingClientRect();return {width:r.width,left:r.left,top:r.top};});const before=await settled(geometry);
  await page.keyboard.press('Control+j');const passage=page.locator('.question-panel');await expect(passage.getByRole('heading',{name:'Heinlein',exact:true})).toBeVisible();
- await passage.getByRole('button',{name:'Whole scene',exact:true}).click();const review=page.getByRole('dialog',{name:'Heinlein Review',exact:true});await expect(review).toBeVisible();
+ await passage.getByRole('button',{name:'Whole scene',exact:true}).click();const review=page.getByRole('region',{name:'Heinlein Review',exact:true});await expect(review).toBeVisible();
  await review.getByRole('button',{name:'Run review',exact:true}).click();await expect.poll(()=>page.evaluate(()=>(window as any).questionsFixture.state().reviewCalls)).toBe(1);
  await review.getByRole('button',{name:'Passage',exact:true}).click();await expect(passage).toBeVisible();await page.evaluate(()=>(window as any).questionsFixture.finishReview());
  await passage.getByRole('button',{name:'Whole scene',exact:true}).click();await expect(review).toBeVisible();await expect(review.locator('.review-status')).toContainText('Review ready');

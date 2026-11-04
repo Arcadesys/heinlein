@@ -33,6 +33,46 @@ source editor so save/recovery and temporary read-only changes cannot enable
 chapter edits. Folder selection restores a temporary read-only setting only on
 the editor that had that setting; a new source editor does not inherit it.
 
+## Review an entire chapter for targeted edits
+
+From a chapter source scene, open **Heinlein → Whole scene → Entire chapter…**.
+Studio captures every source scene in manifest order (or the current drafting
+chapter's order), including the active editor's text. The manuscript view and
+selection stay in place. An assembled chapter already opens review at chapter
+scope. The review tab reads **Whole chapter** once chapter scope is captured.
+
+Opening and capturing are local preparation. **Preview review** shows the exact
+bounded calls; **Run review** explicitly sends them with the selected account
+and model. Long chapters use the existing chunk and Continue workflow. Each call
+has bounded context; this does not promise the entire chapter in every call.
+Returned edits identify their own source file and exact range. Each edit keeps
+the existing author confirmation, stale-source checks, receipt, and revert flow.
+
+Capture fails without replacing the scene scope if a source is missing,
+generated, or the active document or chapter mapping changes during loading.
+Limits remain 128 source files and 1 MiB in the workflow host; older hosts retain
+their 16-scene / 16,000-byte review limit. Nothing is silently truncated.
+
+### Chapter review checkpoint · 2026-11-04
+
+- Route: one workhorse pass at ordinary implementation effort in the existing
+  chat. No model or effort switch was enforced; no agents were delegated.
+- Scope: chapter capture from source-scene review, scope labels, synthetic
+  regression fixtures. Existing unrelated worktree changes are preserved.
+- Evidence: focused integration checks cover legacy manifest order, current
+  drafting order, missing/generated sources, navigation during capture, and
+  disk drift without implicit saves, sends, or applies. Desktop and 320px synthetic browser
+  checks cover keyboard capture, explicit preview/send, edits in two source
+  files, Axe accessibility, and unchanged editor dimensions and text.
+- Final checks: 1,031 frontend tests, 14 browser smoke cases, and the production
+  frontend build pass. The chapter/source-reading browser regression passes at
+  both widths. Rust core suites, 131 native boundary tests, 33 proposal-authority
+  tests, 17 review-lineage tests, formatting, and workspace/harness Clippy pass.
+  Existing ignored Rust tests were not run. Browser plugin unavailable; the
+  repository Playwright workflow provided rendered evidence.
+- Limits: provider behavior is mocked in browser checks. Installed-app,
+  physical VoiceOver, and live-provider acceptance are not established here.
+
 ## Checkpoint
 
 - Route: one bounded workhorse pass at ordinary implementation effort. Model

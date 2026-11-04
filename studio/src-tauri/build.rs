@@ -26,6 +26,7 @@ fn main() {
             "select_question_account",
             "select_question_model",
             "refresh_question_connection",
+            "restore_question_connection",
             "sign_out_question_account",
             "open_question_usage",
             "question_status",

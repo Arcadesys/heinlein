@@ -32,7 +32,8 @@ for (const zoom of [100, 200]) {
     };
     await page.keyboard.press('Control+j');
     await expect(page.locator('.question-panel')).toBeVisible();
-    await expect(page.locator('.question-panel')).toHaveAttribute('aria-modal', 'true');
+    await expect(page.getByRole('dialog', {name: 'Scene and chapter chats', exact: true})).toBeVisible();
+    await expect(page.getByRole('dialog', {name: 'Scene and chapter chats', exact: true})).toHaveJSProperty('open', true);
     await expect(anchored).toPass();
     await page.keyboard.press('Escape');
     await expect(page.locator('.question-panel')).toBeHidden();

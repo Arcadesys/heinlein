@@ -18,7 +18,12 @@ export interface ReviewScope {
     selectedRange?: {path: string; fromUtf8: number; toUtf8: number};
 }
 interface Hooks {
+    rail?:boolean;
+    closePane?():void;
+    reviewChanged?(result:ReviewResult,scope:ReviewScope):void;
     capture(): ReviewScope | null;
+    chapterLabel?(): string | null;
+    captureChapter?(): Promise<ReviewScope>;
     unavailable(reviewing?: boolean): string | null;
     reviewProposal(id: string, guard: () => string | null): Promise<void>;
     openConnection(): void;
@@ -30,6 +35,8 @@ interface Hooks {
     jumpToEdit?(input: ReviewMarkInput, edit: ReviewEdit): Promise<boolean>;
     marksChanged?(input: ReviewMarkInput | null, report: (count: number | null) => void): void;
 }
+// Native catalog allows 50 saved custom agents plus two built-ins.
+const MAX_REVIEWERS = 52;
 const bytes = (s: string) => new TextEncoder().encode(s).length;
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 const size = (n: number) => n < 1024 ? plural(n, 'byte') : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(2)} MiB`;
@@ -40,8 +47,9 @@ function button(text: string, action: () => void, cls = '') { const n = el('butt
 function icon(path: string, box = 14) { const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg'), p = document.createElementNS(ns, 'path'); svg.setAttribute('viewBox', `0 0 ${box} ${box}`); svg.setAttribute('width', String(box)); svg.setAttribute('height', String(box)); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false'); p.setAttribute('d', path); p.setAttribute('fill', 'none'); p.setAttribute('stroke', 'currentColor'); p.setAttribute('stroke-width', '1.6'); p.setAttribute('stroke-linecap', 'round'); p.setAttribute('stroke-linejoin', 'round'); svg.append(p); return svg; }
 function iconButton(label: string, path: string, action: () => void, cls: string, box = 14) { const n = button('', action, cls); n.setAttribute('aria-label', label); n.append(icon(path, box)); return n; }
 function message(error: unknown) { return error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' ? error.message : 'The review could not be completed. Retry when your connection is ready.'; }
+function retryableCall(code: string | null) { return ['network', 'timeout', 'retryExhaustedNetwork', 'retryExhaustedTimeout', 'retryExhaustedProvider'].includes(code ?? ''); }
 function callFailure(code: string | null) {
-    const reasons: Record<string, string> = {outputLimit: 'The model reached its response token limit before finishing the review.', timeout: 'The response timed out.', cancelled: 'The call was cancelled.', usageLimit: 'ChatGPT usage limit reached.', staleConnection: 'The ChatGPT account or model changed.', invalidReviewOrModel: 'The response did not match the selected model or review format.', invalidResponse: 'The response could not be validated.', protocol: 'The response could not be validated.', findingLimit: 'The retained suggestion limit was reached.'};
+    const reasons: Record<string, string> = {retryExhaustedNetwork: 'Connection interrupted after three attempts. Successful chunks were kept.', retryExhaustedTimeout: 'The chunk timed out after three attempts. Successful chunks were kept.', retryExhaustedProvider: 'OpenAI remained unavailable after three attempts. Successful chunks were kept.', outputLimit: 'The model reached its response token limit before finishing the review.', timeout: 'The response timed out.', cancelled: 'The call was cancelled.', usageLimit: 'ChatGPT usage limit reached.', staleConnection: 'The ChatGPT account or model changed.', invalidReviewOrModel: 'The response did not match the selected model or review format.', incompleteReview: 'Consolidation needs all individual assessments to complete.', consolidationTooLarge: 'The individual assessments exceed the consolidation limit. Review a smaller scope; individual results are retained.', invalidResponse: 'The response could not be validated.', protocol: 'The response could not be validated.', findingLimit: 'The retained suggestion limit was reached.'};
     return reasons[code ?? ''] ?? 'The call did not return a valid review.';
 }
 /** Display-only trim of surrounding text so one diff reads as one line. The exact patch is in its details. */
@@ -55,7 +63,39 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const element = el('section', '', 'heinlein-review-panel');
     element.hidden = true;
     element.setAttribute('aria-label', 'Heinlein Review');
-    if (hooks.headerTabs) {element.classList.add('heinlein-integrated'); element.setAttribute('role','dialog'); element.setAttribute('aria-modal','true');}
+    if (hooks.headerTabs) {element.classList.add('heinlein-integrated'); element.setAttribute('role',hooks.rail?'region':'dialog'); if(!hooks.rail)element.setAttribute('aria-modal','true');}
+    // Reuse the guarded card, rather than maintaining a second decision implementation.
+    const suggestionDialog = el('dialog', '', 'review-suggestion-dialog');
+    suggestionDialog.setAttribute('aria-label', 'Review suggestion');
+    const dialogTitle = el('h2', 'Review suggestion');
+    const dialogBody = el('div');
+    const dialogClose = button('Close suggestion', () => closeSuggestion());
+    suggestionDialog.append(dialogTitle, dialogClose, dialogBody);
+    let dialogCard: HTMLElement | null = null;
+    let dialogSlot: Comment | null = null;
+    let dialogReturn: HTMLElement | null = null;
+    let dialogSelection: Range | null = null;
+    function closeSuggestion() {
+        if (!dialogCard) return;
+        const card = dialogCard;
+        dialogCard = null;
+        card.querySelectorAll('h4').forEach(n => n.removeAttribute('aria-level'));
+        dialogSlot?.replaceWith(card);
+        dialogSlot = null;
+        card.querySelectorAll<HTMLButtonElement>('button[data-edit-action="reject"]').forEach(n => { if (n.textContent === 'Reject') n.textContent = 'Keep mine'; });
+        if (suggestionDialog.open) suggestionDialog.close();
+        suggestionDialog.remove();
+        if (dialogReturn?.isConnected && !dialogReturn.classList.contains('cm-content')) dialogReturn.focus({preventScroll: true});
+        else hooks.focusEditor();
+        if (dialogSelection?.startContainer.isConnected && dialogSelection.endContainer.isConnected) {
+            const selection = document.getSelection();
+            selection?.removeAllRanges(); selection?.addRange(dialogSelection);
+        }
+        if (dialogReturn?.isConnected && dialogReturn.hasAttribute('data-review-id')) dialogReturn.focus({preventScroll: true});
+        dialogSelection = null;
+        dialogReturn = null;
+    }
+    suggestionDialog.addEventListener('cancel', event => { event.preventDefault(); if (!busy) closeSuggestion(); });
     let suspended = false;
     let scope: ReviewScope | null = null;
     let recaptureLibrary: (() => Promise<CapturedLibraryScope>) | null = null;
@@ -64,6 +104,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     let generation = 0;
     let pending: string | null = null;
     let busy = false;
+    let automaticRunning = false;
     let disposed = false;
     const background = createReviewActivity(() => show());
     let checking = false;
@@ -92,11 +133,11 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     // Header: the shared Heinlein header when this panel sits in the Heinlein pane; a minimal local row otherwise.
     const chip = el('button');
     chip.onclick = hooks.openConnection;
-    const head = hooks.headerTabs ? createHeinleinHeader({tabs: hooks.headerTabs, status: chip, close: () => tuck()}) : el('header', '', 'heinlein-head');
+    const head = hooks.headerTabs ? createHeinleinHeader({tabs: hooks.headerTabs, status: chip, close: () => {tuck();hooks.closePane?.();}}) : el('header', '', 'heinlein-head');
     if (!hooks.headerTabs) head.append(el('h2', 'Heinlein'), iconButton('Close Heinlein', 'M3 3l8 8M11 3l-8 8', () => tuck(), 'heinlein-close'));
     const title = head.querySelector('h2')!;
     title.tabIndex = -1;
-    // Results strip: progress, stepping and the overflow menu.
+    // Results strip: a visible new-review action, progress, stepping and the overflow menu.
     const strip = el('div', '', 'review-strip');
     strip.hidden = true;
     const progressBox = el('div', '', 'review-progress-box'), progress = el('p', '', 'review-progress'), bar = el('div', '', 'review-bar'), barFill = el('div', '', 'review-bar-fill');
@@ -148,9 +189,10 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const historyHost = el('div'), aboutHost = el('div');
     const markHelp = el('details', '', 'review-mark-help');
     markHelp.append(el('summary', 'How to read and open the marks'), el('p', `A solid underline is a change, a line through is a removal, a wavy underline is competing alternatives and a small bar is an insertion. Click one to open it here, or use ${formatKeys('⌘⌥]')} and ${formatKeys('⌘⌥[')} to move between them and ${formatKeys('⌘⌥O')} to open one. Marks never apply or choose anything.`));
-    const startNew = button('Start a new review', () => { view = 'setup'; toggleMenu(false); update(); firstSetupControl()?.focus(); });
+    const startNew = button('Start a new review', () => { view = 'setup'; toggleMenu(false); update(); (firstSetupControl() ?? run).focus(); });
     const discard = button('Discard review', () => { clear(); hooks.focusEditor(); });
-    menu.append(refreshReview, json, historyHost, aboutHost, markHelp, startNew, discard);
+    strip.prepend(startNew);
+    menu.append(refreshReview, json, historyHost, aboutHost, markHelp, discard);
 
     // Setup.
     const setupView = el('div', '', 'review-setup-view');
@@ -184,7 +226,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const edits = el('div', '', 'review-edits');
     const continueBatch = button('Continue next reviewer batch', () => { void submit(true); });
     continueBatch.hidden = true;
-    const continueNote = el('p', 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count.', 'review-guidance');
+    const continueNote = el('p', 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count. Finish the remaining batches before applying suggestions; changed source needs a fresh review.', 'review-guidance');
     continueNote.hidden = true;
     const resultActions = el('div', '', 'review-result-actions');
     resultActions.append(continueNote, continueBatch);
@@ -216,10 +258,10 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         event.preventDefault();
         event.stopPropagation();
         if (!menu.hidden && (menu.contains(document.activeElement) || document.activeElement === more)) { toggleMenu(false); more.focus(); return; }
-        if (hooks.headerTabs) hide(); else clear();
+        if (hooks.headerTabs) {hide();hooks.closePane?.();} else clear();
         hooks.focusEditor();
     }
-    if (hooks.headerTabs && event.key === 'Tab') {
+    if (hooks.headerTabs && !hooks.rail && event.key === 'Tab') {
       const controls=[...element.querySelectorAll<HTMLElement>('button,summary,input,select,textarea,[tabindex="0"]')].filter(n=>!n.closest('[hidden]')&&!n.matches(':disabled')&&n.getClientRects().length&&!n.closest('details:not([open]) :not(summary)'));
       if (event.shiftKey && document.activeElement===controls[0]) {event.preventDefault();controls.at(-1)?.focus();}
       else if (!event.shiftKey && document.activeElement===controls.at(-1)) {event.preventDefault();controls[0]?.focus();}
@@ -229,7 +271,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         more.setAttribute('aria-expanded', String(open));
         if (open) { body.scrollTop = 0; menu.querySelector<HTMLElement>('button:not(:disabled),summary')?.focus(); }
     }
-    function firstSetupControl() { return setupView.querySelector<HTMLElement>('input:not(:disabled),button:not(:disabled)'); }
+    function firstSetupControl() { return [...setupView.querySelectorAll<HTMLElement>('input:not(:disabled),button:not(:disabled)')].find(control => !control.closest('[hidden]') && !control.closest('details:not([open])')); }
     function live(token: number) { return !disposed && (!element.hidden || suspended) && token === generation; }
     function included() { return scope ? scope.snapshots.filter(s => !workflowMode || selectedPaths.has(s.path) || !scope!.contextPaths || scope!.contextPaths.includes(s.path)) : []; }
     function scopeProblem() {
@@ -267,6 +309,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     }
     let sourceSignature = '';
     function update() {
+        const scopeTab = hooks.headerTabs?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
+        if (scopeTab) scopeTab.textContent = scope?.scope === 'chapter' ? 'Whole chapter' : 'Whole scene';
         const signature = scope && workflowMode ? JSON.stringify([...selectedPaths, '|', ...included().map(s => s.path)]) : '';
         if (scope && workflowMode && signature !== sourceSignature) {
             sourceSignature = signature;
@@ -297,24 +341,28 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         limit.textContent = problem ?? '';
         const previewing = workflowMode && !preparedRequest;
         run.textContent = previewing ? 'Preview review' : 'Run review';
-        run.disabled = previewing ? Boolean(problem || pending || busy || checking || !definitions.length) : Boolean(problem || pending || busy || checking || !ready() || !core.requestReview);
-        retry.disabled = Boolean(problem || pending || busy || checking || !ready() || !core.requestReview || (workflowMode && !preparedRequest));
-        continueBatch.hidden = !result?.workflow?.coverage.some(c => (c.status === 'queued' || c.status === 'notRun') && c.error !== 'findingLimit');
+        run.disabled = previewing ? Boolean(problem || pending || busy || automaticRunning || checking || !definitions.length) : Boolean(problem || pending || busy || automaticRunning || checking || !ready() || !core.requestReview);
+        retry.disabled = Boolean(problem || pending || busy || automaticRunning || checking || !ready() || !core.requestReview || (workflowMode && !preparedRequest));
+        const interruptedChunks = result?.workflow?.coverage.some(c => c.status === 'running' || c.status === 'cancelled');
+        const failedChunks = result?.workflow?.coverage.some(c => c.status === 'failed' && retryableCall(c.error));
+        continueBatch.textContent = failedChunks ? 'Retry failed chunks' : interruptedChunks ? 'Resume interrupted chunks' : 'Continue next reviewer batch';
+        continueBatch.hidden = automaticRunning || !result?.workflow?.coverage.some(c => ((c.status === 'queued' || c.status === 'notRun') && c.error !== 'findingLimit') || c.status === 'running' || c.status === 'cancelled' || (c.status === 'failed' && retryableCall(c.error)));
+        continueNote.textContent = failedChunks || interruptedChunks ? 'Retry sends only failed chunks and remaining calls, keeping completed results. Each chunk gets up to three attempts. Additional plan usage may count. Changed source requires a fresh review.' : 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count. Finish the remaining batches before applying suggestions; changed source needs a fresh review.';
         continueNote.hidden = continueBatch.hidden;
         continueBatch.disabled = Boolean(pending || busy || checking || !ready());
-        setupView.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>('input,select,textarea,.review-setup button').forEach(e => e.disabled = Boolean(pending || busy) || e.dataset.full === 'true');
+        setupView.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>('input,select,textarea,button').forEach(e => e.disabled = Boolean(pending || busy || automaticRunning) || e.dataset.full === 'true');
         refreshReview.hidden = !result || !core.getReview;
         refreshReview.disabled = Boolean(busy || pending);
-        startNew.disabled = discard.disabled = Boolean(busy);
-        cancel.hidden = !pending;
+        startNew.disabled = discard.disabled = Boolean(busy || pending || automaticRunning);
+        cancel.hidden = !pending && !automaticRunning;
         keepWriting.hidden = !pending;
         activity.hidden = !pending || !workflowMode;
         connect.disabled = Boolean(pending || busy);
         const blocked = result?.edits.some(waiting) ? hooks.unavailable(false) : null;
-        edits.querySelectorAll<HTMLElement>('[data-blocked]').forEach(n => { n.textContent = blocked ?? ''; n.hidden = !blocked; });
-        edits.querySelectorAll<HTMLButtonElement>('button[data-edit-action]').forEach(n => { n.disabled = Boolean(busy || pending || (n.dataset.editAction === 'accept' && (blocked || n.dataset.unavailable === 'true'))); });
-        edits.querySelectorAll<HTMLInputElement>('input[type=radio]').forEach(n => { n.disabled = Boolean(busy || pending); });
-        edits.querySelectorAll<HTMLElement>('[data-approve-reason]').forEach(n => { const why = n.dataset.approveReason ?? ''; n.textContent = why; n.hidden = !why; });
+        for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLElement>('[data-blocked]').forEach(n => { n.textContent = blocked ?? ''; n.hidden = !blocked; });
+        for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLButtonElement>('button[data-edit-action]').forEach(n => { n.disabled = Boolean(busy || pending || (n.dataset.editAction === 'accept' && (blocked || n.dataset.unavailable === 'true'))); });
+        for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLInputElement>('input[type=radio]').forEach(n => { n.disabled = Boolean(busy || pending); });
+        for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLElement>('[data-approve-reason]').forEach(n => { const why = n.dataset.approveReason ?? ''; n.textContent = why; n.hidden = !why; });
         updateStrip();
         background.setVisible(!element.hidden && !element.classList.contains('review-tucked'));
     }
@@ -331,7 +379,12 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     }
     async function configure() { if (checking)
         return; const token = generation; checking = true; update(); try {
-        const next = await core.questionStatus?.();
+        let next = await core.questionStatus?.();
+        if (live(token) && next && core.restoreQuestionConnection && !next.usageLimited && !next.signInPending
+          && next.models.length === 0 && next.selectedModel
+          && next.accounts.some(account => account.id === next!.activeAccountId && account.signedIn && account.planEnabled)) {
+            next = await core.restoreQuestionConnection();
+        }
         if (live(token))
             config = next ?? null;
     }
@@ -345,11 +398,11 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             update();
         }
     } }
-    function cancelRequest() { const id = pending; if (id) background.cancel(id); pending = null; activity.hidden = true; clearTimeout(timer); generation++; checking = false; busy = false; if (id) {
+    function cancelRequest() { automaticRunning = false; const id = pending; if (id) background.cancel(id); pending = null; activity.hidden = true; clearTimeout(timer); generation++; checking = false; busy = false; if (id) {
         void core.cancelQuestion?.(id).catch(() => { });
         retry.hidden = false;
     } }
-    function clear() { suspended=false; cancelRequest(); background.clear(); element.hidden = true; hooks.visibilityChanged?.(false); element.classList.remove('review-tucked'); scope = null; recaptureLibrary = null; result = null; config = null; savedRecords = []; shownReview = null; historyOpen = null; view = 'setup'; receipts.clear(); publishMarks(); saved.replaceChildren(); savedSection.hidden = true; edits.replaceChildren(); historyHost.replaceChildren(); aboutHost.replaceChildren(); sources.replaceChildren(); sourceSignature = ''; batchPreview.replaceChildren(); blob.textContent = ''; say(''); toggleMenu(false); update(); }
+    function clear() { closeSuggestion(); suspended=false; cancelRequest(); background.clear(); element.hidden = true; hooks.visibilityChanged?.(false); element.classList.remove('review-tucked'); scope = null; recaptureLibrary = null; result = null; config = null; savedRecords = []; shownReview = null; historyOpen = null; view = 'setup'; receipts.clear(); publishMarks(); saved.replaceChildren(); savedSection.hidden = true; edits.replaceChildren(); historyHost.replaceChildren(); aboutHost.replaceChildren(); sources.replaceChildren(); sourceSignature = ''; batchPreview.replaceChildren(); blob.textContent = ''; say(''); toggleMenu(false); update(); }
     function untuck() {
         if (element.classList.contains('review-tucked')) {
             element.classList.remove('review-tucked');
@@ -367,8 +420,9 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     }
     function validate(value: ReviewResult, requestId?: string) {
         if (value?.readingFeedback !== undefined) {
-            if (!Array.isArray(value.readingFeedback) || value.readingFeedback.length > 384 || value.readingFeedback.some(item =>
+            if (!Array.isArray(value.readingFeedback) || value.readingFeedback.length > 385 || value.readingFeedback.some(item =>
                 !item || typeof item.path !== 'string' || typeof item.reviewer !== 'string' || !item.feedback
+                || (item.feedback.assessment !== undefined && (!item.feedback.assessment || [item.feedback.assessment.strengths, item.feedback.assessment.improvements].some(text => typeof text !== 'string' || !text.trim() || bytes(text) > 2000)))
                 || !Array.isArray(item.feedback.strengths) || !Array.isArray(item.feedback.improvements)
                 || item.feedback.strengths.length > 32 || item.feedback.improvements.length > 32
                 || [item.feedback.overview, ...item.feedback.strengths, ...item.feedback.improvements.map(point => typeof point === 'string' ? point : point?.text)].some(text => typeof text !== 'string' || !text.trim() || bytes(text) > 2000)))
@@ -386,7 +440,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             }
         }
         if (value?.schemaVersion === 2) {
-            if (!value.reviewId || !value.workflow || !Array.isArray(value.edits) || value.edits.length > 1024 || !Array.isArray(value.workflow.coverage) || value.workflow.coverage.length > 384 || (requestId && value.requestId !== requestId) || new Set(value.edits.map(e => e.id)).size !== value.edits.length)
+            if (!value.reviewId || !value.workflow || !Array.isArray(value.edits) || value.edits.length > 1024 || !Array.isArray(value.workflow.coverage) || value.workflow.coverage.length > 385 || (requestId && value.requestId !== requestId) || new Set(value.edits.map(e => e.id)).size !== value.edits.length)
                 throw new Error('Invalid consolidated review. Reload the saved record.');
             for (const e of value.edits) {
                 const source = value.workflow.sources.find(s => s.path === e.path && !s.readOnly);
@@ -431,11 +485,12 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         const content = el('div');
         const render = (index: number) => {
             const entry = entries[index];
-            content.replaceChildren(el('h3', 'Reading overview'), el('p', entry.feedback.overview));
-            if (entries.length > 1) content.append(el('p', `${entry.path} · ${entry.reviewer}. This assessment covers this reviewer’s selected source or chunk.`, 'review-guidance'));
-            for (const [title, marker, points] of [
-                ['Strengths', '✅', entry.feedback.strengths],
-                ['Points for improvement', '❌', entry.feedback.improvements],
+            content.replaceChildren(el('h3', entry.coverageId === 'consolidation' ? 'Consolidated review' : 'Reading overview'), el('p', entry.feedback.overview));
+            if (entry.coverageId === 'consolidation') content.append(el('p', 'Combined assessment of all completed reviewer passes. Individual assessments remain available in Review assessment.', 'review-guidance'));
+            else if (entries.length > 1) content.append(el('p', `${entry.path} · ${entry.reviewer}. This assessment covers this reviewer’s selected source or chunk.`, 'review-guidance'));
+            for (const [title, marker, points, assessment] of [
+                ['Strengths', '✅', entry.feedback.strengths, entry.feedback.assessment?.strengths],
+                ['Points for improvement', '❌', entry.feedback.improvements, entry.feedback.assessment?.improvements],
             ] as const) {
                 const list = el('ul', '', 'review-feedback-list');
                 for (const point of points) {
@@ -460,16 +515,24 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                     } else if (marker === '❌') content.append(el('p', 'Advice only · no text change proposed.', 'review-guidance'));
                     item.append(emoji, content); list.append(item);
                 }
-                content.append(el('h3', title), points.length ? list : el('p', marker === '❌' ? 'No improvements suggested.' : 'No strengths listed.', 'review-guidance'));
+                content.append(el('h3', title));
+                if (assessment) content.append(el('p', assessment));
+                if (points.length) content.append(list);
+                else if (!assessment) content.append(el('p', marker === '❌' ? 'No improvements suggested.' : 'No strengths listed.', 'review-guidance'));
             }
         };
+        const consolidated = entries.findIndex(entry => entry.coverageId === 'consolidation');
+        const workflow = result?.workflow;
+        const contextual = entries.findIndex(entry => entry.coverageId && workflow?.coverage.some(call => call.id === entry.coverageId && workflow.definitions[call.reviewer]?.definition.id === 'contextual'));
+        const initial = consolidated >= 0 ? consolidated : contextual >= 0 ? contextual : Math.max(0, entries.findIndex(entry => entry.feedback.assessment || entry.feedback.strengths.length || entry.feedback.improvements.length));
         if (entries.length > 1) {
-            const label = el('label', 'Reading feedback for', 'review-feedback-picker'), select = el('select');
-            entries.forEach((entry, index) => { const option = el('option', `${entry.path} · ${entry.reviewer} · assessment ${index + 1}`); option.value = String(index); select.append(option); });
+            const label = el('label', 'Review assessment', 'review-feedback-picker'), select = el('select');
+            entries.forEach((entry, index) => { const option = el('option', entry.coverageId === 'consolidation' ? 'Consolidated review · all reviewers' : `${entry.path} · ${entry.reviewer} · individual assessment ${index + 1}`); option.value = String(index); select.append(option); });
+            select.value = String(initial);
             select.onchange = () => render(Number(select.value));
             label.append(select); section.append(label);
         }
-        render(0); section.append(content); return section;
+        render(initial); section.append(content); return section;
     }
     async function jumpToEdit(edit: ReviewEdit) {
         if (!result || !scope || !hooks.jumpToEdit) return;
@@ -478,7 +541,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             const jumped = await hooks.jumpToEdit({repositoryId: scope.repositoryId, projectKey: shown.projectKey ?? null,
                 edits: shown.edits, baselineHash: path => shown.workflow?.sources.find(s => s.path === path)?.sourceHash ?? scope?.snapshots.find(s => s.path === path)?.sourceHash}, edit);
             if (result !== shown || disposed) return;
-            if (jumped) { tuck(); hooks.focusEditor(); hooks.announce?.(`Jumped to suggestion in ${edit.path}.`); }
+            if (jumped) { tuck(); hooks.closePane?.(); hooks.focusEditor(); hooks.announce?.(`Jumped to suggestion in ${edit.path}.`); }
             else say('This suggestion could not be located in the current text. Open the matching saved source or refresh the review.', 'warning');
         } catch { if (result === shown) say('This suggestion could not be located in the current text. Refresh the review and try again.', 'warning'); }
     }
@@ -683,6 +746,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         });
     }
     function render() {
+        closeSuggestion();
         edits.replaceChildren();
         historyHost.replaceChildren();
         aboutHost.replaceChildren();
@@ -692,6 +756,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             historyOpen = null;
         }
         view = result ? 'results' : 'setup';
+        if(result&&scope)hooks.reviewChanged?.(result,scope);
         renderSaved();
         publishMarks();
         if (!result)
@@ -714,7 +779,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             edits.append(el('p', 'This review is incomplete. Failed or interrupted calls are never automatically retried.', 'drafting-warning'));
             w.coverage.forEach((call, index) => {
                 if (['failed', 'cancelled', 'running', 'interrupted'].includes(call.status)) {
-                    const reviewer = w.definitions[call.reviewer]?.definition.displayName ?? 'Reviewer';
+                    const reviewer = w.definitions[call.reviewer]?.definition.displayName ?? 'Consolidation';
                     edits.append(el('p', `${reviewer} · chunk ${index + 1} of ${w.coverage.length}: ${call.status === 'running' || call.status === 'interrupted' ? 'This call was interrupted.' : callFailure(call.error)}`, 'drafting-warning'));
                 }
             });
@@ -795,6 +860,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         const target = box?.querySelector<HTMLElement>('button[data-edit-action="accept"]:not(:disabled)') ?? item?.querySelector<HTMLElement>('input[type=radio]:not(:disabled)') ?? box?.querySelector<HTMLElement>('input[type=radio]:not(:disabled)') ?? box?.querySelector<HTMLElement>('h4') ?? heading ?? title;
         if (note)
             say(note, warning ? 'warning' : 'note');
+        if (element.hidden) { hooks.focusEditor(); return; }
         target.focus({ preventScroll: true });
         target.scrollIntoView?.({ block: 'nearest' });
     }
@@ -815,6 +881,12 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (!cards.length) return;
         const at = cards.findIndex(c => c.classList.contains('review-opened'));
         openCard(cards[at < 0 ? (direction > 0 ? 0 : cards.length - 1) : (at + direction + cards.length) % cards.length]);
+    }
+    function returnToInlineSuggestions() {
+        if (!hooks.rail || !hooks.closePane || element.hidden) return;
+        hide();
+        hooks.closePane();
+        hooks.announce?.(`Review complete. Chats closed. ${plural(result?.edits.filter(waiting).length ?? 0, 'suggestion')} ready in the manuscript. Reopen Chats for the review assessment.`);
     }
     async function submit(continuing = false) {
         if (pending || busy || (!continuing && scopeProblem()) || !ready() || !scope || !core.requestReview)
@@ -841,6 +913,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         const request: ReviewRequest = workflowMode ? { ...preparedRequest!, requestId } : { requestId, repositoryId: scope.repositoryId, scope: scope.scope, snapshots: scope.snapshots.map(s => ({ ...s })) };
         if (workflowMode && !continuing && !preparedRequest)
             return;
+        let completedSuccessfully = false;
         pending = requestId;
         background.start(requestId, scope.label, workflowMode ? coverage.length || null : 1);
         activityPhase = '';
@@ -857,7 +930,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             activity.scrollIntoView?.({block: 'nearest'});
         }
         timer = setTimeout(() => { if (!live(token) || pending !== requestId)
-            return; background.finish(requestId, 'attention', 'Review timed out. Open the review to retry; your text was not changed.'); cancelRequest(); say('Review timed out locally. Usage may count. Retry when ready; your manuscript was not changed.'); update(); }, workflowMode ? 8 * 185000 + 5000 : 185000);
+            return; background.finish(requestId, 'attention', 'Review timed out. Open the review to retry; your text was not changed.'); cancelRequest(); say('Review timed out locally. Usage may count. Retry when ready; your manuscript was not changed.'); update(); }, workflowMode ? 8 * (3 * 185000 + 1000) + 5000 : 185000);
         try {
             const connection = { generation: config!.generation, accountId: config!.activeAccountId!, model: config!.model! };
             const onProgress = (event: ReviewProgress) => {
@@ -866,7 +939,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                     event.completedCalls > event.totalCalls || event.chunkIndex < 1 || event.chunkIndex > event.totalCalls ||
                     !['running', 'receiving', 'completed', 'failed', 'cancelled'].includes(event.status)) return;
                 const reviewerId = (continuing ? oldResult?.workflow?.definitions.map(d => d.definition.id) : preparedRequest?.workflow?.reviewers)?.[event.reviewer];
-                const reviewer = definitions.find(d => d.id === reviewerId)?.displayName ?? 'Reviewer';
+                const reviewer = definitions.find(d => d.id === reviewerId)?.displayName ?? 'Consolidation';
                 const phase = event.status === 'running' ? 'waiting for response' : event.status === 'receiving' ? 'receiving response' : event.status === 'completed' ? 'call completed' : event.status === 'cancelled' ? 'call cancelled' : 'call failed';
                 const detail = `${reviewer} · chunk ${event.chunkIndex} of ${event.totalCalls} · ${phase}${event.status === 'receiving' ? ` · ${size(event.receivedBytes)} received` : ''}. ${event.completedCalls} of ${event.totalCalls} calls completed · ${plural(event.suggestions, 'suggestion')} retained.`;
                 background.progress(requestId, event.completedCalls, event.totalCalls);
@@ -883,6 +956,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             if (!live(token) || pending !== requestId)
                 return;
             result = validate(answer, requestId);
+            completedSuccessfully = !result.workflow || result.workflow.coverage.every(call => call.status === 'completed');
             const completed = result.workflow?.coverage.filter(c => c.status === 'completed').length;
             const total = result.workflow?.coverage.length;
             if (completed !== undefined && completed !== total)
@@ -894,6 +968,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             // Earlier reviews comes from the host's saved records, so the new one appears there too.
             if (workflowMode)
                 void savedReviews();
+            return result;
         }
         catch (error) {
             if (live(token)) {
@@ -907,6 +982,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 clearTimeout(timer);
                 pending = null;
                 update();
+                if (completedSuccessfully && !automaticRunning) returnToInlineSuggestions();
             }
         }
     }
@@ -940,6 +1016,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     async function act(editIds: string[], accept: boolean) {
         if (busy || pending || !result || !scope || !editIds.length)
             return;
+        closeSuggestion();
         const token = generation;
         const repositoryId = scope.repositoryId;
         const reviewId = result.reviewId;
@@ -1055,6 +1132,21 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         }
         else
             scopeCards.append(option(name, detail, true, null));
+        const chapterLabel = hooks.chapterLabel?.();
+        if (scope.scope === 'scene' && chapterLabel && hooks.captureChapter) {
+            const chapter = button('', () => { void captureChapter(); }, 'review-scope-card review-scope-more');
+            const text = el('span', '', 'review-scope-text');
+            text.append(el('span', 'Entire chapter…', 'review-scope-name'), el('span', `${chapterLabel} · Review every source scene for targeted edits`, 'review-scope-detail'));
+            chapter.append(text);
+            chapter.disabled = busy || Boolean(pending);
+            scopeCards.append(chapter);
+        }
+        if (workflowMode && (scope.scope === 'chapter' || (chapterLabel && hooks.captureChapter))) {
+            const quick = button('Review chapter', () => { void reviewChapter(); }, 'review-scope-card primary');
+            quick.title = 'Runs mechanical, story/clarity, and all saved custom agents, then consolidation. Sends this chapter to your selected ChatGPT account and model.';
+            quick.disabled = busy || Boolean(pending) || automaticRunning;
+            scopeCards.append(quick);
+        }
         if (libraryEntry)
             scopeCards.append(libraryEntry);
         if (!workflowMode || !many)
@@ -1075,15 +1167,43 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             targets.append(label);
         }
     }
+    async function captureChapter() {
+        if (!hooks.captureChapter || busy || pending) return;
+        const token = generation;
+        busy = true;
+        scopeCards_(); update(); say('Capturing chapter source scenes…');
+        try {
+            const captured = await hooks.captureChapter();
+            if (!live(token)) return;
+            scope = {...captured, snapshots: captured.snapshots.map(s => ({...s}))};
+            selectedPaths = new Set(scope.snapshots.map(s => s.path));
+            useSelection = false;
+            recaptureLibrary = null;
+            invalidatePreview();
+            if (!workflowMode) {
+                sources.replaceChildren();
+                for (const snapshot of scope.snapshots) {
+                    const text = el('pre', snapshot.source, 'question-text'); text.tabIndex = 0;
+                    sources.append(el('h3', snapshot.path), text);
+                }
+            }
+            say('Entire chapter captured. Review the source preview, then explicitly send for targeted edits.');
+        } catch (error) {
+            if (live(token)) say(message(error), 'warning');
+        } finally {
+            if (live(token)) {busy = false; scopeCards_(); update(); firstSetupControl()?.focus();}
+        }
+    }
     async function reloadReviewers(selectId?: string) {
         const token = generation;
-        const [values, custom] = await Promise.all([core.reviewDefinitions!(), core.listCustomReviewers?.() ?? Promise.resolve([] as CustomReviewer[])]);
+        const custom = await core.listCustomReviewers?.() ?? [];
+        const values = await core.reviewDefinitions!();
         if (!live(token))
             return;
         definitions = values;
         customReviewers = custom;
         reviewerIds = reviewerIds.filter(id => definitions.some(d => d.id === id));
-        if (selectId && !reviewerIds.includes(selectId) && reviewerIds.length < 3)
+        if (selectId && !reviewerIds.includes(selectId) && reviewerIds.length < MAX_REVIEWERS)
             reviewerIds = definitions.map(d => d.id).filter(id => id === selectId || reviewerIds.includes(id));
         if (!reviewerIds.length)
             reviewerIds = [definitions[0]?.id ?? ''];
@@ -1108,7 +1228,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             chip.title = `${d.displayName} · version ${d.version}`;
             if (on) chip.append(icon('M3 7.5l2.5 2.5L11 4.5'));
             chip.append(document.createTextNode(d.displayName));
-            if (!on && reviewerIds.length >= 3) chip.dataset.full = 'true';
+            if (!on && reviewerIds.length >= MAX_REVIEWERS) chip.dataset.full = 'true';
             chips.append(chip);
             const custom = customReviewers.find(c => c.id === d.id);
             if (custom && core.saveCustomReviewer) chips.append(iconButton(`Edit ${d.displayName}`, 'M2 12l1-3.5L9.5 2l2.5 2.5L5.5 11 2 12z', () => { editing = {...custom}; settings(); setup.querySelector<HTMLElement>('.review-agent-name')?.focus(); }, 'review-chip-edit'));
@@ -1120,7 +1240,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             deleted: async () => { await reloadReviewers(); editing = null; settings(); update(); },
             cancel: () => { editing = null; settings(); update(); },
         }));
-        if (definitions.length > 1) set.append(el('p', 'Choose 1 to 3. Each reviewer is a separate advisory pass.', 'review-scope-detail'));
+        if (definitions.length > 1) set.append(el('p', `Choose 1 to ${MAX_REVIEWERS}. Each reviewer is a separate advisory pass.`, 'review-scope-detail'));
         const noteToggle = button(noteOpen ? '− Note for reviewers' : '+ Note for reviewers', () => { noteOpen = !noteOpen; settings(); update(); (noteOpen ? setup.querySelector<HTMLElement>('textarea') : setup.querySelector<HTMLElement>('.review-note-toggle'))?.focus(); }, 'review-note-toggle');
         noteToggle.setAttribute('aria-expanded', String(noteOpen));
         set.append(noteToggle);
@@ -1135,21 +1255,23 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         setup.append(set);
     }
     async function configureWorkflow() { const token = generation; try {
+        // Listing reloads saved custom definitions in the native host before reading its catalog.
+        const custom = await core.listCustomReviewers?.() ?? [];
         const values = await core.reviewDefinitions!();
         if (!live(token))
-            return;
+            return false;
         definitions = values;
-        customReviewers = await core.listCustomReviewers?.().catch(() => [] as CustomReviewer[]) ?? [];
-        if (!live(token))
-            return;
+        customReviewers = custom;
         if (!definitions.some(d => d.id === reviewerIds[0]))
             reviewerIds = [definitions[0]?.id ?? ''];
         settings();
         await savedReviews();
+        return true;
     }
     catch (error) {
         if (live(token))
             say('Reviewers could not be loaded. Close and reopen Whole scene to retry. If this continues, check for a Heinlein Studio update.', 'warning');
+        return false;
     }
     finally {
         if (live(token))
@@ -1164,7 +1286,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         const context = scope.snapshots.filter(s => !selectedPaths.has(s.path) && (!contextPaths || contextPaths.includes(s.path))).map(s => ({ ...s }));
         const includedPaths = new Set([...selectedPaths, ...context.map(s => s.path)]);
         const fullContextOrder = scope.contextPaths?.filter(path => includedPaths.has(path));
-        const request: ReviewRequest = { requestId: crypto.randomUUID(), repositoryId: scope.repositoryId, scope: scope.scope, snapshots: scope.snapshots.filter(s => selectedPaths.has(s.path)).map(s => ({ ...s })), workflow: { reviewers: [...reviewerIds], context, contextNote, ranges, ...(fullContextOrder ? {fullContextOrder} : {}) } };
+        const request: ReviewRequest = { requestId: crypto.randomUUID(), repositoryId: scope.repositoryId, scope: scope.scope, snapshots: scope.snapshots.filter(s => selectedPaths.has(s.path)).map(s => ({ ...s })), workflow: { consolidate: true, reviewers: [...reviewerIds], context, contextNote, ranges, ...(fullContextOrder ? {fullContextOrder} : {}) } };
         busy = true;
         update();
         try {
@@ -1173,7 +1295,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 return;
             preparedRequest = request;
             coverage = next;
-            batchPreview.replaceChildren(el('h3', 'Exact batch preview'), el('p', `${reviewerIds.length} reviewer(s), ${new Set(next.map(c => `${c.sourceIndex}:${c.fromUtf8}:${c.toUtf8}`)).size} editable chunks, ${next.length} selected calls. This batch sends at most ${Math.min(8, next.length)} calls. Remaining calls need Continue.`), el('p', fullContextOrder ? 'Each target call includes the complete selected context in library order.' : 'Each call has bounded neighboring context and the selected read-only context, not the whole work at once.'), el('p', 'Sent to OpenAI with your selected ChatGPT account and model. Plan usage may count.'));
+            batchPreview.replaceChildren(el('h3', 'Exact batch preview'), el('p', `${reviewerIds.length} reviewer(s), ${new Set(next.filter(c => c.id !== 'consolidation').map(c => `${c.sourceIndex}:${c.fromUtf8}:${c.toUtf8}`)).size} editable chunks, ${next.length} selected calls including one final consolidation pass. This batch runs at most ${Math.min(8, next.length)} chunks. Interrupted chunks retry up to two times; additional plan usage may count.${automaticRunning ? ' Review chapter continues all remaining batches automatically.' : ' Remaining calls need Continue.'}`), el('p', fullContextOrder ? 'Each target call includes the complete selected context in library order.' : 'Each call has bounded neighboring context and the selected read-only context, not the whole work at once.'), el('p', 'Sent to OpenAI with your selected ChatGPT account and model. Plan usage may count.'));
             if (fullContextOrder) for (const path of fullContextOrder) { const snapshot = scope.snapshots.find(item => item.path === path)!; batchPreview.append(el('p', `Context: ${path} · ${bytes(snapshot.source).toLocaleString()} UTF-8 bytes`)); }
             const details = el('details');
             details.append(el('summary', 'Reviewer definitions and chunk coverage'));
@@ -1188,7 +1310,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                     details.append(el('p', `Reviewer ${c.reviewer + 1}: read-only context ${request.workflow!.context[range.sourceIndex]?.path}, UTF-8 bytes ${range.fromUtf8}–${range.toUtf8}.`));
             batchPreview.append(details);
             preview.open = true;
-            say(`Ready to send ${plural(Math.min(8, next.length), 'call')}. Check the batch and text below, then choose Run review.`);
+            say(automaticRunning ? 'Running all chapter reviewers, including saved custom agents, then consolidation. Remaining batches continue automatically.' : `Ready to send ${plural(Math.min(8, next.length), 'call')}. Check the batch and text below, then choose Run review.`);
         }
         catch (error) {
             if (live(token))
@@ -1254,7 +1376,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             focusCard(position, chosen);
         }
     } }
-    function openScope(override?: ReviewScope, recapture?: () => Promise<CapturedLibraryScope>) {
+    function openScope(override?: ReviewScope, recapture?: () => Promise<CapturedLibraryScope>, automatic = false) {
             if (disposed)
                 return;
             if (!element.hidden) {
@@ -1289,22 +1411,89 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 say('Heinlein Review is unavailable in this native host.', 'warning');
             scopeCards_();
             settings();
-            if (workflowMode)
+            if (workflowMode && !automatic)
                 void configureWorkflow();
             update();
-            void configure();
+            if (!automatic) void configure();
             title.focus({ preventScroll: true });
         }
-    function hide() { suspended=Boolean(scope); element.hidden=true; toggleMenu(false); hooks.visibilityChanged?.(false); background.setVisible(false); }
+    async function reviewChapter() {
+        if (disposed || pending || busy || automaticRunning) { show(); return; }
+        clear();
+        // Avoid independent setup requests racing this single automatic run.
+        openScope(undefined, undefined, true);
+        automaticRunning = true;
+        let completedSuccessfully = false;
+        const token = generation;
+        update();
+        try {
+            if (scope?.scope !== 'chapter') await captureChapter();
+            if (!live(token)) return;
+            if (scope?.scope !== 'chapter') { say('Open a chapter before running Review chapter. Nothing was sent.', 'warning'); return; }
+            const [loaded] = await Promise.all([configureWorkflow(), configure()]);
+            if (!live(token) || !loaded) return;
+            if (!workflowMode || !core.continueReview) {
+                say('Review chapter is unavailable in this native host. Update Heinlein Studio.', 'warning'); return;
+            }
+            if (!ready()) {
+                say('Connect ChatGPT with a selected model to run Review chapter.', 'warning');
+                return;
+            }
+            const allReviewers = [...new Set(['mechanical', 'contextual', ...customReviewers.map(r => r.id)])];
+            if (allReviewers.some(id => !definitions.some(d => d.id === id))) {
+                say('Chapter reviewers could not be loaded. Nothing was sent.', 'warning'); return;
+            }
+            reviewerIds = allReviewers;
+            settings();
+            if (scopeProblem()) { say(scopeProblem()!, 'warning'); return; }
+            await prepareBatch();
+            if (!live(token) || !preparedRequest) return;
+            let answer = await submit();
+            // Native dispatch already retries transient chunk failures up to three attempts.
+            // Stop after exhaustion; explicit continuation can retry failed chunks.
+            while (live(token) && answer?.workflow) {
+                const calls = answer.workflow.coverage;
+                if (calls.some(c => c.status === 'failed' || c.status === 'cancelled' || c.error)) break;
+                const remaining = calls.filter(c => c.status !== 'completed');
+                if (!remaining.length) break;
+                const completed = calls.length - remaining.length;
+                if (!remaining.every(c => c.status === 'queued' || c.status === 'notRun')) break;
+                answer = await submit(true);
+                if (!answer || !live(token)) return;
+                if ((answer.workflow?.coverage.filter(c => c.status === 'completed').length ?? 0) <= completed) {
+                    say('Chapter review stopped because the next batch made no progress. Completed passes are saved.', 'warning');
+                    return;
+                }
+            }
+            if (!live(token) || !answer) return;
+            if (answer.workflow?.coverage.some(c => c.id === 'consolidation' && c.status === 'completed') &&
+                answer.readingFeedback?.some(entry => entry.coverageId === 'consolidation')) {
+                completedSuccessfully = answer.workflow.coverage.every(call => call.status === 'completed');
+                if (!hooks.rail) {
+                    show();
+                    const feedback = edits.querySelector<HTMLElement>('.review-reading-feedback');
+                    if (feedback) { feedback.tabIndex = -1; feedback.focus(); feedback.scrollIntoView?.({block: 'start'}); }
+                }
+                say('Chapter review complete. Consolidated feedback is open. Choose Review assessment for individual passes.');
+            } else {
+                say('Chapter review incomplete. Completed passes are saved. Check the call details before continuing.', 'warning');
+            }
+        } catch (error) {
+            if (live(token)) say(message(error), 'warning');
+        } finally {
+            if (live(token)) { automaticRunning = false; update(); if (completedSuccessfully) returnToInlineSuggestions(); }
+        }
+    }
+    function hide() { closeSuggestion(); suspended=Boolean(scope); element.hidden=true; toggleMenu(false); hooks.visibilityChanged?.(false); background.setVisible(false); }
     function show() { if (scope && element.hidden && !disposed) {suspended=false; element.hidden=false; element.classList.remove('review-tucked'); hooks.visibilityChanged?.(true); update(); if (!pending && !ready()) void configure(); title.focus({preventScroll:true});} else openScope(); }
-    const keepWriting = button('Keep writing', () => { hide(); hooks.focusEditor(); });
+    const keepWriting = button('Keep writing', () => { hide();hooks.closePane?.(); hooks.focusEditor(); });
     keepWriting.className = 'review-keep-writing';
     footActions.prepend(keepWriting);
     const outside = (event: PointerEvent) => {
-        if (hooks.headerTabs && pending && !element.hidden && event.target instanceof Node && !element.contains(event.target)) { hide(); hooks.focusEditor(); }
+        if (hooks.headerTabs && pending && !element.hidden && event.target instanceof Node && !element.contains(event.target)) { hide(); hooks.closePane?.(); hooks.focusEditor(); }
     };
     document.addEventListener('pointerdown', outside, true);
-    return { element, activityElement: background.element, show, hide,
+    return { element, async openSaved(id:string) { if(pending||busy){show();return;} if(!scope)openScope();if(!scope)return;show();await reopenSaved(id); }, activityElement: background.element, reviewChapter, show, hide,
         documentChanged() { if (pending || result) hide(); else clear(); }, visible:()=>!element.hidden&&!element.classList.contains('review-tucked'), open: () => openScope(), librarySupported: workflowMode, openLibrary: (captured: ReviewScope, recapture: () => Promise<CapturedLibraryScope>) => { if (pending) { show(); say('A review is already running. Wait for it or cancel it before starting another.'); return; } if (workflowMode) { clear(); openScope(captured, recapture); } }, clear, stateChanged: update,
         /** Places the host's library picker entry among the scope choices. Its own handler and guards stay with the host. */
         adoptLibraryEntry(node: HTMLElement) {
@@ -1318,17 +1507,23 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         // Only shows the card. It never applies, rejects or chooses, and a competing group stays unchosen.
         openSuggestion(id: string) {
             if (disposed || !result) return false;
-            if (element.hidden && hooks.headerTabs) show();
-            if (element.hidden) return false;
+            closeSuggestion();
             const item = [...edits.querySelectorAll<HTMLElement>('.review-edit')].find(n => n.dataset.findingId === id);
             const box = item?.closest<HTMLElement>('.review-card');
-            if (!box)
-                return false;
-            untuck();
-            view = 'results';
-            toggleMenu(false);
+            if (!box) return false;
+            dialogReturn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            const selection = document.getSelection();
+            dialogSelection = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+            dialogSlot = document.createComment('suggestion card');
+            box.before(dialogSlot);
+            dialogCard = box;
+            box.querySelectorAll('h4').forEach(n => n.setAttribute('aria-level', '3'));
+            dialogBody.replaceChildren(box);
+            box.querySelectorAll<HTMLButtonElement>('button[data-edit-action="reject"]').forEach(n => { if (n.textContent === 'Keep mine') n.textContent = 'Reject'; });
             update();
-            openCard(box);
+            document.body.append(suggestionDialog);
+            suggestionDialog.showModal();
+            dialogClose.focus({preventScroll: true});
             return true;
         },
         marksInvalidated() {

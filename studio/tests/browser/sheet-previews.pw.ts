@@ -15,7 +15,7 @@ for (const scale of [100, 200]) test(`unopened sheets show accessible cached pre
   await expect(second).toHaveAccessibleDescription('Synthetic opening.');
   await expect(page.locator('.document-tabs [role="tab"]')).toHaveCount(0);
   // Collapsing and expanding uses the same excerpts, without selecting a sheet.
-  const group=page.locator('.tree-toggle');await group.click();await group.click();
+  const group=page.locator('[data-expand-group="g"]');await group.click();await group.click();
   await expect(preview).toHaveText('Synthetic opening.');
   await first.focus();await expect(first).toBeFocused();
   expect(await first.evaluate(node=>getComputedStyle(node).outlineStyle)).not.toBe('none');

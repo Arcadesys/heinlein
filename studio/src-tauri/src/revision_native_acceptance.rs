@@ -30,6 +30,7 @@ fn seed(repo: &Repository, records: &ReviewStore, repository_id: &str) -> Result
             })
             .collect(),
         workflow: Some(Options {
+            consolidate: false,
             reviewers: vec!["contextual".into(), "mechanical".into()],
             context: vec![],
             context_note: String::new(),

@@ -23,10 +23,12 @@ interface DraftingHooks {
   repository(): RepositorySession | null;
   verify?(): void;
   selectedPath?(): string | null;
+  currentGroup?():string|null;
   run(action: () => Promise<void>): Promise<void>;
   runOrganization?(action: () => Promise<void>): Promise<void>;
   show(): void;
   open(path: string): void;
+  selectGroup?(id:string):void;
   exportGroup?(id: string, title: string): void;
   changed(state: DraftingState, previous: DraftingState | null, changes: DraftingFileChange[], focusPath?: string, organizationOnly?: boolean): Promise<void>;
   report(message: string, error?: boolean): void;
@@ -240,14 +242,24 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   function newScene() {
     newSheet();
   }
-  function newSheet() {
+  function newSheet(adjacent?: {sceneId: string; after: boolean}) {
+    const anchor=adjacent?state?.scenes.find(scene=>scene.id===adjacent.sceneId):null;
+    if(adjacent&&!anchor){hooks.report('The scene changed. Open its menu again.',true);return;}
+    const repositoryId=hooks.repository()?.id, revision=state?.revision;
     const opener=document.activeElement as HTMLElement|null;
-    const node = dialog('New scene'); const body = el('form'); const cancel = () => { remove(node); if(opener?.isConnected)opener.focus(); };
+    const node = dialog('New scene'); const body = el('form'); const cancel = () => {
+      remove(node);
+      const target=adjacent?[...element.querySelectorAll<HTMLElement>('[data-scene-id]')].find(row=>row.dataset.sceneId===adjacent.sceneId)?.querySelector<HTMLButtonElement>('.scene-open'):opener;
+      if(target?.isConnected)target.focus();
+    };
+    if(anchor)body.append(el('p',`Add a scene ${adjacent!.after?'below':'above'} ${anchor.title||basename(anchor.path)}.`));
     const name = field(body, 'Scene title', 'Untitled scene');
     submitButton(body, 'Create scene', () => {
+      if(hooks.repository()?.id!==repositoryId||state?.revision!==revision){cancel();hooks.report('The library changed. Start adding the scene again.',true);return;}
       const path = `ms/sheet-${crypto.randomUUID()}.md`;
       const title = name.value.trim(); cancel();
-      void changeManuscript({kind: 'createScene', title, path, groupId: selectedGroup, beforeId: null}, path, undefined, true);
+      const change:DraftingChange=adjacent?{kind:'createSceneAdjacent',title,path,...adjacent}:{kind:'createScene',title,path,groupId:selectedGroup,beforeId:null};
+      void changeManuscript(change, path, undefined, true);
     });
     body.append(button('Cancel', cancel)); node.append(body); display(node, cancel);
   }
@@ -690,11 +702,11 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const group = state!.groups.find(item => item.id === entry.id); if (!group) return null;
       const expanded = !collapsedGroups.has(group.id);
       const row = el('li', '', 'tree-group'); const line = el('div', '', 'tree-row'); line.style.setProperty('--depth', String(depth));
-      const toggle = button(group.title, () => {
-        if (expanded) collapsedGroups.add(group.id); else collapsedGroups.delete(group.id);
-        render(); [...element.querySelectorAll<HTMLButtonElement>('[data-group-id]')].find(node => node.dataset.groupId === group.id)?.focus();
-      }, 'tree-toggle');
-      toggle.dataset.groupId = group.id; toggle.setAttribute('aria-expanded', String(expanded)); pointerMoves.bind(toggle, {kind: 'group', id: group.id});
+      const expand=button(expanded?'▾':'▸',()=>{if(expanded)collapsedGroups.add(group.id);else collapsedGroups.delete(group.id);render();[...element.querySelectorAll<HTMLButtonElement>('[data-expand-group]')].find(node=>node.dataset.expandGroup===group.id)?.focus();},'tree-group-expand');
+      expand.dataset.expandGroup=group.id;expand.setAttribute('aria-label',`${expanded?'Collapse':'Expand'} ${group.title}`);expand.setAttribute('aria-expanded',String(expanded));
+      const toggle = button(group.title, () => {selectedGroup=group.id;hooks.selectGroup?.(group.id);}, 'tree-toggle');
+      if(hooks.currentGroup?.()===group.id)toggle.setAttribute('aria-current','true');
+      toggle.dataset.groupId = group.id; pointerMoves.bind(toggle, {kind: 'group', id: group.id});
       toggle.addEventListener('dragstart', event => { if (!event.dataTransfer) return; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData(GROUP_DRAG_TYPE, JSON.stringify({repositoryId: hooks.repository()?.id, groupId: group.id})); });
       toggle.addEventListener('dragover', event => {
         if (!event.dataTransfer?.types.some(type => type === SCENE_DRAG_TYPE || type === GROUP_DRAG_TYPE)) return;
@@ -720,7 +732,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const siblings = entries.filter(item => item.parentId === entry.parentId); const at = siblings.findIndex(item => item.id === group.id);
       const earlier = button('Move earlier', () => reorderLibraryItem(group.id, -1)); earlier.disabled = at <= 0;
       const later = button('Move later', () => reorderLibraryItem(group.id, 1)); later.disabled = at === siblings.length - 1;
-      line.prepend(toggle, badge, rowMenu(`Actions for ${group.title}`, [
+      line.prepend(expand,toggle, badge, rowMenu(`Actions for ${group.title}`, [
         button('New scene here', () => { selectedGroup = group.id; newSheet(); }),
         button('New group inside', () => { selectedGroup = group.id; createLibraryGroup(); }),
         ...(hooks.exportGroup ? [button('Export group…', () => hooks.exportGroup!(group.id, group.title))] : []),
@@ -750,6 +762,8 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const later = button('Move later', () => state?.library ? reorderLibraryItem(scene.id, 1) : reorder(scene, 1)); later.disabled = state!.library ? siblingIndex === siblings.length - 1 : index === state!.scenes.length - 1;
       line.prepend(open, rowMenu(`Actions for ${scene.title || basename(scene.path)}`, [
         button('Rename…', () => renameLibraryItem(scene.id, 'scene')), button('Move to…', () => state?.library ? moveSheets([scene.id], scene.groupId) : moveScene(scene)),
+        button('Add scene above', () => newSheet({sceneId:scene.id,after:false})),
+        button('Add scene below', () => newSheet({sceneId:scene.id,after:true})),
         earlier, later,
         button(scene.reference ? 'Make regular sheet' : 'Make reference sheet', () => {
           void changeManuscript({kind: 'setSheetReference', path: scene.path, reference: !scene.reference}, undefined, undefined, true,
@@ -814,7 +828,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       button('Refresh from disk', () => { void hooks.run(async () => { try { const loaded = await load(); if (loaded) { await hooks.changed(loaded, null, []); hooks.report('Manuscript refreshed from disk.'); } } catch (error) { hooks.report(`Refresh failed: ${String(error)}`, true); } }); }));
     return items;
   }
-  return { element, supported, clear, load, menuItems, initialize, importExternal, splitScene, splitFile, renameFile, bindMoveSource, bindMoveTarget: moveDrop, updateBuffer, get state() { return state; },
+  return { element, supported, clear, load, refreshSelection(){activeBuffer=null;render();},menuItems, initialize, importExternal, splitScene, splitFile, renameFile, bindMoveSource, bindMoveTarget: moveDrop, updateBuffer, get state() { return state; },
     /** The same previewed, confirmed reorder as the ↑/↓ buttons. Resolves once the change settles. */
     async reorderScene(sceneId: string, delta: -1 | 1) { const scene = state?.scenes.find(item => item.id === sceneId); if (scene && state?.revision && !dialogs.size) await (state.library ? reorderLibraryItem(sceneId, delta) : reorder(scene, delta)); },
     newScene() { if (state?.revision && !dialogs.size) newScene(); },

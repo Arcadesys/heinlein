@@ -51,7 +51,7 @@ describe('Studio in-app drafting questions', () => {
   it('keeps editing, manual save, and autosave available during a pending request', async () => {
     const bridge = core(); const response = deferred<QuestionAnswer>(); bridge.askQuestion.mockReturnValueOnce(response.promise);
     await start(bridge); await open(); button('Capture current scene').click(); question('What next?'); button('Send to OpenAI').click();
-    expect(document.querySelector('dialog[open]')).toBeNull(); expect(panel().tagName).toBe('DIV'); expect(view().state.readOnly).toBe(false);
+    expect(document.querySelector('dialog[open]:not(.conversation-rail-dialog)')).toBeNull(); expect(panel().tagName).toBe('DIV'); expect(view().state.readOnly).toBe(false);
     [...panel().querySelectorAll<HTMLButtonElement>('button')].find(node => node.getAttribute('aria-label') === 'Close Heinlein')!.click(); expect(document.activeElement).toBe(view().contentDOM);
     view().dispatch({changes: {from: view().state.doc.length, insert: '\nAuthor keeps writing.'}});
     expect(button('Save').disabled).toBe(false); button('Save').click();
@@ -240,8 +240,8 @@ describe('Studio attributed revision workflow', () => {
   });
 });
 
-it('restores project chat across Studio scene switches and sends current Reading scene bytes',async()=>{
+it('keeps scene conversations separate and sends current Reading scene bytes',async()=>{
  const bridge=core();await start(bridge);await open();question('First scene');button('Send to OpenAI').click();await vi.waitFor(()=>expect(bridge.askQuestion).toHaveBeenCalledTimes(1));await vi.waitFor(()=>expect(button('Cancel request').hidden).toBe(true));
  bridge.readDocument.mockResolvedValueOnce({path:'second.md',text:'Second scene 🐺\r\nExact',contentHash:'b'.repeat(64),sizeBytes:26,frontmatter:null,generatedCompatibility:false});
- await app!.showDocument('second.md');button('Reading').click();await open();expect(document.querySelector('.question-transcript')!.textContent).toContain('First scene');question('Discuss current scene');button('Send to OpenAI').click();await vi.waitFor(()=>expect(bridge.askQuestion).toHaveBeenCalledTimes(2));expect(bridge.askQuestion.mock.calls[1][0]).toMatchObject({context:'Second scene 🐺\r\nExact',history:[{role:'user',text:'First scene'},{role:'assistant',text:'Read-only mock advice'}]});expect(bridge.saveDocument).not.toHaveBeenCalled();
+ await app!.showDocument('second.md');button('Reading').click();await open();expect(document.querySelector('.question-transcript')!.textContent).not.toContain('First scene');question('Discuss current scene');button('Send to OpenAI').click();await vi.waitFor(()=>expect(bridge.askQuestion).toHaveBeenCalledTimes(2));expect(bridge.askQuestion.mock.calls[1][0]).toMatchObject({context:'Second scene 🐺\r\nExact',history:[]});expect(bridge.saveDocument).not.toHaveBeenCalled();
 });

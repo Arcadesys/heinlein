@@ -162,6 +162,10 @@ export function renderMarkdown(doc: string, ranges: readonly ReaderRange[], mark
       point.className = 'cm-review-point';
       point.dataset.reviewId = mark.id;
       point.title = 'Suggested insertion. Click to open it.';
+      point.tabIndex = 0;
+      point.setAttribute('role', 'button');
+      point.setAttribute('aria-label', 'Suggested insertion. Open diff');
+      point.setAttribute('aria-haspopup', 'dialog');
       if (entry.from === mark.from) entry.node.before(point); else entry.node.after(point);
       marked.set(mark.id, point);
       continue;
@@ -175,9 +179,20 @@ export function renderMarkdown(doc: string, ranges: readonly ReaderRange[], mark
       span.className = className(mark);
       span.dataset.reviewId = mark.id;
       span.title = title(mark);
+      span.tabIndex = 0;
+      span.setAttribute('role', 'button');
+      span.setAttribute('aria-haspopup', 'dialog');
+      span.setAttribute('aria-description', `${title(mark)} Open diff`);
       entry.node.replaceWith(span);
       span.append(entry.node);
       if (!marked.has(mark.id)) marked.set(mark.id, span);
+    }
+  }
+  // Keep overlap highlights and exact click targets, with one interactive leaf
+  // per nested segment. The reader's next/open shortcuts still reach every mark.
+  for (const node of content.querySelectorAll<HTMLElement>('[role="button"]')) {
+    if (node.querySelector('[role="button"],button')) {
+      node.removeAttribute('role');node.removeAttribute('tabindex');node.removeAttribute('aria-haspopup');
     }
   }
   texts = [];
@@ -246,6 +261,8 @@ export function createMarkdownReader(hooks: {label: string; content(): ReaderCon
     hooks.open(node.dataset.reviewId);
   });
   element.addEventListener('keydown', event => {
+    const chip = (event.target as HTMLElement).closest?.<HTMLElement>('[data-review-id]');
+    if (hooks.open && chip?.dataset.reviewId && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); hooks.open(chip.dataset.reviewId); return; }
     if (!hooks.open || !marks.length || !event.altKey || event.shiftKey || !(isMac() ? event.metaKey : event.ctrlKey)) return;
     if (event.code === 'BracketRight' || event.code === 'BracketLeft') {
       event.preventDefault();

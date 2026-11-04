@@ -64,6 +64,14 @@ Object.assign(window,{questionsFixture:{
     if(!request||!finish)throw new Error('No pending request');
     finish({requestId:request.requestId,model:'synthetic',incomplete:false,text:JSON.stringify({schemaVersion:2,answer:'A stronger verb would make the rain more immediate.',strengths:['A clear station setting.'],findings:[{text:'Consider the sound of the rain.',evidence:'Rain tapped the glass roof.',editIds:['e1']}],edits:[{id:'e1',sceneIndex:0,original:'Rain tapped the glass roof.',replacement:'Rain drummed against the glass roof.',reason:'A stronger sound.',role:'editor'}]})});finish=null;
   },
+  finishConsolidatedReview() {
+    if(!reviewRequest||!reviewFinish)throw new Error('No review');
+    reviewFinish({schemaVersion:1,reviewId:'consolidated-review',requestId:reviewRequest.requestId,model:'synthetic',scope:reviewRequest.scope,edits:[],readingFeedback:[
+      {coverageId:'mechanical',path,reviewer:'Mechanical review',feedback:{overview:'No mechanical errors found.',strengths:[],improvements:[]}},
+      {coverageId:'contextual',path,reviewer:'Story and clarity review',feedback:{overview:'The station atmosphere builds tension around Mara’s wait.',strengths:['Rain gives the station a distinct sound.'],improvements:[{text:'Consider echoing the rain image later.',evidence:'Rain tapped the glass roof.',editIds:[]}]}},
+      {coverageId:'consolidation',path:'Selected review scope',reviewer:'Consolidated review',feedback:{overview:'The scene has a clear setting and a focused wait. The reviewers agree the prose reads cleanly; the story reviewer sees one optional opportunity.',assessment:{strengths:'The stopped clock and rain establish an unsettled station, while the final carriage gives Mara’s waiting a clear focus.',improvements:'Consider echoing the rain image at the carriage’s arrival. This is an optional story choice; the mechanical reviewer found no correction needed.'},strengths:[],improvements:[]}}
+    ]});reviewFinish=null;
+  },
   finishGroundedReview(count:number) {
     if(!reviewRequest||!reviewFinish)throw new Error('No review');
     reviewFinish({schemaVersion:1,reviewId:'grounded-review',requestId:reviewRequest.requestId,model:'synthetic',scope:reviewRequest.scope,edits:[],readingFeedback:[{path,reviewer:'Editor',feedback:{overview:'A clear, atmospheric scene.',strengths:['The station has a distinct sound.'],improvements:Array.from({length:count},()=>({text:'Consider echoing this image later.',evidence:'Rain tapped the glass roof.',editIds:[]}))}}]});reviewFinish=null;

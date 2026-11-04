@@ -143,6 +143,12 @@ pub enum DraftingChange {
         group_id: Option<String>,
         before_id: Option<String>,
     },
+    CreateSceneAdjacent {
+        title: String,
+        path: String,
+        scene_id: String,
+        after: bool,
+    },
     RenameFile {
         source_path: String,
         path: String,
@@ -1193,6 +1199,7 @@ impl Repository {
             recovery_journal_hash: None,
             external_guards: vec![],
         };
+        let mut adjacent_creation = None;
         let reordered = match &change {
             DraftingChange::ReorderScene {
                 scene_id,
@@ -1438,6 +1445,36 @@ impl Repository {
                     },
                     &before_id,
                 )?;
+                plan.preview.summary = "Create an empty Markdown scene".into();
+            }
+            DraftingChange::CreateSceneAdjacent {
+                title: name,
+                path,
+                scene_id,
+                after,
+            } => {
+                title(&name)?;
+                scene_path(&path)?;
+                let index = manifest
+                    .scenes
+                    .iter()
+                    .position(|scene| scene.id == scene_id)
+                    .ok_or(Error::DraftingChanged)?;
+                let group_id = manifest.scenes[index].group_id.clone();
+                let before = manifest
+                    .scenes
+                    .get(index + usize::from(after))
+                    .map(|scene| scene.id.clone());
+                let scene = DraftingScene {
+                    id: uuid(),
+                    title: name,
+                    path: path.clone(),
+                    group_id,
+                    reference: false,
+                };
+                adjacent_creation = Some((scene.id.clone(), scene_id, after));
+                self.add_new_file(&mut plan, &path, String::new(), None)?;
+                insert_scene(&mut manifest, scene, &before)?;
                 plan.preview.summary = "Create an empty Markdown scene".into();
             }
             DraftingChange::RenameFile { source_path, path } => {
@@ -2011,6 +2048,18 @@ impl Repository {
                 if !entries.iter().any(|e| e.id == entry.id) {
                     entries.push(entry);
                 }
+            }
+            if let Some((id, anchor, after)) = adjacent_creation {
+                let index = entries
+                    .iter()
+                    .position(|entry| entry.id == id)
+                    .ok_or(Error::InvalidManifest)?;
+                let item = entries.remove(index);
+                let anchor_index = entries
+                    .iter()
+                    .position(|entry| entry.id == anchor && entry.parent_id == item.parent_id)
+                    .ok_or(Error::DraftingChanged)?;
+                entries.insert(anchor_index + usize::from(after), item);
             }
             if let Some((id, before)) = reordered {
                 manifest.preserve_flat_order = false;
@@ -2820,6 +2869,188 @@ mod tests {
             });
         }
     }
+    #[test]
+    fn adjacent_scene_creation_preserves_both_orders_group_sources_and_undo() {
+        for anchor_index in 0..3 {
+            for after in [false, true] {
+                let f = Fixture::new();
+                f.initialize();
+                for path in ["ms/a.md", "ms/b.md", "ms/c.md"] {
+                    f.create(path);
+                    f.put(path, "Exact — e\u{301} 🦊 writing.\r\n");
+                }
+                let initial = f.repo.load_drafting().unwrap();
+                let group = DraftingGroup {
+                    id: uuid(),
+                    title: "Parent".into(),
+                };
+                let nested = DraftingGroup {
+                    id: uuid(),
+                    title: "Nested".into(),
+                };
+                let a = initial.scenes[0].id.clone();
+                let b = initial.scenes[1].id.clone();
+                let c = initial.scenes[2].id.clone();
+                f.apply(DraftingChange::OrganizeLibrary {
+                    groups: vec![group.clone(), nested.clone()],
+                    scene_titles: initial
+                        .scenes
+                        .iter()
+                        .map(|scene| LibrarySceneTitle {
+                            id: scene.id.clone(),
+                            title: scene.title.clone(),
+                        })
+                        .collect(),
+                    entries: vec![
+                        LibraryEntry {
+                            id: group.id.clone(),
+                            kind: LibraryEntryKind::Group,
+                            parent_id: None,
+                        },
+                        LibraryEntry {
+                            id: a,
+                            kind: LibraryEntryKind::Scene,
+                            parent_id: Some(group.id.clone()),
+                        },
+                        LibraryEntry {
+                            id: nested.id.clone(),
+                            kind: LibraryEntryKind::Group,
+                            parent_id: Some(group.id),
+                        },
+                        LibraryEntry {
+                            id: b,
+                            kind: LibraryEntryKind::Scene,
+                            parent_id: Some(nested.id),
+                        },
+                        LibraryEntry {
+                            id: c,
+                            kind: LibraryEntryKind::Scene,
+                            parent_id: None,
+                        },
+                    ],
+                });
+                let before = f.repo.load_drafting().unwrap();
+                let manifest_before = fs::read(f.repo.root().join(MANIFEST)).unwrap();
+                let anchor = &before.scenes[anchor_index];
+                let undo = f.apply(DraftingChange::CreateSceneAdjacent {
+                    title: "New scene".into(),
+                    path: "ms/new.md".into(),
+                    scene_id: anchor.id.clone(),
+                    after,
+                });
+                let result = f.repo.load_drafting().unwrap();
+                let created = result
+                    .scenes
+                    .iter()
+                    .find(|scene| scene.path == "ms/new.md")
+                    .unwrap();
+                assert_eq!(created.group_id, anchor.group_id);
+                assert!(!created.reference);
+                let position = result
+                    .scenes
+                    .iter()
+                    .position(|scene| scene.id == created.id)
+                    .unwrap();
+                assert_eq!(position, anchor_index + usize::from(after));
+                let siblings: Vec<_> = result
+                    .library
+                    .iter()
+                    .filter(|entry| entry.parent_id == anchor.group_id)
+                    .map(|entry| entry.id.as_str())
+                    .collect();
+                let anchor_position = siblings.iter().position(|id| *id == anchor.id).unwrap();
+                let created_position = siblings.iter().position(|id| *id == created.id).unwrap();
+                assert_eq!(
+                    created_position + usize::from(!after),
+                    anchor_position + usize::from(after)
+                );
+                assert_eq!(result.library_legacy, before.library_legacy);
+                assert_eq!(fs::read(f.repo.root().join("ms/new.md")).unwrap(), b"");
+                for path in ["ms/a.md", "ms/b.md", "ms/c.md"] {
+                    assert_eq!(
+                        fs::read_to_string(f.repo.root().join(path)).unwrap(),
+                        "Exact — e\u{301} 🦊 writing.\r\n"
+                    );
+                }
+                f.repo.undo_drafting(&undo, &f.recovery).unwrap();
+                assert_eq!(
+                    fs::read(f.repo.root().join(MANIFEST)).unwrap(),
+                    manifest_before
+                );
+                assert!(!f.repo.root().join("ms/new.md").exists());
+            }
+        }
+    }
+
+    #[test]
+    fn adjacent_scene_creation_rejects_missing_anchor_overwrite_and_stale_plan() {
+        let f = Fixture::new();
+        f.initialize();
+        f.create("ms/a.md");
+        f.put("ms/a.md", "Protected — source.\r\n");
+        let anchor = f.repo.load_drafting().unwrap().scenes[0].id.clone();
+        assert!(matches!(
+            f.preview(DraftingChange::CreateSceneAdjacent {
+                title: "New".into(),
+                path: "ms/new.md".into(),
+                scene_id: uuid(),
+                after: false
+            }),
+            Err(Error::DraftingChanged)
+        ));
+        assert!(f
+            .preview(DraftingChange::CreateSceneAdjacent {
+                title: "New".into(),
+                path: "ms/a.md".into(),
+                scene_id: anchor.clone(),
+                after: true
+            })
+            .is_err());
+        let plan = f
+            .preview(DraftingChange::CreateSceneAdjacent {
+                title: "New".into(),
+                path: "ms/new.md".into(),
+                scene_id: anchor,
+                after: true,
+            })
+            .unwrap();
+        f.create("ms/other.md");
+        assert!(matches!(
+            f.repo.apply_drafting(&plan, &f.recovery),
+            Err(Error::DraftingChanged)
+        ));
+        assert!(!f.repo.root().join("ms/new.md").exists());
+        assert_eq!(
+            fs::read_to_string(f.repo.root().join("ms/a.md")).unwrap(),
+            "Protected — source.\r\n"
+        );
+    }
+
+    #[test]
+    fn adjacent_scene_creation_keeps_legacy_scene_arrays_without_adding_a_library() {
+        for (index, after) in [(0, false), (1, true)] {
+            let f = Fixture::new();
+            f.initialize();
+            f.create("ms/a.md");
+            f.create("ms/b.md");
+            let before = f.repo.load_drafting().unwrap();
+            f.apply(DraftingChange::CreateSceneAdjacent {
+                title: "New".into(),
+                path: "ms/new.md".into(),
+                scene_id: before.scenes[index].id.clone(),
+                after,
+            });
+            let current = f.repo.load_drafting().unwrap();
+            assert_eq!(current.scenes[index + usize::from(after)].path, "ms/new.md");
+            let manifest = parse_workspace_manifest(
+                &fs::read_to_string(f.repo.root().join(MANIFEST)).unwrap(),
+            )
+            .unwrap();
+            assert!(manifest.library.is_none());
+            assert!(current.library_legacy);
+        }
+    }
+
     fn split_change(f: &Fixture, text: &str, offset: usize) -> DraftingChange {
         DraftingChange::SplitScene {
             scene_id: f.repo.load_drafting().unwrap().scenes[0].id.clone(),

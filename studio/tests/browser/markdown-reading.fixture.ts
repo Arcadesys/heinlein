@@ -3,7 +3,7 @@
 import { mountStudio } from '../../src/studio';
 import {EditorView} from '@codemirror/view';
 import {applyAppearance, DEFAULT_APPEARANCE} from '../../src/appearance';
-import type { LocalCore, Manuscript, ProposalOutcome, ProposalReceipt, RecoveryDraft, ReviewResult } from '../../src/localCore';
+import type { LocalCore, Manuscript, ProposalOutcome, ProposalReceipt, RecoveryDraft, ReviewResult, ReviewRequest } from '../../src/localCore';
 import '../../src/fonts.bundle';
 import '../../src/style.css';
 const params = new URLSearchParams(location.search);
@@ -42,7 +42,7 @@ persist();
 const doc = (path: string) => ({ path, text: stored.docs[path], contentHash: stored.docs[path] === baseline[path] ? hashes[path] : 'e'.repeat(64), sizeBytes: utf8(stored.docs[path]), frontmatter: null, generatedCompatibility: false });
 const book: Manuscript = { path: 'scene-manifest.json', project: 'Invented demo', schemaVersion: 1, volumes: [{ number: 1, title: 'Volume', path: '', chapters: [{ number: 1, title: 'The Salt Ledger', path: '', source: 'chapter.md', scenes: [{ path: 'opening.md' }, { path: 'harbor.md' }] }] }] };
 const useChapter = params.get('doc') === 'chapter.md';
-const session = { id: 'synthetic-markdown-session', name: 'Invented demo folder', manifests: useChapter ? ['scene-manifest.json'] : [] };
+const session = { id: 'synthetic-markdown-session', name: 'Invented demo folder', manifests: useChapter || params.has('chapterReview') ? ['scene-manifest.json'] : [] };
 function confirmation(edit: ReviewResult['edits'][number]) {
   return new Promise<boolean>(resolve => {
     const box = document.createElement('dialog');
@@ -94,7 +94,24 @@ if (params.has('sceneNavigation')) Object.assign(core, {
   loadDrafting: async () => ({manifestPath: 'ms/manuscript.json', revision: 'synthetic-navigation', project: 'Invented demo', groups: [], scenes: [{id: 'opening', title: 'Opening', path: 'opening.md', groupId: null}], untrackedPaths: [], missingPaths: []}),
   previewDraftingChange: unavailable, applyDraftingChange: unavailable, undoDraftingChange: unavailable,
 });
+const chapterPreviews: ReviewRequest[] = [], chapterRequests: ReviewRequest[] = [];
+const chapterCoverage = (request: ReviewRequest) => request.snapshots.map((s, sourceIndex) => ({id: `chunk-${sourceIndex}`, sourceIndex, fromUtf8: 0, toUtf8: utf8(s.source), windowFrom: 0, windowTo: utf8(s.source), reviewer: 0, status: 'queued', requestId: null, error: null}));
+if (params.has('chapterReview')) Object.assign(core, {
+  listReviews: async () => [],
+  previewReview: async (request: ReviewRequest) => {chapterPreviews.push(structuredClone(request)); return chapterCoverage(request);},
+  requestReview: async (request: ReviewRequest) => {
+    chapterRequests.push(structuredClone(request));
+    const value = record();
+    value.requestId = request.requestId; value.scope = request.scope;
+    value.edits = value.edits.filter(e => ['example-approve', 'example-harbor'].includes(e.id) && request.snapshots.some(s => s.path === e.path));
+    value.workflow!.sources = value.workflow!.sources.filter(s => request.snapshots.some(snapshot => snapshot.path === s.path));
+    value.workflow!.coverage = chapterCoverage(request).map(c => ({...c, status: 'completed', requestId: 'synthetic-call'}));
+    stored.record = structuredClone(value); persist();
+    return value;
+  },
+});
 const app = mountStudio(document.querySelector<HTMLElement>('#app')!, core);
+Object.assign(window, {chapterReviewFixture: {previews: chapterPreviews, requests: chapterRequests}});
 Object.assign(window, { readingFixture: { app, view: () => EditorView.findFromDOM(document.querySelector('.active-document-pane .cm-editor') as HTMLElement)!, theme: () => applyAppearance({...DEFAULT_APPEARANCE, theme: 'contrast'}), calls, get docs() { return stored.docs; }, baseline, get record() { return stored.record; } } });
 function mountGuide() {
   const style = document.createElement('style');
@@ -130,6 +147,7 @@ function mountGuide() {
   document.querySelector('.heinlein-review-panel .review-body')?.prepend(box);
 }
 void app.selectRepository(async () => session).then(() => app.showDocument(params.get('doc') ?? 'opening.md')).then(async () => {
+  if (params.has('chapterReview')) return;
   [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.startsWith('Heinlein')&&!b.textContent?.includes('Review'))?.click();
   document.querySelector<HTMLButtonElement>('.question-panel .heinlein-tabs button:nth-child(2)')?.click();
   mountGuide();

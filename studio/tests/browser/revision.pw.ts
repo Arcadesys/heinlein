@@ -4,10 +4,11 @@ import AxeBuilder from '@axe-core/playwright';
 const activate = async (locator: import('@playwright/test').Locator) => { await locator.focus(); await locator.page().keyboard.press('Enter'); };
 // Discarding is a full clear and lives in the results overflow menu; the × only tucks the review away.
 const discard = async (panel: import('@playwright/test').Locator) => { await activate(panel.getByRole('button', { name: 'More review actions', exact: true })); await activate(panel.getByRole('button', { name: 'Discard review', exact: true })); };
-const closeHeinlein = (panel: import('@playwright/test').Locator) => panel.getByRole('button', { name: 'Close Heinlein', exact: true }).click();
+const closeHeinlein = async (panel: import('@playwright/test').Locator) => { const dialog = panel.page().getByRole('dialog', {name: 'Review suggestion', exact: true}); if (await dialog.isVisible()) await dialog.getByRole('button', {name:'Close suggestion', exact:true}).click(); else await panel.getByRole('button', { name: 'Close Heinlein', exact: true }).click(); };
+const suggestion = (page: import('@playwright/test').Page) => page.getByRole('dialog', {name:'Review suggestion', exact:true});
 test('prepared conflict choice and two sequential approvals keep unrelated Unicode prose', async ({ page }) => {
     await page.goto('/tests/browser/revision.html');
-    const panel = page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
+    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
     await expect(panel).toBeVisible();
     for (let n = 0; n < 5; n++)
         await page.keyboard.press(process.platform === 'darwin' ? 'Meta+=' : 'Control+=');
@@ -16,6 +17,8 @@ test('prepared conflict choice and two sequential approvals keep unrelated Unico
     await activate(panel.getByRole('button', { name: 'Preview review', exact: true }));
     await expect(panel).toContainText('1 selected calls');
     await activate(panel.getByRole('button', { name: 'Run review', exact: true }));
+    await page.locator('.review-background').getByRole('button', {name:/Open review/}).click();
+    await expect(panel).toBeVisible();
     await expect(panel.locator('.review-edit')).toHaveCount(3);
     await expect(panel.locator('input[type=radio]:checked')).toHaveCount(0);
     // Check the actual pending diffs at enlarged text, not just an empty result.
@@ -54,13 +57,16 @@ test('prepared conflict choice and two sequential approvals keep unrelated Unico
 });
 test('rejected findings disappear only from pending and stay dismissed after close and page restart', async ({ page }) => {
     await page.goto('/tests/browser/revision.html');
-    const panel = page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
+    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
     await expect(panel).toBeVisible();
     await activate(panel.getByRole('button', { name: 'Preview review', exact: true }));
     await activate(panel.getByRole('button', { name: 'Run review', exact: true }));
+    await page.locator('.review-background').getByRole('button', {name:/Open review/}).click();
+    await expect(panel).toBeVisible();
     await activate(panel.locator('[data-finding-id="unrelated"]').getByRole('button', { name: 'Keep mine', exact: true }));
     await expect(panel.locator('[data-finding-id="unrelated"]')).toHaveCount(0);
     await discard(panel);
+    await page.getByRole('dialog', {name:'Scene and chapter chats',exact:true}).getByRole('button', {name:'Close chats',exact:true}).click();
     await openHeinleinReview(page);
     await activate(panel.getByRole('button', { name: 'Reopen saved review synthetic-review-stable', exact: true }));
     await expect(panel.locator('.review-edit')).toHaveCount(2);
@@ -83,7 +89,7 @@ async function openDemo(page: import('@playwright/test').Page) {
     await page.goto(demo);
     await page.evaluate(() => localStorage.clear());
     await page.goto(demo);
-    const panel = page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
+    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
     await expect(panel.locator('.review-edit')).toHaveCount(4);
     await expect(panel.locator('.fixture-demo')).toContainText('not native or provider acceptance');
     await expect(panel.locator('.fixture-demo')).toContainText('unchanged since reset');
@@ -182,46 +188,43 @@ test('demo marks: each highlight covers exactly its text and clicking opens only
     await closeHeinlein(panel);
     await expect(panel).toBeHidden();
     await mark(page, 'example-dismiss').click();
-    await expect(panel).toBeVisible();
-    const card = panel.locator('[data-finding-id="example-dismiss"]');
-    await expect(card.locator('h4')).toBeFocused();
-    await expect(card).toHaveClass(/review-opened/);
+    await expect(panel).toBeHidden();
+    const card = suggestion(page).locator('[data-finding-id="example-dismiss"]');
+    await expect(suggestion(page).getByRole('button', {name:'Close suggestion'})).toBeFocused();
     await expect(card).toBeInViewport();
     expect(await source(page)).toBe(baseline);
     expect(await page.evaluate(() => (window as any).reviewFixture.calls.filter((c: any) => c.action !== 'preview'))).toEqual([]);
-    await expect(panel.locator('.review-edit')).toHaveCount(4);
+    await expect(page.locator('.heinlein-review-panel .review-edit')).toHaveCount(3);
 });
 test('demo marks: an overlap opens the whole group with nothing chosen or applied', async ({ page }) => {
     const panel = await openDemo(page);
     const baseline = await source(page);
     await closeHeinlein(panel);
     await mark(page, 'example-overlap-spelling').click();
-    const group = panel.locator('.review-conflict');
-    await expect(group).toBeFocused();
-    await expect(group).toHaveClass(/review-opened/);
+    const group = suggestion(page).locator('.review-conflict');
+    await expect(suggestion(page).getByRole('button', {name:'Close suggestion'})).toBeFocused();
     await expect(group.locator('input[type=radio]:checked')).toHaveCount(0);
     await expect(group.getByRole('button', chooseFirst)).toBeDisabled();
     expect(await page.evaluate(() => (window as any).reviewFixture.record.edits.some((e: any) => e.selected))).toBe(false);
     expect(await source(page)).toBe(baseline);
 });
-test('demo marks: keyboard steps and opens without changing text, and marks add no tab stops', async ({ page }) => {
+test('demo marks: keyboard steps and opens without changing text, and chips are keyboard reachable', async ({ page }) => {
     const panel = await openDemo(page);
     const baseline = await source(page);
     await closeHeinlein(panel);
     await expect(page.locator('.cm-content')).toBeFocused();
-    expect(await page.locator('.cm-content [tabindex]').count()).toBe(0);
+    expect(await page.locator('.cm-content [data-review-id][tabindex="0"]').count()).toBeGreaterThan(0);
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
     await page.keyboard.press(`${modifier}+Alt+]`);
     await page.keyboard.press(`${modifier}+Alt+o`);
-    const first = panel.locator('[data-finding-id="example-approve"]');
-    await expect(first.locator('h4')).toBeFocused();
-    await expect(first).toHaveClass(/review-opened/);
+    const first = suggestion(page).locator('[data-finding-id="example-approve"]');
+    await expect(first).toBeVisible();
     expect(await source(page)).toBe(baseline);
     await closeHeinlein(panel);
     // Stepping back from the first mark wraps to the last one in the text.
     await page.keyboard.press(`${modifier}+Alt+[`);
     await page.keyboard.press(`${modifier}+Alt+o`);
-    await expect(panel.locator('[data-finding-id="example-dismiss"] h4')).toBeFocused();
+    await expect(suggestion(page).locator('[data-finding-id="example-dismiss"]')).toBeVisible();
 });
 test('demo marks: caret, drag selection, typing and layout stay ordinary editing', async ({ page }) => {
     const panel = await openDemo(page);
@@ -266,7 +269,7 @@ test('demo marks: insertion and removal markers are visible, click through and d
     await page.goto(url);
     await page.evaluate(() => localStorage.clear());
     await page.goto(url);
-    const panel = page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
+    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
     await expect(panel.locator('.review-edit')).toHaveCount(8);
     await expect(mark(page, 'marker-delete')).toHaveText(' again');
     const point = page.locator('.cm-review-point');
@@ -280,14 +283,14 @@ test('demo marks: insertion and removal markers are visible, click through and d
     await point.scrollIntoViewIfNeeded();
     const box = (await point.boundingBox())!;
     await page.mouse.click(box.x, box.y + box.height / 2);
-    await expect(panel.locator('[data-finding-id="marker-insert"] h4')).toBeFocused();
+    await expect(suggestion(page).locator('[data-finding-id="marker-insert"]')).toBeVisible();
 });
 test('demo marks: an approved insertion keeps the other marks on their exact words, including after Refresh review', async ({ page }) => {
     const url = `${demo}&markers=1`;
     await page.goto(url);
     await page.evaluate(() => localStorage.clear());
     await page.goto(url);
-    const panel = page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
+    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
     await expect(page.locator('.cm-content [data-review-id]')).toHaveCount(8);
     await activate(panel.locator('[data-finding-id="marker-insert"]').getByRole('button', approve));
     await activate(page.getByRole('dialog', { name: 'Simulated final confirmation' }).getByRole('button', { name: 'Confirm and apply', exact: true }));
@@ -306,7 +309,7 @@ test('demo marks: Next then Open reaches the exact card at shared boundaries, an
     await page.goto(url);
     await page.evaluate(() => localStorage.clear());
     await page.goto(url);
-    const panel = page.getByRole('dialog', { name: 'Heinlein Review', exact: true });
+    const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
     await expect(page.locator('.cm-content [data-review-id]')).toHaveCount(8);
     const baseline = await source(page);
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
@@ -316,9 +319,8 @@ test('demo marks: Next then Open reaches the exact card at shared boundaries, an
         await expect(page.locator('.cm-content')).toBeFocused();
         await page.keyboard.press(`${modifier}+Alt+]`);
         await page.keyboard.press(`${modifier}+Alt+o`);
-        await expect(panel.locator(`[data-finding-id="${id}"] h4`)).toBeFocused();
-        await expect(panel.locator(`[data-finding-id="${id}"]`)).toHaveClass(/review-opened/);
-        await expect(panel.locator('.review-opened')).toHaveCount(1);
+        await expect(suggestion(page).locator(`[data-finding-id="${id}"]`)).toBeVisible();
+        await expect(suggestion(page).getByRole('button', {name:'Close suggestion'})).toBeFocused();
     }
     expect(await source(page)).toBe(baseline);
     expect(await page.evaluate(() => (window as any).reviewFixture.calls.filter((c: any) => c.action !== 'preview'))).toEqual([]);
@@ -363,7 +365,7 @@ test('demo marks: hover, modified clicks and composition never open a card, and 
     await page.locator('.cm-content').dispatchEvent('compositionend', { data: '' });
     await page.waitForTimeout(150);
     await target.click({ position: { x: 3, y: 5 } });
-    await expect(panel.locator('[data-finding-id="example-approve"] h4')).toBeFocused();
+    await expect(suggestion(page).locator('[data-finding-id="example-approve"]')).toBeVisible();
     await closeHeinlein(panel);
     await page.keyboard.type('Z');
     await expect(page.locator('.cm-line', { hasText: 'Marlo counted' })).toContainText(/manifest w?Z?e?r?e?Z?/);
@@ -372,4 +374,43 @@ test('demo marks: hover, modified clicks and composition never open a card, and 
     const at = line!.indexOf('Z'), word = line!.indexOf('The manifest ') + 'The manifest '.length;
     expect(at).toBeGreaterThanOrEqual(word);
     expect(at).toBeLessThanOrEqual(word + 4);
+});
+
+test('inline suggestion dialog: diff, Escape, guarded accept and durable reject without reflow', async ({page}, info) => {
+    const errors: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    const panel = await openDemo(page);
+    await closeHeinlein(panel);
+    await expect(page).toHaveTitle('Synthetic revision workflow acceptance');
+    await expect(page).toHaveURL(/revision.html/);
+    const before = await geometry(page), original = await source(page);
+    const chip = mark(page, 'example-dismiss');
+    await chip.focus(); await page.keyboard.press('Enter');
+    const dialog = suggestion(page);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('.review-inline-diff')).toBeVisible();
+    await expect(dialog.getByRole('button', {name:'Accept…', exact:true})).toBeEnabled();
+    await expect(dialog.getByRole('button', {name:'Reject', exact:true})).toBeEnabled();
+    expect(await geometry(page)).toEqual(before);
+    expect(await source(page)).toBe(original);
+    expect((await new AxeBuilder({page}).include('.review-suggestion-dialog').analyze()).violations).toEqual([]);
+    expect(await dialog.evaluate(n => n.scrollWidth <= n.clientWidth)).toBe(true);
+    await expect(page.locator('vite-error-overlay')).toHaveCount(0);
+    await page.screenshot({path:`/tmp/heinlein-inline-suggestion-${info.project.name}.png`});
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0); await expect(chip).toBeFocused();
+    await page.keyboard.press('Enter');
+    await dialog.getByRole('button', {name:'Reject', exact:true}).click();
+    await expect(chip).toHaveCount(0);
+    expect(await source(page)).toBe(original);
+    expect(await page.evaluate(() => (window as any).reviewFixture.record.edits.find((e:any) => e.id === 'example-dismiss').status)).toBe('rejected');
+    await mark(page, 'example-approve').click();
+    await suggestion(page).getByRole('button', {name:'Accept…', exact:true}).click();
+    const confirm = page.getByRole('dialog', {name:'Simulated final confirmation'});
+    await expect(confirm).toBeVisible(); expect(await source(page)).toBe(original);
+    await confirm.getByRole('button', {name:'Confirm and apply', exact:true}).click();
+    await expect(mark(page,'example-approve')).toHaveCount(0);
+    expect(await source(page)).toBe(original.replace('were', 'was'));
+    expect(errors).toEqual([]);
 });

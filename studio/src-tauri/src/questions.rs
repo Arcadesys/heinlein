@@ -573,6 +573,18 @@ pub(crate) fn select_question_model(
 }
 
 #[tauri::command]
+pub(crate) async fn restore_question_connection(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    let auth = host.auth(&app)?;
+    // Restore does not clear quota state or interrupt an existing question.
+    host.status(auth.restore_saved().await?)
+}
+
+#[tauri::command]
 pub(crate) async fn refresh_question_connection(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
@@ -1216,13 +1228,14 @@ async fn request_review_workflow(
     }
     let _active = Active(&host.review_active);
     let capture_repository = request.repository_id.clone();
-    let(defs,coverage,remaining)=super::with_repository(&app,&capture_repository,|repo|{
+    let(defs,coverage,remaining,reports)=super::with_repository(&app,&capture_repository,|repo|{
   let mut slot=host.review.lock().map_err(|_|"Review unavailable")?;
   if let Some(id)=request.workflow.as_ref().and_then(|o|o.review_id.as_ref()){
    ensure_review(&app,&mut slot,repo,&request.repository_id,id)?;
    let session=slot.as_mut().ok_or("Review unavailable")?;
    let mut old=session.request.clone();old.request_id=request.request_id.clone();old.workflow.as_mut().unwrap().review_id=Some(id.clone());
    if serde_json::to_value(&old).map_err(|_|"Invalid review")?!=serde_json::to_value(&request).map_err(|_|"Invalid review")?||!session.connection_matches(&connection.account_id,&connection.model,connection.generation){return Err("Continue requires the same captured scope, reviewer definitions, account and model".into())}
+   if session.requeue_failed(|snapshot| repo.read(&snapshot.path).is_ok_and(|current| !current.generated_compatibility && current.text == snapshot.source))? {session.persist(&review_records(&app)?,repo)?;}
    session.set_request_id(request.request_id.clone());session.bind_batch_generation(connection.generation);
   }else{
    let mapping=repo.load_drafting().map_err(|e|e.to_string())?;
@@ -1231,7 +1244,7 @@ async fn request_review_workflow(
    for snapshot in request.snapshots.iter().chain(request.workflow.as_ref().unwrap().context.iter()) {let current=repo.read(&snapshot.path).map_err(|e|e.to_string())?;if current.generated_compatibility||(current.content_hash!=snapshot.source_hash&&current.text!=snapshot.source){return Err("A selected source/context changed; capture the review again".into())}}
    let mut session=crate::review_state::ReviewSession::workflow(request.clone(),repo.project_key(),connection.model.clone(),connection.account_id.clone(),connection.generation)?;session.persist(&review_records(&app)?,repo)?;*slot=Some(session);
   }
-  let session=slot.as_ref().ok_or("Review unavailable")?;Ok((session.definitions(),session.coverage(),session.remaining_findings()))
+  let session=slot.as_ref().ok_or("Review unavailable")?;Ok((session.definitions(),session.coverage(),session.remaining_findings(),session.reviewer_reports()))
  }).map_err(NativeError::revision)?;
     if remaining == 0 {
         return Err(NativeError::revision("The retained finding limit is reached. Start a smaller explicit review; no call was sent."));
@@ -1317,6 +1330,7 @@ async fn request_review_workflow(
             coverage,
             defs,
             remaining,
+            reports,
             progress,
         )
         .await?;

@@ -1,0 +1,51 @@
+import {EditorView} from '@codemirror/view';
+// Synthetic local conversations and reviews. No file, provider or approval authority.
+import '../../src/fonts.bundle';import '../../src/style.css';
+import {mountStudio} from '../../src/studio';
+import {putThread,readThreads,sceneThreadScope,groupThreadScope} from '../../src/threadStore';
+import {saveConversation,conversationKey} from '../../src/questionHistoryStore';
+import type {DraftingState,LocalCore,QuestionRequest,ReviewResult,ReviewRequest} from '../../src/localCore';
+const session={id:'threads-fixture',projectKey:'threads-book',name:'Synthetic book',manifests:[]};
+const state:DraftingState={manifestPath:'ms/index.json',revision:'r',project:'Synthetic book',groups:[{id:'nine',title:'Chapter 9'},{id:'nested',title:'Nested group'},{id:'ten',title:'Chapter 10'}],scenes:[{id:'a',title:'Rain scene',path:'ms/a.md',groupId:'nine'},{id:'b',title:'Harbor scene',path:'ms/b.md',groupId:'nested'},{id:'c',title:'Other scene',path:'ms/c.md',groupId:'ten'}],library:[{id:'nine',kind:'group',parentId:null},{id:'nested',kind:'group',parentId:'nine'},{id:'ten',kind:'group',parentId:null},{id:'a',kind:'scene',parentId:'nine'},{id:'b',kind:'scene',parentId:'nested'},{id:'c',kind:'scene',parentId:'ten'}],untrackedPaths:[],missingPaths:[]};
+const original='# Rain\n\nRain tapped the glass roof.\n\nMara waited for the final carriage.\n';let saves=0;
+const initialSheets:Record<string,string>={'ms/a.md':original,'ms/b.md':'---\r\ntitle: Harbor\r\n---\r\nHarbor 🦊—view.\r\nMixed newline.\n','ms/c.md':'Other chapter prose.\n'};
+const disk:Record<string,string>=JSON.parse(localStorage.getItem('threads-fixture-disk')??'null')??initialSheets;
+const drafts:Record<string,any>=JSON.parse(localStorage.getItem('threads-fixture-drafts')??'{}');
+if(new URLSearchParams(location.search).has('recovery'))drafts['ms/b.md']={id:'recover',path:'ms/b.md',baseHash:'a'.repeat(64),text:'Kept recovery prose.',updatedAt:0};
+const hash=async(text:string)=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(b=>b.toString(16).padStart(2,'0')).join('');
+const doc=async(path:string,text=disk[path])=>({path,text,contentHash:await hash(text),sizeBytes:new TextEncoder().encode(text).length,frontmatter:null,generatedCompatibility:false});
+const review:ReviewResult={schemaVersion:2,reviewId:'chapter-review',requestId:'saved',model:'synthetic',scope:'chapter',edits:[],workflow:{definitions:[],coverage:[],sources:['ms/a.md','ms/b.md'].map((path,order)=>({id:path,path,sourceHash:'a'.repeat(64),readOnly:false,order})),decisions:[],accountId:'account',accountGeneration:1,contextNotice:'Synthetic chapter assessment.'},readingFeedback:[{coverageId:'consolidation',path:'Selected review scope',reviewer:'Consolidated review',feedback:{overview:'The chapter balances rain and harbor imagery.',assessment:{strengths:'The setting remains clear.',improvements:'Consider the transition between scenes.'},strengths:[],improvements:[]}}]};
+if(!readThreads(session.projectKey).length){
+ for(const [id,path,question] of [['a','ms/a.md','Rain motivation'],['b','ms/b.md','Harbor pacing'],['c','ms/c.md','Other chapter topic']]){
+  const storageKey=conversationKey(session.projectKey,'account','synthetic')+':thread:'+id;
+  saveConversation(storageKey,{turns:[{question,answer:{requestId:id,model:'synthetic',text:`Saved answer about ${question}.`,incomplete:false},contextBytes:0,scenePath:path}],draft:'',forgotten:0});
+  putThread(session.projectKey,{id,kind:'conversation',title:question,scope:sceneThreadScope(path,state),storageKey,status:'open',updatedAt:1,accountId:'account',model:'synthetic'});
+ }
+ putThread(session.projectKey,{id:'review:chapter-review',kind:'review',title:'Chapter transition review',scope:groupThreadScope('nine',state),reviewId:'chapter-review',status:'open',updatedAt:2,model:'synthetic'});
+}
+const requests:QuestionRequest[]=[];
+const core={available:()=>true,pickRepository:async()=>session,recentRepositories:async()=>[],listDirectory:async()=>[],readDocument:async(_id:string,path:string)=>doc(path),loadManuscript:async()=>null,saveDocument:async(_id:string,path:string,expected:string,text:string)=>{if(expected!==await hash(disk[path]))throw Error('Source changed');saves++;disk[path]=text;localStorage.setItem('threads-fixture-disk',JSON.stringify(disk));return doc(path,text);},readRecovery:async(_id:string,path:string)=>drafts[path]??null,stageRecovery:async(_id:string,path:string,baseHash:string,text:string)=>{const draft={id:crypto.randomUUID(),path,baseHash,text,updatedAt:0};drafts[path]=draft;localStorage.setItem('threads-fixture-drafts',JSON.stringify(drafts));return draft;},discardRecovery:async(_id:string,path:string)=>{delete drafts[path];localStorage.setItem('threads-fixture-drafts',JSON.stringify(drafts));},setUnsavedChanges:async()=>{},requestClose:async()=>{},onCloseRequested:async()=>()=>{},listSystemFonts:async()=>[],loadDrafting:async()=>state,previewDraftingChange:async()=>({id:'preview',summary:'No mutation',changes:[],warnings:[]}),applyDraftingChange:async()=>({state,undoId:'undo'}),undoDraftingChange:async()=>state,questionStatus:async()=>({configured:true,model:'synthetic',selectedModel:'synthetic',models:[{slug:'synthetic',displayName:'Synthetic'}],accounts:[{id:'account',label:'Synthetic',signedIn:true,planEnabled:true}],activeAccountId:'account',generation:1,usageLimited:false,signInPending:false,message:'Ready'}),askQuestion:async(request:QuestionRequest)=>{requests.push(request);return {requestId:request.requestId,model:'synthetic',text:'Synthetic new answer.',incomplete:false};},cancelQuestion:async()=>true,listReviews:async()=>[review],getReview:async()=>review} as unknown as LocalCore;
+// One-click chapter review uses only synthetic responses and persists them across reloads.
+const automaticRequests:ReviewRequest[]=[],automaticContinuations:string[]=[];
+let automaticReview:ReviewResult|null=JSON.parse(localStorage.getItem('threads-fixture-review')??'null');
+const builtinReviewers=[{id:'mechanical',version:1,displayName:'Mechanical review',instructions:'Mechanical assessment.'},{id:'contextual',version:1,displayName:'Story and clarity review',instructions:'Story assessment.'}];
+const customReviewers=new URLSearchParams(location.search).has('customAgents')?Array.from({length:4},(_,i)=>({id:`custom-${i}`,version:1,displayName:`Custom agent ${i}`,description:'Synthetic only',instructions:'Advice only.',output:'notes' as const})):[];
+const chapterReviewers=[...builtinReviewers,...customReviewers];
+function completedReview(request:ReviewRequest,count:number,persist=true):ReviewResult {
+ const value:ReviewResult={...structuredClone(review),reviewId:'automatic-chapter',requestId:request.requestId,revision:count,workflow:{...structuredClone(review.workflow!),definitions:chapterReviewers.map((definition,index)=>({instanceId:`reviewer-${index}`,definition,hash:'b'.repeat(64)})),sources:request.snapshots.map((s,order)=>({id:s.path,path:s.path,sourceHash:s.sourceHash,readOnly:false,order})),coverage:Array.from({length:10},(_,i)=>({id:i===9?'consolidation':`pass-${i}`,sourceIndex:i%request.snapshots.length,fromUtf8:0,toUtf8:1,windowFrom:0,windowTo:1,reviewer:i===9?chapterReviewers.length:i%chapterReviewers.length,status:i<count?'completed':'queued',requestId:i<count?'synthetic-call':null,error:null}))},readingFeedback:[{coverageId:'pass-0',path:'ms/a.md',reviewer:'Mechanical review',feedback:{overview:'Individual mechanical pass keeps the intentional fragments.',assessment:{strengths:'Clear punctuation.',improvements:'No mechanical correction needed.'},strengths:[],improvements:[]}}]};
+ for(const [index,d] of customReviewers.entries())value.readingFeedback!.push({coverageId:`pass-${index+2}`,path:'ms/a.md',reviewer:d.displayName,feedback:{overview:`${d.displayName} individual feedback.`,assessment:{strengths:'Effective scene voice.',improvements:'Consider the transition.'},strengths:[],improvements:[]}});
+ if(count===10)value.readingFeedback!.push({coverageId:'consolidation',path:'Selected review scope',reviewer:'Consolidated review',feedback:{overview:'Combined chapter feedback from all reviewer passes.',assessment:{strengths:'Rain and harbor imagery establish place.',improvements:'Consider a clearer transition between sheets.'},strengths:[],improvements:[]}});
+ if(persist){automaticReview=value;localStorage.setItem('threads-fixture-review',JSON.stringify(value));}return structuredClone(value);
+}
+if(new URLSearchParams(location.search).has('automaticReview'))Object.assign(core,{
+ reviewDefinitions:async()=>chapterReviewers,
+ listCustomReviewers:async()=>customReviewers,
+ previewReview:async(request:ReviewRequest)=>completedReview(request,0,false).workflow!.coverage,
+ requestReview:async(request:ReviewRequest)=>{automaticRequests.push(structuredClone(request));return completedReview(request,8);},
+ continueReview:async(_repo:string,_review:string,requestId:string)=>{automaticContinuations.push(requestId);return completedReview({...automaticRequests[0],requestId},10);},
+ listReviews:async()=>automaticReview?[review,automaticReview]:[review],
+ getReview:async(_repo:string,id:string)=>id==='automatic-chapter'?structuredClone(automaticReview):structuredClone(review),
+});
+Object.assign(window,{automaticChapterFixture:{requests:automaticRequests,continuations:automaticContinuations}});
+const app=mountStudio(document.querySelector<HTMLElement>('#app')!,core);const ready=app.selectRepository(async()=>session).then(()=>new URLSearchParams(location.search).has('empty')?undefined:app.showDocument('ms/a.md'));
+Object.assign(window,{threadsFixture:{ready,source:()=>({original,saves,requests,disk,drafts}),selectText:(text:string)=>{const view=EditorView.findFromDOM(document.querySelector('.cm-content')!)!;const from=view.state.doc.toString().indexOf(text);if(from<0)throw Error('Missing test passage');view.dispatch({selection:{anchor:from,head:from+text.length}});view.focus();},tryBoundary:()=>{const view=EditorView.findFromDOM(document.querySelector('.cm-content')!)!;const from=view.state.doc.toString().indexOf('\n\n---\n\n');view.dispatch({changes:{from,to:from+7,insert:''}});},showScene:(path:string)=>app.showDocument(path)}});

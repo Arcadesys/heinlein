@@ -1,3 +1,4 @@
+import {readThreads,putThread,removeThread,type WriterThread,type ThreadScope} from './threadStore';
 import {conversationKey,loadConversation,saveConversation} from './questionHistoryStore';
 import {createQuestionComparison, createQuestionDiffChips} from './questionDiff';
 import type {ProposalReview} from './localCore';
@@ -12,10 +13,14 @@ export const QUESTION_LIMITS = Object.freeze({question: 4000, context: 16000, in
 export const questionBytes = (text: string) => new TextEncoder().encode(text).length;
 export interface QuestionScene {
   repositoryId: string; projectKey?: string; path: string; source: string; from: number; to: number;
-  canCapture: boolean;
+  canCapture: boolean;contextLabel?:string;
 }
 export interface PassageItem {id: string; from: number; to: number; label: string; active: boolean; stale: boolean}
 export interface QuestionPanelHooks {
+  rail?:boolean;
+  closePane?():void;
+  threadScope?(): ThreadScope | null;
+  threadsChanged?(): void;
   passages?: {select(from: number, to: number): void; changed(items: PassageItem[]): void};
   current(): QuestionScene | null;
   focusEditor(): void;
@@ -84,13 +89,14 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   let seenConnection: string | null = null;
   let selectedAccountId: string | null = null; let reauthorizing = false; let addingAccount = false;
   let storedKey: string | null = null; let storageFailed = false;
+  let selectedThread: WriterThread | null = null; let threadProject: string | null = null; let forceNewThread = false;let reopenThread = false;
   let contextMode: 'scene' | 'snapshot' | 'none' = 'scene';
   let context = ''; let contextLabel = 'None. No manuscript text will be sent.';
   let contextVersion = 0; let preparing = false;
   let target: SelectionQuestionState | null = null;
   const revisionActions: (() => void)[] = [];
   let turns: Turn[] = []; let forgotten = 0; let pending: QuestionRequest | null = null; let pendingRevision = false;
-  interface Passage {id: string; scene: QuestionScene; binding: SelectionQuestionState | null; turns: Turn[]; context: string; contextLabel: string; contextVersion: number; contextMode: 'scene' | 'snapshot' | 'none'; target: SelectionQuestionState | null; mode: string; draft: string; title: string; status: string; stale: boolean}
+  interface Passage {thread?:WriterThread; id: string; scene: QuestionScene; binding: SelectionQuestionState | null; turns: Turn[]; context: string; contextLabel: string; contextVersion: number; contextMode: 'scene' | 'snapshot' | 'none'; target: SelectionQuestionState | null; mode: string; draft: string; title: string; status: string; stale: boolean}
   const passages: Passage[] = []; let passageId = 0; let activePassage: Passage | null = null; let sessionPath: string | null = null;
   let notifying = false; let fullReviewCancel: (() => void) | null = null;
   const passagePicker = el('details', '', 'question-passage-picker'); passagePicker.hidden = !integrated;
@@ -101,10 +107,11 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   let showSettings = false;
   const connectionArea = el('section', '', 'question-connection-area'); connectionArea.setAttribute('aria-label', 'Account and storage');
   const body = el('div', '', 'heinlein-body');
+  const threadBanner=el('p','','question-thread-scope');threadBanner.hidden=!hooks.threadScope;
   const settingsToggle = button(unified ? '' : 'Connect ChatGPT', () => {showSettings = !showSettings; update(); if (showSettings) {body.scrollTop = 0; connectionArea.querySelector<HTMLElement>('button, summary')?.focus({preventScroll:true});}}, 'question-settings-toggle');
   // The unified pane shares one compact header with Heinlein Review.
-  const header = unified ? createHeinleinHeader({tabs: hooks.headerTabs!, status: settingsToggle, close: () => collapse()}) : el('div', '', 'question-heading');
-  const heading = el('div'); heading.append(el('h3', 'Writing conversation'), el('p', 'Project conversation · shared across scenes.', 'muted'));
+  const header = unified ? createHeinleinHeader({tabs: hooks.headerTabs!, status: settingsToggle, close: () => {collapse();hooks.closePane?.();}}) : el('div', '', 'question-heading');
+  const heading = el('div'); heading.append(el('h3', 'Writing conversation'), el('p', hooks.threadScope ? 'Conversation attached to this scene or chapter.' : 'Project conversation · shared across scenes.', 'muted'));
   const closeButton = unified ? header.querySelector<HTMLButtonElement>('.heinlein-close')! : button(integrated ? 'Collapse' : 'Close questions', () => integrated ? collapse() : close(true));
   if (unified) {setHeinleinStatus(settingsToggle, 'checking', 'Checking connection');} else if (integrated) header.append(el('h3', 'Questions'), closeButton); else header.append(heading, closeButton);
   const connection = el('p', '', 'question-connection'); connection.setAttribute('role', 'status');
@@ -195,9 +202,10 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     status.textContent = !wasSent ? 'Local preparation canceled. No request was sent.' : wasRevision ? 'Stopped locally. A pending suggestion may already have been recorded; check Proposed revisions. OpenAI usage may still count. Your manuscript was not changed.' : 'Canceled locally. OpenAI may already have processed the request; it can still count toward your plan usage.'; update();
   }); cancel.hidden = true;
   const reset = button('Clear conversation', () => {
-    if (storedKey) {try {localStorage.removeItem(storedKey);storageFailed=false;persistence.textContent='Saved conversation cleared.';} catch {storageFailed=true;persistence.textContent='Saved conversation could not be cleared. Try again before closing.';return;}}
+    if (storedKey) {try {localStorage.removeItem(storedKey);if(selectedThread&&threadProject){removeThread(threadProject,selectedThread.id);hooks.threadsChanged?.();}storageFailed=false;persistence.textContent='Saved conversation cleared.';} catch {storageFailed=true;persistence.textContent='Saved conversation could not be cleared. Try again before closing.';return;}}
     fullReviewCancel?.();
     const wasPending = Boolean(pending); const wasRevision = pendingRevision; resetContents();
+    if(hooks.threadScope){storedKey=null;if(configuration)restoreConversation(configuration);}
     update();
     status.textContent = wasPending ? 'Conversation cleared and request canceled locally. Previously sent text cannot be recalled from OpenAI.' : 'Conversation cleared from this project’s saved chat. Previously sent text cannot be recalled from OpenAI.';
     if (wasRevision) status.textContent += ' A pending suggestion may already have been recorded; check Proposed revisions.';
@@ -274,7 +282,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       chips.append(passageChip.node, sceneChip.node, addPassage, addScene);
       sendNote.append(sendNoteText, contextDetails);
       composer.classList.add('heinlein-composer'); composer.replaceChildren(passageQuote, passageNote, chips, questionLabel, requestNote, actions, sendNote, status);
-      body.append(el('h3', 'Conversation', 'sr-only'), connectionArea, passagePicker, fullReview, transcript, waiting, streaming);
+      body.append(el('h3', 'Conversation', 'sr-only'), threadBanner, connectionArea, passagePicker, fullReview, transcript, waiting, streaming);
       element.append(header, body, composer);
     } else {
       composer.replaceChildren(modeLabel, questionLabel, requestNote, actions, contextSummary, contextDetails, status);
@@ -290,8 +298,8 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const textSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
     dedicated = integrated && (Boolean(layoutQuery?.matches) || window.innerWidth < 64 * textSize);
     element.dataset.presentation = dedicated ? 'dedicated' : 'overlay';
-    element.setAttribute('role', integrated ? 'dialog' : 'complementary');
-    if (integrated) element.setAttribute('aria-modal', 'true'); else element.removeAttribute('aria-modal');
+    element.setAttribute('role', hooks.rail?'region':integrated ? 'dialog' : 'complementary');
+    if (integrated&&!hooks.rail) element.setAttribute('aria-modal', 'true'); else element.removeAttribute('aria-modal');
     if (integrated && !element.hidden && !element.contains(document.activeElement)) closeButton.focus({preventScroll: true});
   }
   layoutQuery?.addEventListener?.('change', presentation); window.addEventListener('resize', presentation); presentation();
@@ -299,7 +307,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   textObserver.observe(document.documentElement, {attributes: true, attributeFilter: ['style', 'data-zoom']});
   const headerObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => { element.style.setProperty('--question-header-height', `${header.offsetHeight + 16}px`); }); headerObserver?.observe(header);
   element.addEventListener('keydown', event => {
-    if (event.key !== 'Tab' || !integrated) return;
+    if (event.key !== 'Tab' || !integrated || hooks.rail) return;
     const focusable = [...element.querySelectorAll<HTMLElement>('button, select, textarea, input, summary, [tabindex="0"]')].filter(node => !node.closest('[hidden]') && !node.matches(':disabled') && node.getClientRects().length && !node.closest('details:not([open]) :not(summary)'));
     const first = focusable[0]; const last = focusable.at(-1);
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
@@ -324,7 +332,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   });
   // Escape is scoped to this panel; the editor keeps all its own shortcuts.
   element.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && !event.isComposing) {event.preventDefault(); event.stopPropagation(); (integrated ? collapse() : close(true));}
+    if (event.key === 'Escape' && !event.isComposing) {event.preventDefault();event.stopPropagation();if(integrated){collapse();hooks.closePane?.();}else close(true);}
   });
   function live() { return !disposed && (integrated || !element.hidden) && hooks.current()?.repositoryId === session && (!integrated || hooks.current()?.path === sessionPath); }
   function activeAccount() { return configuration?.accounts.find(account => account.id === configuration?.activeAccountId); }
@@ -339,6 +347,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   function targetBytes() {return mode.value === 'revision' && target ? questionBytes(target.source.slice(target.from, target.to)) : 0;}
   function outgoingHistory() { if (mode.value === 'revision') return []; return questionHistory(messages(), Math.max(0, (mode.value === 'revision' ? QUESTION_LIMITS.input : QUESTION_LIMITS.sceneInput) - questionBytes(question.value) - questionBytes(context) - targetBytes())); }
   function revisionProblem(snapshot?: SelectionQuestionSnapshot, reviewing = false) {
+    if(hooks.threadScope?.()?.kind==='chapter')return 'Open a source scene to request a passage revision. Chapter conversations provide advice only.';
     if (!core.suggestQuestionRevision || !hooks.reviewRevision || !core.rejectProposal) return 'Revision review is unavailable in this native host.';
     const unavailable = hooks.revisionUnavailable?.(reviewing); if (unavailable) return unavailable;
     let current = hooks.selectionState?.(reviewing) ?? null;
@@ -350,12 +359,12 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     if (targetBytes() > QUESTION_LIMITS.context) return 'The revision target exceeds 16,000 UTF-8 bytes. Select a shorter passage.';
     return selectionQuestionAvailability(current);
   }
-  function outgoingProblem() {return (contextMode === 'scene' && mode.value !== 'revision' && !hooks.current()?.canCapture ? 'The current scene is unavailable. Open an editable scene or choose Remove context.' : null) ?? questionProblem(question.value, context, contextMode === 'scene' && mode.value !== 'revision' ? QUESTION_LIMITS.scene : QUESTION_LIMITS.context) ?? (mode.value === 'revision' ? revisionProblem() : null) ?? (questionBytes(question.value) + questionBytes(context) + targetBytes() > (mode.value === 'revision' ? QUESTION_LIMITS.input : QUESTION_LIMITS.sceneInput) ? 'The question, target, and context exceed 32,000 UTF-8 bytes. Remove context or shorten the selection.' : null);}
+  function outgoingProblem() {return (selectedThread && configuration && (selectedThread.accountId !== configuration.activeAccountId || selectedThread.model !== configuration.selectedModel) ? 'This saved thread is read-only with the current connection. Switch to its account and model, or start a new conversation.' : null) ?? (contextMode === 'scene' && mode.value !== 'revision' && !hooks.current()?.canCapture ? 'The current scene is unavailable. Open an editable scene or choose Remove context.' : null) ?? questionProblem(question.value, context, contextMode === 'scene' && mode.value !== 'revision' ? QUESTION_LIMITS.scene : QUESTION_LIMITS.context) ?? (mode.value === 'revision' ? revisionProblem() : null) ?? (questionBytes(question.value) + questionBytes(context) + targetBytes() > (mode.value === 'revision' ? QUESTION_LIMITS.input : QUESTION_LIMITS.sceneInput) ? 'The question, target, and context exceed 32,000 UTF-8 bytes. Remove context or shorten the selection.' : null);}
   function refreshSceneContext() {
     if (contextMode !== 'scene' || mode.value === 'revision') return;
     const current = hooks.current();
     context = current?.canCapture ? current.source : '';
-    contextLabel = current?.canCapture ? `Current scene · ${current.path} · refreshed for each message` : 'Current scene unavailable. Open an editable scene to include it.';
+    contextLabel = current?.canCapture ? current.contextLabel??`Current scene · ${current.path} · refreshed for each message` : 'Current scene unavailable. Open an editable scene to include it.';
   }
   function persist() {
     if (integrated) projectTurns = activePassage ? [...projectTurns, ...turns.filter(turn => !projectTurns.includes(turn))] : turns;
@@ -364,19 +373,42 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       const saved=saveConversation(storedKey,{draft:question.value,forgotten,turns:(integrated ? projectTurns : turns).map(t=>({question:t.question,answer:{requestId:t.answer.requestId,text:t.answer.text,model:t.answer.model,incomplete:t.answer.incomplete,inputTokens:t.answer.inputTokens,outputTokens:t.answer.outputTokens},contextBytes:t.contextBytes,scenePath:t.scenePath,proposalId:t.revision?.proposalId??t.proposalId}))});
       forgotten=saved.forgotten;
       if(integrated) {projectTurns=projectTurns.slice(-saved.turns.length); if(!activePassage)turns=projectTurns;} else if(saved.turns.length<turns.length){turns=turns.slice(-saved.turns.length);renderTranscript();}
+      if (selectedThread && threadProject && (saved.turns.length || saved.draft)) {
+        const prior=readThreads(threadProject).find(t=>t.id===selectedThread!.id);
+        const currentScope=hooks.threadScope?.();const ownedScope=currentScope?.kind===selectedThread.scope.kind&&currentScope.id===selectedThread.scope.id?currentScope:prior?.scope??selectedThread.scope;
+        selectedThread={...selectedThread,scope: ownedScope,status:reopenThread?'open':prior?.status??selectedThread.status,title:(saved.turns[0]?.question||saved.draft).slice(0,100)||'Writing conversation',updatedAt:Date.now()};
+        putThread(threadProject,selectedThread);reopenThread=false;hooks.threadsChanged?.();
+      }
       persistence.textContent='Saved on this Mac.';
     } catch {storageFailed=true;persistence.textContent='Chat could not be saved on this Mac. Keep this panel open and copy any replies you need.';}
   }
   function restoreConversation(next: QuestionStatus) {
     const current=hooks.current();
     if(!current||!next.activeAccountId||!next.selectedModel||!next.accounts.find(a=>a.id===next.activeAccountId)?.signedIn)return;
-    const key=conversationKey(current.projectKey??current.repositoryId,next.activeAccountId,next.selectedModel);
+    const project=current.projectKey??current.repositoryId;
+    let key=conversationKey(project,next.activeAccountId,next.selectedModel);
+    const scope=hooks.threadScope?.();
+    if(scope){
+      try {
+        const index=readThreads(project);
+        const legacy=loadConversation(key);
+        if((legacy.turns.length||legacy.draft)&&!index.some(t=>t.storageKey===key))putThread(project,{id:`legacy:${next.activeAccountId}:${next.selectedModel}`,kind:'conversation',title:'Earlier project conversation',scope:{kind:'project',id:'project',label:'Project'},status:'open',updatedAt:0,storageKey:key,accountId:next.activeAccountId,model:next.selectedModel});
+        if(!selectedThread||threadProject!==project){
+          selectedThread=(!forceNewThread?index.filter(t=>t.kind==='conversation'&&t.status==='open'&&t.scope.kind===scope.kind&&t.scope.id===scope.id&&t.accountId===next.activeAccountId&&t.model===next.selectedModel).sort((a,b)=>b.updatedAt-a.updatedAt)[0]:undefined)??{id:crypto.randomUUID(),kind:'conversation',title:'Writing conversation',scope,status:'open',updatedAt:Date.now(),accountId:next.activeAccountId,model:next.selectedModel};
+          selectedThread.storageKey??=key+':thread:'+selectedThread.id;
+          threadProject=project;forceNewThread=false;
+        }
+        key=selectedThread.storageKey!;
+      }catch{storageFailed=true;persistence.textContent='Saved threads could not be read. They have not been overwritten.';return;}
+    }
     if(storedKey===key)return;
     storedKey=key;storageFailed=false;
     try {const saved=loadConversation(key);projectTurns=saved.turns;if(!integrated||!activePassage)turns=projectTurns;forgotten=saved.forgotten;if(!question.value && (!integrated||!activePassage))question.value=saved.draft;renderTranscript();persistence.textContent='Saved on this Mac.';}
     catch {storageFailed=true;persistence.textContent='Saved chat could not be read. It has not been overwritten. Clear conversation to start again.';}
   }
   function update() {
+    if(hooks.threadScope)lifetime.textContent='Each conversation is saved on this Mac with its scene or chapter and account/model. Each thread retains up to 100 turns within 512 KB. Other threads are not sent as history. Exact manuscript snapshots and revision authority are not restored from saved chat.';
+    threadBanner.textContent=selectedThread?`${selectedThread.scope.label} · ${selectedThread.title}`:hooks.threadScope?.()?.label??'';
     refreshSceneContext();
     const history = pending?.history ?? outgoingHistory();
     latestReply.hidden = turns.length === 0;
@@ -442,10 +474,11 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       const sceneAttached = !revising && (contextMode === 'scene' || snapshotScene);
       const words = (text: string) => {const n = text.trim() ? text.trim().split(/\s+/).length : 0; return `${n.toLocaleString()} word${n === 1 ? '' : 's'}`;};
       passageChip.node.hidden = !passageText; passageChip.text.textContent = `Passage · ${words(passageText)}`; passageChip.x.hidden = revising; passageChip.x.disabled = removeContext.disabled;
-      sceneChip.node.hidden = !sceneAttached; sceneChip.text.textContent = context ? `Whole scene · ${words(context)}` : 'Whole scene · unavailable'; sceneChip.x.disabled = removeContext.disabled;
+      const contextName=hooks.current()?.contextLabel??'Whole scene';
+      sceneChip.node.hidden = !sceneAttached; sceneChip.text.textContent = context ? `${contextName} · ${words(context)}` : `${contextName} · unavailable`; sceneChip.x.disabled = removeContext.disabled;
       addScene.hidden = revising || contextMode === 'scene'; addScene.disabled = captureScene.disabled;
       addPassage.hidden = revising || contextMode !== 'none' || !passage || passageStale(passage); addPassage.disabled = captureScene.disabled;
-      sendNoteText.textContent = `Sends your message${passageText ? ' + the passage' : sceneAttached && context ? ' + the whole scene' : ''} to ChatGPT. `;
+      sendNoteText.textContent = `Sends your message${passageText ? ' + the passage' : sceneAttached && context ? hooks.current()?.contextLabel ? ` + ${hooks.current()?.contextLabel}` : ' + the whole scene' : ''} to ChatGPT. `;
       settingsToggle.setAttribute('aria-expanded', String(!connectionArea.hidden));
     }
     notifyPassages();
@@ -522,7 +555,14 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       if (!core.available() || !core.questionStatus || !core.askQuestion || !core.cancelQuestion) {
         applyConfiguration({configured: false, model: null, message: 'OpenAI questions need a configured native Heinlein host. Local drafting remains available.', accounts: [], activeAccountId: null, models: [], selectedModel: null, signInPending: false, generation: 0, usageLimited: false});
       } else {
-        const result = await (remote && core.refreshQuestionConnection ? core.refreshQuestionConnection() : core.questionStatus());
+        let result = await (remote && core.refreshQuestionConnection ? core.refreshQuestionConnection() : core.questionStatus());
+        if (!live() || request !== statusVersion) return;
+        if (!remote && core.restoreQuestionConnection && !result.usageLimited && !result.signInPending
+          && result.models.length === 0 && result.selectedModel
+          && result.accounts.some(account => account.id === result.activeAccountId && account.signedIn && account.planEnabled)) {
+          connection.textContent = 'Restoring saved ChatGPT connection…';
+          result = await core.restoreQuestionConnection();
+        }
         if (!live() || request !== statusVersion) return;
         applyConfiguration(result);
       }
@@ -571,6 +611,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     }
   }
   function resetContents() {
+    selectedThread=null;threadProject=null;reopenThread=false;forceNewThread=false;threadBanner.textContent='';
     if (integrated) {passages.length = 0; activePassage = null; projectTurns = [];}
 
     contextMode='scene'; contextVersion++; cancelPending(); mode.value = 'ask'; target = null; targetText.textContent = ''; targetNote.textContent = ''; targetSection.hidden = true; revisionActions.length = 0; turns = []; forgotten = 0; context = ''; contextLabel = 'None. No manuscript text will be sent.'; question.value = ''; question.placeholder = 'Ask about an idea, a detail, or where to go next…'; transcript.replaceChildren(); contextDetails.open = false;
@@ -600,7 +641,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
         const stale = revisionProblem(snapshot); if (stale) throw new Error(stale);
         if (snapshot.sourceHash !== snapshot.sourceSha256) throw new Error('The selected source does not match its saved hash. Save and capture the selection again.');
       }
-      preparing = false; pending = request; pendingRevision = Boolean(snapshot); update(); if (unified) body.scrollTop = body.scrollHeight;
+      preparing = false; pending = request; pendingRevision = Boolean(snapshot); reopenThread=true;persist(); update(); if (unified) body.scrollTop = body.scrollHeight;
       streaming.hidden = true; streamingText.textContent = ''; streamingLabel.textContent = 'OpenAI · Streaming answer';
       const answer = snapshot
         ? await core.suggestQuestionRevision!(request, binding, {repositoryId: snapshot.repositoryId, path: snapshot.path, sourceHash: snapshot.sourceHash, fromUtf8: snapshot.fromUtf8, toUtf8: snapshot.toUtf8, selectedText: snapshot.selectedText})
@@ -697,7 +738,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   }
   function stashPassage() {
     if (!activePassage) return;
-    Object.assign(activePassage, {turns, context, contextLabel, contextVersion, target, mode: mode.value, draft: question.value, contextMode, title: currentTitle.textContent ?? '', status: status.textContent ?? ''});
+    Object.assign(activePassage, {thread:selectedThread??undefined,turns, context, contextLabel, contextVersion, target, mode: mode.value, draft: question.value, contextMode, title: currentTitle.textContent ?? '', status: status.textContent ?? ''});
   }
   function passageItems(): PassageItem[] {
     return passages.map(p => ({id: p.id, from: p.scene.from, to: p.scene.to, active: p === activePassage && !element.hidden, stale: passageStale(p), label: passageStale(p) ? 'Source changed' : p === activePassage && (pending || preparing) ? 'Asking…' : p.turns.some(t => t.revision && !t.revision.rejected) ? `${p.turns.filter(t => t.revision && !t.revision.rejected).length} suggestion${p.turns.filter(t => t.revision && !t.revision.rejected).length === 1 ? '' : 's'}` : p.turns.length ? 'Answer ready' : 'Ask about passage'}));
@@ -724,6 +765,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     stashPassage();
     if (passage !== activePassage) { streaming.hidden = true; streamingText.textContent = ''; }
     activePassage = passage;
+    if(hooks.threadScope && passage.thread){selectedThread=passage.thread;storedKey=selectedThread.storageKey??null;projectTurns=passage.turns;}
     ({turns, context, contextLabel, contextVersion, target, contextMode} = passage); mode.value = passage.mode; question.value = passage.draft; questionLabel.firstChild!.textContent = turns.length ? 'Ask a follow-up' : 'Your message'; currentTitle.textContent = passage.title; status.textContent = passage.status;
     contextMode = passage.contextMode;
     if (!passageStale(passage)) hooks.passages?.select(passage.scene.from, passage.scene.to);
@@ -736,6 +778,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     if (pending || preparing || authBusy || turns.some(t => t.revision?.busy)) {open(); status.textContent = 'Wait for the current request or choose Cancel request before starting another passage.'; return false;}
     stashPassage(); open();
     const passage: Passage = {id: `passage-${++passageId}`, scene: {...scene}, binding: hooks.selectionState?.() ?? null, turns: [], context: scene.source.slice(scene.from, scene.to), contextLabel: 'Selected passage only', contextVersion: contextVersion + 1, target: null, mode: 'ask', draft: '', contextMode: 'snapshot', title: 'Selected passage', status: '', stale: false};
+    if(hooks.threadScope && configuration){persist();activePassage=null;selectedThread=null;storedKey=null;forceNewThread=true;restoreConversation(configuration);passage.thread=selectedThread??undefined;}
     passages.push(passage); activatePassage(passage.id); contextDetails.open = false; return true;
   }
   function collapse() {
@@ -779,6 +822,17 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     question.focus({preventScroll: true}); void checkStatus();
   }
   return {element,
+    openConversation(thread?:WriterThread) {
+      if(pending||preparing||authBusy||turns.some(t=>t.revision?.busy)){open();status.textContent='Wait for the current request or cancel it before switching threads.';return false;}
+      persist();resetContents();storedKey=null;storageFailed=false;
+      if(thread){
+        const current=hooks.current();if(!current||!thread.storageKey)return false;
+        const saved=loadConversation(thread.storageKey);selectedThread=thread;threadProject=current.projectKey??current.repositoryId;storedKey=thread.storageKey;
+        turns=saved.turns;projectTurns=turns;forgotten=saved.forgotten;question.value=saved.draft;renderTranscript();
+      }else forceNewThread=true;
+      if(!hooks.current()?.canCapture)contextMode='none';
+      open();if(configuration)restoreConversation(configuration);update();return true;
+    },
     open,
     selectionVersion: () => contextVersion,
     stateChanged() {notifyPassages(); if (integrated && session && !live()) {close(); return;} if(live()&&!pending&&!preparing) update(); if (live() && (mode.value === 'revision' || revisionActions.length)) updateRevisionState();},

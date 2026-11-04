@@ -19,13 +19,13 @@ async function openPassage(page:Page) {
   await page.keyboard.press('Control+j');
   const pane = page.locator('.question-panel');
   await expect(pane).toBeVisible();
-  await expect(page.locator('.workspace')).toHaveJSProperty('inert', true);
+  await expect(page.locator('.conversation-rail-dialog')).toHaveJSProperty('open',true);
   await expect.poll(() => textLayout(page)).toEqual(layout);
   // The composer ends with the "What will be sent" disclosure; Copy as prompt… stays in the send row.
   await expect(pane.getByRole('button',{name:'Copy as prompt…',exact:true})).toBeVisible();
   const lastControl = pane.locator('.heinlein-send-note > details > summary');await expect(lastControl).toHaveText('What will be sent');
   await lastControl.focus();await page.keyboard.press('Tab');
-  await expect(pane.getByRole('button',{name:'Passage',exact:true})).toBeFocused();
+  await expect(page.getByRole('button',{name:'Back to threads',exact:true})).toBeFocused();
   return layout;
 }
 async function sendRevision(page:Page) {
@@ -104,27 +104,28 @@ test('passage chip survives collapse, background completion, exact diff and guar
   expect((await new AxeBuilder({page}).include('.question-panel').analyze()).violations).toEqual([]);
   await page.screenshot({path:`/tmp/heinlein-questions-${info.project.name}-wide.png`});
   await pane.getByRole('button',{name:'Review changes…',exact:true}).click();await expect(pane.getByRole('button',{name:'Continue to native confirmation'})).toBeEnabled();
-  await expect(page.locator('dialog[open]')).toHaveCount(0);await expect(pane.getByLabel('Original full scene')).toContainText('The station clock');expect((await state(page)).applied).toBe(0);
+  await expect(page.locator('dialog[open]:not(.conversation-rail-dialog)')).toHaveCount(0);await expect(pane.getByLabel('Original full scene')).toContainText('The station clock');expect((await state(page)).applied).toBe(0);
   await pane.getByRole('button',{name:'Continue to native confirmation'}).click();await expect.poll(async()=>(await state(page)).applied).toBe(1);
   expect((await state(page)).source).toContain('Rain drummed against');expect(errors).toEqual([]);
 });
 test('narrow and enlarged text retain keyboard access, diff labels and no overflow',async({page},info)=>{
   await openPassage(page);await sendRevision(page);await fixture(page,'finish');const pane=page.locator('.question-panel');await expect(pane.getByRole('button',{name:'Review changes…',exact:true})).toBeVisible();
-  await page.setViewportSize({width:1600,height:1000});await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});await expect(pane).toHaveAttribute('aria-modal','true');
-  expect(await pane.evaluate(node=>node.getBoundingClientRect().left)).toBe(0);
-  await page.evaluate(()=>{document.documentElement.style.fontSize='100%';});await expect(pane).toHaveAttribute('role','dialog');await expect(pane).toHaveAttribute('aria-modal','true');
+  await page.setViewportSize({width:1600,height:1000});await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});await expect(page.locator('.conversation-rail-dialog')).toHaveJSProperty('open',true);
+  expect(await pane.evaluate(node=>node.getBoundingClientRect().right)).toBeLessThanOrEqual(1600);
+  await page.evaluate(()=>{document.documentElement.style.fontSize='100%';});await expect(pane).toHaveAttribute('role','region');await expect(page.locator('.conversation-rail')).toBeVisible();
   for(const width of [1200,700,320]) {
-    await page.setViewportSize({width,height:900});await expect(pane).toHaveAttribute('role','dialog');
+    await page.setViewportSize({width,height:900});await expect(pane).toHaveAttribute('role','region');if(width<=700)await expect(page.locator('.conversation-rail-dialog')).toHaveJSProperty('open',true);
     expect(await pane.evaluate(node=>node.scrollWidth<=node.clientWidth+1)).toBe(true);
   }
   for (const zoom of ['200%', '400%']) {await page.evaluate(zoom=>{document.documentElement.style.fontSize=zoom;},zoom); expect(await pane.evaluate(node=>node.scrollWidth<=node.clientWidth+1)).toBe(true);}
   await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});
   const collapse=pane.getByRole('button',{name:'Close Heinlein',exact:true});await collapse.focus();await expect(collapse).toBeFocused();
-  const last=pane.locator('.heinlein-send-note > details > summary');await last.focus();await page.keyboard.press('Tab');await expect(pane.getByRole('button',{name:'Passage',exact:true})).toBeFocused();await page.keyboard.press('Shift+Tab');await expect(last).toBeFocused();await collapse.focus();
+  const last=pane.locator('.heinlein-send-note > details > summary');await last.focus();await page.keyboard.press('Tab');await expect(page.getByRole('button',{name:'Back to threads',exact:true})).toBeFocused();await page.keyboard.press('Shift+Tab');await expect(last).toBeFocused();await collapse.focus();
   const size=await collapse.boundingBox();expect(size!.height).toBeGreaterThanOrEqual(44);
   expect((await new AxeBuilder({page}).include('.question-panel').analyze()).violations).toEqual([]);
   await page.screenshot({path:`/tmp/heinlein-questions-${info.project.name}-narrow.png`});
   await page.keyboard.press('Escape');await expect(pane).toBeHidden();await expect(page.locator('.cm-content')).toBeFocused();
+  await page.locator('.navigation-toggle').click();await expect(page.locator('.navigation-modal')).toHaveJSProperty('open',true);await page.getByRole('button',{name:'Return to writing',exact:true}).click();
   await page.keyboard.press('Control+j');await expect(pane).toBeVisible();await expect(pane.locator('.question-diff-chip summary')).toContainText('drummed');
 });
 test('dismiss records rejection without applying',async({page})=>{
