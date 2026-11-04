@@ -19,6 +19,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "preferences_request",
             "project_request",
+            "mcp_access_request",
             "github_request",
             "update_request",
             "connect_question_account",
