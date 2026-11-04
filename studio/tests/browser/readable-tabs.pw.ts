@@ -9,7 +9,10 @@ for(const high of [false,true])test(`sheet X buttons preserve writing and guard 
  const initial=await page.evaluate(()=>JSON.stringify((window as any).documentFixture.fixture.documents));
  const close=page.getByRole('button',{name:'Close sheet Harvest Moon',exact:true}),inactive=page.getByRole('button',{name:'Close sheet The morning after',exact:true});
  await expect(close).toHaveText('×');await expect(inactive).toBeVisible();
- await page.evaluate(()=>{const v=(window as any).documentFixture.view();v.dispatch({changes:{from:0,insert:'Unsaved words. '},selection:{anchor:4}});});
+ // Keep this close-guard scenario genuinely unsaved even when CI layout/axe
+ // work outlasts the real autosave debounce. Exercise the actual save-failure UI.
+ await page.evaluate(()=>{const f=(window as any).documentFixture;f.fixture.setFailSave(true);const v=f.view();v.dispatch({changes:{from:0,insert:'Unsaved words. '},selection:{anchor:4}});});
+ await expect(page.getByRole('status',{name:'Unsaved · autosave paused',exact:true})).toBeVisible();
  const geometry=()=>page.locator('.active-document-pane .cm-content').evaluate(el=>{const r=el.getBoundingClientRect();return{width:r.width,top:r.top};});const before=await geometry();
  await inactive.focus();await expect(inactive).toBeFocused();
  const target=await inactive.evaluate(el=>{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return{width:r.width,height:r.height,hit:el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)),outline:s.outlineStyle};});
@@ -70,4 +73,15 @@ test('UUID sheet files have readable tabs, keyboard names and full paths in Deta
  expect(await page.evaluate(()=>JSON.stringify((window as any).documentFixture.fixture.documents))).toBe(initial);
  expect(await page.evaluate(()=>(window as any).documentFixture.fixture.externalCalls)).toEqual([]);
  expect(errors).toEqual([]);
+});
+
+test('successful autosave closes the last tab without a dirty prompt and retains the saved writing',async({page})=>{
+ await page.goto('/tests/browser/document-tabs.html?titled');await page.waitForFunction(()=>document.documentElement.dataset.tabsReady==='true');
+ await page.evaluate(()=>{const v=(window as any).documentFixture.view();v.dispatch({changes:{from:0,insert:'Autosaved words. '}});});
+ await expect.poll(()=>page.evaluate(()=>{const f=(window as any).documentFixture;return f.fixture.documents['local-a'][f.paths[0]].startsWith('Autosaved words. ');})).toBe(true);
+ await expect(page.getByRole('status',{name:'Saved on this Mac',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Close sheet The morning after',exact:true}).click();
+ await page.getByRole('button',{name:'Close sheet Harvest Moon',exact:true}).click();
+ await expect(page.getByRole('dialog',{name:'Unsaved changes',exact:true})).toHaveCount(0);await expect(page.locator('.document-tabs')).toBeHidden();
+ expect(await page.evaluate(()=>{const f=(window as any).documentFixture;return f.fixture.documents['local-a'][f.paths[0]].startsWith('Autosaved words. ');})).toBe(true);
 });

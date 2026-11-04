@@ -22,7 +22,7 @@ export function createConversationRail(list:HTMLElement,measure:()=>HTMLElement|
     const rem=parseFloat(getComputedStyle(document.documentElement).fontSize)||16;
     const railWidth=Math.min(48*rem,Math.max(0,gap-16));dock.style.width=`${railWidth}px`;
     const wide=innerWidth>=1100&&!!bounds&&gap>=36*rem+16;
-    if(bounds&&!initialized){open=wide;initialized=true;}
+    if(bounds&&!initialized)open=wide;
     const isModal=open&&!wide;if(isModal!==modalState){modalState=isModal;modalChanged?.(isModal);}
     toggle.setAttribute('aria-expanded',String(open));back.hidden=!detail;listHost.hidden=!!detail;empty.hidden=!list.hidden;
     dock.hidden=!open||!wide;

@@ -39,8 +39,11 @@ test('a sheet recovery draft prevents chapter editing until the writer resolves 
 });
 
 test('wide screens dock chats on the right without moving or rewrapping the manuscript',async({page},info)=>{
- test.skip(info.project.name!=='desktop');await page.setViewportSize({width:2048,height:1000});await page.goto('/tests/browser/threads.html');await page.evaluate(async()=>{await (window as any).threadsFixture.ready;await document.fonts.ready;});
- const dock=page.locator('.conversation-rail-dock');await expect(dock).toBeVisible();await expect(page.locator('.navigation-drawer')).toBeVisible();await page.getByRole('button',{name:'Chapter 9',exact:true}).click();await expect(page.locator('.assembled-editor .cm-content')).toBeVisible();await expect(page.getByRole('region',{name:'Section threads'})).toContainText('Chapter 9');
+ test.skip(info.project.name!=='desktop');await page.setViewportSize({width:1024,height:1000});await page.goto('/tests/browser/threads.html');await page.evaluate(async()=>{await (window as any).threadsFixture.ready;await document.fonts.ready;});
+ const dock=page.locator('.conversation-rail-dock');await expect(dock).toBeHidden();
+ // Reproduce a first measurement without room, then the final wide layout.
+ // No explicit user choice was made, so initial automatic placement must adapt.
+ await page.setViewportSize({width:2048,height:1000});await expect(dock).toBeVisible();await expect(page.locator('.navigation-drawer')).toBeVisible();await page.getByRole('button',{name:'Chapter 9',exact:true}).click();await expect(page.locator('.assembled-editor .cm-content')).toBeVisible();await expect(page.getByRole('region',{name:'Section threads'})).toContainText('Chapter 9');
  const before=await shape(page);const rectangle=await page.locator('.cm-content').boundingBox();const rail=await dock.boundingBox();expect(rectangle!.x+rectangle!.width).toBeLessThanOrEqual(rail!.x);
  await page.getByRole('button',{name:'Close chats',exact:true}).click();expect(await shape(page)).toEqual(before);await page.getByRole('button',{name:'Chats',exact:true}).click();expect(await shape(page)).toEqual(before);
  expect((await new AxeBuilder({page}).include('.conversation-rail').analyze()).violations).toEqual([]);await page.screenshot({path:'/tmp/heinlein-separated-rails-wide.png'});
