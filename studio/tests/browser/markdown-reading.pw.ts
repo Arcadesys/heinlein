@@ -193,15 +193,16 @@ test('Approving from Reading stays in Reading and removes only resolved marks, w
   await openReading(page);
   await mark(page, 'example-approve').click();
   const panel = panelOf(page);
-  await panel.locator('[data-finding-id="example-approve"]').getByRole('button', { name: 'Accept…', exact: true }).click();
+  await suggestion(page).locator('[data-finding-id="example-approve"]').getByRole('button', { name: 'Accept…', exact: true }).click();
   await page.getByRole('dialog', { name: 'Simulated final confirmation' }).getByRole('button', { name: 'Confirm and apply', exact: true }).click();
-  await expect(panel.locator('.review-decision-note')).toContainText('Applied to opening.md');
+  await expect(page.locator('.heinlein-review-panel .review-decision-note')).toContainText('Applied to opening.md');
   await expect(reader(page)).not.toHaveAttribute('hidden', '');
   await expect(reader(page)).toContainText('The manifest was wrong');
   await expect(mark(page, 'example-approve')).toHaveCount(0);
   await expect(mark(page, 'example-dismiss')).toHaveText('Nobody looked up.');
   await expect(mark(page, 'example-overlap-word')).toHaveText('grey');
-  await panel.locator('[data-finding-id="example-dismiss"]').getByRole('button', { name: 'Keep mine', exact: true }).click();
+  await mark(page, 'example-dismiss').click();
+  await suggestion(page).getByRole('button', { name: 'Reject', exact: true }).click();
   await expect(mark(page, 'example-dismiss')).toHaveCount(0);
   await expect(mark(page, 'example-overlap-word')).toHaveText('grey');
 });
@@ -238,10 +239,10 @@ test('An assembled chapter reads part by part, and each mark opens the card for 
   const revise = page.getByRole('button', { name: 'Revise source passage', exact: true });
   await expect(revise).toBeHidden();
   const hint = page.locator('.active-document-pane .page > p.muted').first();
-  await expect(hint).toHaveText('A formatted, read-only copy of the current source scenes. Switch to Source to select a passage and revise it.');
+  await expect(hint).toHaveText('Reading the current chapter. Switch to Source to edit its sheets together.');
   await closeReview(page);
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Source', exact: true }).click();
-  await expect(hint).toContainText('Select a passage, then choose Revise source passage.');
+  await expect(hint).toContainText('Edit this chapter as one manuscript.');
   await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).click(); await expect(revise).toBeVisible();
 });
 test('The role label follows the view, and the preview entry opens ready in Reading', async ({ page }) => {
@@ -261,7 +262,7 @@ test('Reading and AI advice keep separate policies on one screen, and manuscript
   await openReading(page);
   expect(await reader(page).locator('a').count()).toBe(0);
   await mark(page, 'example-approve').click();
-  const card = panelOf(page).locator('[data-finding-id="example-approve"]');
+  const card = suggestion(page).locator('[data-finding-id="example-approve"]');
   const advice = card.locator('.rendered-markdown');
   await expect(advice.locator('strong')).toHaveText('singular');
   const link = advice.getByRole('link', { name: 'a usage note' });

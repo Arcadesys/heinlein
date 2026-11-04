@@ -17,6 +17,8 @@ test('prepared conflict choice and two sequential approvals keep unrelated Unico
     await activate(panel.getByRole('button', { name: 'Preview review', exact: true }));
     await expect(panel).toContainText('1 selected calls');
     await activate(panel.getByRole('button', { name: 'Run review', exact: true }));
+    await page.locator('.review-background').getByRole('button', {name:/Open review/}).click();
+    await expect(panel).toBeVisible();
     await expect(panel.locator('.review-edit')).toHaveCount(3);
     await expect(panel.locator('input[type=radio]:checked')).toHaveCount(0);
     // Check the actual pending diffs at enlarged text, not just an empty result.
@@ -59,9 +61,12 @@ test('rejected findings disappear only from pending and stay dismissed after clo
     await expect(panel).toBeVisible();
     await activate(panel.getByRole('button', { name: 'Preview review', exact: true }));
     await activate(panel.getByRole('button', { name: 'Run review', exact: true }));
+    await page.locator('.review-background').getByRole('button', {name:/Open review/}).click();
+    await expect(panel).toBeVisible();
     await activate(panel.locator('[data-finding-id="unrelated"]').getByRole('button', { name: 'Keep mine', exact: true }));
     await expect(panel.locator('[data-finding-id="unrelated"]')).toHaveCount(0);
     await discard(panel);
+    await page.getByRole('dialog', {name:'Scene and chapter chats',exact:true}).getByRole('button', {name:'Close chats',exact:true}).click();
     await openHeinleinReview(page);
     await activate(panel.getByRole('button', { name: 'Reopen saved review synthetic-review-stable', exact: true }));
     await expect(panel.locator('.review-edit')).toHaveCount(2);

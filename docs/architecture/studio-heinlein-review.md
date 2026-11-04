@@ -16,7 +16,9 @@ gate, and no reviewer can save, publish, expand context or choose another accoun
 3. **Run Heinlein Review** sends at most eight serial calls through the existing
    explicitly selected ChatGPT account/model. **Continue next reviewer batch**
    authorizes another bounded batch on the same captured scope and definition
-   snapshots. There is no aggregator model, automatic retry or account fallback.
+   snapshots. Transient chunk failures retry up to three attempts with cancellable
+   backoff; successful chunks are retained. Auth, quota and invalid output failures
+   stay terminal. There is no account or model fallback. Retries may incur usage.
 4. Each pending card shows its file, current and proposed text in byte-verified
    context, comments and reviewer; exact UTF-8 byte range, patch and full provenance
    are under **Exact patch details**. Captured line/column is derived from the
@@ -244,7 +246,9 @@ supported (50 custom plus two built-ins), within the existing 384 individual-cal
 limit. Oversize plans fail without dropping reviewers.
 
 The run stops on cancellation, a failed call, an invalid response, or continuation
-without progress; it does not retry calls automatically. Completed individual
+without progress or after bounded transient retries are exhausted. Explicit
+**Retry failed chunks** continues the saved review while preserving completed
+results; a changed source/context requires a fresh review. Completed individual
 assessments remain persisted in the native review record. Success opens and
 focuses consolidated feedback; Review assessment switches to any individual
 pass. Existing advanced review setup retains explicit batch controls. Review

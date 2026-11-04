@@ -177,7 +177,8 @@ impl Database {
         }
     }
     fn validate(&self) -> Result<()> {
-        if self.schema != 1
+        if !matches!(self.schema, 1 | 2)
+            || (self.schema == 2 && !self.secrets_in_vault)
             || uuid::Uuid::parse_str(&self.host_id).is_err()
             || self.accounts.len() > 64
         {

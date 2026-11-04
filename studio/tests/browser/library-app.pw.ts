@@ -76,7 +76,7 @@ test('library reflows with enlarged text and retains a visible focus indicator',
 test('groups collapse and expand in place and keep focus',async({page})=>{
  await page.goto('/tests/browser/library-app.html');
  await openDrawer(page);
- const group=page.getByRole('button',{name:'Group',exact:true}); await expect(group).toHaveAttribute('aria-expanded','true');
+ const group=page.locator('[data-expand-group="g"]'); await expect(group).toHaveAttribute('aria-expanded','true');
  await group.click(); await expect(group).toHaveAttribute('aria-expanded','false'); await expect(group).toBeFocused();
  await expect(page.getByRole('button',{name:'First sheet',exact:true})).toHaveCount(0);
  await page.keyboard.press('Enter'); await expect(group).toHaveAttribute('aria-expanded','true');

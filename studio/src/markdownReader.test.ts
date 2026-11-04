@@ -94,6 +94,11 @@ describe('Markdown reading renderer', () => {
     const text = 'in long grey sheets.';
     const {content} = render(text, [mark('all', ...at(text, 'long grey sheets'), 'replace', 'g'), mark('word', ...at(text, 'grey'), 'replace', 'g')]);
     expect(content.querySelector('[data-review-id="all"] [data-review-id="word"]')!.textContent).toBe('grey');
+    expect(content.querySelector('[role="button"] [role="button"]')).toBeNull();
+    const word=content.querySelector('[data-review-id="word"]')!;
+    expect(word.getAttribute('role')).toBe('button');
+    expect(word.getAttribute('aria-label')).toBeNull();
+    expect(word.getAttribute('aria-description')).toContain('Open diff');
     expect(content.textContent).toBe(text);
   });
   it('renders parts separately so an open fence cannot swallow the next one, at exact positions', () => {

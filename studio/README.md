@@ -520,6 +520,9 @@ auth-directory path. Non-secret registrations, account/model choices and host
 identity remain in private app-data `chatgpt-auth/auth.json`. A locked one-time
 migration verifies the vault write before sanitizing the old JSON. Vault failure
 leaves the legacy file intact and fails closed; no plaintext fallback is used.
+Migrated metadata uses schema 2 so older clients refuse it rather than overwriting
+the vault-backed profile on downgrade. Back up private app-data before downgrading;
+older app versions cannot use these securely stored sessions.
 An interrupted cleanup uses the newer vault state, never the old refresh token.
 Keep the bundle identifier, app-data path and signing identity stable across
 updates. Keychain prompts/access continuity require validation with the signed

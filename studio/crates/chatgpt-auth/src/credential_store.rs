@@ -173,6 +173,7 @@ impl Store {
         if legacy || !db.secrets_in_vault {
             self.save(&db)?;
             db.secrets_in_vault = true;
+            db.schema = 2;
         }
         Ok(Some(db))
     }
@@ -206,6 +207,9 @@ impl Store {
         }
         let mut public = db.clone();
         public.secrets_in_vault = secured;
+        // Old clients reject this schema instead of overwriting a vault-backed
+        // profile with an apparently signed-out plaintext record on downgrade.
+        public.schema = if secured { 2 } else { 1 };
         for account in &mut public.accounts {
             account.tokens = None;
             account.refresh_pending = false;
@@ -297,6 +301,8 @@ mod tests {
             assert!(!text.contains(secret));
         }
         assert!(text.contains("synthetic-model"));
+        let public: Database = serde_json::from_str(&text).unwrap();
+        assert_eq!(public.schema, 2); // Pre-vault clients require exactly schema 1.
         drop(_lock);
         drop(store);
         let reopened = Store::with_vault(path, vault).unwrap();
@@ -375,6 +381,7 @@ mod tests {
             let file = storage::Store::open(path.clone()).unwrap();
             let mut db = legacy();
             db.secrets_in_vault = true;
+            db.schema = 2;
             file.save(&db).unwrap();
             let before = std::fs::read(path.join("auth.json")).unwrap();
             let vault = Arc::new(MemoryVault::default());
