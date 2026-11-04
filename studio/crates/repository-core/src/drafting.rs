@@ -1166,13 +1166,14 @@ impl Repository {
         {
             return Err(Error::DraftingCollision);
         }
-        // A registered-scene split only adds its suffix to the index; unrelated
-        // drift stays untouched. verify_plan still guards changes after preview.
+        // Splitting or inserting beside a scene only adds the selected entries;
+        // unrelated drift stays untouched. verify_plan still guards changes after preview.
         if (!state.untracked_paths.is_empty() || !state.missing_paths.is_empty())
             && !file_only
             && !matches!(
                 change,
                 DraftingChange::Reconcile {}
+                    | DraftingChange::CreateSceneAdjacent { .. }
                     | DraftingChange::Initialize { .. }
                     | DraftingChange::SetSheetReference { .. }
                     | DraftingChange::OrganizeLibrary { .. }
@@ -1455,12 +1456,25 @@ impl Repository {
             } => {
                 title(&name)?;
                 scene_path(&path)?;
+                // Discovered references are visible in the same scene menu. Adopt
+                // only the explicitly selected anchor, never reconcile other files.
+                if !manifest.scenes.iter().any(|scene| scene.id == scene_id) {
+                    let anchor = discovered_reference_sheets(&manifest, &members)
+                        .into_iter()
+                        .find(|scene| scene.id == scene_id)
+                        .ok_or(Error::DraftingChanged)?;
+                    manifest.scenes.push(anchor);
+                }
                 let index = manifest
                     .scenes
                     .iter()
                     .position(|scene| scene.id == scene_id)
                     .ok_or(Error::DraftingChanged)?;
-                let group_id = manifest.scenes[index].group_id.clone();
+                let anchor = &manifest.scenes[index];
+                let document = self.read(&anchor.path)?;
+                plan.read_guards
+                    .push((anchor.path.clone(), document.content_hash));
+                let group_id = anchor.group_id.clone();
                 let before = manifest
                     .scenes
                     .get(index + usize::from(after))
@@ -2980,6 +2994,171 @@ mod tests {
                 assert!(!f.repo.root().join("ms/new.md").exists());
             }
         }
+    }
+
+    #[test]
+    fn adjacent_scene_creation_preserves_unrelated_index_drift_and_repeats() {
+        for missing in [false, true] {
+            let f = Fixture::new();
+            f.put("ms/anchor.md", "Exact — e\u{301} 🦊.\r\n");
+            f.put("ms/other.md", "Other source\r\n");
+            f.initialize();
+            if missing {
+                fs::remove_file(f.repo.root().join("ms/other.md")).unwrap();
+            } else {
+                f.put("ms/notes.md", "Unlisted — keep exact.\r\n");
+            }
+            let before = f.repo.load_drafting().unwrap();
+            let anchor = before.scenes[0].id.clone();
+            let manifest_before = fs::read(f.repo.root().join(MANIFEST)).unwrap();
+            for (i, after) in [false, true, false, true].into_iter().enumerate() {
+                let path = format!("ms/new-{i}.md");
+                let change = || DraftingChange::CreateSceneAdjacent {
+                    title: format!("New {i}"),
+                    path: path.clone(),
+                    scene_id: anchor.clone(),
+                    after,
+                };
+                // Preview/cancel is read only, even with pre-existing drift.
+                let canceled = f.preview(change()).unwrap();
+                assert!(!f.repo.root().join(&path).exists());
+                let index_before = fs::read(f.repo.root().join(MANIFEST)).unwrap();
+                drop(canceled);
+                assert_eq!(
+                    fs::read(f.repo.root().join(MANIFEST)).unwrap(),
+                    index_before
+                );
+                let undo = f.apply(change());
+                let current = Repository::open(f.repo.root())
+                    .unwrap()
+                    .load_drafting()
+                    .unwrap();
+                let a = current.scenes.iter().position(|s| s.id == anchor).unwrap();
+                let n = current.scenes.iter().position(|s| s.path == path).unwrap();
+                assert_eq!(n + usize::from(!after), a + usize::from(after));
+                assert_eq!(current.untracked_paths, before.untracked_paths);
+                assert_eq!(current.missing_paths, before.missing_paths);
+                assert_eq!(
+                    f.repo.read("ms/anchor.md").unwrap().text,
+                    "Exact — e\u{301} 🦊.\r\n"
+                );
+                if !missing {
+                    assert_eq!(
+                        f.repo.read("ms/notes.md").unwrap().text,
+                        "Unlisted — keep exact.\r\n"
+                    );
+                }
+                // Undo restores the exact pre-change index, including drift.
+                f.repo.undo_drafting(&undo, &f.recovery).unwrap();
+                assert_eq!(
+                    fs::read(f.repo.root().join(MANIFEST)).unwrap(),
+                    manifest_before
+                );
+                assert!(!f.repo.root().join(&path).exists());
+            }
+        }
+    }
+
+    #[test]
+    fn adjacent_scene_creation_adopts_only_selected_discovered_reference() {
+        for after in [false, true] {
+            let f = Fixture::new();
+            f.put("ms/anchor.md", "Source — unchanged.\r\n");
+            f.initialize();
+            f.put("ms/reference/notes.md", "Reference — unchanged.\r\n");
+            f.put("ms/reference/other.md", "Other reference");
+            f.put("ms/unlisted.md", "Unlisted notes");
+            let before = f.repo.load_drafting().unwrap();
+            let anchor = before
+                .reference_sheets
+                .iter()
+                .find(|s| s.path == "ms/reference/notes.md")
+                .unwrap();
+            let manifest_before = fs::read(f.repo.root().join(MANIFEST)).unwrap();
+            let undo = f.apply(DraftingChange::CreateSceneAdjacent {
+                title: "New".into(),
+                path: "ms/new.md".into(),
+                scene_id: anchor.id.clone(),
+                after,
+            });
+            let current = f.repo.load_drafting().unwrap();
+            let a = current
+                .scenes
+                .iter()
+                .position(|s| s.id == anchor.id)
+                .unwrap();
+            let n = current
+                .scenes
+                .iter()
+                .position(|s| s.path == "ms/new.md")
+                .unwrap();
+            assert_eq!(n + usize::from(!after), a + usize::from(after));
+            assert_eq!(current.scenes[a], *anchor);
+            assert!(!current.scenes[n].reference);
+            assert!(!current
+                .scenes
+                .iter()
+                .any(|s| s.path == "ms/reference/other.md"));
+            assert_eq!(current.untracked_paths, before.untracked_paths);
+            assert_eq!(
+                f.repo.read(&anchor.path).unwrap().text,
+                "Reference — unchanged.\r\n"
+            );
+            f.repo.undo_drafting(&undo, &f.recovery).unwrap();
+            assert_eq!(
+                fs::read(f.repo.root().join(MANIFEST)).unwrap(),
+                manifest_before
+            );
+        }
+    }
+
+    #[test]
+    fn adjacent_scene_creation_with_drift_keeps_post_preview_guards() {
+        for mutation in ["anchor", "members", "manifest"] {
+            let f = Fixture::new();
+            f.put("ms/anchor.md", "Source");
+            f.initialize();
+            f.put("ms/unlisted.md", "Unlisted source");
+            let before = f.repo.load_drafting().unwrap();
+            let plan = f
+                .preview(DraftingChange::CreateSceneAdjacent {
+                    title: "New".into(),
+                    path: "ms/new.md".into(),
+                    scene_id: before.scenes[0].id.clone(),
+                    after: true,
+                })
+                .unwrap();
+            match mutation {
+                "anchor" => f.put("ms/anchor.md", "External author edit"),
+                "members" => f.put("ms/later.md", "External added file"),
+                _ => {
+                    let mut text = fs::read_to_string(f.repo.root().join(MANIFEST)).unwrap();
+                    text.push('\n');
+                    f.put(MANIFEST, &text);
+                }
+            }
+            let index = fs::read(f.repo.root().join(MANIFEST)).unwrap();
+            assert_eq!(
+                f.repo.apply_drafting(&plan, &f.recovery).unwrap_err(),
+                Error::DraftingChanged
+            );
+            assert_eq!(fs::read(f.repo.root().join(MANIFEST)).unwrap(), index);
+            assert!(!f.repo.root().join("ms/new.md").exists());
+        }
+        let f = Fixture::new();
+        f.put("ms/anchor.md", "Source");
+        f.initialize();
+        let anchor = f.repo.load_drafting().unwrap().scenes[0].id.clone();
+        fs::remove_file(f.repo.root().join("ms/anchor.md")).unwrap();
+        assert!(f
+            .preview(DraftingChange::CreateSceneAdjacent {
+                title: "New".into(),
+                path: "ms/new.md".into(),
+                scene_id: anchor,
+                after: true
+            })
+            .is_err());
+        assert!(!f.repo.root().join("ms/new.md").exists());
     }
 
     #[test]

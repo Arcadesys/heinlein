@@ -11,6 +11,7 @@ standalone-ok-diagnostic = ["standalone-native-acceptance", "dep:cc"]
 standalone-ok-diagnostic-probes = ["standalone-ok-diagnostic"]
 revision-native-acceptance = []
 update-native-acceptance = []
+scene-native-acceptance = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

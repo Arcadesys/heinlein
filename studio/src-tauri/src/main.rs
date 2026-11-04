@@ -3,7 +3,8 @@
     any(
         feature = "standalone-native-acceptance",
         feature = "revision-native-acceptance",
-        feature = "update-native-acceptance"
+        feature = "update-native-acceptance",
+        feature = "scene-native-acceptance"
     ),
     allow(dead_code)
 )]
@@ -24,6 +25,17 @@
 ))]
 compile_error!("Select exactly one native acceptance fixture");
 
+#[cfg(all(feature = "scene-native-acceptance", target_os = "macos"))]
+mod scene_native_acceptance;
+#[cfg(all(
+    feature = "scene-native-acceptance",
+    any(
+        feature = "standalone-native-acceptance",
+        feature = "revision-native-acceptance",
+        feature = "update-native-acceptance"
+    )
+))]
+compile_error!("Select exactly one native acceptance fixture");
 mod custom_reviewers;
 mod drafting;
 mod export_pipeline;
@@ -64,7 +76,8 @@ mod update_native_script;
     not(any(
         feature = "standalone-native-acceptance",
         feature = "revision-native-acceptance",
-        feature = "update-native-acceptance"
+        feature = "update-native-acceptance",
+        feature = "scene-native-acceptance"
     ))
 ))]
 use recents::load_recents;
@@ -686,6 +699,18 @@ async fn list_system_fonts(window: tauri::WebviewWindow) -> Result<Vec<String>, 
     .map_err(|e| e.to_string())
 }
 fn main() {
+    if std::env::args_os().any(|arg| arg == "--scene-native-acceptance") {
+        #[cfg(all(feature = "scene-native-acceptance", target_os = "macos"))]
+        {
+            scene_native_acceptance::run();
+            return;
+        }
+        #[cfg(not(all(feature = "scene-native-acceptance", target_os = "macos")))]
+        {
+            eprintln!("Scene acceptance requires its explicit macOS feature");
+            std::process::exit(64);
+        }
+    }
     if std::env::args_os().any(|arg| arg == "--update-native-acceptance") {
         #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
         {
@@ -725,7 +750,8 @@ fn main() {
     #[cfg(any(
         feature = "standalone-native-acceptance",
         feature = "revision-native-acceptance",
-        feature = "update-native-acceptance"
+        feature = "update-native-acceptance",
+        feature = "scene-native-acceptance"
     ))]
     {
         eprintln!(
@@ -736,7 +762,8 @@ fn main() {
     #[cfg(not(any(
         feature = "standalone-native-acceptance",
         feature = "revision-native-acceptance",
-        feature = "update-native-acceptance"
+        feature = "update-native-acceptance",
+        feature = "scene-native-acceptance"
     )))]
     production_main();
 }
@@ -744,7 +771,8 @@ fn main() {
 #[cfg(not(any(
     feature = "standalone-native-acceptance",
     feature = "revision-native-acceptance",
-    feature = "update-native-acceptance"
+    feature = "update-native-acceptance",
+    feature = "scene-native-acceptance"
 )))]
 fn production_main() {
     let runtime = match update::Runtime::acquire() {
