@@ -388,7 +388,7 @@ dialog { color: var(--fg); }
 .row-menu > summary:hover, .row-menu[open] > summary { color: var(--accent); background: var(--surface); }
 .row-menu > summary:focus { outline: 3px solid var(--accent); outline-offset: -3px; opacity: 1; }
 .row-menu > .row-menu-items { visibility: hidden; }
-.row-menu-items { position: fixed; z-index: 40; display: flex; flex-direction: column; min-width: 12rem; max-width: 18rem; padding: .3rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
+.row-menu-items { position: fixed; z-index: 40; display: flex; flex-direction: column; box-sizing:border-box; min-width:min(12rem,calc(100vw - 16px)); max-width:min(18rem,calc(100vw - 16px)); max-height:calc(100dvh - 16px); overflow:auto; padding: .3rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
 .row-menu-items button { width: 100%; min-height: 2.75rem; padding: .35rem .6rem; border-color: transparent; background: transparent; font-size: .8125rem; text-align: left; }
 .row-menu-items button:hover:not(:disabled) { color: var(--accent); background: var(--surface-hover); }
 .row-menu-items hr { width: 100%; border: 0; border-top: 1px solid var(--border); margin: .3rem 0; }
@@ -532,9 +532,9 @@ dialog { color: var(--fg); }
 .markdown-reader button { min-height: 48px; max-width: 100%; margin-block: .25em; padding-inline: .9rem; font-family: var(--font-ui, var(--ui-fallback)); font-size: 1rem; color: var(--fg); white-space: normal; text-align: start; border: 2px solid var(--fg-muted); }
 .md-view-toggle { display: inline-flex; flex-wrap: wrap; gap: .4rem; }
 .editor-toolbar .md-view-toggle { flex-basis: 100%; margin-bottom: .5rem; }
-.editor-toolbar .md-view-toggle button, .reference-pane .md-view-toggle button { min-height: 48px; padding-inline: 1rem; color: var(--fg); font-size: 1rem; border: 2px solid var(--fg-muted); }
+.editor-toolbar .md-view-toggle button, .reference-pane .md-view-toggle button, .standalone-toolbar .md-view-toggle button { min-height: 48px; padding-inline: 1rem; color: var(--fg); font-size: 1rem; border: 2px solid var(--fg-muted); }
 .md-view-toggle button[aria-pressed="true"] { color: var(--fg); font-weight: 700; border-color: var(--fg); border-width: 3px; }
-.editor-toolbar .md-view-toggle button:disabled { border-style: dashed; opacity: 1; color: var(--fg-muted); }
+.editor-toolbar .md-view-toggle button:disabled, .standalone-toolbar .md-view-toggle button:disabled { border-style: dashed; opacity: 1; color: var(--fg-muted); }
 .editor-toolbar.document-reading .source-only { display: none; }
 /* Inline suggestion marks. Text decoration only: no metrics change, and the selection layer stays visible. */
 .cm-review-mark { cursor: pointer; text-decoration-color: var(--fg); text-decoration-skip-ink: none; }
@@ -720,8 +720,8 @@ dialog { color: var(--fg); }
    fades secondary chrome. This changes only the project-enabled header. */
 .project-first > .status-pill { background:var(--bg); }
 .project-first > .status-pill .pill-save:not([data-state="error"]) { color:var(--fg); }
-:root[data-fade-chrome] .studio.project-first.typing > .status-pill.chrome:not(:hover):not(:focus-within) { opacity:1; }
-:root[data-fade-chrome] .studio.project-first.typing > .status-pill.chrome:not(:hover):not(:focus-within) > :not(.project-switcher):not(.pill-save) { opacity:.12; }
+:root[data-fade-chrome] .studio.typing > .status-pill.chrome:not(:hover):not(:focus-within) { opacity:1; }
+:root[data-fade-chrome] .studio.typing > .status-pill.chrome:not(:hover):not(:focus-within) > :not(.project-switcher):not(.pill-save):not(.pill-goal) { opacity:.12; }
 /* Primary manuscript creation controls follow the project-library target sizes. */
 .drafting-actions button { min-height:44px; font-size:1rem; }
 .drafting-dialog :is(button,input,select) { min-height:44px; font-size:1rem; }
@@ -1004,6 +1004,16 @@ dialog { color: var(--fg); }
    Long messages scroll inside the same row, so autosave cannot move the caret. */
 .studio:not(.standalone-writing):has(.document-workspace) > .notice-slot { grid-template-columns:8ch minmax(0,1fr); grid-template-rows:minmax(0,1fr); gap:4px; }
 .studio:not(.standalone-writing):has(.document-workspace) > .notice-slot > .pill-save { padding-block:0; line-height:1.5; }
+
+/* Keep daily progress in the existing header row. Digits cannot resize the writer. */
+.studio > .status-pill .pill-goal { flex:0 0 auto; font-variant-numeric:tabular-nums; }
+.studio > .status-pill .pill-goal .pill-mono { inline-size:13ch; min-inline-size:0; overflow:hidden; text-overflow:ellipsis; text-align:end; }
+.studio > .status-pill .project-switcher { min-inline-size:0; }
+@media(max-width:1000px) { .studio > .status-pill .pill-goal .pill-bar { display:none; } }
+:root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .pill-goal .pill-bar { display:none; }
+.preference-warning { position:fixed; z-index:100; inset:auto 8px 8px; padding:8px; background:var(--surface); color:var(--fg); border:2px solid var(--danger); display:flex; gap:8px; flex-wrap:wrap; max-block-size:30vh; overflow:auto; }
+.preference-warning[hidden] { display:none; }
+.preference-warning button { min-block-size:48px; }
 .source-project-info { margin-block-end:.4rem; }
 .source-project-info > summary { min-block-size:48px; padding:.25rem 0; display:list-item; cursor:pointer; }
 .source-project-info[open] > :not(summary) { margin-block:.4rem; }
@@ -1116,3 +1126,5 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 .update-notice[hidden] { display:none; }
 .update-notice button { min-height:48px; max-width:100%; padding:.75rem 1rem; border:2px solid var(--fg); background:var(--bg); color:var(--fg); font:600 1rem var(--font-ui, var(--ui-fallback)); white-space:normal; }
 .update-notice button:focus-visible { outline:3px solid var(--fg); outline-offset:3px; }
+
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill > .pill-goal { padding-inline:4px; }

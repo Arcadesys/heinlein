@@ -1,4 +1,6 @@
 import { createEditor } from './editor';
+import { frontmatterEnd } from './assembledChapter';
+import { createMarkdownReader } from './markdownReader';
 import type { LocalCore, RepositorySession } from './localCore';
 export interface StandaloneDraft {
     schemaVersion: 1;
@@ -109,6 +111,8 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
     openCopy: (session: RepositorySession, path: string) => Promise<void>;
 }) {
     let active = false, session: DraftOpened | null = null, editor: ReturnType<typeof createEditor> | null = null, text = '', kept = '', epoch = 0, edit = 0;
+    let reader: ReturnType<typeof createMarkdownReader> | null = null;
+    let showSource: (() => void) | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined, maxTimer: ReturnType<typeof setTimeout> | undefined, flight: Promise<boolean> | null = null, failed: string | null = null;
     let pending: {
         revision: number;
@@ -134,7 +138,8 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
         }
     }
     function schedule() { clearTimeout(timer); timer = setTimeout(() => void flush(), DRAFT_DELAY); maxTimer ??= setTimeout(() => { maxTimer = undefined; void flush(); }, DRAFT_MAX_WAIT); }
-    function changed(raw: string) { text = raw; edit++; failed = null; discardPreview(); hooks.dirty(dirty()); report(dirty() ? 'Keeping on this Mac…' : 'Kept on this Mac'); schedule(); }
+    const focusWriting = () => { if (reader && !reader.element.hidden) reader.focus(); else editor?.view.focus(); };
+    function changed(raw: string) { text = raw; edit++; failed = null; discardPreview(); hooks.dirty(dirty()); report(dirty() ? 'Keeping on this Mac…' : 'Kept on this Mac'); if (reader && !reader.element.hidden) reader.update(); schedule(); }
     async function flush(): Promise<boolean> {
         if (!active)
             return true;
@@ -202,6 +207,9 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
         hooks.modeChanged?.(false);
         editor?.destroy();
         editor = null;
+        reader?.clear();
+        reader = null;
+        showSource = null;
         view = null;
         status = null;
         const handle = session?.handle;
@@ -247,6 +255,45 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
         view.append(title, status, toolbar, body, node('p', 'Choosing a destination makes an independent copy. Nothing is uploaded or shared by keeping this draft here.'));
         hooks.parent.replaceChildren(view);
         editor = createEditor(body, text, raw => changed(raw), () => void flush(), undefined, report);
+        const sourceEditor = editor;
+        let sourceScroll = 0, pageScroll = 0;
+        const scroller = () => { for (let parent = body.parentElement; parent; parent = parent.parentElement) if (/auto|scroll/.test(getComputedStyle(parent).overflowY)) return parent; return null; };
+        const setView = (reading: boolean) => {
+            if (!reader || reader.element.hidden === !reading) return;
+            if (reading) {
+                sourceScroll = sourceEditor.view.scrollDOM.scrollTop;
+                pageScroll = scroller()?.scrollTop ?? 0;
+                reader.update();
+            }
+            body.hidden = reading;
+            reader.element.hidden = !reading;
+            sourceButton.setAttribute('aria-pressed', String(!reading));
+            readingButton.setAttribute('aria-pressed', String(reading));
+            if (!reading) {
+                sourceEditor.view.requestMeasure();
+                sourceEditor.view.scrollDOM.scrollTop = sourceScroll;
+                const parent = scroller(); if (parent) parent.scrollTop = pageScroll;
+            }
+        };
+        showSource = () => { setView(false); sourceEditor.view.focus(); };
+        const sourceButton = btn('Source', showSource);
+        const readingButton = btn('Reading', () => setView(true));
+        sourceButton.setAttribute('aria-pressed', 'true');
+        readingButton.setAttribute('aria-pressed', 'false');
+        readingButton.disabled = Boolean(opened?.loaded.recoveryRequired);
+        readingButton.title = readingButton.disabled ? 'Resolve recovery in Source before using Reading.' : 'Read formatted Markdown without changing your draft.';
+        const toggle = node('div');
+        toggle.className = 'md-view-toggle';
+        toggle.setAttribute('role', 'group');
+        toggle.setAttribute('aria-label', 'Document view');
+        toggle.append(sourceButton, readingButton);
+        toolbar.prepend(toggle);
+        reader = createMarkdownReader({label: 'Draft reading view', content: () => {
+            const value = sourceEditor.view.state.doc.toString();
+            const from = frontmatterEnd(value) ?? 0;
+            return {text: value, ranges: [{from, to: value.length}], note: from ? 'Frontmatter is not shown in Reading. See Source.' : undefined};
+        }, showSource});
+        body.after(reader.element);
         const readOnly = Boolean(opened?.readOnlyReason || opened?.loaded.recoveryRequired || opened?.loaded.draft.state === 'discarded');
         editor.setEditable(!readOnly);
         hooks.dirty(false);
@@ -278,7 +325,7 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
             const d = dialog('Drafts on this Mac');
             d.append(node('p', 'These drafts have no expiry. Discarded drafts can be restored.'));
             let selection=0;
-            const close = () => { selection++;d.remove();if(editor)editor.view.focus();else if(opener instanceof HTMLElement&&opener.isConnected)opener.focus(); };
+            const close = () => { selection++;d.remove();if(editor)focusWriting();else if(opener instanceof HTMLElement&&opener.isConnected)opener.focus(); };
             const problem=node('p');problem.setAttribute('role','alert');d.append(problem);
             d.append(btn('Back to writing', close), btn('New draft', () => { close(); void newDraft(); }));
             for (const state of ['active', 'discarded', 'unavailable']) {
@@ -429,7 +476,7 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
         updateFields();
         const result = node('div');
         d.append(result);
-        const cancel = () => { discardPreview(); d.remove(); editor?.view.focus(); };
+        const cancel = () => { discardPreview(); d.remove(); focusWriting(); };
         d.append(btn('Cancel', cancel));
         const prepare = btn('Choose location and preview…', () => void (async () => {
             if (busy)
@@ -487,7 +534,7 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
                 session.loaded.draft = saved;
             }
             const receipt = saved.placements.at(-1)!;
-            d.replaceChildren(node('h2', 'Copy placed'), node('p', `Verified copy: ${receipt.destination}. Your original stays here. Later edits are independent.`), btn('Keep editing original', () => { d.remove(); editor?.view.focus(); }), btn('Open placed copy', () => { d.remove(); void openCopy(receipt.id); }));
+            d.replaceChildren(node('h2', 'Copy placed'), node('p', `Verified copy: ${receipt.destination}. Your original stays here. Later edits are independent.`), btn('Keep editing original', () => { d.remove(); showSource?.(); }), btn('Open placed copy', () => { d.remove(); void openCopy(receipt.id); }));
             if (generation !== edit)
                 report('Copy placed. Newer original edits are still being kept here.');
             else

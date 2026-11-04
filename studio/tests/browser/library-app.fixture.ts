@@ -38,6 +38,16 @@ if (new URLSearchParams(location.search).has('export')) {
   core.saveMarkdownExport = async (repositoryId,filename,text) => {calls.push({repositoryId,filename,text});return true;};
   (window as any).exportFixture = {calls};
 }
+if (new URLSearchParams(location.search).has('unified')) {
+ state.libraryLegacy=true;
+ state.library=[{id:'g',kind:'group',parentId:null},{id:'t',kind:'scene',parentId:'g'},{id:'s',kind:'scene',parentId:'g'}];
+ state.referenceSheets=[{id:'ref',title:'Reference only',path:'ms/reference/notes.md',groupId:'g',reference:true}];
+ core.readDocument=async(_id,path)=>doc(path,path==='ms/first.md'?'ALPHA-BEGIN. First scene.':path==='ms/second.md'?'OMEGA-END. Last scene.':'REFERENCE-ONLY material.');
+ core.recentRepositories=async()=>Array.from({length:12},(_,n)=>({id:`fake-${n}`,name:`Synthetic recent ${n}`}));
+ const calls:any[]=[];let outcome='saved';
+ core.exportManuscript=async(repositoryId,filename,spec)=>{if(outcome==='failed'){outcome='saved';throw Error('Pandoc is missing (synthetic)');}calls.push({repositoryId,filename,...spec});if(outcome==='canceled'){outcome='saved';return false;}return true;};
+ (window as any).exportFixture={calls,setOutcome:(value:string)=>{outcome=value;}};
+}
 if (new URLSearchParams(location.search).has('reviewers')) {
   const key = 'synthetic-review-agents';
   core.listCustomReviewers = async () => JSON.parse(localStorage.getItem(key) ?? '[]');

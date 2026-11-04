@@ -222,9 +222,7 @@ pub(super) fn picker_phase() -> Option<&'static str> {
     FIXTURE.get().map(|fixture| fixture.phase.as_str())
 }
 pub(super) fn manual_session_failed() -> bool {
-    FIXTURE
-        .get()
-        .map_or(true, |f| f.abort.load(Ordering::SeqCst))
+    FIXTURE.get().is_none_or(|f| f.abort.load(Ordering::SeqCst))
 }
 pub(super) fn picker_manual() -> bool {
     picker_phase() == Some("picker-manual-preview")

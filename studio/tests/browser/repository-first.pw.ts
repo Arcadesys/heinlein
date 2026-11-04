@@ -59,6 +59,20 @@ test('GitHub entry CTA has measured solid text contrast in default and high-cont
  }
 });
 
+test('routine project notices have AA contrast when focused and settle before quiet-state audits',async({page})=>{
+ await page.goto('/tests/browser/projects.html');
+ await page.locator('.project-switcher').click();await page.getByRole('button',{name:'Open Novel B',exact:true}).click();
+ const notice=page.locator('.status');await expect(notice).toContainText('Novel B');
+ if(await page.getByRole('dialog',{name:'Navigation'}).isVisible())await page.keyboard.press('Escape');
+ for(const high of [false,true]){
+  if(high){await page.getByRole('button',{name:'More actions'}).click();await page.getByRole('button',{name:'Appearance',exact:false}).click();await page.getByRole('button',{name:'High contrast',exact:true}).click();await page.keyboard.press('Escape');}
+  await notice.focus();await expect(notice).toHaveCSS('opacity','1');
+  expect((await new AxeBuilder({page}).include('.notice-slot').withTags(['wcag2a','wcag2aa']).analyze()).violations).toEqual([]);
+  await page.getByRole('button',{name:'More actions',exact:true}).focus();
+  await expect(notice).toHaveClass(/\bquiet\b/);await expect(notice).toHaveCSS('opacity','0');
+ }
+});
+
 for(const saved of [null,{open:true,active:'manuscript'},{open:false,active:'manuscript'}]){
  test(`manifest-free managed project lands on files with keyboard access and no setup (${JSON.stringify(saved)})`,async({page},info)=>{
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
@@ -75,6 +89,10 @@ for(const saved of [null,{open:true,active:'manuscript'},{open:false,active:'man
   await activate(page.locator('.source-project-info > summary'));await expect(guide).toBeVisible();
   await activate(page.locator('.source-project-info > summary'));await expect(guide).toBeHidden();
   await expect(guide).toHaveText('Browse writing files to edit or review. No manuscript setup is required.');
+  // Audit the settled quiet state, not a random frame of its timed opacity fade.
+  // The focused visible notice is audited separately above in both themes.
+  await expect(page.locator('.status')).toHaveClass(/\bquiet\b/);
+  await expect(page.locator('.status')).toHaveCSS('opacity','0');
   for(const high of [false,true]){
    if(high){if(await page.getByRole('dialog',{name:'Navigation'}).isVisible())await page.keyboard.press('Escape');await activate(page.getByRole('button',{name:'More actions'}));await activate(page.getByRole('button',{name:'Appearance',exact:false}));await activate(page.getByRole('button',{name:'High contrast',exact:true}));await page.keyboard.press('Escape');const toggle=page.getByRole('button',{name:'Navigation',exact:true});if(await toggle.isVisible())await activate(toggle);}
    for(const zoom of ['100','200']){

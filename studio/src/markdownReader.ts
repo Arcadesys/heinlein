@@ -192,7 +192,7 @@ export function createMarkdownReader(hooks: {label: string; content(): ReaderCon
   element.hidden = true;
   const announcer = document.createElement('p');
   announcer.className = 'sr-only';
-  announcer.setAttribute('role', 'status');
+  if (hooks.open) announcer.setAttribute('role', 'status');
   const body = document.createElement('div');
   element.append(announcer, body);
   let marks: readonly ReviewMark[] = [];

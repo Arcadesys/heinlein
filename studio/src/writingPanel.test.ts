@@ -122,12 +122,12 @@ describe('typewriter settings', () => {
     expect(toggle.getAttribute('aria-pressed')).toBe('false');
     expect(panel.element.querySelector('[role="status"]')!.textContent).toBe('');
   });
-  it('reports unavailable audio without enabling either toggle', async () => {
+  it('retains the requested sound preference when audio is unavailable', async () => {
     vi.stubGlobal('AudioContext', undefined);
     vi.stubGlobal('webkitAudioContext', undefined);
     const settings = panel.soundSettings();
     settings.querySelector('button')!.click(); await Promise.resolve();
-    expect(settings.querySelector('button')!.getAttribute('aria-pressed')).toBe('false');
+    expect(settings.querySelector('button')!.getAttribute('aria-pressed')).toBe('true');
     expect(panel.element.textContent).toContain('Audio unavailable; writing still works.');
   });
 });

@@ -10,9 +10,9 @@ async function drawer(page:Page) {
 async function groupExport(page:Page) {
   const menu=page.locator('summary[aria-label="Actions for Group"]');
   await menu.focus(); await expect(menu).toBeFocused(); await page.keyboard.press('Enter');
-  const action=page.getByRole('group',{name:'Actions for Group'}).getByRole('button',{name:'Export as Markdown…',exact:true});
+  const action=page.getByRole('group',{name:'Actions for Group'}).getByRole('button',{name:'Export group…',exact:true});
   await action.focus(); await page.keyboard.press('Enter');
-  return page.getByRole('dialog',{name:'Export as Markdown',exact:true});
+  return page.getByRole('dialog',{name:'Export group',exact:true});
 }
 test('group export is keyboard accessible, preserves editor geometry, and sends a single Markdown snapshot to native save',async({page},info)=>{
   const errors:string[]=[]; page.on('pageerror',error=>errors.push(error.message)); page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
@@ -27,7 +27,7 @@ test('group export is keyboard accessible, preserves editor geometry, and sends 
   const dialog=await groupExport(page);
   await expect(dialog.getByRole('status')).toContainText('2 sheets ready');
   await expect(dialog.getByRole('button',{name:'Cancel',exact:true})).toBeFocused();
-  expect((await new AxeBuilder({page}).include('dialog[aria-label="Export as Markdown"]').analyze()).violations).toEqual([]);
+  expect((await new AxeBuilder({page}).include('dialog[aria-label="Export group"]').analyze()).violations).toEqual([]);
   const save=dialog.getByRole('button',{name:'Choose export location…'});await save.focus(); await expect(save).toBeFocused();
   const target=await save.boundingBox();expect(target!.height).toBeGreaterThanOrEqual(44);
   const focus=await save.evaluate(node=>getComputedStyle(node).outlineStyle);expect(focus).not.toBe('none');
@@ -52,10 +52,10 @@ test('source folder export includes descendants and supports Escape at enlarged 
   await page.locator('summary[aria-label="Project actions"]').click();
   await page.getByRole('group',{name:'Project actions'}).getByRole('button',{name:'Source files',exact:true}).click();
   await page.locator('summary[aria-label="Actions for folder writing"]').click();
-  await page.getByRole('group',{name:'Actions for folder writing'}).getByRole('button',{name:'Export as Markdown…'}).click();
-  const dialog=page.getByRole('dialog',{name:'Export as Markdown',exact:true});
+  await page.getByRole('group',{name:'Actions for folder writing'}).getByRole('button',{name:'Export folder…'}).click();
+  const dialog=page.getByRole('dialog',{name:'Export folder',exact:true});
   await expect(dialog.getByRole('status')).toContainText('1 sheet ready');
-  expect((await new AxeBuilder({page}).include('dialog[aria-label="Export as Markdown"]').analyze()).violations).toEqual([]);
+  expect((await new AxeBuilder({page}).include('dialog[aria-label="Export folder"]').analyze()).violations).toEqual([]);
   expect(await dialog.evaluate(node=>node.scrollWidth>node.clientWidth)).toBe(false);
   const save=dialog.getByRole('button',{name:'Choose export location…'});await save.focus();
   expect(await save.evaluate(node=>{const range=document.createRange();range.setStart(node.firstChild!,0);range.setEnd(node.firstChild!,6);return range.getClientRects().length;})).toBe(1);

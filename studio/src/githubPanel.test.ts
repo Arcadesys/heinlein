@@ -195,6 +195,24 @@ it('Not now cancels without version/upload and returns focus',async()=>{
  await f.click('Not now');expect(f.p.element.open).toBe(false);expect(document.activeElement).toBe(opener);
  expect(f.request.mock.calls.filter(c=>c[0].action==='confirm')).toHaveLength(0);
 });
+it('a queued close from the prior opening cannot invalidate a reopened Send',async()=>{
+ const notifications:Array<()=>void>=[];
+ HTMLDialogElement.prototype.close=function(){this.removeAttribute('open');notifications.push(()=>this.dispatchEvent(new Event('close')));};
+ const f=fixture();await f.p.openSend();await f.click('Not now');await f.p.openSend();
+ const original=f.request.getMockImplementation()!;f.request.mockImplementation(r=>r.action==='confirm'?Promise.resolve(null):original(r));
+ const check=f.p.element.querySelector<HTMLInputElement>('input[type=checkbox]')!;check.click();
+ f.fill('Name recorded with these changes','Writer');f.fill('Email recorded with these changes','private@example.test');
+ notifications.shift()!();await f.click('Send to GitHub…');await tick();
+ expect(f.request.mock.calls.filter(c=>c[0].action==='confirm')).toHaveLength(1);
+ expect(f.p.element.open).toBe(true);expect(check.checked).toBe(true);
+ expect(f.p.element.textContent).toContain('Nothing sent');
+ expect(document.activeElement?.textContent).toBe('Send to GitHub…');
+});
+it('a native close of the current dialog still cancels its preview',async()=>{
+ const f=fixture();await f.p.openSend();f.request.mockClear();f.p.element.close();await tick();
+ expect(f.p.element.open).toBe(false);
+ expect(f.request).toHaveBeenCalledWith({action:'cancel',previewId:'send'});
+});
 it('a failed save prevents even a Send preview',async()=>{
  const f=fixture();const rejectSave=vi.fn(async()=>false);
  const p=createGitHubPanel({available:()=>true,githubRequest:f.request} as unknown as LocalCore,{...f.hooks,saveForSend:rejectSave});panels.push(p);document.body.append(p.element);await p.openSend();

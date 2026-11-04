@@ -181,4 +181,16 @@ describe('Studio chrome', () => {
     document.querySelector<HTMLButtonElement>('[aria-label="Reset text font to default"]')!.click();
     [...document.querySelectorAll<HTMLButtonElement>('.theme-card')].find(card => card.textContent === 'Arcades')!.click();
   });
+  it('keeps the live daily counter outside action storage while menus open and close', async()=>{
+    const app=await start();await app.showDocument('casino.md');await settle();
+    const goal=document.querySelector<HTMLButtonElement>('.status-pill > .pill-goal')!;
+    expect(goal).not.toBeNull();expect(goal.closest('[hidden]')).toBeNull();
+    const before=EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
+    const more=document.querySelector<HTMLButtonElement>('[aria-label="More actions"]')!;more.click();
+    expect(goal.closest('[hidden]')).toBeNull();document.querySelector<HTMLButtonElement>('.workspace-actions-dialog > button')!.click();
+    goal.click();expect(document.querySelector<HTMLElement>('.goal-card')!.hidden).toBe(false);
+    expect(EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)).toBe(before);
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Daily word goal');
+  });
+
 });
