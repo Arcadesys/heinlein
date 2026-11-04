@@ -19,7 +19,7 @@ test('project tree and writing area stay within their workspace at enlarged text
  expect(geometry.tree.right).toBeLessThanOrEqual(geometry.nav.right+1);
  await page.screenshot({path:info.outputPath('library-workspace-200.png')});
 });
-test('full app navigates the project tree and editor',async({page})=>{
+test('full app navigates the project tree and editor',{tag:'@smoke'},async({page})=>{
  await page.goto('/tests/browser/library-app.html');
  await openDrawer(page);
  await expect(page.locator('.navigator [role="tab"]')).toHaveCount(0);

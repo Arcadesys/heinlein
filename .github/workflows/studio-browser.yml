@@ -1,0 +1,39 @@
+name: Studio full browser acceptance
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser-full:
+    name: Full browser acceptance (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
+      - run: npm ci
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+      - name: Full browser acceptance (synthetic fixtures, desktop and 320px)
+        run: npm run test:browser:full
+        env:
+          TMPDIR: ${{ runner.temp }}
+      - name: Keep browser diagnostics when acceptance fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-browser-full-${{ matrix.os }}
+          path: ${{ runner.temp }}/heinlein-theme-browser-results
+          if-no-files-found: ignore

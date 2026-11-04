@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-test('normal renderer opens Appearance without native access', async ({page}) => {
+test('normal renderer opens Appearance without native access', {tag: '@smoke'}, async ({page}) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
   if(await page.getByRole('dialog',{name:'Navigation'}).isVisible())await page.keyboard.press('Escape');

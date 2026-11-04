@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 const activate = async (l: import('@playwright/test').Locator) => { if(!await l.isVisible()){const nav=l.page().getByRole('dialog',{name:'Navigation'});if(await nav.isVisible())await l.page().keyboard.press('Escape');await l.page().getByRole('button',{name:'More actions'}).click();} await l.focus(); await l.page().keyboard.press('Enter'); };
 const writing = (p: import('@playwright/test').Page) => p.locator('.standalone-editor .cm-content');
-test('start without setup, local keep/restart/find/resume/discard/restore by keyboard', async ({ page }) => {
+test('start without setup, local keep/restart/find/resume/discard/restore by keyboard', {tag: '@smoke'}, async ({ page }) => {
     await page.goto('/tests/browser/standalone.html');
     await expect(writing(page)).toBeVisible();
     await expect(writing(page)).toBeFocused();
