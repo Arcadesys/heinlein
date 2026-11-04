@@ -14,3 +14,11 @@
     padding: .5em .65em;
   }
 }
+
+.markdown-export-dialog > label {display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-block:.7rem;}
+.markdown-export-dialog :is(select,input[type=text]) {font:inherit;max-inline-size:100%;min-block-size:48px;}
+.markdown-export-dialog input[type=checkbox] {inline-size:24px;block-size:24px;flex:none;}
+.tree-project {flex-wrap:wrap;}
+.tree-project > h2 {order:0;flex:1 1 0;min-inline-size:0;}
+.tree-project > .project-menu {order:1;flex:none;}
+.tree-project > .project-export {order:2;flex:1 1 100%;min-block-size:48px;max-inline-size:100%;font-size:1rem;}

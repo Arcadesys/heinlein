@@ -20,16 +20,18 @@ beforeEach(()=>{
 afterEach(()=>{vi.restoreAllMocks();});
 
 describe('read-only Markdown export',()=>{
-  it('exports nested groups in Library order, includes references, and uses the current buffer without saving',async()=>{
+  it('exports nested groups in Library order, excludes references by default and uses the current buffer without saving',async()=>{
     const core=bridge(); const original=structuredClone(state);
     const text='---\r\nprivate: metadata\r\n---\r\nCurrent — 🐺\r\n\r\nPunch.\n';
     const exported=await prepareMarkdownExport(core,'repo','Act one',{kind:'group',id:'g'},state,new Map([['ms/a.md',doc('ms/a.md',text)]]));
-    expect(exported.count).toBe(3);
+    expect(exported.count).toBe(2);
     expect(exported.filename).toBe('Act one.md');
     expect(exported.text).toContain('Current — 🐺\r\n\r\nPunch.\n');
     expect(exported.text).not.toContain('private:'); expect(exported.text).not.toContain('Outside');
     expect(exported.text.indexOf('### Second')).toBeLessThan(exported.text.indexOf('## First'));
-    expect(exported.text).toContain('### Reference notes');
+    expect(exported.text).not.toContain('Reference notes');
+    const withReferences=await prepareMarkdownExport(core,'repo','Act one',{kind:'group',id:'g'},state,new Map([['ms/a.md',doc('ms/a.md',text)]]),{includeReferences:true});
+    expect(withReferences.count).toBe(3);expect(withReferences.text).toContain('### Reference notes');
     expect(core.readDocument).not.toHaveBeenCalledWith('repo','ms/a.md');
     expect(core.saveDocument).not.toHaveBeenCalled(); expect(core.stageRecovery).not.toHaveBeenCalled();
     expect(state).toEqual(original);
@@ -82,14 +84,30 @@ it('lets the author cancel, retry the native picker, recover from save errors, a
   const core=bridge(); const save=vi.mocked(core.saveMarkdownExport!); save.mockResolvedValueOnce(false).mockRejectedValueOnce(new Error('Disk full')).mockResolvedValueOnce(true);
   const report=vi.fn();const exporter=createMarkdownExport(core,{root:document.body,snapshot:()=>({repositoryId:'repo',state,buffers:new Map()}),report});
   await exporter.open('Act one',{kind:'group',id:'g'});
-  expect(document.querySelector('dialog')?.getAttribute('aria-label')).toBe('Export as Markdown');
+  expect(document.querySelector('dialog')?.getAttribute('aria-label')).toBe('Export group');
   const button=document.querySelector<HTMLButtonElement>('dialog button')!; button.click();
   await vi.waitFor(()=>expect(document.querySelector('[role=status]')?.textContent).toContain('canceled'));
   button.click(); await vi.waitFor(()=>expect(document.querySelector('[role=status]')?.textContent).toContain('Disk full'));
   button.click(); await vi.waitFor(()=>expect(document.querySelector('dialog')).toBeNull());
-  expect(report).toHaveBeenCalledWith('Exported 3 sheets as one Markdown file.');
+  expect(report).toHaveBeenCalledWith('Exported 2 sheets as one Markdown file.');
   expect(save.mock.calls[0]).toEqual(save.mock.calls[2]);
   await exporter.open('Act one',{kind:'group',id:'g'});
   document.querySelector<HTMLButtonElement>('dialog button:last-child')!.click();
   expect(document.querySelector('dialog')).toBeNull(); expect(save).toHaveBeenCalledTimes(3); exporter.destroy();
+});
+
+it('respects native legacy ordering even with a synthesized Library array',async()=>{
+ const nativeLegacy={...state,libraryLegacy:true,referenceSheets:undefined,scenes:[state.scenes[2],state.scenes[0],state.scenes[1]]};
+ const result=await prepareMarkdownExport(bridge(),'repo','Book',{kind:'project'},nativeLegacy);
+ expect(result.text.indexOf('### Outside')).toBeLessThan(result.text.indexOf('### First'));
+ expect(result.text.indexOf('### First')).toBeLessThan(result.text.indexOf('### Second'));
+});
+it('explicit reference opt-in keeps captured sources and passes the chosen format to native conversion',async()=>{
+ const core=bridge();const convert=vi.fn(async()=>true);core.exportManuscript=convert;
+ const exporter=createMarkdownExport(core,{root:document.body,snapshot:()=>({repositoryId:'repo',state,buffers:new Map()}),report:vi.fn()});
+ await exporter.open('Book',{kind:'project'});const check=document.querySelector<HTMLInputElement>('input[type=checkbox]')!;expect(check.checked).toBe(false);
+ check.checked=true;check.dispatchEvent(new Event('change'));await vi.waitFor(()=>expect(document.querySelector('[role=status]')?.textContent).toContain('4 sheets ready'));
+ const format=document.querySelector<HTMLSelectElement>('select')!;format.value='epub';format.dispatchEvent(new Event('change'));
+ document.querySelector<HTMLButtonElement>('dialog button')!.click();await vi.waitFor(()=>expect(convert).toHaveBeenCalledOnce());
+ expect(convert.mock.calls[0]).toMatchObject(['repo','Book.epub',{format:'epub',title:'Book',author:''}]);expect(vi.mocked(core.readDocument).mock.calls.filter(([,path])=>path==='ms/a.md')).toHaveLength(1);exporter.destroy();
 });

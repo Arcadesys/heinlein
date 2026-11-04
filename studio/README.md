@@ -4,9 +4,48 @@ An additive native desktop editor with local autosave and explicit recovery deci
 folder, browse its files, and use a scene manifest to navigate the manuscript.
 The existing Python publisher and its CLI remain unchanged.
 
+## Markdown Reading
+
+Use **Reading** beside **Source** to read formatted Markdown in project documents
+or standalone drafts. Reading includes your current unsaved text; returning to
+Source keeps your selection and undo history. Switching views does not save or
+change the manuscript. Headings, emphasis, lists, quotes, links and code are
+rendered with your writing appearance settings. Link destinations appear as text,
+embedded images are not loaded, and raw HTML stays literal. Frontmatter remains
+available in Source. Resolve any pending recovery in Source first.
+
+## Preferences and daily progress
+
+The daily counter stays directly available in the writing header. Its width is
+reserved so growing counts do not move or resize the writer; large counts use a
+compact display with exact totals in the accessible label and tooltip.
+
+Native Studio loads preferences before mounting the editor. Appearance, fonts,
+zoom, navigation, accepted custom themes, the daily target/progress and sound
+choice/volume live in one versioned `preferences-v1.json` in Tauri's app-config
+directory (on macOS, `~/Library/Application Support/me.thearcades.heinlein.studio/`).
+Using one atomic envelope keeps the initial target and progress migration together.
+The stable production bundle identifier must be retained when packaging updates.
+
+The first launch imports only allowlisted settings from the current WebKit
+profile; existing native values win. It retains the original payloads for recovery
+and leaves WebKit records untouched. Writes use an OS lock, revision checks,
+atomic replacement, fsync and a previous-file backup. Unreadable/future native
+schemas are preserved and shown as a loading error. Failed writes stay pending,
+are visibly reported, and can be retried. Closing waits for settings writes or
+requires an explicit choice to close with the last saved settings after writing
+has passed its existing save guards. Sound resumes after a user keypress; saved
+sound preferences do not imply audio is already playing.
+
+Browser previews continue to use localStorage. Development/RC profiles remain
+separate; this migration does not guess between conflicting historical profiles.
+Manuscripts, project stores, recovery, credentials, conversations and review agents
+retain their existing separate stores. Preferences do not provide cross-device sync.
+Native builds require Rust 1.89 or newer for OS-backed file locking.
+
 ## 1.7 release packaging
 
-Heinlein Studio is version **1.7.2**. The independent Python
+Heinlein Studio is version **1.7.3**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:
@@ -274,15 +313,36 @@ asset references block directory-changing operations so their bytes are not
 silently rewritten or their references knowingly broken. Incoming links elsewhere
 still need author review after path changes. Publication is deferred.
 
-**Export as Markdown…** in a group’s or project’s actions combines its sheets
-and nested groups into one Markdown file in Library order. In **Source files**,
-use a folder’s actions or **Export this folder as Markdown…** to include its
-subfolders; indexed sheets use Library order, followed by other Markdown files in
-natural filename order. Reference sheets are included. The export adds headings,
-omits YAML metadata and uses current editor text without changing the source.
-Images and attachments are not bundled. The native Save dialog requires a new
-file outside the source project; existing files are never replaced. No file is
-sent to anyone automatically.
+**Export manuscript…** is a visible button in the Library header, the first
+project action, and a command-palette entry. It opens one dialog for PDF, EPUB,
+Markdown, HTML and DOCX. Group/folder actions use the same dialog with an explicit
+scope label. Reference sheets are excluded by default and can be included with a
+checkbox. Native legacy reading order is preserved even when the host supplies a
+synthesized Library tree. Indexed folder sheets follow that same order.
+
+The dialog captures current editor text, adds headings and omits per-sheet YAML.
+Its optional author field supplies the export byline. It writes a new file outside
+the source project; existing files are never replaced. No source edits or automatic
+uploads occur. Conversion failures and canceled location pickers leave a retryable
+dialog. Local image attachments are not bundled in this version.
+
+Markdown requires no converter. Other formats use the bundled Heinlein publishing
+adapter plus a locally installed Python runtime with Heinlein's dependencies and
+Pandoc; PDF also requires Chrome/Chromium. The adapter reuses the existing Pandoc
+and EPUB/DOCX writers and the Chrome PDF renderer, using plain manuscript styling
+without publication branding or colophon pages. Chrome runs with a disposable
+profile; conversions are staged privately and bounded to three minutes. Missing
+converters produce an actionable error before a destination file is created.
+
+For an isolated review build (separate application identity and user-data profile):
+
+```sh
+OPENSSL_STATIC=1 CARGO_NET_OFFLINE=true npm run tauri build -- --config src-tauri/tauri.export-preview.conf.json --bundles app --ci
+```
+
+This builds **Heinlein Studio Export Preview.app** without replacing the installed
+app or importing its project/account lists. Production release configuration also
+bundles the publishing adapter but retains the stable production identifier.
 
 ## Tests
 

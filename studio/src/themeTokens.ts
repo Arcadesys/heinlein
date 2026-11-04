@@ -1,3 +1,4 @@
+import {preferenceStorage} from './preferences';
 // Agent output is data only. Never accept CSS, selectors, URLs, font names or markup.
 import {appearanceVariables, THEMES, type Appearance} from './appearance';
 export const THEME_COLORS = ['bg', 'surface', 'hover', 'fg', 'muted', 'accent', 'border', 'warn', 'danger'] as const;
@@ -70,10 +71,10 @@ export function themeDiff(before: Record<string, string>, after: Record<string, 
   return [...new Set([...Object.keys(before), ...Object.keys(after)])].sort().filter(key => before[key] !== after[key]).map(key => `${key}\n− ${before[key] ?? '(baseline)'}\n+ ${after[key] ?? '(baseline)'}`).join('\n\n') || 'No token changes.';
 }
 /** Accepted and previous themes share one atomic storage record. Candidates never reach it. */
-export function createThemeStore(storage?: Storage) {
+export function createThemeStore(storage?: Pick<Storage, 'getItem' | 'setItem'>) {
   let raw: string | null = null; let state = empty(); let warning = '';
   try {
-    storage ??= window.localStorage;
+    storage ??= preferenceStorage();
     raw = storage.getItem(THEME_STORAGE_KEY);
     if (raw !== null) {
       const data: unknown = JSON.parse(raw);

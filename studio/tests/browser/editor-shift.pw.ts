@@ -113,6 +113,7 @@ for (const zoom of [1, 2]) for (const theme of ['default', 'contrast']) {
     });
     await page.waitForTimeout(200);
     const reflow = await sample();
+    await expect(page.locator('.cm-content')).toBeFocused();
     await page.keyboard.type('x');
     const afterReflow = await sample();
     expect(afterReflow.width).toBe(reflow.width);
@@ -120,6 +121,7 @@ for (const zoom of [1, 2]) for (const theme of ['default', 'contrast']) {
     await page.keyboard.press('Enter');
     await page.keyboard.type('New fragment — kept.');
     const newline = await sample();
+    expect(await page.evaluate(()=>(window as any).shiftFixture.view.state.doc.toString())).toContain('\nNew fragment — kept.');
     expect(newline.anchor.top).toBeCloseTo(reflow.anchor.top, 0);
     await page.waitForTimeout(2200);
     expect((await sample()).at).toEqual(newline.at);

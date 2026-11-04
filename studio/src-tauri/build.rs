@@ -17,6 +17,7 @@ fn main() {
     }
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "preferences_request",
             "project_request",
             "github_request",
             "update_request",
@@ -68,6 +69,7 @@ fn main() {
             "list_directory",
             "read_document",
             "save_markdown_export",
+            "export_manuscript",
             "save_document",
             "read_recovery",
             "stage_recovery",

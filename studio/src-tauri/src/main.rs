@@ -26,12 +26,16 @@ compile_error!("Select exactly one native acceptance fixture");
 
 mod custom_reviewers;
 mod drafting;
+mod export_pipeline;
 mod first_story;
 mod github;
+mod manuscript_export;
 mod markdown_export;
 mod mcp_access;
 #[cfg(all(test, unix))]
 mod persistence_tests;
+mod preferences;
+mod preferences_store;
 mod projects;
 mod proposals;
 mod questions;
@@ -811,6 +815,8 @@ fn production_main() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            manuscript_export::export_manuscript,
+            preferences::preferences_request,
             markdown_export::save_markdown_export,
             projects::project_request,
             mcp_access::mcp_access_request,

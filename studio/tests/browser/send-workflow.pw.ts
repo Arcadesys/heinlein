@@ -2,7 +2,7 @@ import {test,expect,type Locator,type Page} from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 /** Source files open from the project ⋯ menu (keyboard: Enter, arrows, Enter) unless the drawer already shows them. */
 async function showSourceFiles(page:Page){await expect(page.locator('#navigation-drawer')).toHaveAttribute('aria-hidden','false');await expect(page.locator('.nav-view:not([hidden])').first()).toBeVisible();if(await page.locator('.files.nav-view').isVisible())return;const more=page.locator('summary[aria-label="Project actions"]');await expect(more).toBeVisible();await more.focus();await page.keyboard.press('Enter');const item=page.getByRole('group',{name:'Project actions'}).getByRole('button',{name:'Source files',exact:true});await expect(item).toBeVisible();for(let i=0;i<12&&!await item.evaluate(el=>el===document.activeElement);i++)await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');await expect(page.locator('.files.nav-view')).toBeVisible();}
-for(const contrast of [false,true])test(`focused Send: Not now, native cancel, keyboard200 contrast=${contrast}`,async({page})=>{
+for(const contrast of [false,true])for(const staleClose of [false,true])test(`focused Send: Not now, native cancel, keyboard200 contrast=${contrast}${staleClose?' delayed prior close':''}`,async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
 
  async function activate(target:Locator){await expect(target).toBeVisible();await expect(target).toBeEnabled();for(let n=0;n<120;n++){if(await target.evaluate(el=>el===document.activeElement)){await expect(target).toBeFocused();await target.press('Enter');return;}await page.keyboard.press('Tab');}throw Error('Keyboard target unreachable');}
@@ -23,7 +23,10 @@ for(const contrast of [false,true])test(`focused Send: Not now, native cancel, k
  await expect(dialog).toContainText('earlier-scene.md');
  const send=dialog.getByRole('button',{name:'Send to GitHub…',exact:true});expect((await send.boundingBox())!.height).toBeGreaterThanOrEqual(44);
  expect(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+ // A previous close() queues its notification; it can arrive after this reopen.
+ if(staleClose)await dialog.evaluate(el=>el.dispatchEvent(new Event('close')));
  await activate(send);await expect(dialog.getByRole('status')).toContainText('Nothing sent');await expect(checkbox).toBeChecked();await expect(send).toBeFocused();
+ expect(await page.evaluate(()=> (window as any).githubFixture.calls.filter((c:any)=>c.action==='confirm'))).toHaveLength(1);
  // Axe closes an auxiliary page: run it after the keyboard journey, not between focus and activation.
  expect((await new AxeBuilder({page}).include('.github-panel').analyze()).violations).toEqual([]);
  expect(await page.evaluate(()=> (window as any).githubFixture.workspace.headOid)).toBe('local');expect(errors).toEqual([]);

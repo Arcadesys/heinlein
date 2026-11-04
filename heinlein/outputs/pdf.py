@@ -122,7 +122,10 @@ def _print_to_pdf(html: str, output: Path, *, keep_html: Path | None = None) -> 
             f"--print-to-pdf={output}",
             f"file://{html_path}",
         ]
-        subprocess.run(cmd, check=True, capture_output=True)
+        # Keep exports out of the author's running Chrome profile/session.
+        with tempfile.TemporaryDirectory(prefix="heinlein-chrome-") as profile:
+            cmd.insert(1, f"--user-data-dir={profile}")
+            subprocess.run(cmd, check=True, capture_output=True, timeout=90)
     finally:
         if cleanup:
             html_path.unlink(missing_ok=True)

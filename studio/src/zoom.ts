@@ -1,3 +1,4 @@
+import {preferenceStorage} from './preferences';
 // Text zoom for the whole UI. Steps map to `:root[data-zoom]` rules in style.css,
 // which scale the root font size; everything else is sized in rem so it follows.
 export const ZOOM_STEPS = [75, 90, 100, 115, 130, 150, 175, 200, 250, 300] as const;
@@ -31,8 +32,8 @@ export function shortcutAction(event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'c
 }
 
 export function loadZoom(): number {
-  try { return parseZoom(localStorage.getItem(STORAGE_KEY)); } catch { return DEFAULT_ZOOM; }
+  try { return parseZoom(preferenceStorage().getItem(STORAGE_KEY)); } catch { return DEFAULT_ZOOM; }
 }
 export function saveZoom(value: number) {
-  try { localStorage.setItem(STORAGE_KEY, String(value)); } catch { /* storage is a convenience only */ }
+  try { preferenceStorage().setItem(STORAGE_KEY, String(value)); } catch { /* storage is a convenience only */ }
 }

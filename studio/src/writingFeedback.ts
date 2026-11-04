@@ -1,3 +1,4 @@
+import {preferenceStorage} from './preferences';
 /** Local-only writing feedback. No manuscript text is stored by this module. */
 export const DEFAULT_DAILY_GOAL = 1000;
 export const WRITING_STORAGE_KEY = 'heinlein-studio-writing-v1';
@@ -55,9 +56,9 @@ function readProgress(raw: string | null): StoredProgress {
   const fresh: StoredProgress = {version: 1, goal: DEFAULT_DAILY_GOAL, days: emptyRecord()};
   if (!raw) return fresh;
   const value: unknown = JSON.parse(raw);
-  if (!value || typeof value !== 'object') return fresh;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('Saved progress needs recovery');
   const candidate = value as Partial<StoredProgress>;
-  if (candidate.version !== 1) return fresh;
+  if (candidate.version !== 1) throw Error('Unsupported saved progress version');
   if (validGoal(candidate.goal)) fresh.goal = candidate.goal;
   if (!candidate.days || typeof candidate.days !== 'object') return fresh;
   for (const [date, scenes] of Object.entries(candidate.days)) {
@@ -90,7 +91,7 @@ export function createDailyGoalTracker(options: DailyGoalOptions = {}) {
     options.onStorageError?.(error);
   };
   try {
-    storage = options.storage === undefined ? globalThis.localStorage : options.storage;
+    storage = options.storage === undefined ? preferenceStorage() : options.storage;
     persistenceAvailable = !!storage;
   } catch (error) { failed(error); }
   let raw: string | null = null;
@@ -102,7 +103,7 @@ export function createDailyGoalTracker(options: DailyGoalOptions = {}) {
   }
   let data: StoredProgress;
   try { data = readProgress(raw); }
-  catch (error) { data = readProgress(null); failed(error); }
+  catch (error) { data = readProgress(null); storage = null; failed(error); }
   const now = options.now ?? (() => new Date());
   const day = () => localDateKey(now());
   const persist = () => {
@@ -166,7 +167,7 @@ export function createDailyGoalTracker(options: DailyGoalOptions = {}) {
 }
 
 export type TypewriterKey = 'key' | 'delete' | 'return';
-export interface TypewriterSoundOptions { createContext?: () => AudioContext }
+export interface TypewriterSoundOptions { createContext?: () => AudioContext; storage?: StorageLike | null }
 /** Off by default. Call setEnabled(true) directly from a user click/tap gesture. */
 export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
   let context: AudioContext | undefined;
@@ -174,6 +175,14 @@ export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
   let generation = 0;
   let lastClick = -Infinity;
   let volume = 0.5;
+  let requested=false;
+  let soundStorage:StorageLike|null=null;
+  try {
+    soundStorage=options.storage===undefined?preferenceStorage():options.storage;
+    const saved=JSON.parse(soundStorage?.getItem('heinlein-studio-sound-v1')??'null');
+    if(saved?.version===1){requested=saved.enabled===true;if(typeof saved.volume==='number'&&Number.isFinite(saved.volume))volume=Math.max(0,Math.min(1,saved.volume));}
+  }catch{/* Audio is optional; never prevent writing. */}
+  const persist=()=>{try{soundStorage?.setItem('heinlein-studio-sound-v1',JSON.stringify({version:1,enabled:requested,volume}));}catch{/* Native persistence reports failures independently. */}};
   const buffers = new Map<TypewriterKey, AudioBuffer>();
   const makeContext = options.createContext ?? (() => {
     const Audio = globalThis.AudioContext ?? (globalThis as typeof globalThis & {webkitAudioContext?: typeof AudioContext}).webkitAudioContext;
@@ -182,7 +191,9 @@ export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
   });
   return {
     enabled: () => enabled,
+    requested: () => requested,
     async setEnabled(value: boolean): Promise<boolean> {
+      requested=value;persist();
       const request = ++generation;
       enabled = false;
       if (!value) return false;
@@ -195,7 +206,7 @@ export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
       return enabled;
     },
     volume: () => volume,
-    setVolume(value: number): void { if (Number.isFinite(value)) volume = Math.max(0, Math.min(1, value)); },
+    setVolume(value: number): void { if (Number.isFinite(value)) {volume = Math.max(0, Math.min(1, value));persist();} },
     play(kind: TypewriterKey = 'key'): void {
       if (!enabled || volume === 0 || !context || context.state !== 'running' || context.currentTime - lastClick < 0.025) return;
       try {

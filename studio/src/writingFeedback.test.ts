@@ -234,6 +234,14 @@ function audioMock() {
   return {context, source, gain, createContext: vi.fn(() => context as unknown as AudioContext)};
 }
 
+describe('unreadable progress preservation',()=>{
+  it.each(['{bad', '{"version":2,"goal":1000,"days":{}}', 'null'])('does not replace %s on startup or typing',raw=>{
+    const writes=vi.fn();const tracker=createDailyGoalTracker({storage:{getItem:()=>raw,setItem:writes}});
+    tracker.loadScene('synthetic','one');tracker.recordChange('synthetic','one','one two');
+    expect(tracker.snapshot().persistenceAvailable).toBe(false);expect(writes).not.toHaveBeenCalled();
+  });
+});
+
 describe('optional typewriter sounds', () => {
   it('is silent by default and creates audio only when explicitly enabled', async () => {
     const mock = audioMock();
@@ -318,5 +326,15 @@ describe('typewriter volume and cached sounds', () => {
     sounds.setVolume(2); expect(sounds.volume()).toBe(1);
     sounds.setVolume(NaN); expect(sounds.volume()).toBe(1);
     sounds.destroy();
+  });
+});
+
+describe('remembered sound choice',()=>{
+  it('restores requested state and volume without starting audio until a gesture',async()=>{
+    const values=new Map<string,string>();const storage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value);}};
+    const first=createTypewriterSound({storage,createContext:()=>{throw Error('audio unavailable');}});
+    first.setVolume(.8);await first.setEnabled(true);first.destroy();
+    const createContext=vi.fn(()=>{throw Error('must wait for gesture');});const second=createTypewriterSound({storage,createContext});
+    expect(second.requested()).toBe(true);expect(second.volume()).toBe(.8);expect(second.enabled()).toBe(false);expect(createContext).not.toHaveBeenCalled();
   });
 });
