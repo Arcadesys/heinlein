@@ -28,6 +28,11 @@ scene, or captured editor state invalidate the operation rather than shifting it
 boundary silently. Core independently checks the expected source hash and the
 manifest revision.
 
+Unrelated unlisted or missing scene files do not block splitting an existing
+registered scene. The split preserves those index entries and files rather than
+running discovery. File membership, the index, and the split source are still
+checked again at Apply; changes after preview require a new preview.
+
 The existing structural transaction writes both scene files and the manifest.
 The split-specific journal validation requires an exact prefix/suffix relationship;
 it does not admit arbitrary in-place text replacements. Failure rollback and

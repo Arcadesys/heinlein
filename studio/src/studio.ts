@@ -12,7 +12,7 @@ import {createGitHubPanel} from './githubPanel';
 import {createFirstStory} from './firstStory';
 import { createReviewPanel } from './reviewPanel';
 import { createMarkdownReader, type ReaderContent } from './markdownReader';
-import { createReviewMarkPublisher, reviewMarkExtension, reviewMarksIn, setReviewMarks, type ReviewMarkTarget } from './reviewMarks';
+import { computeReviewMarks, createReviewMarkPublisher, reviewMarkExtension, reviewMarksIn, setReviewMarks, type ReviewMarkTarget } from './reviewMarks';
 import { createDocumentDetails } from './documentDetails';
 import { sceneBreaks } from './sceneNavigator';
 import { rowMenu } from './rowMenu';
@@ -953,11 +953,25 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     approveReview: async (run,guard)=>{reviewApplying=true;let outcome:import('./localCore').ProposalOutcome|null=null;try{await runProposal(async()=>{const problem=guard();if(problem)throw new Error(problem);outcome=await run();if(outcome&&outcome.receipt.status!=='failed')await proposalChanged(outcome.receipt.path);});return outcome;}finally{reviewApplying=false;}},
     openConnection: () => {if(draftingQuestions){root.append(draftingQuestions.element);openHeinlein('passage');}},
     announce: text => {status.classList.remove('error'); status.textContent = text;},
+    jumpToEdit: async (input, edit) => {
+      const owns = () => input.repositoryId === repository?.id && (!input.projectKey || !repository.projectKey || input.projectKey === repository.projectKey);
+      if (!owns() || dirty || selecting || structuralBusy || recoveryPending || repositoryDetached) return false;
+      if (!reviewMarkTargets()?.some(target => target.path === edit.path) && !await showDocument(edit.path)) return false;
+      const target = (chapterEditor ?? editor)?.view;
+      const targets = reviewMarkTargets();
+      if (!target || !targets || !owns()) return false;
+      const doc = target.state.doc;
+      const mark = (await computeReviewMarks(input, targets)).find(mark => mark.id === edit.id);
+      if (!mark || target !== (chapterEditor ?? editor)?.view || target.state.doc !== doc || !owns()) return false;
+      setDocumentView('source');
+      target.dispatch({selection: {anchor: mark.from, head: mark.to}, scrollIntoView: true});
+      return true;
+    },
     marksChanged: (input, report) => reviewMarkPublisher.publish(input, report),
     focusEditor: () => focusWriterView(),
   });
   libraryReviewEntry.hidden=!reviewPanel.librarySupported;reviewPanel.adoptLibraryEntry(libraryReviewEntry);
-  root.append(reviewPanel.element);
+  root.append(reviewPanel.element, reviewPanel.activityElement);
 
   // Marks show only over clean text this exact view can prove it holds. Chapter parts already carry their source mapping.
   function reviewMarkTargets(): ReviewMarkTarget[] | null {
@@ -1145,12 +1159,21 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const sameScene=oldScene?state.scenes.find(scene=>scene.id===oldScene.id):undefined;
     documentTabs.reconcile(state.scenes);reference.reconcile(state.scenes);
     for(const change of changes){
+      if(change.kind==='deleteSheet'&&change.source){documentTabs.invalidate(change.source,true);reference.markUnavailable(change.source);}
       if((change.kind==='renameFile'||change.kind==='Undo renameFile')&&change.source&&change.destination){documentTabs.renamePath(change.source,change.destination);reference.renamePath(change.source,change.destination);}
       if(change.source){reference.markChanged(change.source);documentTabs.invalidate(change.source);}
       if(change.destination){reference.markChanged(change.destination);documentTabs.invalidate(change.destination);}
       if(change.source&&(change.kind==='Undo splitFile'||(change.kind==='rollback'&&!change.destination))){documentTabs.invalidate(change.source,true);reference.markUnavailable(change.source);}
     }
     splitReadingOffer.replaceChildren();splitReadingOffer.hidden=true;
+    if(changes.some(change=>change.kind==='deleteSheet'||change.kind==='Undo deleteSheet')){
+      if(changes.some(change=>change.kind==='deleteSheet'&&change.source===opened?.path))resetPreview();
+      await showDirectory(directoryPath.textContent==='/'?'':directoryPath.textContent||'');
+      await writing.setManuscript(core,repository!,state);
+      const restored=changes.find(change=>change.kind==='Undo deleteSheet')?.destination;
+      if(!opened&&restored&&await showDocument(restored,true))structuralFocusPath=restored;
+      return;
+    }
     const split=changes.find(change=>['split','splitFile'].includes(change.kind)&&change.source&&change.destination);
     const original=split&&previous?.scenes.find(scene=>scene.path===split.source);
     const retained=original&&state.scenes.find(scene=>scene.id===original.id&&scene.path===split?.source);
@@ -1692,7 +1715,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     questions?.clear();
     selectionAsk?.destroy(); selectionAsk = null;
     draftingQuestions?.clear(); questionButton = null;
-    if (!reviewApplying) reviewPanel?.clear(); currentChapter = null;
+    if (!reviewApplying) reviewPanel?.documentChanged(); currentChapter = null;
     writing.clearScene();
     cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; recoveryErrorMessage = null; recovery = null; recoveryPending = false; writePaused = null;
     editorCommands?.destroy();editorCommands=null;documentCommandBar.replaceChildren();documentReader = null; documentView = null;
@@ -2005,7 +2028,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     questions?.clear();
     selectionAsk?.destroy(); selectionAsk = null;
     draftingQuestions?.clear(); questionButton = null;
-    if (!reviewApplying) reviewPanel?.clear(); currentChapter = null;
+    if (!reviewApplying) reviewPanel?.documentChanged(); currentChapter = null;
     if (doc.generatedCompatibility) writing.clearScene();
     else writing.openScene(repository?.projectKey ?? '', doc.path, doc.text, drafting.state?.scenes.find(scene => scene.path === doc.path)?.id);
     cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; recoveryErrorMessage = null; recovery = draft; recoveryPending = Boolean(draft && draft.text !== doc.text); writePaused = null; writeBaseHash = doc.contentHash;

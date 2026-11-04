@@ -30,6 +30,12 @@ pub(super) fn answer_bytes() -> Vec<u8> {
     serde_json::to_vec(&answer_value()).unwrap()
 }
 
+pub(super) fn structured_answer_bytes() -> Vec<u8> {
+    let mut response = answer_value();
+    response["output"][0]["content"][0]["text"] = json!(json!({"schemaVersion":2,"answer":"Keep the door open—literally.","strengths":[],"findings":[],"edits":[]}).to_string());
+    serde_json::to_vec(&response).unwrap()
+}
+
 pub(super) fn event(kind: &str, response: Value) -> Vec<u8> {
     format!(
         "event: {kind}\r\ndata: {}\r\n\r\n",
@@ -466,7 +472,7 @@ async fn mocked_send_happens_once_with_no_credential_in_body() {
                 assert!(!String::from_utf8(body)
                     .unwrap()
                     .contains("unit-test-not-a-credential"));
-                Ok(answer_bytes())
+                Ok(structured_answer_bytes())
             },
             REQUEST_TIMEOUT,
         )
@@ -505,7 +511,7 @@ async fn invalid_requests_and_prestart_cancellation_never_call_transport() {
                 config(),
                 |_, _| async {
                     calls.fetch_add(1, Ordering::SeqCst);
-                    Ok(answer_bytes())
+                    Ok(structured_answer_bytes())
                 },
                 REQUEST_TIMEOUT,
             )
@@ -552,7 +558,7 @@ async fn cancellation_aborts_transport_releases_slot_and_rejects_late_success() 
         .ask_with(
             request("two"),
             config(),
-            |_, _| async { Ok(answer_bytes()) },
+            |_, _| async { Ok(structured_answer_bytes()) },
             REQUEST_TIMEOUT
         )
         .await
@@ -593,7 +599,7 @@ async fn a_second_inflight_is_rejected_and_wrong_id_cancellation_does_not_abort(
         .ask_with(
             request("two"),
             config(),
-            |_, _| async { Ok(answer_bytes()) },
+            |_, _| async { Ok(structured_answer_bytes()) },
             REQUEST_TIMEOUT
         )
         .await
@@ -803,7 +809,7 @@ async fn quota_blocks_same_account_until_explicit_recheck_without_billing_fallba
         .ask_with(
             request("three"),
             config().with_account("account-b").unwrap(),
-            |_, _| async { Ok(answer_bytes()) },
+            |_, _| async { Ok(structured_answer_bytes()) },
             REQUEST_TIMEOUT
         )
         .await
@@ -814,7 +820,7 @@ async fn quota_blocks_same_account_until_explicit_recheck_without_billing_fallba
         .ask_with(
             request("four"),
             config().with_account("account-a").unwrap(),
-            |_, _| async { Ok(answer_bytes()) },
+            |_, _| async { Ok(structured_answer_bytes()) },
             REQUEST_TIMEOUT
         )
         .await
@@ -1375,6 +1381,16 @@ fn no_text_distinguishes_output_limit_from_empty_completed_response() {
         .unwrap()
         .contains("synthetic-private"));
     assert!(parse_revision("test", &serde_json::to_vec(&response).unwrap()).is_err());
+}
+
+#[test]
+fn review_timeout_does_not_expand_ordinary_question_timeout() {
+    let ordinary = config();
+    let review = ordinary
+        .clone()
+        .with_timeout(review::REVIEW_REQUEST_TIMEOUT);
+    assert_eq!(ordinary.request_timeout, Duration::from_secs(60));
+    assert_eq!(review.request_timeout, Duration::from_secs(180));
 }
 
 #[test]

@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::{atomic::Ordering, Arc, Mutex};
 use tauri::{Manager, State};
 use tauri_plugin_opener::OpenerExt;
+mod review_progress;
+use review_progress::{Reporter, ReviewProgress};
 
 const USAGE_URL: &str = "https://chatgpt.com/settings/usage";
 
@@ -865,10 +867,11 @@ pub(crate) async fn request_review(
     host: State<'_, QuestionHost>,
     request: drafting_questions::review::ReviewRequest,
     connection: QuestionConnection,
+    on_progress: tauri::ipc::Channel<ReviewProgress>,
 ) -> Result<crate::review_state::ReviewResult, NativeError> {
     main_window(&window)?;
     if request.workflow.is_some() {
-        return request_review_workflow(app, host, request, connection).await;
+        return request_review_workflow(app, host, request, connection, on_progress).await;
     }
 
     request.validate()?;
@@ -1190,6 +1193,7 @@ async fn request_review_workflow(
     host: State<'_, QuestionHost>,
     mut request: drafting_questions::review::ReviewRequest,
     connection: QuestionConnection,
+    on_progress: tauri::ipc::Channel<ReviewProgress>,
 ) -> Result<crate::review_state::ReviewResult, NativeError> {
     request.validate()?;
     let auth = host.auth(&app)?;
@@ -1239,9 +1243,19 @@ async fn request_review_workflow(
     {
         return Err(QuestionError::stale_connection().into());
     }
+    let reporter = Arc::new(Mutex::new(Reporter::new(
+        request.request_id.clone(),
+        Some(on_progress),
+    )));
+    let stream_reporter = Arc::clone(&reporter);
     let config = Configuration::new(&credentials.access_token, &credentials.model)?
         .with_account(&credentials.account_id)?
-        .with_cancellation(credentials.cancelled);
+        .with_cancellation(credentials.cancelled)
+        .with_progress(move |text| {
+            if let Ok(mut reporter) = stream_reporter.lock() {
+                reporter.receiving(text.len());
+            }
+        });
     let progress =
         |call: &drafting_questions::review_workflow::CallResult| -> Result<(), QuestionError> {
             if !auth.is_current(connection.generation)
@@ -1252,41 +1266,47 @@ async fn request_review_workflow(
             {
                 return Err(QuestionError::stale_connection());
             }
-            super::with_repository(&app, &request.repository_id, |repo| {
-                let store = review_records(&app)?;
-                let saved: Vec<crate::review_state::ReviewSession> =
-                    store.list(repo).map_err(|e| e.to_string())?;
-                let mut tombstones = saved
-                    .iter()
-                    .flat_map(|r| r.tombstones())
-                    .collect::<std::collections::HashSet<_>>();
-                for receipt in super::proposals::review_receipts(&app, repo)? {
-                    if receipt.kind == "reject" && receipt.status == "rejected" {
-                        if let Some(a) = receipt.origin.review {
-                            tombstones.insert(a.fingerprint);
+            let (coverage, suggestions) =
+                super::with_repository(&app, &request.repository_id, |repo| {
+                    let store = review_records(&app)?;
+                    let saved: Vec<crate::review_state::ReviewSession> =
+                        store.list(repo).map_err(|e| e.to_string())?;
+                    let mut tombstones = saved
+                        .iter()
+                        .flat_map(|r| r.tombstones())
+                        .collect::<std::collections::HashSet<_>>();
+                    for receipt in super::proposals::review_receipts(&app, repo)? {
+                        if receipt.kind == "reject" && receipt.status == "rejected" {
+                            if let Some(a) = receipt.origin.review {
+                                tombstones.insert(a.fingerprint);
+                            }
                         }
                     }
-                }
-                let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
-                let id = slot
-                    .as_ref()
-                    .filter(|r| r.request.request_id == request.request_id)
-                    .ok_or("Review changed")?
-                    .id()
-                    .to_owned();
-                ensure_review(&app, &mut slot, repo, &request.repository_id, &id)?;
-                let session = review_session(&mut slot, &request.repository_id, &id)?;
-                session.ingest(
-                    drafting_questions::review_workflow::Batch {
-                        calls: vec![call.clone()],
-                        cancelled: false,
-                        limit_reached: false,
-                    },
-                    &tombstones,
-                )?;
-                session.persist(&store, repo)
-            })
-            .map_err(|_| QuestionError::review_persistence())
+                    let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
+                    let id = slot
+                        .as_ref()
+                        .filter(|r| r.request.request_id == request.request_id)
+                        .ok_or("Review changed")?
+                        .id()
+                        .to_owned();
+                    ensure_review(&app, &mut slot, repo, &request.repository_id, &id)?;
+                    let session = review_session(&mut slot, &request.repository_id, &id)?;
+                    session.ingest(
+                        drafting_questions::review_workflow::Batch {
+                            calls: vec![call.clone()],
+                            cancelled: false,
+                            limit_reached: false,
+                        },
+                        &tombstones,
+                    )?;
+                    session.persist(&store, repo)?;
+                    Ok((session.coverage(), session.finding_count()))
+                })
+                .map_err(|_| QuestionError::review_persistence())?;
+            if let Ok(mut reporter) = reporter.lock() {
+                reporter.transition(&call.coverage, &coverage, suggestions);
+            }
+            Ok(())
         };
     let batch = host
         .questions
@@ -1474,6 +1494,7 @@ pub(crate) fn preview_review(
     })
 }
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri supplies the window, host and progress channel separately.
 pub(crate) async fn continue_review(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
@@ -1482,6 +1503,7 @@ pub(crate) async fn continue_review(
     review_id: String,
     request_id: String,
     connection: QuestionConnection,
+    on_progress: tauri::ipc::Channel<ReviewProgress>,
 ) -> Result<crate::review_state::ReviewResult, NativeError> {
     main_window(&window)?;
     let request = super::with_repository(&app, &repository_id, |repo| {
@@ -1499,5 +1521,5 @@ pub(crate) async fn continue_review(
         Ok(request)
     })
     .map_err(NativeError::revision)?;
-    request_review_workflow(app, host, request, connection).await
+    request_review_workflow(app, host, request, connection, on_progress).await
 }

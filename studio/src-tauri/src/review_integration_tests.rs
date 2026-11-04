@@ -80,6 +80,7 @@ impl Fixture {
             .ingest(
                 Batch {
                     calls: vec![CallResult {
+                        reading_feedback: None,
                         provider_response_id: None,
                         coverage,
                         edits,
@@ -368,6 +369,7 @@ fn durable_rejection_receipt_survives_a_record_write_gap_and_regenerated_results
         reason: "Again".into(),
     };
     ReviewOutput {
+        reading_feedback: None,
         schema_version: 1,
         edits: vec![edit.clone()],
     }
@@ -377,6 +379,7 @@ fn durable_rejection_receipt_survives_a_record_write_gap_and_regenerated_results
         .ingest(
             Batch {
                 calls: vec![CallResult {
+                    reading_feedback: None,
                     provider_response_id: None,
                     coverage,
                     edits: vec![edit],
@@ -699,6 +702,7 @@ fn refreshing_a_matching_legacy_review_does_not_require_a_v2_record() {
     let legacy = ReviewSession::new(
         request,
         ReviewOutput {
+            reading_feedback: None,
             schema_version: 1,
             edits: vec![],
         },

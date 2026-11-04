@@ -10,6 +10,12 @@ test('physical pointer reorder persists, suppresses accidental open, and ordinar
  await page.reload();await expect(page.locator('.scene-open')).toHaveText(['Beta','Alpha','Gamma']);
  await page.getByRole('button',{name:'Beta',exact:true}).click();await expect(page.locator('#opened')).toHaveText('ms/b.md');
 });
+test('a drop on a sheet preview still reorders without opening it',async({page})=>{
+ await drag(page,page.getByRole('button',{name:'Alpha',exact:true}),page.locator('.tree-scene[data-scene-id="b"] .scene-excerpt'));
+ await expect(page.locator('.scene-open')).toHaveText(['Beta','Alpha','Gamma']);
+ await expect(page.locator('#opened')).toBeEmpty();
+ await page.reload();await expect(page.locator('.scene-open')).toHaveText(['Beta','Alpha','Gamma']);
+});
 test('pointer can move a scene into another chapter and reorder chapter groups',async({page})=>{
  await drag(page,page.getByRole('button',{name:'Alpha',exact:true}),page.getByRole('button',{name:'Ending',exact:true}));
  await expect(page.locator('.tree-group').filter({has:page.getByRole('button',{name:'Ending',exact:true})}).first().locator('.scene-open')).toHaveText(['Gamma','Alpha']);

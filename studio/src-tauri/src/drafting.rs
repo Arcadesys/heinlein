@@ -76,7 +76,9 @@ pub(crate) async fn preview_drafting_change(
         state.mutation_gate.invalidate();
         if !matches!(
             &change,
-            DraftingChange::OrganizeLibrary { .. } | DraftingChange::SetSheetReference { .. }
+            DraftingChange::OrganizeLibrary { .. }
+                | DraftingChange::SetSheetReference { .. }
+                | DraftingChange::DeleteGroup { .. }
         ) {
             clean_editor(&state)?;
         }

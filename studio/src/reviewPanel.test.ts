@@ -41,7 +41,7 @@ describe('Heinlein review panel author-controlled workflow', () => {
 
   it.each(['wrong original', 'split UTF-8', 'out of bounds', 'outside scope', 'overlap'] as const)('rejects unsafe edit targets: %s', async problem => {const core = bridge(); core.requestReview.mockImplementation(async request => {const value = response(request); const edit = value.edits[0]; if (problem === 'wrong original') edit.original = 'not this text'; else if (problem === 'split UTF-8') {edit.fromUtf8 = 3; edit.toUtf8 = 5; edit.original = '🐺';} else if (problem === 'out of bounds') edit.toUtf8 = 9999; else if (problem === 'outside scope') edit.path = 'other.md'; else value.edits.push({...edit, id: 'overlapping'}); return value;}); await start(core); button('Run review').click(); await vi.waitFor(() => expect(button('Retry review').hidden).toBe(false)); expect(panel!.element.querySelectorAll('button[data-edit-action="accept"]')).toHaveLength(0); expect(core.prepareReviewEdit).not.toHaveBeenCalled();});
 
-  it('times out locally, cancels the native request, and requires explicit retry', async () => {const pending = deferred<Result>(); const core = bridge(); core.requestReview.mockReturnValueOnce(pending.promise); await start(core); vi.useFakeTimers(); try {button('Run review').click(); const request = core.requestReview.mock.calls[0][0]; await vi.advanceTimersByTimeAsync(65000); expect(core.cancelQuestion).toHaveBeenCalledWith(request.requestId); expect(button('Retry review').hidden).toBe(false); expect(core.requestReview).toHaveBeenCalledOnce(); pending.resolve(response(request)); await Promise.resolve(); expect(panel!.element.querySelectorAll('button[data-edit-action="accept"]')).toHaveLength(0); expect(core.saveDocument).not.toHaveBeenCalled();} finally {vi.useRealTimers();}});
+  it('times out locally, cancels the native request, and requires explicit retry', async () => {const pending = deferred<Result>(); const core = bridge(); core.requestReview.mockReturnValueOnce(pending.promise); await start(core); vi.useFakeTimers(); try {button('Run review').click(); const request = core.requestReview.mock.calls[0][0]; await vi.advanceTimersByTimeAsync(185000); expect(core.cancelQuestion).toHaveBeenCalledWith(request.requestId); expect(button('Retry review').hidden).toBe(false); expect(core.requestReview).toHaveBeenCalledOnce(); pending.resolve(response(request)); await Promise.resolve(); expect(panel!.element.querySelectorAll('button[data-edit-action="accept"]')).toHaveLength(0); expect(core.saveDocument).not.toHaveBeenCalled();} finally {vi.useRealTimers();}});
   it('applies the byte limit to all chapter sources together', async () => {scope!.scope = 'chapter'; scope!.snapshots = [{path: 'one.md', source: 'x'.repeat(9000), sourceHash: 'a'}, {path: 'two.md', source: 'y'.repeat(9000), sourceHash: 'b'}]; const core = await start(); expect(button('Run review').disabled).toBe(true); expect(core.requestReview).not.toHaveBeenCalled();});
 
   it('refreshes individual decisions changed through the generic native proposals panel', async () => {const core = await start(); await run(); const request = core.requestReview.mock.calls[0][0]; core.getReview.mockResolvedValue({...response(request), edits: [{...response(request).edits[0], status: 'rejected'}]} as never); button('Refresh review').click(); await vi.waitFor(() => expect(panel!.element.textContent).toContain('Rejected · local receipt retained.')); expect(panel!.element.querySelectorAll('button[data-edit-action="accept"]')).toHaveLength(0); expect(core.requestReview).toHaveBeenCalledOnce(); expect(core.saveDocument).not.toHaveBeenCalled(); expect(core.applyProposalReview).not.toHaveBeenCalled();});
@@ -55,4 +55,47 @@ it('dismisses a durably rejected suggestion from pending cards while retaining i
  expect(panel!.element.querySelector('pre')?.textContent).toBeTruthy();
  expect(panel!.element.textContent).toContain('"status": "rejected"');
  expect(core.applyProposalReview).not.toHaveBeenCalled();
+});
+
+const reading = {overview: 'The scene reads with a clear voice and growing tension.', strengths: ['A distinct voice.', 'A grounded setting.', 'A well paced turn.'], improvements: ['Consider the opening beat.', 'Clarify the immediate goal.', 'Explore the final image.'].map(text => ({text, editIds: ['edit-1']}))};
+it('shows reading feedback with targeted diffs for all three improvements', async () => {
+ const core = bridge(); core.requestReview.mockImplementation(async request => ({...response(request), readingFeedback: [{path: 'scene.md', reviewer: 'Editor', feedback: reading}]}));
+ await start(core); button('Run review').click();
+ await vi.waitFor(() => expect(panel!.element.textContent).toContain(reading.overview));
+ expect(panel!.element.querySelectorAll('.review-feedback-list')).toHaveLength(2);
+ expect([...panel!.element.querySelectorAll('.review-feedback-list')].map(list => list.children.length)).toEqual([3,3]);
+ expect(panel!.element.querySelectorAll('[aria-hidden="true"].review-feedback-marker')).toHaveLength(6);
+ expect(panel!.element.textContent).toContain('Strengths'); expect(panel!.element.textContent).toContain('Points for improvement');
+ expect(panel!.element.querySelectorAll('.review-improvement-diffs')).toHaveLength(3); expect(core.saveDocument).not.toHaveBeenCalled();
+});
+it('jumps from the diff list without approving or changing the source', async () => {
+ const core = bridge(), jumpToEdit = vi.fn(async () => true);
+ panel = createReviewPanel(core as unknown as LocalCore, {capture: () => scope, unavailable: () => unavailable, reviewProposal, openConnection, focusEditor, jumpToEdit});
+ document.body.append(panel.element); panel.open(); await vi.waitFor(() => expect(button('Run review').disabled).toBe(false)); await run();
+ (panel.element.querySelector('.review-diff-jump') as HTMLButtonElement).click();
+ await vi.waitFor(() => expect(jumpToEdit).toHaveBeenCalledOnce());
+ expect(jumpToEdit.mock.calls[0]).toBeDefined(); expect(core.prepareReviewEdit).not.toHaveBeenCalled(); expect(core.saveDocument).not.toHaveBeenCalled(); expect(core.applyProposalReview).not.toHaveBeenCalled();
+});
+it('does not invent reading feedback for older saved results', async () => {
+ await start(); await run(); expect(panel!.element.textContent).toContain('Reading feedback is unavailable'); expect(panel!.element.querySelectorAll('.review-feedback-list')).toHaveLength(0);
+});
+it('rejects malformed reading feedback before showing review actions', async () => {
+ const core=bridge(); core.requestReview.mockImplementation(async request=>({...response(request), readingFeedback:[{path:'scene.md',reviewer:'Editor',feedback:{...reading,strengths:['']}}]}));
+ await start(core); button('Run review').click(); await vi.waitFor(()=>expect(button('Retry review').hidden).toBe(false)); expect(panel!.element.querySelectorAll('[data-edit-action="accept"]')).toHaveLength(0);
+});
+
+it.each([{editIds: ['missing']}, {editIds: ['edit-1', 'edit-1']}])('rejects an improvement with invalid diff references: %j', async ({editIds}) => {
+ const core=bridge(); core.requestReview.mockImplementation(async request=>({...response(request), readingFeedback:[{path:'scene.md',reviewer:'Editor',feedback:{...reading,improvements:[reading.improvements[0], {...reading.improvements[1], editIds}, reading.improvements[2]]}}]}));
+ await start(core); button('Run review').click(); await vi.waitFor(()=>expect(button('Retry review').hidden).toBe(false));
+ expect(panel!.element.textContent).toContain('An improvement point contains invalid diff references.'); expect(panel!.element.querySelectorAll('[data-edit-action="accept"]')).toHaveLength(0);
+});
+
+
+it.each([0, 1, 4])('accepts %i grounded improvements without requiring patches', async count => {
+ const feedback={overview:'The scene reads clearly.',strengths:['A clear setting.'],improvements:Array.from({length:count},()=>({text:'Consider a later echo of the image.',evidence:'Bad fox.',editIds:[]}))};
+ const core=bridge();core.requestReview.mockImplementation(async request=>({...response(request),edits:[],readingFeedback:[{path:'scene.md',reviewer:'Editor',feedback}]}));
+ await start(core);button('Run review').click();await vi.waitFor(()=>expect(panel!.element.textContent).toContain(feedback.overview));
+ expect(panel!.element.querySelectorAll('.review-improvement-diffs')).toHaveLength(0);
+ expect(panel!.element.textContent).toContain(count ? 'Evidence: Bad fox.' : 'No improvements suggested.');
+ expect(core.saveDocument).not.toHaveBeenCalled();
 });

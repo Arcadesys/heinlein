@@ -63,6 +63,8 @@
 /* The one live line. */
 .heinlein-review-panel .review-status { flex: none; margin: 0; padding: .5rem max(1rem, calc((100% - 44rem) / 2)) 0; font-size: .8125rem; }
 .heinlein-review-panel .review-status:empty { padding: 0; }
+.heinlein-review-panel .review-activity { flex: none; padding: .5rem max(1rem, calc((100% - 44rem) / 2)); font-size: 1rem; overflow-wrap: anywhere; }
+.heinlein-review-panel .review-activity progress { display: block; width: 100%; height: 1rem; margin-bottom: .5rem; accent-color: var(--accent); }
 .heinlein-review-panel .review-decision-note { margin: .5rem max(1rem, calc((100% - 44rem) / 2)) 0; padding: .5rem .75rem; font-weight: 500; border: 1px solid var(--border-strong); border-left: 4px solid var(--accent); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
 .heinlein-review-panel .review-status-warning { color: var(--warn); border-color: var(--warn); }
 
@@ -185,3 +187,22 @@
 .review-swatch-alt { border-bottom: 2px dotted var(--fg); }
 .review-legend kbd { margin-left: auto; }
 .heinlein-review-panel .review-mark-note { font-size: .75rem; color: var(--fg-muted); }
+
+/* Completed reading feedback and the keyboard-accessible index of suggested diffs. */
+.review-reading-feedback, .review-diff-list { min-width: 0; padding-block: .5rem 1rem; border-bottom: 1px solid var(--border-strong); overflow-wrap: anywhere; }
+.review-reading-feedback h3, .review-diff-list h3 { font-size: 1.15rem; line-height: 1.4; margin: 1rem 0 .5rem; color: var(--fg); }
+.review-feedback-list { list-style: none; padding: 0; margin: .5rem 0 1rem; display: grid; gap: .8rem; }
+.review-feedback-list li { display: grid; grid-template-columns: 1.8em minmax(0, 1fr); gap: .5rem; }
+.review-feedback-marker { font-size: 1.15em; }
+.review-feedback-picker { display: grid; gap: .5rem; font-weight: 700; }
+.review-feedback-picker select { min-width: 0; width: 100%; min-height: 44px; font: inherit; background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong); }
+.review-diff-list ol { list-style: none; padding: 0; display: grid; gap: .75rem; }
+.review-diff-jump { display: grid; gap: .4rem; width: 100%; min-height: 48px; padding: .85rem; text-align: left; white-space: normal; overflow-wrap: anywhere; font: inherit; line-height: 1.55; color: var(--fg); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; }
+.review-diff-jump:focus-visible, .review-feedback-picker select:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+.review-diff-location { font-weight: 700; }
+
+.review-diff-jump ins { text-decoration: underline; text-underline-offset: .15em; }
+
+.review-improvement-diffs { display: grid; gap: .5rem; margin-top: .5rem; }
+.review-improvement-jump { min-height: 44px; width: 100%; padding: .6rem .8rem; font: inherit; line-height: 1.5; text-align: left; white-space: normal; overflow-wrap: anywhere; color: var(--fg); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); cursor: pointer; }
+.review-improvement-jump:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }

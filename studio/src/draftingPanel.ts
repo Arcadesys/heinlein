@@ -3,6 +3,7 @@ import type { DraftingChange, DraftingFileChange, DraftingPreview, DraftingScene
 import { rowMenu } from './rowMenu';
 import {withReferenceSheets} from './sheetManagement';
 import './referenceSheets.css';
+import {sheetPreview} from './sheetPreview';
 import {libraryPointerDrag, type LibraryDragSource, type LibraryDropTarget} from './libraryPointerDrag';
 
 export const REPOSITORY_DRAG_TYPE = 'application/x-heinlein-repository-entry';
@@ -46,9 +47,53 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   let movementBusy=false,drag:{token:string;source:MoveSource;repositoryId:string;revision:string}|null=null;
   const dialogs = new Map<HTMLDialogElement, () => void>();
   function closeDialogs() { for (const cancel of [...dialogs.values()]) cancel(); }
-  function clear() { version++; pointerMoves.cancel(); clearDrag(); activeBuffer = null; selectedGroup = null; collapsedGroups.clear(); canUndo = false; canRedo = false; closeDialogs(); state = null; undo = null; element.replaceChildren(); }
+  function clear() { version++; resetExcerpts(); pointerMoves.cancel(); clearDrag(); activeBuffer = null; selectedGroup = null; collapsedGroups.clear(); canUndo = false; canRedo = false; closeDialogs(); state = null; undo = null; element.replaceChildren(); }
+  const excerpts = new Map<string, string>();
+  let excerptGeneration = 0;
+  let excerptLoading = false;
+  function resetExcerpts() { excerptGeneration++; excerpts.clear(); excerptLoading = false; }
+  const paintExcerpt = (node: HTMLElement, text: string) => {
+    node.textContent = text || 'No text yet'; node.classList.toggle('is-empty', !text); node.classList.remove('is-pending');
+  };
+  /** Fill previews after render; rows reserve their height first so nothing shifts when text arrives. */
+  async function hydrateExcerpts() {
+    const current = excerptGeneration, repositoryId = hooks.repository()?.id;
+    if (!repositoryId || excerptLoading) return;
+    excerptLoading = true;
+    // Warm collapsed groups too, without opening a sheet in the editor.
+    const queue = [...new Set(state?.scenes.map(scene => scene.path))].filter(path => !excerpts.has(path));
+    const isCurrent = () => !disposed && current === excerptGeneration && repositoryId === hooks.repository()?.id;
+    const worker = async () => {
+      for (let path = queue.shift(); path; path = queue.shift()) {
+        if (!isCurrent()) return;
+        let text: string;
+        try {
+          text = sheetPreview((await core.readDocument(repositoryId, path)).text);
+        } catch { text = 'Preview unavailable'; }
+        if (!isCurrent()) return;
+        // A live editor update takes precedence over an earlier disk read.
+        if (!excerpts.has(path)) excerpts.set(path, text);
+        for (const node of element.querySelectorAll<HTMLElement>('.scene-excerpt')) {
+          if (node.dataset.path === path) paintExcerpt(node, excerpts.get(path)!);
+        }
+      }
+    };
+    // Managed projects use an exclusive workspace lock, including for reads.
+    try { await worker(); }
+    finally {
+      if (current === excerptGeneration) {
+        excerptLoading = false;
+        if (isCurrent() && state?.scenes.some(scene => !excerpts.has(scene.path))) await hydrateExcerpts();
+      }
+    }
+  }
   function updateBuffer(path: string, text: string) {
     activeBuffer = {path, text};
+    const scene = state?.scenes.find(item => item.path === path);
+    if (scene) {
+      const excerpt = sheetPreview(text); excerpts.set(path, excerpt);
+      for (const node of element.querySelectorAll<HTMLElement>('.scene-excerpt')) if (node.dataset.path === path) paintExcerpt(node, excerpt);
+    }
     for (const control of element.querySelectorAll<HTMLButtonElement>('.scene-open')) {
       if (control.dataset.path === path) control.setAttribute('aria-current', 'true'); else control.removeAttribute('aria-current');
     }
@@ -60,7 +105,11 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     const repositoryId = hooks.repository()!.id;
     const loaded = await core.loadDrafting!(repositoryId);
     if (disposed || current !== version || request !== loadRequest || repositoryId !== hooks.repository()?.id) return null;
-    state = withReferenceSheets(loaded); render(); return state;
+    resetExcerpts(); state = withReferenceSheets(loaded);
+    if (activeBuffer && state.scenes.some(scene => scene.path === activeBuffer!.path)) excerpts.set(activeBuffer.path, sheetPreview(activeBuffer.text));
+    render(); await hydrateExcerpts();
+    if (disposed || current !== version || request !== loadRequest || repositoryId !== hooks.repository()?.id) return null;
+    return state;
   }
   function dialog(title: string) {
     const node = el('dialog', '', 'appearance-dialog drafting-dialog');
@@ -115,9 +164,14 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   }
   function confirmPreview(preview: DraftingPreview): Promise<boolean> {
     return new Promise(resolve => {
-      const node = dialog('Review manuscript change');
+      const deletion = preview.changes.find(change => change.kind === 'deleteSheet' || change.kind === 'deleteGroup');
+      const groupDeletion = deletion?.kind === 'deleteGroup';
+      const deleteLabel = groupDeletion ? 'Delete group' : 'Delete sheet';
+      const node = dialog(deletion ? `${deleteLabel}?` : 'Review manuscript change');
+      if (deletion) node.classList.add('drafting-delete-dialog');
       if(preview.changes.some(change=>change.kind==='split'||change.kind==='splitFile'))node.classList.add('drafting-split-dialog');
       node.append(el('p', friendlySummary(preview.summary)));
+      if (deletion?.source) node.append(el('p', deletion.source, 'path'));
       const imported = preview.changes.filter(change => change.kind === 'index' && change.destination && change.destination !== state?.manifestPath);
       if (imported.length) {
         node.append(el('p', `${imported.length} existing ${imported.length === 1 ? 'sheet will' : 'sheets will'} be added to the library.`));
@@ -132,10 +186,10 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       }
       const details = el('details'); details.append(el('summary', 'Document details'), list); node.append(details);
       for (const warning of preview.warnings) node.append(el('p', warning, 'drafting-warning'));
-      node.append(el('p', 'File collisions are blocked. Affected files are checked again before this change is applied.', 'muted'));
+      node.append(el('p', groupDeletion ? 'The library is checked again before the group is deleted.' : deletion ? 'The file and library are checked again before deletion.' : 'File collisions are blocked. Affected files are checked again before this change is applied.', 'muted'));
       let done = false;
       const finish = (confirmed: boolean) => { if (done) return; done = true; remove(node); resolve(confirmed); };
-      node.append(button('Cancel', () => finish(false)), button('Apply change', () => finish(true), 'primary'));
+      node.append(button('Cancel', () => finish(false)), button(deletion ? deleteLabel : 'Apply change', () => finish(true), 'primary'));
       display(node, () => finish(false));
     });
   }
@@ -144,7 +198,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     if (!before || !repositoryId) return false;
     let didApply=false;
     loadRequest++;
-    const organizationOnly = change.kind === 'organizeLibrary' || change.kind === 'setSheetReference';
+    const organizationOnly = change.kind === 'organizeLibrary' || change.kind === 'setSheetReference' || change.kind === 'deleteGroup';
     await (organizationOnly ? hooks.runOrganization ?? hooks.run : hooks.run)(async () => {
       let applied = false;
       try {
@@ -153,13 +207,13 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         const preview = await core.previewDraftingChange!(repositoryId, before.revision, change);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
         if(!preview.changes.length && !organizationOnly && !immediate){hooks.report(preview.summary);return;}
-        if (!immediate && !organizationOnly && !await confirmPreview(preview)) { hooks.report('Change canceled.'); return; }
+        if (!immediate && (!organizationOnly || change.kind === 'deleteGroup') && !await confirmPreview(preview)) { hooks.report('Change canceled.'); return; }
         if (disposed || repositoryId !== hooks.repository()?.id) return;
         if (!organizationOnly) hooks.verify?.();
         if (prepare) prepare();
         const result = await core.applyDraftingChange!(repositoryId, preview.id);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
-        applied = true; didApply = true; state = withReferenceSheets(result.state); undo = result.undoId ? {id: result.undoId, changes: preview.changes, summary: preview.summary} : null; canUndo = Boolean(result.undoId); canRedo = false; render(); hooks.show();
+        applied = true; didApply = true; state = withReferenceSheets(result.state); undo = result.undoId ? {id: result.undoId, changes: preview.changes, summary: preview.summary} : null; canUndo = Boolean(result.undoId); canRedo = false; render(); await hydrateExcerpts(); hooks.show();
         await hooks.changed(state, before, preview.changes, focusPath, organizationOnly);
         if (focusItem) {
           const control = focusItem.kind === 'group'
@@ -199,6 +253,46 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   function splitScene(sceneId: string, prepare: () => {expectedHash: string; byteOffset: number}) {
     const scene=state?.scenes.find(item=>item.id===sceneId);if(!scene||!state?.revision)return;
     splitSource(scene.path,prepare,scene);
+  }
+  function deleteSheet(scene: DraftingScene) {
+    if (dialogs.size || !state || state.recoveryRequired) return;
+    const remaining = state.scenes.filter(item => item.id !== scene.id);
+    const next = remaining.find(item => item.path === hooks.selectedPath?.())
+      ?? remaining[Math.min(state.scenes.indexOf(scene), remaining.length - 1)];
+    const focusItem: LibraryEntry = next ? {id: next.id, kind: 'scene', parentId: next.groupId}
+      : {id: scene.groupId ?? '', kind: 'group', parentId: null};
+    void changeManuscript({kind: 'deleteSheet', path: scene.path})
+      .then(applied => {
+        if (disposed) return;
+        // Structural operations keep the editor layout inert until run finishes.
+        // Restore keyboard focus only after those controls are interactive again.
+        const target = applied
+          ? focusItem.kind === 'scene'
+            ? [...element.querySelectorAll<HTMLElement>('[data-scene-id]')].find(node => node.dataset.sceneId === focusItem.id)?.querySelector<HTMLButtonElement>('.scene-open')
+            : [...element.querySelectorAll<HTMLButtonElement>('[data-group-id]')].find(node => node.dataset.groupId === focusItem.id)
+          : [...element.querySelectorAll<HTMLButtonElement>('.scene-open')].find(node => node.dataset.path === scene.path);
+        (target ?? element.querySelector<HTMLButtonElement>('.tree-add'))?.focus();
+      });
+  }
+  function deleteGroup(groupId: string) {
+    if (dialogs.size || !state || state.recoveryRequired) return;
+    const entries = libraryEntries();
+    const group = entries.find(entry => entry.id === groupId && entry.kind === 'group');
+    if (!group) return;
+    const active = state.scenes.find(scene => scene.path === hooks.selectedPath?.());
+    const next = active ? entries.find(entry => entry.id === active.id)
+      : entries.find(entry => entry.parentId === groupId) ?? entries.find(entry => entry.id === group.parentId);
+    void changeManuscript({kind: 'deleteGroup', groupId}).then(applied => {
+      if (disposed) return;
+      if (applied) {
+        collapsedGroups.delete(groupId);
+        if (selectedGroup === groupId) selectedGroup = group.parentId;
+      }
+      const id = applied ? next?.id : groupId;
+      const target = id ? [...element.querySelectorAll<HTMLButtonElement>('[data-group-id], .scene-open')]
+        .find(node => node.dataset.groupId === id || node.closest<HTMLElement>('[data-scene-id]')?.dataset.sceneId === id) : undefined;
+      (target ?? element.querySelector<HTMLButtonElement>('.tree-add'))?.focus();
+    });
   }
   function renameFile(sourcePath:string) {
     if(dialogs.size||!state||state.recoveryRequired)return;
@@ -346,7 +440,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         if (!metadataOnly) hooks.verify?.();
         const result = await core.historyDraftingChange!(repositoryId!, direction, metadataOnly);
         if (disposed || hooks.repository()?.id !== repositoryId) return;
-        state = withReferenceSheets(result.state); canUndo = result.canUndo; canRedo = result.canRedo; undo = null; render(); hooks.show();
+        state = withReferenceSheets(result.state); canUndo = result.canUndo; canRedo = result.canRedo; undo = null; render(); await hydrateExcerpts(); hooks.show();
         await hooks.changed(state, before, [], undefined, result.metadataOnly); hooks.report(`${direction === 'undo' ? 'Undid' : 'Redid'} library change locally.`);
       } catch (error) {
         if (metadataOnly && String(error).includes('HISTORY_REQUIRES_SAVED_EDITOR')) { needsFileGuard = true; return; }
@@ -419,17 +513,18 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
     const entry = undo; const before = state; const repositoryId = hooks.repository()?.id;
     if (!entry || !before || !repositoryId) return;
     loadRequest++;
-    await hooks.run(async () => {
+    const organizationOnly = entry.changes.every(change => change.kind === 'deleteGroup');
+    await (organizationOnly ? hooks.runOrganization ?? hooks.run : hooks.run)(async () => {
       const preview: DraftingPreview = {id: '', summary: `Undo: ${entry.summary}`, warnings: ['Undo is refused if any affected file has changed. Your current edits are saved before this check.'], changes: entry.changes.map(change => ({kind: `Undo ${change.kind}`, source: change.destination, destination: change.source}))};
       if (!await confirmPreview(preview)) { hooks.report('Undo canceled.'); return; }
       if (disposed || repositoryId !== hooks.repository()?.id) return;
       let applied = false;
       try {
-        hooks.verify?.();
+        if (!organizationOnly) hooks.verify?.();
         const restored = await core.undoDraftingChange!(repositoryId, entry.id);
         if (disposed || repositoryId !== hooks.repository()?.id) return;
-        applied = true; state = withReferenceSheets(restored); undo = null; render(); hooks.show();
-        await hooks.changed(restored, before, preview.changes);
+        applied = true; state = withReferenceSheets(restored); undo = null; render(); await hydrateExcerpts(); hooks.show();
+        await hooks.changed(restored, before, preview.changes, undefined, organizationOnly);
         hooks.report('Last manuscript change undone locally.');
       } catch (error) { hooks.report(`${applied ? 'Undo saved locally, but the view could not refresh' : 'Undo could not be completed'}: ${String(error)}. Current files and recovery remain available.`, true); }
     });
@@ -513,6 +608,11 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       if (event.dataTransfer.files.length) hooks.report('Use Import files… to authorize these files with the native picker. Browser-provided file paths are not used.', true);
     } catch { hooks.report('This drag could not be read. Use Move… or Import repository files… instead.', true); }
   }
+  // Previews make rows taller; a drop on a title still uses that title's midpoint.
+  function sceneDropBounds(line: HTMLElement, target: Element | null): DOMRect {
+    const title = target?.closest<HTMLElement>('.scene-open');
+    return (title && line.contains(title) ? title : line).getBoundingClientRect();
+  }
   function pointerDestination(source: LibraryDragSource, x: number, y: number): LibraryDropTarget | null {
     if (!state) return null;
     const hit = document.elementFromPoint(x, y); if (!hit || !element.contains(hit)) return null;
@@ -523,7 +623,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
       const id = sceneRow.dataset.sceneId!; if (id === source.id) return null;
       const entry = entries.find(e => e.id === id); if (!entry) return null;
       const line = sceneRow.querySelector<HTMLElement>(':scope > .tree-row')!;
-      const b = line.getBoundingClientRect(), before = y <= b.top + b.height / 2;
+      const b = sceneDropBounds(line, hit), before = y <= b.top + b.height / 2;
       const siblings = entries.filter(e => e.parentId === entry.parentId), at = siblings.findIndex(e => e.id === id);
       return {parentId: entry.parentId, beforeId: before ? id : siblings[at + 1]?.id ?? null, marker: line, side: before ? 'before' : 'after', label: `Move “${name}” ${before ? 'before' : 'after'} “${state.scenes.find(s => s.id === id)?.title}”`};
     }
@@ -556,7 +656,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
   /** A scene row accepts a drop above or below its midline; the marker is a shadow so rows never shift. */
   function sceneDropTarget(row: HTMLElement, line: HTMLElement, scene: DraftingScene, entries: LibraryEntry[]) {
     const accepts = (event: DragEvent) => !!event.dataTransfer?.types.some(type => type === REPOSITORY_DRAG_TYPE || type === SCENE_DRAG_TYPE);
-    const half = (event: DragEvent): 'before' | 'after' => { const bounds = line.getBoundingClientRect(); return event.clientY > bounds.top + bounds.height / 2 ? 'after' : 'before'; };
+    const half = (event: DragEvent): 'before' | 'after' => { const bounds = sceneDropBounds(line, event.target instanceof Element ? event.target : null); return event.clientY > bounds.top + bounds.height / 2 ? 'after' : 'before'; };
     row.addEventListener('dragover', event => {
       if (!accepts(event)) return;
       event.preventDefault(); event.dataTransfer!.dropEffect = 'move';
@@ -623,6 +723,7 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
         button('New scene here', () => { selectedGroup = group.id; newSheet(); }),
         button('New group inside', () => { selectedGroup = group.id; createLibraryGroup(); }),
         button('Rename…', () => renameLibraryItem(group.id, 'group')), button('Move to…', () => moveGroup(group.id)), earlier, later,
+        button('Delete group…', () => deleteGroup(group.id)),
       ]));
       row.append(line);
       if (expanded) { const children = el('ul'); draw(group.id, children, depth + 1); if (children.childElementCount) row.append(children); }
@@ -652,8 +753,15 @@ export function createDraftingPanel(core: LocalCore, hooks: DraftingHooks) {
           void changeManuscript({kind: 'setSheetReference', path: scene.path, reference: !scene.reference}, undefined, undefined, true,
             `${scene.title} is now a ${scene.reference ? 'regular' : 'reference'} sheet`, {id: scene.id, kind: 'scene', parentId: scene.groupId});
         }),
+        button('Delete sheet…', () => deleteSheet(scene)),
         el('p', scene.path, 'scene-path'),
       ]));
+      const excerpt = el('p', '', 'scene-excerpt'); excerpt.dataset.path = scene.path;
+      excerpt.id = `sheet-preview-${index}`; open.setAttribute('aria-describedby', excerpt.id);
+      pointerMoves.bind(excerpt, {kind: 'scene', id: scene.id});
+      excerpt.addEventListener('click', () => hooks.open(scene.path));
+      if (excerpts.has(scene.path)) paintExcerpt(excerpt, excerpts.get(scene.path)!); else excerpt.classList.add('is-pending');
+      line.append(excerpt);
       row.append(line); sceneDropTarget(row, line, scene, entries);
       return row;
     };

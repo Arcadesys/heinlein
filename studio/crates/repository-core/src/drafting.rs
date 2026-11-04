@@ -119,6 +119,12 @@ pub enum SceneDestination {
     deny_unknown_fields
 )]
 pub enum DraftingChange {
+    DeleteGroup {
+        group_id: String,
+    },
+    DeleteSheet {
+        path: String,
+    },
     SetSheetReference {
         path: String,
         reference: bool,
@@ -1125,6 +1131,7 @@ impl Repository {
             _ => None,
         };
         let file_only = matches!(change, DraftingChange::SplitFile { .. })
+            || matches!(&change, DraftingChange::DeleteSheet { path } if !existing.as_ref().is_some_and(|m| m.scenes.iter().any(|s| s.path == *path)))
             || (matches!(change, DraftingChange::RenameFile { .. }) && rename_member.is_none());
         let members = self.drafting_members()?;
         let mut manifest = existing.clone().unwrap_or(Manifest {
@@ -1153,6 +1160,8 @@ impl Repository {
         {
             return Err(Error::DraftingCollision);
         }
+        // A registered-scene split only adds its suffix to the index; unrelated
+        // drift stays untouched. verify_plan still guards changes after preview.
         if (!state.untracked_paths.is_empty() || !state.missing_paths.is_empty())
             && !file_only
             && !matches!(
@@ -1161,6 +1170,9 @@ impl Repository {
                     | DraftingChange::Initialize { .. }
                     | DraftingChange::SetSheetReference { .. }
                     | DraftingChange::OrganizeLibrary { .. }
+                    | DraftingChange::SplitScene { .. }
+                    | DraftingChange::DeleteSheet { .. }
+                    | DraftingChange::DeleteGroup { .. }
             )
         {
             return Err(Error::DraftingChanged);
@@ -1194,8 +1206,89 @@ impl Repository {
             } => Some((scene_id.clone(), before_id.clone())),
             _ => None,
         };
-        let organized = matches!(&change, DraftingChange::OrganizeLibrary { .. });
+        let organized = matches!(
+            &change,
+            DraftingChange::OrganizeLibrary { .. } | DraftingChange::DeleteGroup { .. }
+        );
         match change {
+            DraftingChange::DeleteGroup { group_id } => {
+                let group = manifest
+                    .groups
+                    .iter()
+                    .find(|g| g.id == group_id)
+                    .ok_or(Error::DraftingChanged)?;
+                let name = group.title.clone();
+                let mut entries = manifest
+                    .library
+                    .clone()
+                    .unwrap_or_else(|| legacy_library(&manifest));
+                let position = entries
+                    .iter()
+                    .position(|e| e.id == group_id && e.kind == LibraryEntryKind::Group)
+                    .ok_or(Error::DraftingChanged)?;
+                let parent_id = entries[position].parent_id.clone();
+                let insertion = entries[..position]
+                    .iter()
+                    .filter(|e| e.parent_id.as_deref() != Some(&group_id))
+                    .count();
+                let children: Vec<_> = entries
+                    .iter()
+                    .filter(|e| e.parent_id.as_deref() == Some(&group_id))
+                    .cloned()
+                    .map(|mut e| {
+                        e.parent_id = parent_id.clone();
+                        e
+                    })
+                    .collect();
+                entries.retain(|e| e.id != group_id && e.parent_id.as_deref() != Some(&group_id));
+                entries.splice(insertion..insertion, children);
+                for scene in &mut manifest.scenes {
+                    if scene.group_id.as_deref() == Some(&group_id) {
+                        scene.group_id = parent_id.clone();
+                    }
+                }
+                manifest.groups.retain(|g| g.id != group_id);
+                manifest.preserve_flat_order |= manifest.library.is_none();
+                manifest.library = Some(entries);
+                plan.preview.summary = format!("Delete group “{name}”");
+                plan.preview.changes.push(DraftingChangeView {
+                    kind: "deleteGroup".into(),
+                    source: None,
+                    destination: None,
+                });
+                plan.preview.warnings.push("Keeps all sheets and nested groups. They move up one level in the same order. No sheet files are deleted or moved. Undo is available during this session.".into());
+            }
+            DraftingChange::DeleteSheet { path } => {
+                scene_path(&path)?;
+                self.allowed(&path, false)?;
+                self.check_write_manifests(&path)?;
+                self.refuse_legacy_scene_move(&path)?;
+                let scene = manifest.scenes.iter().find(|s| s.path == path);
+                let name = scene.map_or_else(|| scene_title(&path), |s| s.title.clone());
+                let before = self.snapshot(&path)?;
+                if before.is_none() && scene.is_none() {
+                    return Err(Error::NotFound);
+                }
+                if let Some(before) = before {
+                    if before.mode & 0o222 == 0 {
+                        return Err(Error::Denied);
+                    }
+                    plan.edits.push(Edit {
+                        path: path.clone(),
+                        before: Some(before),
+                        after: None,
+                    });
+                }
+                manifest.scenes.retain(|s| s.path != path);
+                plan.recovery_paths.push(path.clone());
+                plan.preview.summary = format!("Delete sheet “{name}”");
+                plan.preview.changes.push(DraftingChangeView {
+                    kind: "deleteSheet".into(),
+                    source: Some(path),
+                    destination: None,
+                });
+                plan.preview.warnings.push("Deletes this sheet’s Markdown file from this Mac and removes it from the library. Undo is available during this session. Links to this sheet are not rewritten.".into());
+            }
             DraftingChange::SetSheetReference { path, reference } => {
                 scene_path(&path)?;
                 if let Some(scene) = manifest.scenes.iter_mut().find(|s| s.path == path) {
@@ -4196,6 +4289,9 @@ mod tests {
     }
     include!("drafting_moves_tests.rs");
     include!("drafting_file_split_tests.rs");
+    include!("drafting_split_drift_tests.rs");
+    include!("drafting_delete_sheet_tests.rs");
+    include!("drafting_delete_group_tests.rs");
     include!("reference_sheet_tests.rs");
 }
 

@@ -1,5 +1,7 @@
 //! Verified targeted-edit lineage. Persisted records never mint native apply authority.
-use drafting_questions::review::{ReviewEdit, ReviewOutput, ReviewRequest, ReviewScope};
+use drafting_questions::review::{
+    ReadingFeedback, ReadingImprovement, ReviewEdit, ReviewOutput, ReviewRequest, ReviewScope,
+};
 use proposal_store::{diff_hash, text_hash, PendingProposal, ProposalOrigin};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -38,6 +40,15 @@ struct DisplayLocation {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReadingFeedbackView {
+    #[serde(default)]
+    coverage_id: Option<String>,
+    path: String,
+    reviewer: String,
+    feedback: ReadingFeedback,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ReviewResult {
     review_id: String,
     request_id: String,
@@ -49,6 +60,8 @@ pub(crate) struct ReviewResult {
     #[serde(default)]
     project_key: Option<String>,
     edits: Vec<EditView>,
+    #[serde(default)]
+    reading_feedback: Vec<ReadingFeedbackView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     workflow: Option<WorkflowView>,
 }
@@ -98,6 +111,21 @@ impl ReviewSession {
             revision: 0,
             project_key: None,
             workflow: None,
+            reading_feedback: output
+                .reading_feedback
+                .into_iter()
+                .map(|feedback| ReadingFeedbackView {
+                    coverage_id: None,
+                    path: request
+                        .snapshots
+                        .iter()
+                        .map(|s| s.path.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    reviewer: "Proofreader and editor".into(),
+                    feedback,
+                })
+                .collect(),
             edits: output
                 .edits
                 .into_iter()
@@ -501,6 +529,7 @@ impl ReviewSession {
             revision: 0,
             project_key: Some(project_key.clone()),
             edits: vec![],
+            reading_feedback: vec![],
             workflow: Some(WorkflowView {
                 definitions,
                 coverage,
@@ -535,6 +564,9 @@ impl ReviewSession {
     }
     pub fn remaining_findings(&self) -> usize {
         1024usize.saturating_sub(self.result.edits.len())
+    }
+    pub fn finding_count(&self) -> usize {
+        self.result.edits.len()
     }
     pub fn coverage(&self) -> Vec<drafting_questions::review_workflow::Coverage> {
         self.result
@@ -624,8 +656,32 @@ impl ReviewSession {
             if call.model != self.result.model {
                 return Err("The provider model differs from the selected review model".into());
             }
+            let mut feedback = call.reading_feedback;
+            if let Some(feedback) = &mut feedback {
+                feedback
+                    .validate_links(&call.edits, false)
+                    .map_err(|e| e.to_string())?;
+                let ids = call
+                    .edits
+                    .iter()
+                    .map(|edit| {
+                        (
+                            edit.id.clone(),
+                            format!("finding-{}", &self.fingerprint(edit)[..32]),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
+                for point in &mut feedback.improvements {
+                    if let ReadingImprovement::Linked(point) = point {
+                        for id in &mut point.edit_ids {
+                            *id = ids.get(id).ok_or("Missing improvement diff")?.clone();
+                        }
+                    }
+                }
+            }
             for mut edit in call.edits {
                 let single = ReviewOutput {
+                    reading_feedback: None,
                     schema_version: 1,
                     edits: vec![edit.clone()],
                 };
@@ -701,6 +757,16 @@ impl ReviewSession {
                     selected: false,
                     source_stale: false,
                     location: None,
+                });
+            }
+            if let Some(feedback) = feedback {
+                self.result.reading_feedback.push(ReadingFeedbackView {
+                    coverage_id: Some(call.coverage.id.clone()),
+                    path: self.request.snapshots[call.coverage.source_index]
+                        .path
+                        .clone(),
+                    reviewer: definition.definition.display_name.clone(),
+                    feedback,
                 });
             }
         }
@@ -938,6 +1004,21 @@ impl ReviewSession {
             return Err("Invalid consolidated review record".into());
         }
         self.request.validate().map_err(|e| e.to_string())?;
+        if self.result.reading_feedback.len() > 384 {
+            return Err("Too much reading feedback".into());
+        }
+        let feedback_edits = self
+            .result
+            .edits
+            .iter()
+            .map(|edit| edit.edit.clone())
+            .collect::<Vec<_>>();
+        for item in &self.result.reading_feedback {
+            item.feedback
+                .validate_links(&feedback_edits, false)
+                .map_err(|e| e.to_string())?;
+        }
+
         if self.revision == u64::MAX
             || self.result.scope != self.request.scope
             || self.result.request_id != self.request.request_id
@@ -1050,6 +1131,7 @@ impl ReviewSession {
                 return Err("Stored finding identity changed".into());
             }
             ReviewOutput {
+                reading_feedback: None,
                 schema_version: 1,
                 edits: vec![item.edit.clone()],
             }
@@ -1089,6 +1171,7 @@ impl ReviewSession {
         }
         for e in &self.result.edits {
             let value = ReviewOutput {
+                reading_feedback: None,
                 schema_version: 1,
                 edits: vec![e.edit.clone()],
             };
@@ -1245,6 +1328,7 @@ mod tests {
         ReviewSession::new(
             request,
             ReviewOutput {
+                reading_feedback: None,
                 schema_version: 1,
                 edits,
             },
@@ -1438,6 +1522,7 @@ mod tests {
         let mut s = ReviewSession::new(
             request,
             ReviewOutput {
+                reading_feedback: None,
                 schema_version: 1,
                 edits: vec![first, second, third],
             },
@@ -1479,6 +1564,131 @@ mod tests {
         )
         .unwrap()
     }
+    #[test]
+    fn reading_feedback_survives_saved_workflow_without_findings() {
+        let mut session = workflow_session(1);
+        let mut batch = call(&session, 0, vec![]);
+        batch.calls[0].reading_feedback = Some(ReadingFeedback {
+            overview: "A clear scene with a strong voice.".into(),
+            strengths: vec!["Voice".into(), "Setting".into(), "Pacing".into()],
+            improvements: vec![
+                ReadingImprovement::Legacy("Opening".into()),
+                ReadingImprovement::Legacy("Goal".into()),
+                ReadingImprovement::Legacy("Ending".into()),
+            ],
+        });
+        session.ingest(batch, &Default::default()).unwrap();
+        session.revision = 1;
+        let json = serde_json::to_string(&session).unwrap();
+        let loaded: ReviewSession = serde_json::from_str(&json).unwrap();
+        let loaded = loaded
+            .restore(&"b".repeat(64), "reopened", |_| false)
+            .unwrap();
+        assert!(loaded.view().edits.is_empty());
+        assert_eq!(
+            loaded.view().reading_feedback[0].feedback.overview,
+            "A clear scene with a strong voice."
+        );
+        assert_eq!(loaded.view().reading_feedback[0].path, "scenes/one.md");
+    }
+    #[test]
+    fn grounded_advice_without_patches_survives_saved_workflow() {
+        use drafting_questions::review::LinkedImprovement;
+        for count in [0, 1, 4] {
+            let mut session = workflow_session(1);
+            let mut batch = call(&session, 0, vec![]);
+            batch.calls[0].reading_feedback = Some(ReadingFeedback {
+                overview: "A clear scene.".into(),
+                strengths: vec![],
+                improvements: (0..count)
+                    .map(|_| {
+                        ReadingImprovement::Linked(LinkedImprovement {
+                            text: "Consider echoing the image later.".into(),
+                            edit_ids: vec![],
+                            evidence: Some("An exact quotation 🐺.".into()),
+                        })
+                    })
+                    .collect(),
+            });
+            session.ingest(batch, &Default::default()).unwrap();
+            session.revision = 1;
+            let json = serde_json::to_string(&session).unwrap();
+            let loaded: ReviewSession = serde_json::from_str(&json).unwrap();
+            let loaded = loaded
+                .restore(&"b".repeat(64), "reopened", |_| false)
+                .unwrap();
+            assert!(loaded.view().edits.is_empty());
+            assert_eq!(
+                loaded.view().reading_feedback[0]
+                    .feedback
+                    .improvements
+                    .len(),
+                count
+            );
+            if count > 0 {
+                assert!(serde_json::to_string(&loaded.view())
+                    .unwrap()
+                    .contains("An exact quotation 🐺."));
+            }
+        }
+    }
+    #[test]
+    fn improvement_links_follow_consolidated_ids_and_survive_reopen_and_decisions() {
+        use drafting_questions::review::LinkedImprovement;
+        let edit = session().view().edits[0].edit.clone();
+        let mut session = workflow_session(2);
+        let provider_id = edit.id.clone();
+        let mut batch = call(&session, 0, vec![edit.clone()]);
+        batch.calls[0].reading_feedback = Some(ReadingFeedback {
+            overview: "Three suggestions grounded in a concrete change.".into(),
+            strengths: vec!["Voice".into(), "Setting".into(), "Pacing".into()],
+            improvements: (0..3)
+                .map(|i| {
+                    ReadingImprovement::Linked(LinkedImprovement {
+                        text: format!("Improvement {}", i + 1),
+                        edit_ids: vec![provider_id.clone()],
+                        evidence: None,
+                    })
+                })
+                .collect(),
+        });
+        // Another reviewer already found this exact edit; links must resolve to the retained finding.
+        session
+            .ingest(call(&session, 1, vec![edit]), &Default::default())
+            .unwrap();
+        session.ingest(batch, &Default::default()).unwrap();
+        let finding_id = session.view().edits[0].edit.id.clone();
+        assert_ne!(provider_id, finding_id);
+        assert_eq!(session.view().edits.len(), 1);
+        let pending = session
+            .rejection_candidate(&finding_id, &"b".repeat(64))
+            .unwrap();
+        session.prepared(&finding_id, pending.clone()).unwrap();
+        session.rejected_proposal("repo", &pending.id);
+        assert_eq!(session.view().edits[0].status, "rejected");
+        session.revision = 1;
+        let loaded: ReviewSession =
+            serde_json::from_str(&serde_json::to_string(&session).unwrap()).unwrap();
+        let loaded = loaded
+            .restore(&"b".repeat(64), "reopened", |_| false)
+            .unwrap();
+        for point in &loaded.view().reading_feedback[0].feedback.improvements {
+            let ReadingImprovement::Linked(point) = point else {
+                panic!("Expected linked improvement")
+            };
+            assert_eq!(point.edit_ids, vec![finding_id.clone()]);
+        }
+        let mut broken: ReviewSession =
+            serde_json::from_str(&serde_json::to_string(&loaded).unwrap()).unwrap();
+        if let ReadingImprovement::Linked(point) =
+            &mut broken.result.reading_feedback[0].feedback.improvements[0]
+        {
+            point.edit_ids = vec!["missing".into()];
+        }
+        assert!(broken
+            .restore(&"b".repeat(64), "reopened", |_| false)
+            .is_err());
+    }
     fn call(
         s: &ReviewSession,
         index: usize,
@@ -1489,6 +1699,7 @@ mod tests {
         coverage.request_id = Some(format!("provider-call-{index}"));
         drafting_questions::review_workflow::Batch {
             calls: vec![drafting_questions::review_workflow::CallResult {
+                reading_feedback: None,
                 provider_response_id: None,
                 coverage,
                 edits,

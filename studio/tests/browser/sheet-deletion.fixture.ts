@@ -1,0 +1,11 @@
+import '../../src/fonts.bundle';
+import '../../src/style.css';
+import {mountStudio} from '../../src/studio';
+import {sheetDeletionModel} from '../sheetDeletionModel';
+import {applyAppearance,loadAppearance} from '../../src/appearance';
+const model=sheetDeletionModel();
+const app=mountStudio(document.querySelector<HTMLElement>('#app')!,model.core);
+Object.assign(window,{sheetDeletionFixture:{...model,theme:()=>applyAppearance({...loadAppearance(),theme:'contrast'})}});
+await app.selectRepository(async()=>model.session);
+await app.showDocument('ms/first.md');
+document.documentElement.dataset.sheetDeletionReady='true';
