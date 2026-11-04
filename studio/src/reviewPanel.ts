@@ -70,12 +70,25 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const dialogTitle = el('h2', 'Review suggestion');
     const dialogBody = el('div');
     const dialogClose = button('Close suggestion', () => closeSuggestion());
-    suggestionDialog.append(dialogTitle, dialogClose, dialogBody);
+    const dialogNavigation = el('nav', '', 'review-suggestion-navigation');
+    dialogNavigation.setAttribute('aria-label', 'Suggestion navigation');
+    const dialogPrevious = button('Previous', () => navigateSuggestion(-1));
+    const dialogNext = button('Next', () => navigateSuggestion(1));
+    const dialogPosition = el('p', '', 'review-suggestion-position');
+    dialogPosition.setAttribute('role', 'status');
+    dialogPosition.setAttribute('aria-live', 'polite');
+    dialogNavigation.append(dialogPrevious, dialogPosition, dialogNext);
+    const dialogMessage = el('p', '', 'review-suggestion-message');
+    dialogMessage.hidden = true;
+    dialogMessage.setAttribute('aria-live', 'polite');
+    suggestionDialog.append(dialogTitle, dialogClose, dialogNavigation, dialogBody, dialogMessage);
+    let dialogCards: HTMLElement[] = [];
+    let dialogIndex = -1;
     let dialogCard: HTMLElement | null = null;
     let dialogSlot: Comment | null = null;
     let dialogReturn: HTMLElement | null = null;
     let dialogSelection: Range | null = null;
-    function closeSuggestion() {
+    function restoreSuggestionCard() {
         if (!dialogCard) return;
         const card = dialogCard;
         dialogCard = null;
@@ -83,6 +96,11 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         dialogSlot?.replaceWith(card);
         dialogSlot = null;
         card.querySelectorAll<HTMLButtonElement>('button[data-edit-action="reject"]').forEach(n => { if (n.textContent === 'Reject') n.textContent = 'Keep mine'; });
+    }
+    function closeSuggestion() {
+        if (!dialogCard && !suggestionDialog.open) return;
+        restoreSuggestionCard();
+        dialogCards = []; dialogIndex = -1;
         if (suggestionDialog.open) suggestionDialog.close();
         suggestionDialog.remove();
         if (dialogReturn?.isConnected && !dialogReturn.classList.contains('cm-content')) dialogReturn.focus({preventScroll: true});
@@ -94,6 +112,64 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (dialogReturn?.isConnected && dialogReturn.hasAttribute('data-review-id')) dialogReturn.focus({preventScroll: true});
         dialogSelection = null;
         dialogReturn = null;
+    }
+    function showSuggestionCard(index: number) {
+        restoreSuggestionCard();
+        dialogIndex = index;
+        const box = dialogCards[index];
+        dialogSlot = document.createComment('suggestion card');
+        box.before(dialogSlot);
+        dialogCard = box;
+        box.querySelectorAll('h4').forEach(n => n.setAttribute('aria-level', '3'));
+        dialogBody.replaceChildren(box);
+        box.querySelectorAll<HTMLButtonElement>('button[data-edit-action="reject"]').forEach(n => { if (n.textContent === 'Keep mine') n.textContent = 'Reject'; });
+        dialogMessage.hidden = true;
+        dialogPosition.textContent = `Suggestion ${index + 1} of ${dialogCards.length}`;
+        dialogPrevious.disabled = busy || pending !== null || index === 0;
+        dialogNext.disabled = busy || pending !== null || index === dialogCards.length - 1;
+        update();
+    }
+    function navigateSuggestion(direction: 1 | -1) {
+        const index = dialogIndex + direction;
+        if (busy || pending || index < 0 || index >= dialogCards.length) return;
+        const trigger = direction > 0 ? dialogNext : dialogPrevious;
+        showSuggestionCard(index);
+        // Keep keyboard focus on navigation; reaching an end focuses the remaining direction.
+        (trigger.disabled ? direction > 0 ? dialogPrevious : dialogNext : trigger).focus({preventScroll: true});
+    }
+    const suggestionIds = (card: HTMLElement) => card.dataset.findingId ? [card.dataset.findingId] : [...card.querySelectorAll<HTMLElement>('[data-finding-id]')].map(node => node.dataset.findingId!);
+    function pendingSuggestionCards() {
+        const pendingEdits = result?.edits.filter(waiting) ?? [];
+        const cardEdit = (card: HTMLElement) => pendingEdits.find(edit => suggestionIds(card).includes(edit.id));
+        const sourceOrder = (path: string) => { const index = scope?.snapshots.findIndex(source => source.path === path) ?? -1; return index < 0 ? Number.MAX_SAFE_INTEGER : index; };
+        return [...edits.querySelectorAll<HTMLElement>('.review-card')].filter(card => cardEdit(card)).sort((a, b) => {
+            const left = cardEdit(a)!, right = cardEdit(b)!;
+            return sourceOrder(left.path) - sourceOrder(right.path) || left.path.localeCompare(right.path) || left.fromUtf8 - right.fromUtf8;
+        });
+    }
+    function resumeSuggestion(preferredIds: string[], note?: string, warning = false, focusAccept = false) {
+        if (!suggestionDialog.open) return false;
+        restoreSuggestionCard();
+        dialogCards = pendingSuggestionCards();
+        if (dialogCards.length) {
+            const index = preferredIds.map(id => dialogCards.findIndex(card => suggestionIds(card).includes(id))).find(index => index >= 0) ?? 0;
+            showSuggestionCard(index);
+            const target = focusAccept ? dialogCard?.querySelector<HTMLElement>('button[data-edit-action="accept"]:not(:disabled)') : null;
+            (target ?? dialogCard?.querySelector<HTMLElement>('h4') ?? dialogClose).focus({preventScroll: true});
+            dialogCard?.scrollIntoView?.({block: 'nearest'});
+        } else {
+            restoreSuggestionCard();
+            dialogIndex = -1;
+            dialogBody.replaceChildren(el('p', 'All suggestions decided. Close to return to your manuscript.'));
+            dialogPosition.textContent = 'All suggestions decided';
+            dialogPrevious.disabled = dialogNext.disabled = true;
+            dialogClose.focus({preventScroll: true});
+        }
+        dialogMessage.textContent = note ?? '';
+        dialogMessage.hidden = !note;
+        dialogMessage.setAttribute('aria-live', warning ? 'assertive' : 'polite');
+        if (note) say(note, warning ? 'warning' : 'note');
+        return true;
     }
     suggestionDialog.addEventListener('cancel', event => { event.preventDefault(); if (!busy) closeSuggestion(); });
     let suspended = false;
@@ -363,6 +439,9 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLButtonElement>('button[data-edit-action]').forEach(n => { n.disabled = Boolean(busy || pending || (n.dataset.editAction === 'accept' && (blocked || n.dataset.unavailable === 'true'))); });
         for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLInputElement>('input[type=radio]').forEach(n => { n.disabled = Boolean(busy || pending); });
         for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLElement>('[data-approve-reason]').forEach(n => { const why = n.dataset.approveReason ?? ''; n.textContent = why; n.hidden = !why; });
+        dialogClose.disabled = Boolean(busy);
+        dialogPrevious.disabled = Boolean(busy || pending || dialogIndex <= 0);
+        dialogNext.disabled = Boolean(busy || pending || dialogIndex < 0 || dialogIndex >= dialogCards.length - 1);
         updateStrip();
         background.setVisible(!element.hidden && !element.classList.contains('review-tucked'));
     }
@@ -745,8 +824,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             update();
         });
     }
-    function render() {
-        closeSuggestion();
+    function render(preserveSuggestion = false) {
+        if (preserveSuggestion) restoreSuggestionCard(); else closeSuggestion();
         edits.replaceChildren();
         historyHost.replaceChildren();
         aboutHost.replaceChildren();
@@ -1016,7 +1095,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     async function act(editIds: string[], accept: boolean) {
         if (busy || pending || !result || !scope || !editIds.length)
             return;
-        closeSuggestion();
+        const modalDecision = suggestionDialog.open;
+        const preferredIds = modalDecision ? [...dialogCards.slice(dialogIndex), ...dialogCards.slice(0, dialogIndex)].flatMap(suggestionIds) : [];
         const token = generation;
         const repositoryId = scope.repositoryId;
         const reviewId = result.reviewId;
@@ -1076,7 +1156,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 }
             }
             if (live(token)) {
-                render();
+                render(modalDecision && suggestionDialog.open);
                 const after = result.edits.find(e => e.id === editId);
                 const replaced = result.edits.filter(e => e.status === 'supersededByAuthorChoice' && after?.conflictGroup && e.conflictGroup === after.conflictGroup).length;
                 note = !accept ? `Kept your text. Your manuscript was not changed.${editIds.length > 1 ? ` ${editIds.length} alternatives were dismissed.` : ''} Other suggestions are unchanged.`
@@ -1089,7 +1169,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         }
         catch (error) {
             if (live(token)) {
-                render();
+                render(modalDecision && suggestionDialog.open);
                 note = message(error);
                 failed = true;
             }
@@ -1098,7 +1178,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             if (live(token)) {
                 busy = false;
                 update();
-                focusCard(position, note, failed);
+                if (!modalDecision || !resumeSuggestion(preferredIds, note, failed)) focusCard(position, note, failed);
             }
         }
     }
@@ -1357,23 +1437,22 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         }
     } }
     async function chooseAlternative(id: string) { if (busy || pending || !scope || !result || !core.chooseReviewEdit)
-        return; const token = generation; const position = Math.max(0, [...edits.querySelectorAll<HTMLElement>('.review-edit')].findIndex(n => n.dataset.findingId === id)); let chosen: string | undefined; busy = true; update(); try {
+        return; const modalChoice = suggestionDialog.open; const token = generation; const position = Math.max(0, [...edits.querySelectorAll<HTMLElement>('.review-edit')].findIndex(n => n.dataset.findingId === id)); let chosen: string | undefined; let failed = false; busy = true; update(); try {
         const next = await core.chooseReviewEdit(scope.repositoryId, result.reviewId, id);
         if (live(token)) {
             result = validate(next);
-            render();
+            render(modalChoice && suggestionDialog.open);
             chosen = 'Alternative selected, not applied. Accept it to apply it and dismiss the competing alternatives.';
         }
     }
     catch (error) {
-        if (live(token))
-            say(message(error), 'warning');
+        if (live(token)) { chosen = message(error); failed = true; }
     }
     finally {
         if (live(token)) {
             busy = false;
             update();
-            focusCard(position, chosen);
+            if (!modalChoice || !resumeSuggestion([id], chosen, failed, !failed)) focusCard(position, chosen, failed);
         }
     } }
     function openScope(override?: ReviewScope, recapture?: () => Promise<CapturedLibraryScope>, automatic = false) {
@@ -1514,13 +1593,10 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             dialogReturn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
             const selection = document.getSelection();
             dialogSelection = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
-            dialogSlot = document.createComment('suggestion card');
-            box.before(dialogSlot);
-            dialogCard = box;
-            box.querySelectorAll('h4').forEach(n => n.setAttribute('aria-level', '3'));
-            dialogBody.replaceChildren(box);
-            box.querySelectorAll<HTMLButtonElement>('button[data-edit-action="reject"]').forEach(n => { if (n.textContent === 'Keep mine') n.textContent = 'Reject'; });
-            update();
+            dialogCards = pendingSuggestionCards();
+            const index = dialogCards.indexOf(box);
+            if (index < 0) return false;
+            showSuggestionCard(index);
             document.body.append(suggestionDialog);
             suggestionDialog.showModal();
             dialogClose.focus({preventScroll: true});
