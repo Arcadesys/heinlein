@@ -25,6 +25,9 @@ for(const payload of ['', 'Replacement paragraph — 🦊.\nSecond line.'])test(
   await expect.poll(()=>page.evaluate(()=>(window as any).editorAutomationFixture.editor.text())).toBe(expected);
   await page.locator('.cm-content').focus();await page.keyboard.press('ControlOrMeta+End');await page.keyboard.insertText(' More writing.');
   await expect.poll(()=>page.evaluate(()=>(window as any).editorAutomationFixture.editor.text())).toBe(expected+' More writing.');
+  // A fast reload can leave inherited fixture text in its startup color
+  // transition. Audit the settled foreground, without changing the AA check.
+  await expect.poll(()=>page.locator('#app').evaluate(node=>getComputedStyle(node).color===getComputedStyle(node.querySelector('.cm-editor')!).color)).toBe(true);
   expect((await new AxeBuilder({page}).include('#app').analyze()).violations).toEqual([]);
   expect(await page.locator('vite-error-overlay').count()).toBe(0);expect(errors).toEqual([]);
   await page.screenshot({path:info.outputPath(`paste-${payload?'replacement':'protected'}.png`),fullPage:true});
