@@ -201,6 +201,9 @@ test('Approving from Reading stays in Reading and removes only resolved marks, w
   await expect(mark(page, 'example-approve')).toHaveCount(0);
   await expect(mark(page, 'example-dismiss')).toHaveText('Nobody looked up.');
   await expect(mark(page, 'example-overlap-word')).toHaveText('grey');
+  // Decisions keep the suggestion dialog open for the next pending passage.
+  // Return to Reading explicitly before opening a different marked passage.
+  await suggestion(page).getByRole('button', { name: 'Close suggestion', exact: true }).click();
   await mark(page, 'example-dismiss').click();
   await suggestion(page).getByRole('button', { name: 'Reject', exact: true }).click();
   await expect(mark(page, 'example-dismiss')).toHaveCount(0);
