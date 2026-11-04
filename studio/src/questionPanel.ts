@@ -555,7 +555,14 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       if (!core.available() || !core.questionStatus || !core.askQuestion || !core.cancelQuestion) {
         applyConfiguration({configured: false, model: null, message: 'OpenAI questions need a configured native Heinlein host. Local drafting remains available.', accounts: [], activeAccountId: null, models: [], selectedModel: null, signInPending: false, generation: 0, usageLimited: false});
       } else {
-        const result = await (remote && core.refreshQuestionConnection ? core.refreshQuestionConnection() : core.questionStatus());
+        let result = await (remote && core.refreshQuestionConnection ? core.refreshQuestionConnection() : core.questionStatus());
+        if (!live() || request !== statusVersion) return;
+        if (!remote && core.restoreQuestionConnection && !result.usageLimited && !result.signInPending
+          && result.models.length === 0 && result.selectedModel
+          && result.accounts.some(account => account.id === result.activeAccountId && account.signedIn && account.planEnabled)) {
+          connection.textContent = 'Restoring saved ChatGPT connection…';
+          result = await core.restoreQuestionConnection();
+        }
         if (!live() || request !== statusVersion) return;
         applyConfiguration(result);
       }

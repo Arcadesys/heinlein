@@ -1,5 +1,6 @@
 //! Native-only Sign in with ChatGPT. No renderer token transport, model defaults,
 //! environment credentials, startup network, API-key fallback, or inference here.
+mod credential_store;
 mod http;
 mod oauth;
 mod storage;
@@ -59,7 +60,7 @@ impl AuthError {
 impl fmt::Display for AuthError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Storage => "ChatGPT credentials could not be safely read or saved. Check Heinlein's private app-data storage.",
+            Self::Storage => "ChatGPT credentials could not be safely read or saved. Check OS credential-store access and Heinlein's private app-data permissions.",
             Self::Busy => "Another ChatGPT connection operation is in progress. Try again when it finishes.",
             Self::Configuration => "This ChatGPT connection configuration is not supported.",
             Self::Network => "The ChatGPT service could not be reached. Existing credentials were preserved.",
@@ -162,6 +163,8 @@ struct Database {
     host_id: String,
     accounts: Vec<Registration>,
     active: Option<String>,
+    #[serde(default)]
+    secrets_in_vault: bool,
 }
 impl Database {
     fn new() -> Self {
@@ -170,6 +173,7 @@ impl Database {
             host_id: uuid::Uuid::new_v4().urn().to_string(),
             accounts: Vec::new(),
             active: None,
+            secrets_in_vault: false,
         }
     }
     fn validate(&self) -> Result<()> {
@@ -229,6 +233,7 @@ impl Database {
 struct Runtime {
     db: Database,
     models: Vec<Model>,
+    restore_attempted: bool,
     generation: u64,
     invalidation: watch::Sender<bool>,
     pending: Option<watch::Sender<bool>>,
@@ -268,7 +273,7 @@ impl Runtime {
     }
 }
 pub struct AuthService {
-    store: storage::Store,
+    store: credential_store::Store,
     state: Mutex<Runtime>,
     gate: tokio::sync::Mutex<()>,
     transport: Arc<dyn http::Transport>,
@@ -280,7 +285,7 @@ impl AuthService {
         Self::with_transport(path, Arc::new(http::Http::new()?))
     }
     fn with_transport(path: PathBuf, transport: Arc<dyn http::Transport>) -> Result<Self> {
-        let store = storage::Store::open(path)?;
+        let store = credential_store::Store::open(path)?;
         let lock = store.lock()?;
         let db: Database = store.load()?.unwrap_or_else(Database::new);
         db.validate()?;
@@ -290,6 +295,7 @@ impl AuthService {
             state: Mutex::new(Runtime {
                 db,
                 models: Vec::new(),
+                restore_attempted: false,
                 generation: 1,
                 invalidation: watch::channel(false).0,
                 pending: None,
@@ -555,8 +561,43 @@ impl AuthService {
         }
         self.status()
     }
+    /// Validate a saved connection once per process, without opening a browser,
+    /// choosing a model, clearing a usage limit, or issuing inference.
+    pub async fn restore_saved(&self) -> Result<AuthStatus> {
+        let _gate = self.gate.lock().await;
+        {
+            let mut r = self.runtime()?;
+            if r.restore_attempted
+                || !r.models.is_empty()
+                || r.pending.is_some()
+                || !r
+                    .db
+                    .active
+                    .as_ref()
+                    .and_then(|id| r.db.account(id).ok())
+                    .is_some_and(|a| a.plan_enabled() && a.selected_model.is_some())
+            {
+                return Ok(r.status());
+            }
+            r.restore_attempted = true;
+        }
+        match self.refresh_models_inner().await {
+            Ok(status) => Ok(status),
+            Err(error) => {
+                let mut r = self.runtime()?;
+                r.message = Some(format!(
+                    "Saved ChatGPT connection could not be verified. {} Recheck when available.",
+                    error
+                ));
+                Ok(r.status())
+            }
+        }
+    }
     pub async fn refresh_models(&self) -> Result<AuthStatus> {
         let _gate = self.gate.try_lock().map_err(|_| AuthError::Busy)?;
+        self.refresh_models_inner().await
+    }
+    async fn refresh_models_inner(&self) -> Result<AuthStatus> {
         let generation = {
             let mut r = self.runtime()?;
             r.invalidate();
@@ -589,15 +630,8 @@ impl AuthService {
         if r.generation != generation {
             return Err(AuthError::Cancelled);
         }
-        let id = db.active.clone().ok_or(AuthError::NotSignedIn)?;
-        let account = db.account_mut(&id)?;
-        if account
-            .selected_model
-            .as_ref()
-            .is_some_and(|s| !models.iter().any(|m| &m.slug == s))
-        {
-            account.selected_model = None;
-        }
+        // Preserve a saved choice omitted by a transient catalog. Send still
+        // requires membership in the verified catalog; never pick a replacement.
         self.store.save(db)?;
         r.db = db.clone();
         r.models = models;

@@ -34,6 +34,9 @@ test('@smoke entire chapter returns targeted edits without moving or reflowing t
   expect(await page.evaluate(() => (window as any).chapterReviewFixture.previews[0].snapshots.map((s: any) => s.path))).toEqual(['opening.md', 'harbor.md']);
   expect(await page.evaluate(() => (window as any).chapterReviewFixture.requests)).toEqual([]);
   await panel.getByRole('button', {name: 'Run review', exact: true}).click();
+  await expect(page.locator('.review-background').getByRole('button', {name: /Open review/})).toBeVisible();
+  await page.locator('.review-background').getByRole('button', {name: /Open review/}).click();
+  await expect(panel).toBeVisible();
   await expect(panel.locator('.review-edit')).toHaveCount(2);
   await expect(panel).toContainText('were'); await expect(panel).toContainText('was');
   await expect(panel).toContainText('twice'); await expect(panel).toContainText('two times');

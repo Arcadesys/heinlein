@@ -352,3 +352,13 @@ it('a saved custom agent missing from the host catalog stops the full chapter ru
  const f=automaticFixture([{id:'custom-missing',version:1,displayName:'Missing',instructions:'Advice.'}]);f.core.reviewDefinitions.mockResolvedValue(structuredClone(defs));
  await panel!.reviewChapter();expect(f.core.requestReview).not.toHaveBeenCalled();expect(panel!.element.textContent).toContain('Chapter reviewers could not be loaded.');
 });
+
+it('explicitly resumes failed chunks in the same saved review and retains completed results',async()=>{
+ const f=automaticFixture();f.core.requestReview.mockImplementation(async r=>{const value=await f.make(r,1);value.workflow!.coverage[1].status='failed';value.workflow!.coverage[1].error='retryExhaustedTimeout';return value;});
+ await panel!.reviewChapter();expect(f.continuation).not.toHaveBeenCalled();
+ expect(panel!.element.textContent).toContain('timed out after three attempts');
+ expect(f.button('Retry failed chunks').hidden).toBe(false);await f.click('Retry failed chunks');
+ expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.continuation).toHaveBeenCalledOnce();
+ expect(f.continuation.mock.calls[0].slice(0,2)).toEqual(['repo','review-stable']);
+ expect(panel!.element.textContent).toContain('Individual mechanics assessment.');
+});

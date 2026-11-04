@@ -556,6 +556,73 @@ fn add_chapter_neighbors(request: &ReviewRequest, coverage: &Coverage, sub: &mut
         });
     }
 }
+/// Only transport interruptions and transient server failures are retried.
+/// Identity, permission, quota, invalid output and cancellation stay terminal.
+pub fn retryable_coverage_error(code: &str) -> bool {
+    matches!(
+        code,
+        "network"
+            | "timeout"
+            | "retryExhaustedNetwork"
+            | "retryExhaustedTimeout"
+            | "retryExhaustedProvider"
+    )
+}
+fn transient(error: &QuestionError) -> bool {
+    !error.is_usage_limit()
+        && error.provider_code.is_none()
+        && (matches!(error.code, "network" | "timeout")
+            || (error.code == "providerUnavailable"
+                && error
+                    .http_status
+                    .is_some_and(|s| matches!(s, 500 | 502 | 503 | 504))))
+}
+// Retries only this immutable chunk body. Successful siblings are never replayed.
+// Ambiguous failures can incur additional plan usage; there is no inference
+// exactly-once promise. Only one validated result is committed for the chunk.
+async fn chunk_transport<F, Fut>(
+    config: &Configuration,
+    body: Vec<u8>,
+    flight: &mut Flight,
+    changed: &mut Option<watch::Receiver<bool>>,
+    transport: &mut F,
+    timeout: Duration,
+) -> Result<Vec<u8>, QuestionError>
+where
+    F: FnMut(Configuration, Vec<u8>) -> Fut,
+    Fut: Future<Output = Result<Vec<u8>, QuestionError>>,
+{
+    for attempt in 0..3 {
+        if attempt > 0 {
+            tokio::select! {biased;
+                _=connection_changed(changed)=>return Err(QuestionError::stale_connection()),
+                _=flight.cancelled.wait_for(|c|*c)=>return Err(QuestionError::cancelled()),
+                _=tokio::time::sleep(Duration::from_millis(250 * (1 << (attempt-1))))=>{}
+            }
+        }
+        let answer = tokio::select! {biased;
+            _=connection_changed(changed)=>return Err(QuestionError::stale_connection()),
+            _=flight.cancelled.wait_for(|c|*c)=>return Err(QuestionError::cancelled()),
+            r=tokio::time::timeout(timeout,transport(config.clone(),body.clone()))=>match r {Ok(r)=>r,Err(_)=>Err(QuestionError::timeout())}
+        };
+        match answer {
+            Err(mut error) if transient(&error) => {
+                if attempt < 2 {
+                    continue;
+                }
+                error.code = match error.code {
+                    "network" => "retryExhaustedNetwork",
+                    "timeout" => "retryExhaustedTimeout",
+                    _ => "retryExhaustedProvider",
+                };
+                error.message="This review chunk failed after three attempts. Successful chunks were kept. Retrying may incur additional plan usage.";
+                return Err(error);
+            }
+            answer => return answer,
+        }
+    }
+    unreachable!()
+}
 impl QuestionService {
     // Keep the captured authority, persisted coverage and explicit dispatch budget visible.
     #[allow(clippy::too_many_arguments)]
@@ -666,17 +733,24 @@ impl QuestionService {
                             edits: vec![],
                             model: config.model.clone(),
                         })?;
-                        tokio::select! {biased;
-                            _=connection_changed(&mut changed)=>Err(QuestionError::stale_connection()),
-                            _=flight.cancelled.wait_for(|c|*c)=>{cancelled=true;Err(QuestionError::cancelled())},
-                            r=tokio::time::timeout(timeout,transport(config.clone(),body))=>match r {
-                                Ok(Ok(bytes))=>parse_consolidation(&request.request_id,&config.model,&bytes),
-                                Ok(Err(e))=>Err(e), Err(_)=>Err(QuestionError::timeout())
-                            }
-                        }
+                        chunk_transport(
+                            &config,
+                            body,
+                            &mut flight,
+                            &mut changed,
+                            &mut transport,
+                            timeout,
+                        )
+                        .await
+                        .and_then(|bytes| {
+                            parse_consolidation(&request.request_id, &config.model, &bytes)
+                        })
                     }
                     Err(e) => Err(e),
                 };
+                if answer.as_ref().is_err_and(|e| e.code == "cancelled") {
+                    cancelled = true;
+                }
                 let (feedback, error) = match answer {
                     Ok(feedback) => {
                         coverage.status = "completed".into();
@@ -774,7 +848,27 @@ impl QuestionService {
                 edits: vec![],
                 model: config.model.clone(),
             })?;
-            let answer = tokio::select! {biased;_=connection_changed(&mut changed)=>Err(QuestionError::stale_connection()),_=flight.cancelled.wait_for(|c|*c)=>{cancelled=true;Err(QuestionError::cancelled())},r=tokio::time::timeout(timeout,transport(config.clone(),body))=>match r{Ok(Ok(bytes))=>crate::review::parse_review(&sub,&bytes).map(|(answer,json)| { let value:serde_json::Value=serde_json::from_slice(&bytes).unwrap_or_default(); let provider_response_id=safe_request_id(value.get("id").and_then(|v|v.as_str())); (answer,json,provider_response_id) }),Ok(Err(e))=>Err(e),Err(_)=>Err(QuestionError::timeout())}};
+            let answer = chunk_transport(
+                &config,
+                body,
+                &mut flight,
+                &mut changed,
+                &mut transport,
+                timeout,
+            )
+            .await
+            .and_then(|bytes| {
+                crate::review::parse_review(&sub, &bytes).map(|(answer, json)| {
+                    let value: serde_json::Value =
+                        serde_json::from_slice(&bytes).unwrap_or_default();
+                    let provider_response_id =
+                        safe_request_id(value.get("id").and_then(|v| v.as_str()));
+                    (answer, json, provider_response_id)
+                })
+            });
+            if answer.as_ref().is_err_and(|e| e.code == "cancelled") {
+                cancelled = true;
+            }
             match answer {
                 Ok((answer, json, provider_response_id)) => {
                     let mut output: ReviewOutput =
@@ -1055,7 +1149,8 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn consolidation_failure_timeout_and_cancellation_keep_prior_reports_without_retry() {
+    async fn consolidation_failure_timeout_and_cancellation_keep_prior_reports_with_bounded_retry()
+    {
         for case in ["failure", "timeout", "cancelled", "usage"] {
             let mut r = request("Rain tapped.");
             r.workflow.as_mut().unwrap().consolidate = true;
@@ -1106,7 +1201,7 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            assert_eq!(sent, 1);
+            assert_eq!(sent, if case == "timeout" { 3 } else { 1 });
             assert_eq!(batch.calls.len(), 1);
             assert!(batch.calls[0].reading_feedback.is_none());
             assert_eq!(reports.len(), 1);
@@ -1161,6 +1256,73 @@ mod tests {
                 "{case}"
             );
         }
+    }
+    #[tokio::test(start_paused = true)]
+    async fn transient_chunk_failure_retries_only_that_chunk_and_consolidates_once() {
+        let mut r = request("Rain tapped.");
+        r.workflow.as_mut().unwrap().consolidate = true;
+        r.workflow
+            .as_mut()
+            .unwrap()
+            .reviewers
+            .push("mechanical".into());
+        let coverage = plan(&r).unwrap();
+        let service = QuestionService::default();
+        let permit = service
+            .reserve(&r.question_request().unwrap(), "account")
+            .unwrap();
+        let config = Configuration::new("synthetic-secret", "test-model")
+            .unwrap()
+            .with_account("account")
+            .unwrap();
+        let mut bodies = vec![];
+        let mut finals = vec![];
+        let batch = service
+            .review_batch_with(
+                r,
+                config,
+                permit,
+                coverage,
+                vec![
+                    built_in_definitions().remove(1),
+                    built_in_definitions().remove(0),
+                ],
+                1024,
+                vec![],
+                |call| {
+                    if call.coverage.status == "completed" {
+                        finals.push(call.coverage.id.clone());
+                    }
+                    Ok(())
+                },
+                |_, body| {
+                    bodies.push(body);
+                    let n = bodies.len();
+                    async move {
+                        if n == 2 {
+                            Err(QuestionError::new("network", "synthetic interruption"))
+                        } else {
+                            Ok(assessed_response())
+                        }
+                    }
+                },
+                Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bodies.len(), 4);
+        assert_eq!(bodies[1], bodies[2]);
+        assert_ne!(bodies[0], bodies[1]);
+        assert_eq!(batch.calls.len(), 3);
+        assert_eq!(finals.len(), 3);
+        assert_eq!(
+            finals
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            3
+        );
+        assert!(batch.calls.iter().all(|c| c.coverage.status == "completed"));
     }
     #[tokio::test]
     async fn failed_individual_pass_keeps_siblings_and_never_sends_partial_consolidation() {
@@ -1574,5 +1736,90 @@ mod custom_reviewer_tests {
         b.output = "rewrite".into();
         assert!(b.validate().is_err());
         assert!(r.definition().instructions.len() <= 4000);
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    #[tokio::test(start_paused = true)]
+    async fn retry_transport_is_bounded_cancellation_aware_and_body_stable() {
+        for case in [
+            "recover",
+            "exhaust",
+            "cancel",
+            "quota",
+            "invalid",
+            "server",
+            "connection",
+        ] {
+            let service = QuestionService::default();
+            let request = QuestionRequest {
+                request_id: format!("retry-{case}"),
+                question: "Check".into(),
+                context: "Rain".into(),
+                history: vec![],
+            };
+            let mut flight = service.reserve(&request, "account").unwrap().0;
+            let (change, rx) = watch::channel(false);
+            let config = Configuration::new("synthetic-secret", "test-model")
+                .unwrap()
+                .with_account("account")
+                .unwrap();
+            let mut changed = Some(rx);
+            let mut sent = 0;
+            let cancel = service.clone();
+            let mut transport = |_: Configuration, body: Vec<u8>| {
+                sent += 1;
+                assert_eq!(body, b"same immutable chunk");
+                let answer =
+                    match case {
+                        "recover" if sent == 2 => Ok(b"validated later".to_vec()),
+                        "quota" => Err(QuestionError::usage_limited()),
+                        "invalid" => Err(QuestionError::invalid_response()),
+                        "server" => Err(QuestionError::new("providerUnavailable", "synthetic")
+                            .with_http(503, None)),
+                        _ => Err(QuestionError::new("network", "synthetic")),
+                    };
+                if case == "cancel" {
+                    cancel.cancel("retry-cancel").unwrap();
+                }
+                if case == "connection" {
+                    change.send_replace(true);
+                }
+                async { answer }
+            };
+            let answer = chunk_transport(
+                &config,
+                b"same immutable chunk".to_vec(),
+                &mut flight,
+                &mut changed,
+                &mut transport,
+                Duration::from_secs(1),
+            )
+            .await;
+            match case {
+                "recover" => {
+                    assert!(answer.is_ok());
+                    assert_eq!(sent, 2);
+                }
+                "exhaust" | "server" => {
+                    assert!(answer.unwrap_err().code.starts_with("retryExhausted"));
+                    assert_eq!(sent, 3);
+                }
+                "cancel" => {
+                    assert_eq!(answer.unwrap_err().code, "cancelled");
+                    assert_eq!(sent, 1);
+                }
+                "connection" => {
+                    assert_eq!(answer.unwrap_err().code, "staleConnection");
+                    assert_eq!(sent, 1);
+                }
+                _ => {
+                    assert!(answer.is_err());
+                    assert_eq!(sent, 1);
+                }
+            }
+        }
     }
 }

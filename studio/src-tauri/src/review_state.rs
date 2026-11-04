@@ -582,6 +582,45 @@ impl ReviewSession {
             .is_some_and(|v| v.account_id == account)
             && self.result.model == model
     }
+    /// Explicit continuation retries only transiently failed calls. Completed
+    /// reports, findings and decisions remain immutable. A changed capture needs
+    /// a fresh review rather than rebasing old results onto new writing.
+    pub fn requeue_failed(
+        &mut self,
+        source_matches: impl Fn(&drafting_questions::review::ReviewSnapshot) -> bool,
+    ) -> Result<bool, String> {
+        use drafting_questions::review_workflow::retryable_coverage_error;
+        let Some(workflow) = self.result.workflow.as_ref() else {
+            return Ok(false);
+        };
+        let retry = workflow.coverage.iter().any(|c| {
+            c.status == "failed" && c.error.as_deref().is_some_and(retryable_coverage_error)
+        });
+        if !retry {
+            return Ok(false);
+        }
+        if !self
+            .request
+            .snapshots
+            .iter()
+            .chain(&self.request.workflow.as_ref().unwrap().context)
+            .all(source_matches)
+        {
+            return Err("The captured source or context changed. Start a fresh review; completed results were preserved.".into());
+        }
+        for c in &mut self.result.workflow.as_mut().unwrap().coverage {
+            if c.status == "failed"
+                && (c.error.as_deref().is_some_and(retryable_coverage_error)
+                    || (c.id == drafting_questions::review_workflow::CONSOLIDATION_ID
+                        && c.error.as_deref() == Some("incompleteReview")))
+            {
+                c.status = "queued".into();
+                c.error = None;
+                c.request_id = None;
+            }
+        }
+        Ok(true)
+    }
     pub fn bind_batch_generation(&mut self, generation: u64) {
         if let Some(w) = &mut self.result.workflow {
             w.account_generation = generation;
@@ -1757,6 +1796,34 @@ mod tests {
         assert!(broken
             .restore(&"b".repeat(64), "reopened", |_| false)
             .is_err());
+    }
+    #[test]
+    fn retry_failed_chunks_keeps_completed_results_and_refuses_changed_capture() {
+        let mut s = workflow_session(2);
+        let edit = session().view().edits[0].edit.clone();
+        s.ingest(call(&s, 0, vec![edit]), &Default::default())
+            .unwrap();
+        let completed = serde_json::to_value(s.view()).unwrap();
+        let mut failed = call(&s, 1, vec![]);
+        failed.calls[0].coverage.status = "failed".into();
+        failed.calls[0].coverage.error = Some("retryExhaustedTimeout".into());
+        s.ingest(failed, &Default::default()).unwrap();
+        let before = serde_json::to_value(s.view()).unwrap();
+        assert!(s.requeue_failed(|_| false).is_err());
+        assert_eq!(before, serde_json::to_value(s.view()).unwrap());
+        assert!(s.requeue_failed(|_| true).unwrap());
+        assert_eq!(s.coverage()[0].status, "completed");
+        assert_eq!(s.coverage()[1].status, "queued");
+        assert!(s.coverage()[1].error.is_none());
+        assert_eq!(
+            serde_json::to_value(s.view()).unwrap()["edits"],
+            completed["edits"]
+        );
+        assert!(!s.requeue_failed(|_| false).unwrap());
+        // Ingested duplicate successful calls do not duplicate findings or feedback.
+        let count = s.finding_count();
+        s.ingest(call(&s, 0, vec![]), &Default::default()).unwrap();
+        assert_eq!(s.finding_count(), count);
     }
     fn call(
         s: &ReviewSession,

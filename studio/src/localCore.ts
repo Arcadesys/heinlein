@@ -125,6 +125,7 @@ export interface LocalCore {
   selectQuestionAccount?(accountId: string): Promise<QuestionStatus>;
   selectQuestionModel?(slug: string): Promise<QuestionStatus>;
   refreshQuestionConnection?(): Promise<QuestionStatus>;
+  restoreQuestionConnection?(): Promise<QuestionStatus>;
   signOutQuestionAccount?(accountId?: string): Promise<QuestionStatus>;
   openQuestionUsage?(): Promise<void>;
   listProposals?(repositoryId: string): Promise<ProposalListing>;
@@ -207,6 +208,7 @@ export const localCore: LocalCore = {
   selectQuestionAccount: accountId => invoke('select_question_account', {accountId}),
   selectQuestionModel: slug => invoke('select_question_model', {slug}),
   refreshQuestionConnection: () => invoke('refresh_question_connection'),
+  restoreQuestionConnection: () => invoke('restore_question_connection'),
   signOutQuestionAccount: accountId => invoke('sign_out_question_account', {accountId: accountId ?? null}),
   openQuestionUsage: () => invoke('open_question_usage'),
   listProposals: repositoryId => invoke('list_proposals', {repositoryId}),

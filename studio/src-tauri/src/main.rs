@@ -845,6 +845,7 @@ fn production_main() {
             questions::select_question_account,
             questions::select_question_model,
             questions::refresh_question_connection,
+            questions::restore_question_connection,
             questions::sign_out_question_account,
             questions::open_question_usage,
             proposals::list_proposals,

@@ -573,6 +573,18 @@ pub(crate) fn select_question_model(
 }
 
 #[tauri::command]
+pub(crate) async fn restore_question_connection(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    let auth = host.auth(&app)?;
+    // Restore does not clear quota state or interrupt an existing question.
+    host.status(auth.restore_saved().await?)
+}
+
+#[tauri::command]
 pub(crate) async fn refresh_question_connection(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
@@ -1223,6 +1235,7 @@ async fn request_review_workflow(
    let session=slot.as_mut().ok_or("Review unavailable")?;
    let mut old=session.request.clone();old.request_id=request.request_id.clone();old.workflow.as_mut().unwrap().review_id=Some(id.clone());
    if serde_json::to_value(&old).map_err(|_|"Invalid review")?!=serde_json::to_value(&request).map_err(|_|"Invalid review")?||!session.connection_matches(&connection.account_id,&connection.model,connection.generation){return Err("Continue requires the same captured scope, reviewer definitions, account and model".into())}
+   if session.requeue_failed(|snapshot| repo.read(&snapshot.path).is_ok_and(|current| !current.generated_compatibility && current.text == snapshot.source))? {session.persist(&review_records(&app)?,repo)?;}
    session.set_request_id(request.request_id.clone());session.bind_batch_generation(connection.generation);
   }else{
    let mapping=repo.load_drafting().map_err(|e|e.to_string())?;

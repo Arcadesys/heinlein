@@ -47,8 +47,9 @@ function button(text: string, action: () => void, cls = '') { const n = el('butt
 function icon(path: string, box = 14) { const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg'), p = document.createElementNS(ns, 'path'); svg.setAttribute('viewBox', `0 0 ${box} ${box}`); svg.setAttribute('width', String(box)); svg.setAttribute('height', String(box)); svg.setAttribute('aria-hidden', 'true'); svg.setAttribute('focusable', 'false'); p.setAttribute('d', path); p.setAttribute('fill', 'none'); p.setAttribute('stroke', 'currentColor'); p.setAttribute('stroke-width', '1.6'); p.setAttribute('stroke-linecap', 'round'); p.setAttribute('stroke-linejoin', 'round'); svg.append(p); return svg; }
 function iconButton(label: string, path: string, action: () => void, cls: string, box = 14) { const n = button('', action, cls); n.setAttribute('aria-label', label); n.append(icon(path, box)); return n; }
 function message(error: unknown) { return error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' ? error.message : 'The review could not be completed. Retry when your connection is ready.'; }
+function retryableCall(code: string | null) { return ['network', 'timeout', 'retryExhaustedNetwork', 'retryExhaustedTimeout', 'retryExhaustedProvider'].includes(code ?? ''); }
 function callFailure(code: string | null) {
-    const reasons: Record<string, string> = {outputLimit: 'The model reached its response token limit before finishing the review.', timeout: 'The response timed out.', cancelled: 'The call was cancelled.', usageLimit: 'ChatGPT usage limit reached.', staleConnection: 'The ChatGPT account or model changed.', invalidReviewOrModel: 'The response did not match the selected model or review format.', incompleteReview: 'Consolidation needs all individual assessments to complete.', consolidationTooLarge: 'The individual assessments exceed the consolidation limit. Review a smaller scope; individual results are retained.', invalidResponse: 'The response could not be validated.', protocol: 'The response could not be validated.', findingLimit: 'The retained suggestion limit was reached.'};
+    const reasons: Record<string, string> = {retryExhaustedNetwork: 'Connection interrupted after three attempts. Successful chunks were kept.', retryExhaustedTimeout: 'The chunk timed out after three attempts. Successful chunks were kept.', retryExhaustedProvider: 'OpenAI remained unavailable after three attempts. Successful chunks were kept.', outputLimit: 'The model reached its response token limit before finishing the review.', timeout: 'The response timed out.', cancelled: 'The call was cancelled.', usageLimit: 'ChatGPT usage limit reached.', staleConnection: 'The ChatGPT account or model changed.', invalidReviewOrModel: 'The response did not match the selected model or review format.', incompleteReview: 'Consolidation needs all individual assessments to complete.', consolidationTooLarge: 'The individual assessments exceed the consolidation limit. Review a smaller scope; individual results are retained.', invalidResponse: 'The response could not be validated.', protocol: 'The response could not be validated.', findingLimit: 'The retained suggestion limit was reached.'};
     return reasons[code ?? ''] ?? 'The call did not return a valid review.';
 }
 /** Display-only trim of surrounding text so one diff reads as one line. The exact patch is in its details. */
@@ -342,7 +343,10 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         run.textContent = previewing ? 'Preview review' : 'Run review';
         run.disabled = previewing ? Boolean(problem || pending || busy || automaticRunning || checking || !definitions.length) : Boolean(problem || pending || busy || automaticRunning || checking || !ready() || !core.requestReview);
         retry.disabled = Boolean(problem || pending || busy || automaticRunning || checking || !ready() || !core.requestReview || (workflowMode && !preparedRequest));
-        continueBatch.hidden = automaticRunning || !result?.workflow?.coverage.some(c => (c.status === 'queued' || c.status === 'notRun') && c.error !== 'findingLimit');
+        const failedChunks = result?.workflow?.coverage.some(c => c.status === 'failed' && retryableCall(c.error));
+        continueBatch.textContent = failedChunks ? 'Retry failed chunks' : 'Continue next reviewer batch';
+        continueBatch.hidden = automaticRunning || !result?.workflow?.coverage.some(c => ((c.status === 'queued' || c.status === 'notRun') && c.error !== 'findingLimit') || (c.status === 'failed' && retryableCall(c.error)));
+        continueNote.textContent = failedChunks ? 'Retry sends only failed chunks and remaining calls, keeping completed results. Each chunk gets up to three attempts. Additional plan usage may count. Changed source requires a fresh review.' : 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count.';
         continueNote.hidden = continueBatch.hidden;
         continueBatch.disabled = Boolean(pending || busy || checking || !ready());
         setupView.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>('input,select,textarea,button').forEach(e => e.disabled = Boolean(pending || busy || automaticRunning) || e.dataset.full === 'true');
@@ -374,7 +378,12 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     }
     async function configure() { if (checking)
         return; const token = generation; checking = true; update(); try {
-        const next = await core.questionStatus?.();
+        let next = await core.questionStatus?.();
+        if (live(token) && next && core.restoreQuestionConnection && !next.usageLimited && !next.signInPending
+          && next.models.length === 0 && next.selectedModel
+          && next.accounts.some(account => account.id === next!.activeAccountId && account.signedIn && account.planEnabled)) {
+            next = await core.restoreQuestionConnection();
+        }
         if (live(token))
             config = next ?? null;
     }
@@ -920,7 +929,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             activity.scrollIntoView?.({block: 'nearest'});
         }
         timer = setTimeout(() => { if (!live(token) || pending !== requestId)
-            return; background.finish(requestId, 'attention', 'Review timed out. Open the review to retry; your text was not changed.'); cancelRequest(); say('Review timed out locally. Usage may count. Retry when ready; your manuscript was not changed.'); update(); }, workflowMode ? 8 * 185000 + 5000 : 185000);
+            return; background.finish(requestId, 'attention', 'Review timed out. Open the review to retry; your text was not changed.'); cancelRequest(); say('Review timed out locally. Usage may count. Retry when ready; your manuscript was not changed.'); update(); }, workflowMode ? 8 * (3 * 185000 + 1000) + 5000 : 185000);
         try {
             const connection = { generation: config!.generation, accountId: config!.activeAccountId!, model: config!.model! };
             const onProgress = (event: ReviewProgress) => {
@@ -1285,7 +1294,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 return;
             preparedRequest = request;
             coverage = next;
-            batchPreview.replaceChildren(el('h3', 'Exact batch preview'), el('p', `${reviewerIds.length} reviewer(s), ${new Set(next.filter(c => c.id !== 'consolidation').map(c => `${c.sourceIndex}:${c.fromUtf8}:${c.toUtf8}`)).size} editable chunks, ${next.length} selected calls including one final consolidation pass. This batch sends at most ${Math.min(8, next.length)} calls.${automaticRunning ? ' Review chapter continues all remaining batches automatically.' : ' Remaining calls need Continue.'}`), el('p', fullContextOrder ? 'Each target call includes the complete selected context in library order.' : 'Each call has bounded neighboring context and the selected read-only context, not the whole work at once.'), el('p', 'Sent to OpenAI with your selected ChatGPT account and model. Plan usage may count.'));
+            batchPreview.replaceChildren(el('h3', 'Exact batch preview'), el('p', `${reviewerIds.length} reviewer(s), ${new Set(next.filter(c => c.id !== 'consolidation').map(c => `${c.sourceIndex}:${c.fromUtf8}:${c.toUtf8}`)).size} editable chunks, ${next.length} selected calls including one final consolidation pass. This batch runs at most ${Math.min(8, next.length)} chunks. Interrupted chunks retry up to two times; additional plan usage may count.${automaticRunning ? ' Review chapter continues all remaining batches automatically.' : ' Remaining calls need Continue.'}`), el('p', fullContextOrder ? 'Each target call includes the complete selected context in library order.' : 'Each call has bounded neighboring context and the selected read-only context, not the whole work at once.'), el('p', 'Sent to OpenAI with your selected ChatGPT account and model. Plan usage may count.'));
             if (fullContextOrder) for (const path of fullContextOrder) { const snapshot = scope.snapshots.find(item => item.path === path)!; batchPreview.append(el('p', `Context: ${path} · ${bytes(snapshot.source).toLocaleString()} UTF-8 bytes`)); }
             const details = el('details');
             details.append(el('summary', 'Reviewer definitions and chunk coverage'));
@@ -1439,7 +1448,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             await prepareBatch();
             if (!live(token) || !preparedRequest) return;
             let answer = await submit();
-            // Native continuation retains completed calls. Never automatically retry failures.
+            // Native dispatch already retries transient chunk failures up to three attempts.
+            // Stop after exhaustion; explicit continuation can retry failed chunks.
             while (live(token) && answer?.workflow) {
                 const calls = answer.workflow.coverage;
                 if (calls.some(c => c.status === 'failed' || c.status === 'cancelled' || c.error)) break;
@@ -1479,7 +1489,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     keepWriting.className = 'review-keep-writing';
     footActions.prepend(keepWriting);
     const outside = (event: PointerEvent) => {
-        if (hooks.headerTabs && pending && !element.hidden && event.target instanceof Node && !element.contains(event.target)) { hide(); hooks.focusEditor(); }
+        if (hooks.headerTabs && pending && !element.hidden && event.target instanceof Node && !element.contains(event.target)) { hide(); hooks.closePane?.(); hooks.focusEditor(); }
     };
     document.addEventListener('pointerdown', outside, true);
     return { element, async openSaved(id:string) { if(pending||busy){show();return;} if(!scope)openScope();if(!scope)return;show();await reopenSaved(id); }, activityElement: background.element, reviewChapter, show, hide,
