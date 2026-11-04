@@ -22,6 +22,7 @@ for(const zoom of [100,200]) {
   await page.evaluate(async zoom=>{await (window as any).questionsFixture.ready;document.documentElement.dataset.zoom=String(zoom);await document.fonts.ready;},zoom);
   const before=await shape(page);await page.getByRole('button',{name:'Heinlein',exact:true}).click();await page.getByRole('button',{name:'Whole scene',exact:true}).click();
   const pane=page.locator('.heinlein-review-panel');await pane.getByRole('button',{name:'Run review',exact:true}).click();await page.evaluate(count=>(window as any).questionsFixture.finishGroundedReview(count),count);
+  await page.locator('.review-background').getByRole('button',{name:/Open review/}).click();
   await expect(pane.getByRole('heading',{name:'Reading overview',exact:true})).toBeVisible();await expect(pane.getByRole('heading',{name:'Points for improvement',exact:true})).toBeVisible();
   await expect(pane).toContainText(count?'Evidence: Rain tapped the glass roof.':'No improvements suggested.');await expect(pane.locator('.review-improvement-jump')).toHaveCount(0);
   expect(await shape(page)).toEqual(before);expect((await new AxeBuilder({page}).include('.heinlein-review-panel').analyze()).violations).toEqual([]);expect(await pane.evaluate(n=>n.scrollWidth<=n.clientWidth)).toBe(true);expect(errors).toEqual([]);await expect(page.locator('vite-error-overlay')).toHaveCount(0);
@@ -35,6 +36,7 @@ for(const zoom of [100,200]) test(`consolidated review keeps individual passes a
  await page.evaluate(async zoom=>{await (window as any).questionsFixture.ready;document.documentElement.dataset.zoom=String(zoom);await document.fonts.ready;},zoom);
  const before=await shape(page);await page.getByRole('button',{name:'Heinlein',exact:true}).click();await page.getByRole('button',{name:'Whole scene',exact:true}).click();
  const pane=page.locator('.heinlein-review-panel');await pane.getByRole('button',{name:'Run review',exact:true}).click();await page.evaluate(()=>(window as any).questionsFixture.finishConsolidatedReview());
+ await page.locator('.review-background').getByRole('button',{name:/Open review/}).click();
  await expect(pane.getByRole('heading',{name:'Consolidated review',exact:true})).toBeVisible();
  await expect(pane).toContainText('The stopped clock and rain establish an unsettled station');await expect(pane).toContainText('This is an optional story choice');
  await expect(pane.getByRole('heading',{name:'Strengths',exact:true})).toBeVisible();await expect(pane.getByRole('heading',{name:'Points for improvement',exact:true})).toBeVisible();
