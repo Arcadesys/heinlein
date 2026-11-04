@@ -916,28 +916,52 @@ mod tests {
         options.consolidate = true;
         assert_eq!(plan(&r).unwrap().len(), MAX_REVIEWERS + 1);
         let first = r.snapshots[0].clone();
-        r.snapshots = (0..7).map(|i| { let mut s=first.clone(); s.path=format!("scene-{i}.md"); s }).collect();
+        r.snapshots = (0..7)
+            .map(|i| {
+                let mut s = first.clone();
+                s.path = format!("scene-{i}.md");
+                s
+            })
+            .collect();
         assert_eq!(plan(&r).unwrap().len(), 7 * MAX_REVIEWERS + 1);
-        let mut extra = first; extra.path="scene-extra.md".into(); r.snapshots.push(extra);
-        assert!(plan(&r).is_err(), "Never truncate a plan exceeding 384 individual calls");
+        let mut extra = first;
+        extra.path = "scene-extra.md".into();
+        r.snapshots.push(extra);
+        assert!(
+            plan(&r).is_err(),
+            "Never truncate a plan exceeding 384 individual calls"
+        );
         r.snapshots.truncate(1);
-        r.workflow.as_mut().unwrap().reviewers.push("custom-over-limit".into());
+        r.workflow
+            .as_mut()
+            .unwrap()
+            .reviewers
+            .push("custom-over-limit".into());
         assert!(plan(&r).is_err());
     }
     #[tokio::test]
     async fn final_pass_combines_reports_after_individual_calls_and_survives_continue_budget() {
         let mut custom_defs = built_in_definitions();
         custom_defs.extend((0..8).map(|i| ReviewerDefinition {
-            id: format!("custom-{i}"), version: 1, display_name: format!("Custom {i}"),
+            id: format!("custom-{i}"),
+            version: 1,
+            display_name: format!("Custom {i}"),
             instructions: "Give advice only.".into(),
         }));
         for (text, selected) in [
-            ("Rain tapped.".to_string(), vec![built_in_definitions().remove(1)]),
-            ("Rain tapped. ".repeat(8000), vec![built_in_definitions().remove(1)]),
+            (
+                "Rain tapped.".to_string(),
+                vec![built_in_definitions().remove(1)],
+            ),
+            (
+                "Rain tapped. ".repeat(8000),
+                vec![built_in_definitions().remove(1)],
+            ),
             ("Rain tapped.".to_string(), custom_defs),
         ] {
             let mut r = request(&text);
-            r.workflow.as_mut().unwrap().reviewers = selected.iter().map(|d| d.id.clone()).collect();
+            r.workflow.as_mut().unwrap().reviewers =
+                selected.iter().map(|d| d.id.clone()).collect();
             r.workflow.as_mut().unwrap().consolidate = true;
             let mut coverage = plan(&r).unwrap();
             assert_eq!(coverage.last().unwrap().id, CONSOLIDATION_ID);
@@ -974,7 +998,12 @@ mod tests {
                                 final_count += 1;
                                 assert_eq!(input.as_array().unwrap().len(), coverage.len() - 1);
                                 for definition in &selected {
-                                    assert!(input.as_array().unwrap().iter().any(|report| report["reviewer"].as_str() == Some(&definition.display_name)));
+                                    assert!(input
+                                        .as_array()
+                                        .unwrap()
+                                        .iter()
+                                        .any(|report| report["reviewer"].as_str()
+                                            == Some(&definition.display_name)));
                                 }
                                 assert_eq!(
                                     body["text"]["format"]["schema"]["properties"]["edits"]

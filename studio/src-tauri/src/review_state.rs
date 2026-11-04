@@ -1621,8 +1621,13 @@ mod tests {
         session.revision = 1;
         let json = serde_json::to_string(&session).unwrap();
         let loaded: ReviewSession = serde_json::from_str(&json).unwrap();
-        let loaded = loaded.restore(&"b".repeat(64), "reopened", |_| false).unwrap();
-        assert_eq!(loaded.view().workflow.as_ref().unwrap().definitions.len(), 8);
+        let loaded = loaded
+            .restore(&"b".repeat(64), "reopened", |_| false)
+            .unwrap();
+        assert_eq!(
+            loaded.view().workflow.as_ref().unwrap().definitions.len(),
+            8
+        );
         assert_eq!(loaded.view().workflow.as_ref().unwrap().coverage.len(), 8);
     }
     #[test]

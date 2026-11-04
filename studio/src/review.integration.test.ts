@@ -162,12 +162,13 @@ describe('Studio Heinlein Review integration', () => {
     core.prepareReviewEdit.mockImplementation(async () => ({proposalId: `proposal-${accepted + 1}`}));
     const native = {...core, listProposals: vi.fn(async () => ({pending: [], receipts: []})), reviewProposal: vi.fn(async () => proposal()), reviewProposalRevert: vi.fn(async () => proposal()), cancelProposalReview: vi.fn(async () => {}), applyProposalReview: vi.fn(async (_repositoryId: string, binding: ProposalBinding): Promise<ProposalOutcome> => {disk = proposal().replacementText; accepted++; return {receipt: {id: `receipt-${accepted}`, kind: 'apply', status: 'completed', proposalId: binding.proposalId, path: 'scene.md', baseHash: binding.baseHash, replacementHash: binding.replacementHash, diffHash: binding.diffHash, origin, parentReceiptId: null, message: null, createdAtMs: Date.now(), revertAvailable: true}, warning: null};})};
     await start(native); await open(); button('Run review').click(); await vi.waitFor(() => expect(button('Accept…').disabled).toBe(false));
+    button('Open review').click(); await vi.waitFor(() => expect(panel().hidden).toBe(false));
     for (let index = 0; index < 2; index++) {
       button('Accept…').click(); await vi.waitFor(() => expect(document.querySelector('[aria-label="Review whole-scene proposal"]')).not.toBeNull());
       expect(native.applyProposalReview).toHaveBeenCalledTimes(index); expect(native.saveDocument).not.toHaveBeenCalled();
       const comparison = document.querySelector('[aria-label="Review whole-scene proposal"]')!; expect(comparison.textContent).toContain('Native OpenAI suggestion'); expect(comparison.querySelector('pre')!.textContent).toBe(disk);
       button('Continue to native confirmation').click(); await vi.waitFor(() => expect(native.getReview).toHaveBeenCalledTimes(index + 1));
-      expect(panel().hidden).toBe(false); expect(native.applyProposalReview).toHaveBeenCalledTimes(index + 1); expect(view().state.doc.toString()).toBe(disk.replace(/\r\n/g, '\n'));
+      await vi.waitFor(() => expect(panel().hidden).toBe(false)); expect(native.applyProposalReview).toHaveBeenCalledTimes(index + 1); expect(view().state.doc.toString()).toBe(disk.replace(/\r\n/g, '\n'));
     }
     expect(disk).toContain('paragraph'); expect(disk).toContain('Final line'); expect(native.saveDocument).not.toHaveBeenCalled();
     expect(panel().querySelectorAll('button[data-edit-action="accept"]')).toHaveLength(0);
