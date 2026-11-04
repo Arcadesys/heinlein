@@ -32,16 +32,24 @@ test('full app navigates the project tree and editor',{tag:'@smoke'},async({page
  expect((await new AxeBuilder({page}).include('.workspace').analyze()).violations).toEqual([]);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
 });
-test('row menus have names, generous targets and keyboard focus',async({page})=>{
+for(const zoom of [75,100,200])test(`row menus have names, generous targets and keyboard focus at ${zoom}%`,async({page},info)=>{
  await page.goto('/tests/browser/library-app.html');
+ await page.evaluate(async zoom=>{document.documentElement.dataset.zoom=String(zoom);await document.fonts.ready;},zoom);
  await openDrawer(page);
  const more=page.locator('summary[aria-label="Actions for First sheet"]');
  await more.focus(); await expect(more).toBeFocused(); await expect(more).toHaveAttribute('title','Actions for First sheet');
- const box=await more.boundingBox();
- // Chromium on macOS can report a 44px target as 43.99998474121094px.
- // Compare at 0.001 CSS-pixel precision while preserving the 44px minimum.
- expect(Math.round(box!.width*1000)/1000).toBeGreaterThanOrEqual(44);
- expect(Math.round(box!.height*1000)/1000).toBeGreaterThanOrEqual(44);
+ const samples=[];
+ // CDP quads use fractional coordinates. Retain the actual accessibility
+ // minimum under fractional translations rather than relaxing the assertion.
+ for(const offset of [0,.125,.333,.625,.875]){
+  await more.evaluate((node,offset)=>{(node as HTMLElement).style.transform=`translateX(${offset}px)`;},offset);
+  const box=(await more.boundingBox())!;
+  const dom=await more.evaluate(node=>{const r=node.getBoundingClientRect(),style=getComputedStyle(node);return {x:r.x,y:r.y,width:r.width,height:r.height,minWidth:style.minWidth,minHeight:style.minHeight,transform:style.transform,parentTransform:getComputedStyle(node.closest('.navigation-drawer')!).transform,devicePixelRatio};});
+  samples.push({offset,box,dom});
+ }
+ await info.attach('row-menu-geometry',{body:JSON.stringify(samples,null,2),contentType:'application/json'});
+ for(const sample of samples){expect(sample.box.width,JSON.stringify(sample)).toBeGreaterThanOrEqual(44);expect(sample.box.height,JSON.stringify(sample)).toBeGreaterThanOrEqual(44);}
+ await more.evaluate(node=>{(node as HTMLElement).style.transform='';});
  const focus=await more.evaluate(node=>{const style=getComputedStyle(node);return {outline:style.outlineStyle,shadow:style.boxShadow,opacity:style.opacity};});
  expect(focus.outline!=='none'||focus.shadow!=='none').toBe(true); expect(focus.opacity).toBe('1');
  await page.keyboard.press('Enter');
