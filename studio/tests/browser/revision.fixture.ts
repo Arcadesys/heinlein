@@ -45,6 +45,7 @@ function demoRecord(): ReviewResult {
     ] };
 }
 // Stands in for the native macOS confirmation so the demo stays readable at large text in any browser panel.
+let failNextReject = false;
 function simulatedConfirmation(edit: ReviewResult['edits'][number]) {
     return new Promise<boolean>(resolve => {
         const box = document.createElement('dialog');
@@ -81,7 +82,7 @@ const core: LocalCore = { available: () => true, pickRepository: async () => ses
     requestReview: async (r) => { calls.push({ action: 'run' }); if (demo) throw new Error('This demo uses prepared suggestions and runs no reviewers. Use Reset demo to start again.'); stored.record = result(r); persist(); return structuredClone(stored.record); }, cancelQuestion: async () => true, getReview: async () => structuredClone(stored.record!),
     chooseReviewEdit: async (_repo, _review, id) => { calls.push({ action: 'choose', id }); const group = stored.record!.edits.find(e => e.id === id)!.conflictGroup; stored.record!.edits.forEach(e => { if (e.conflictGroup === group)
         e.selected = e.id === id; }); persist(); return structuredClone(stored.record!); },
-    rejectReviewEdit: async (_repo, _review, id) => { calls.push({ action: 'reject', id }); stored.record!.edits.find(e => e.id === id)!.status = 'rejected'; receipt(id, 'reject', 'rejected'); persist(); return structuredClone(stored.record!); },
+    rejectReviewEdit: async (_repo, _review, id) => { if (failNextReject) { failNextReject = false; throw new Error('Synthetic rejection failed. Retry this suggestion.'); } calls.push({ action: 'reject', id }); stored.record!.edits.find(e => e.id === id)!.status = 'rejected'; receipt(id, 'reject', 'rejected'); persist(); return structuredClone(stored.record!); },
     approveReviewEdit: async (_repo, _review, id): Promise<ProposalOutcome | null> => {
         calls.push({ action: 'approve', id });
         if (dirty || recovery)
@@ -148,7 +149,7 @@ if (!demo) {
     notice.textContent = 'Synthetic revision acceptance: no real manuscripts, provider, native dialogs or credentials.';
     document.body.prepend(notice);
 }
-Object.assign(window, { reviewFixture: { calls, get text() { return stored.text; }, baseline, get record() { return stored.record; } } });
+Object.assign(window, { reviewFixture: { calls, failNextReject: () => { failNextReject = true; }, get text() { return stored.text; }, baseline, get record() { return stored.record; } } });
 void app.selectRepository(async () => session).then(() => app.showDocument(scenePath)).then(async () => {
     [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.startsWith('Heinlein')&&!b.textContent?.includes('Review'))?.click();
   document.querySelector<HTMLButtonElement>('.question-panel .heinlein-tabs button:nth-child(2)')?.click();

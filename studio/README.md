@@ -43,9 +43,9 @@ Manuscripts, project stores, recovery, credentials, conversations and review age
 retain their existing separate stores. Preferences do not provide cross-device sync.
 Native builds require Rust 1.89 or newer for OS-backed file locking.
 
-## 1.7 release packaging
+## 1.8 release packaging
 
-Heinlein Studio is version **1.7.3**. The independent Python
+Heinlein Studio is version **1.8.0**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:

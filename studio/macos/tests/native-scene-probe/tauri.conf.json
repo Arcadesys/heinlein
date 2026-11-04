@@ -1,0 +1,35 @@
+{
+  "productName": "Heinlein disposable scene acceptance",
+  "version": "0.0.0",
+  "identifier": "me.thearcades.heinlein.synthetic-scene",
+  "build": {
+    "frontendDist": "./dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; object-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'",
+      "capabilities": [
+        {
+          "identifier": "scene-native-fixture",
+          "windows": [
+            "main"
+          ],
+          "permissions": [
+            "allow-load-drafting",
+            "allow-preview-drafting-change",
+            "allow-apply-drafting-change",
+            "core:event:allow-emit",
+            "allow-read-document"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../../../src-tauri/icons/icon.png"
+    ]
+  }
+}

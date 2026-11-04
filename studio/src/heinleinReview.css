@@ -237,3 +237,6 @@
 .review-suggestion-dialog :is(p, h4, pre, button, summary, code) { overflow-wrap: anywhere; }
 .review-suggestion-dialog pre { white-space: pre-wrap; }
 .review-suggestion-dialog :focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+.review-suggestion-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-block: .75rem; }
+.review-suggestion-position { flex: 1 1 8rem; margin: 0; text-align: center; font-weight: 700; }
+.review-suggestion-navigation button { flex: 1 1 6rem; }
