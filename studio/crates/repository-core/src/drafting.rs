@@ -1166,13 +1166,14 @@ impl Repository {
         {
             return Err(Error::DraftingCollision);
         }
-        // Splitting or inserting beside a scene only adds the selected entries;
-        // unrelated drift stays untouched. verify_plan still guards changes after preview.
+        // Creating or splitting a scene only adds the selected entries; unrelated
+        // drift stays untouched. verify_plan still guards changes after preview.
         if (!state.untracked_paths.is_empty() || !state.missing_paths.is_empty())
             && !file_only
             && !matches!(
                 change,
                 DraftingChange::Reconcile {}
+                    | DraftingChange::CreateScene { .. }
                     | DraftingChange::CreateSceneAdjacent { .. }
                     | DraftingChange::Initialize { .. }
                     | DraftingChange::SetSheetReference { .. }
@@ -2883,6 +2884,181 @@ mod tests {
             });
         }
     }
+    #[test]
+    fn scene_creation_preserves_preexisting_index_drift_and_undo() {
+        for missing in [false, true] {
+            for grouped in [false, true] {
+                let f = Fixture::new();
+                f.put("ms/original.md", "Exact — e\u{301} 🦊 writing.\r\n");
+                f.put("ms/other.md", "Other source\r\n");
+                f.initialize();
+                let group_id = if grouped {
+                    f.apply(DraftingChange::CreateGroup {
+                        title: "Chapter".into(),
+                    });
+                    Some(f.repo.load_drafting().unwrap().groups[0].id.clone())
+                } else {
+                    None
+                };
+                if missing {
+                    fs::remove_file(f.repo.root().join("ms/other.md")).unwrap();
+                } else {
+                    f.put("ms/notes.md", "Unlisted — keep exact.\r\n");
+                }
+                let before = f.repo.load_drafting().unwrap();
+                let manifest_before = fs::read(f.repo.root().join(MANIFEST)).unwrap();
+                for i in 0..2 {
+                    let path = format!("ms/new-{i}.md");
+                    let change = || DraftingChange::CreateScene {
+                        title: format!("New {i}"),
+                        path: path.clone(),
+                        group_id: group_id.clone(),
+                        before_id: None,
+                    };
+                    let canceled = f.preview(change()).unwrap();
+                    assert!(!f.repo.root().join(&path).exists());
+                    assert_eq!(
+                        fs::read(f.repo.root().join(MANIFEST)).unwrap(),
+                        manifest_before
+                    );
+                    drop(canceled);
+                    let undo = f.apply(change());
+                    let current = Repository::open(f.repo.root())
+                        .unwrap()
+                        .load_drafting()
+                        .unwrap();
+                    assert_eq!(current.scenes.len(), before.scenes.len() + 1);
+                    assert_eq!(&current.scenes[..before.scenes.len()], before.scenes);
+                    let created = current.scenes.last().unwrap();
+                    assert_eq!(created.path, path);
+                    assert_eq!(created.group_id, group_id);
+                    assert_eq!(current.groups, before.groups);
+                    assert_eq!(current.untracked_paths, before.untracked_paths);
+                    assert_eq!(current.missing_paths, before.missing_paths);
+                    assert_eq!(fs::read(f.repo.root().join(&path)).unwrap(), b"");
+                    assert_eq!(
+                        f.repo.read("ms/original.md").unwrap().text,
+                        "Exact — e\u{301} 🦊 writing.\r\n"
+                    );
+                    if !missing {
+                        assert_eq!(
+                            f.repo.read("ms/notes.md").unwrap().text,
+                            "Unlisted — keep exact.\r\n"
+                        );
+                    }
+                    f.repo.undo_drafting(&undo, &f.recovery).unwrap();
+                    assert_eq!(
+                        fs::read(f.repo.root().join(MANIFEST)).unwrap(),
+                        manifest_before
+                    );
+                    assert!(!f.repo.root().join(&path).exists());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scene_creation_with_drift_still_rejects_changes_after_preview() {
+        for drift in ["membership", "manifest", "destination"] {
+            let f = Fixture::new();
+            f.put("ms/original.md", "Original source");
+            f.initialize();
+            f.put("ms/notes.md", "Unlisted notes");
+            let plan = f
+                .preview(DraftingChange::CreateScene {
+                    title: "New".into(),
+                    path: "ms/new.md".into(),
+                    group_id: None,
+                    before_id: None,
+                })
+                .unwrap();
+            match drift {
+                "membership" => f.put("ms/later.md", "Added after preview"),
+                "manifest" => {
+                    let mut text = fs::read_to_string(f.repo.root().join(MANIFEST)).unwrap();
+                    text.push('\n');
+                    f.put(MANIFEST, &text);
+                }
+                "destination" => f.put("ms/new.md", "Existing author text"),
+                _ => unreachable!(),
+            }
+            let manifest = fs::read(f.repo.root().join(MANIFEST)).unwrap();
+            assert_eq!(
+                f.repo.apply_drafting(&plan, &f.recovery).unwrap_err(),
+                Error::DraftingChanged
+            );
+            assert_eq!(fs::read(f.repo.root().join(MANIFEST)).unwrap(), manifest);
+            assert_eq!(
+                f.repo.read("ms/original.md").unwrap().text,
+                "Original source"
+            );
+            assert_eq!(f.repo.read("ms/notes.md").unwrap().text, "Unlisted notes");
+            if drift == "destination" {
+                assert_eq!(
+                    f.repo.read("ms/new.md").unwrap().text,
+                    "Existing author text"
+                );
+            } else {
+                assert!(!f.repo.root().join("ms/new.md").exists());
+            }
+        }
+    }
+
+    #[test]
+    fn scene_creation_does_not_reuse_a_missing_tracked_path() {
+        let f = Fixture::new();
+        f.put("ms/original.md", "Original source");
+        f.initialize();
+        fs::remove_file(f.repo.root().join("ms/original.md")).unwrap();
+        let manifest = fs::read(f.repo.root().join(MANIFEST)).unwrap();
+        assert!(f
+            .preview(DraftingChange::CreateScene {
+                title: "New".into(),
+                path: "ms/original.md".into(),
+                group_id: None,
+                before_id: None,
+            })
+            .is_err());
+        assert_eq!(fs::read(f.repo.root().join(MANIFEST)).unwrap(), manifest);
+        assert!(!f.repo.root().join("ms/original.md").exists());
+    }
+
+    #[test]
+    fn scene_creation_preserves_unrelated_writing_changed_after_preview() {
+        let f = Fixture::new();
+        f.put("ms/original.md", "Original source");
+        f.initialize();
+        f.put("ms/notes.md", "Unlisted notes");
+        let plan = f
+            .preview(DraftingChange::CreateScene {
+                title: "New".into(),
+                path: "ms/new.md".into(),
+                group_id: None,
+                before_id: None,
+            })
+            .unwrap();
+        f.put("ms/original.md", "New author writing — kept.\r\n");
+        f.put("ms/notes.md", "New unlisted notes — kept.\r\n");
+        let undo = f.repo.apply_drafting(&plan, &f.recovery).unwrap();
+        assert_eq!(
+            f.repo.read("ms/original.md").unwrap().text,
+            "New author writing — kept.\r\n"
+        );
+        assert_eq!(
+            f.repo.read("ms/notes.md").unwrap().text,
+            "New unlisted notes — kept.\r\n"
+        );
+        f.repo.undo_drafting(&undo, &f.recovery).unwrap();
+        assert_eq!(
+            f.repo.read("ms/original.md").unwrap().text,
+            "New author writing — kept.\r\n"
+        );
+        assert_eq!(
+            f.repo.read("ms/notes.md").unwrap().text,
+            "New unlisted notes — kept.\r\n"
+        );
+    }
+
     #[test]
     fn adjacent_scene_creation_preserves_both_orders_group_sources_and_undo() {
         for anchor_index in 0..3 {
