@@ -1,7 +1,5 @@
 import type { LocalCore, ProposalReview, ProposalReceipt, RepositorySession } from './localCore';
 import {createProposalDiff} from './proposalDiff';
-import {createStageStrip} from './stageStrip';
-import {stageOf} from './consensus';
 import {collectRevisions, revisionStatus, type Revision} from './revisions';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = ''): HTMLElementTagNameMap[K] {
@@ -13,7 +11,8 @@ function button(label: string, action: () => void, className = '') {
 interface Hooks {
   root: HTMLElement;
   repository(): RepositorySession | null;
-  run(action: () => Promise<void>): Promise<void>;
+  /** Resolves to the reason when the host refused to start the action. */
+  run(action: () => Promise<void>): Promise<string | void>;
   changed(path: string): Promise<void>;
   report(message: string, error?: boolean): void;
   applied?(receiptId: string): void;
@@ -29,6 +28,10 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
   let filter: 'all' | 'pending' | 'history' = 'all';
   let query = '';
   let progressNote = '';
+  let progressError = false;
+  // The status bar sits behind the Revisions dialog, so the last outcome is repeated inside it.
+  let lastReport: {message: string; error: boolean} | null = null;
+  const say = (message: string, error = false) => { lastReport = {message, error}; hooks.report(message, error); };
   function remove(node: HTMLDialogElement) { dialogs.delete(node); node.remove(); }
   function clear() { version++; loading = false; for (const cancel of [...dialogs.values()]) cancel(); }
   function dialog(title: string) {
@@ -70,8 +73,10 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
   async function change(id: string, kind: 'apply' | 'revert', guard?: () => string | null, presenter?: (view: ProposalReview) => Promise<boolean>, prepare?: () => Promise<string>): Promise<boolean> {
     const repositoryId = hooks.repository()?.id; const current = version;
     if (!repositoryId || disposed) return false;
-    let applied = false;
-    await hooks.run(async () => {
+    let applied = false, ran = false;
+    lastReport = null;
+    const refused = await hooks.run(async () => {
+      ran = true;
       let view: ProposalReview | null = null;
       let submitted = false;
       try {
@@ -81,29 +86,30 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
         view = kind === 'apply' ? await core.reviewProposal!(repositoryId, id) : await core.reviewProposalRevert!(repositoryId, id);
         if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
         const loaded = guard?.(); if (loaded) throw new Error(loaded);
-        if (!await (presenter ?? review)(view)) { hooks.report('Review canceled. The manuscript was not changed.'); return; }
+        if (!await (presenter ?? review)(view)) { say('Review canceled. The manuscript was not changed.'); return; }
         if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
         const reviewed = guard?.(); if (reviewed) throw new Error(reviewed);
         submitted = true;
         const outcome = await core.applyProposalReview!(repositoryId, {reviewId: view.id, proposalId: view.proposalId, baseHash: view.baseHash, replacementHash: view.replacementHash, diffHash: view.diffHash});
         if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
-        if (!outcome) { hooks.report('Native confirmation canceled. The manuscript was not changed.'); return; }
+        if (!outcome) { say('Native confirmation canceled. The manuscript was not changed.'); return; }
         if (outcome.receipt.status !== 'failed') await hooks.changed(outcome.receipt.path);
-        hooks.report(outcome.warning ?? `${kind === 'revert' ? 'Proposal reverted' : 'Proposal applied'} to ${outcome.receipt.path}. An attributed local receipt has been kept.`, outcome.receipt.status !== 'completed');
+        say(outcome.warning ?? `${kind === 'revert' ? 'Proposal reverted' : 'Proposal applied'} to ${outcome.receipt.path}. An attributed local receipt has been kept.`, outcome.receipt.status !== 'completed');
         applied = !outcome.warning && outcome.receipt.status === 'completed';
-        if(kind==='apply'&&!outcome.warning&&outcome.receipt.status==='completed'&&outcome.receipt.revertAvailable)hooks.applied?.(outcome.receipt.id);
+        if(kind==='apply'&&!outcome.warning&&outcome.receipt.status==='completed'){lastApplied={receiptId:outcome.receipt.revertAvailable?outcome.receipt.id:'',path:outcome.receipt.path};if(outcome.receipt.revertAvailable)hooks.applied?.(outcome.receipt.id);}
       } catch (error) {
-        hooks.report(`Proposal operation stopped: ${String(error)}${submitted ? ' Check the local receipts and current source before any retry.' : ''}`, true);
+        say(`Proposal operation stopped: ${String(error)}${submitted ? ' Check the local receipts and current source before any retry.' : ''}`, true);
       } finally {
         if (view) await core.cancelProposalReview!(repositoryId, view.id).catch(() => {});
       }
     });
+    if (!ran) say(`Nothing was applied. ${typeof refused === 'string' ? refused : 'Save your scene and resolve any local recovery, then accept again.'}`, true);
     return applied;
   }
   function receiptItem(receipt: ProposalReceipt, node: HTMLDialogElement) {
     const item = el('article', '', 'proposal-receipt');
     if (receipt.baseText !== undefined && receipt.replacementText !== undefined) item.append(createProposalDiff(receipt.baseText, receipt.replacementText));
-    const metadata = el('details'); metadata.append(el('summary', 'Revision record'));
+    const metadata = el('details'); metadata.append(el('summary', 'Technical details'));
     metadata.append(el('h3', `${receipt.kind === 'reject' ? 'Reject' : receipt.kind === 'revert' ? 'Revert' : 'Apply'} · ${receipt.path} · ${receipt.status}`), el('p', attribution(receipt.origin)),
       el('p', `Author action: ${receipt.kind === 'reject' ? 'Studio explicit rejection' : receipt.authorAction === 'studioAuthorAccept' ? 'Studio Accept' : 'Studio native confirmation'} · Receipt: ${receipt.id}`), el('p', `Proposal: ${receipt.proposalId}`),
       el('p', `Base: ${receipt.baseHash}`, 'path'), el('p', `Replacement: ${receipt.replacementHash}`, 'path'), el('p', `Diff: ${receipt.diffHash}`, 'path'));
@@ -112,6 +118,18 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
     if (receipt.message) item.append(el('p', receipt.message, receipt.status === 'completed' ? 'muted' : 'drafting-warning'));
     if (receipt.revertAvailable) item.append(button('Review revert', () => { remove(node); void change(receipt.id, 'revert'); }));
     return item;
+  }
+  type Tab = 'decide' | 'done';
+  let tab: Tab = 'decide';
+  let progressUndo = '';
+  let lastApplied: {receiptId: string; path: string} | null = null;
+  const snippet = (text: string, max = 90) => { const one = text.replace(/\s+/g, ' ').trim(); return one.length > max ? `${one.slice(0, max - 1)}…` : one; };
+  const sourceKind = (r: Revision) => r.review ? 'review' : r.proposal?.origin.kind === 'localMcp' ? 'external' : 'suggestion';
+  function who(r: Revision) {
+    const named = r.review?.edit.provenance?.map(p => p.displayName).filter(Boolean) ?? [];
+    if (named.length) return [...new Set(named)].join(', ');
+    if (r.review) return 'Heinlein review';
+    return r.proposal?.origin.kind === 'localMcp' ? (r.proposal.origin.clientLabel || 'External suggestion') : 'Heinlein suggestion';
   }
   async function open() {
     if (!supported || !hooks.repository() || disposed || loading || dialogs.size) return;
@@ -127,64 +145,103 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
       const node = dialog('Revisions');
       node.classList.add('revisions-dialog');
       const close = () => remove(node);
-      const toolbar = el('div', '', 'revision-toolbar');
-      toolbar.append(button('Refresh', () => {close(); void open();}), button('Close', close));
-      node.append(toolbar);
-      const stages = createStageStrip('Revision progress');
-      node.append(stages.element);
-      node.append(el('p', 'All saved suggestions for this project. Review the before and after, then choose what to keep. Your writing changes only after your confirmation.', 'muted'));
-      function loadFailure(message: string, reason: unknown) {
-        node.append(el('p', message, 'drafting-warning'));
-        const details = el('details'); details.append(el('summary', 'Load error details'), el('pre', String(reason))); node.append(details);
-      }
-      if (proposalResult.status === 'rejected') loadFailure('External proposals and revision history could not be loaded. Use Refresh above to try again.', proposalResult.reason);
-      if (reviewResult.status === 'rejected') loadFailure('Saved in-app reviews could not be loaded. Use Refresh above to try again.', reviewResult.reason);
-      const controls = el('div', '', 'revision-filters'); controls.setAttribute('aria-label', 'Filter revisions');
-      const content = el('div', '', 'revision-list');
       const count = el('p', '', 'revision-count'); count.setAttribute('role', 'status');
       const search = el('input'); search.type = 'search'; search.placeholder = 'Find a scene or phrase'; search.value = query; search.setAttribute('aria-label', 'Find revisions');
-      const filters = (['all', 'pending', 'history'] as const).map(value => {
-        const label = value === 'all' ? 'All revisions' : value === 'pending' ? 'Pending' : 'History';
-        const control = button(label, () => {filter = value; render();});
-        controls.append(control); return {value, control};
-      });
-      search.addEventListener('input', () => {query = search.value; render();});
-      function render() {
-        filters.forEach(({value, control}) => control.setAttribute('aria-pressed', String(value === filter)));
-        const shown = revisions.filter(revision => (filter === 'all' || (filter === 'pending') === (revision.status === 'pending'))
-          && [revision.path, revision.reason, revision.before, revision.after].join('\n').toLocaleLowerCase().includes(query.toLocaleLowerCase()));
-        const pending = revisions.filter(r => r.status === 'pending'); node.dataset.pending = String(pending.length);
-        const scenes = new Set(pending.map(r => r.path)).size;
-        count.textContent = `${shown.length} of ${revisions.length} revisions · ${pending.length} pending${pending.length ? ` in ${scenes} ${scenes === 1 ? 'scene' : 'scenes'}` : ''}`;
-        // Keep each scene's pending revisions together; the model's own order is otherwise unchanged.
-        // Nothing saved yet reads as Ask; open revisions as Decide; all decided as Done.
-        const waitingNow = pending.length;
-        stages.set(revisions.length ? stageOf({running: false, hasResult: true, waiting: waitingNow}) : 'ask', waitingNow ? `${waitingNow} waiting` : '');
-        shown.sort((a, b) => (a.status === 'pending' && b.status === 'pending' ? a.path.localeCompare(b.path) : 0));
-        content.replaceChildren();
-        if (!shown.length) content.append(el('p', revisions.length ? 'No revisions match this filter.' : 'No saved revisions for this project.'));
-        for (const revision of shown) content.append(revisionItem(revision, node, render));
+      search.hidden = !query;
+      const searchToggle = button('Search', () => { search.hidden = !search.hidden; if (!search.hidden) search.focus(); });
+      searchToggle.setAttribute('aria-label', 'Search revisions');
+      const toolbar = el('div', '', 'revision-toolbar');
+      toolbar.append(count, searchToggle, button('Close', close));
+      node.append(toolbar, search);
+      const progress = el('div', '', 'revision-next'); progress.setAttribute('role', 'status');
+      if (progressNote) {
+        progress.append(el('span', progressNote));
+        if (progressError) progress.classList.add('drafting-warning');
+        if (progressUndo) { const receiptId = progressUndo; progress.append(button('Undo', () => { remove(node); void change(receiptId, 'revert'); }, 'revision-undo')); }
       }
-      const progress = el('p', progressNote, 'revision-next'); progress.setAttribute('role', 'status'); progressNote = '';
-      node.append(controls, search, count, progress, content); render();
-      node.append(el('p', 'Revision records retain local decisions, not an authenticated revision ledger.', 'muted'));
+      progressNote = ''; progressError = false; progressUndo = '';
+      node.append(progress);
+      function loadFailure(message: string, reason: unknown) {
+        const box = el('div', '', 'revision-load-error');
+        box.append(el('p', message, 'drafting-warning'), button('Try again', () => {close(); void open();}));
+        const details = el('details'); details.append(el('summary', 'Load error details'), el('pre', String(reason))); box.append(details);
+        node.append(box);
+      }
+      if (proposalResult.status === 'rejected') loadFailure('External proposals and revision history could not be loaded.', proposalResult.reason);
+      if (reviewResult.status === 'rejected') loadFailure('Saved in-app reviews could not be loaded.', reviewResult.reason);
+      const tabs = el('div', '', 'revision-filters'); tabs.setAttribute('role', 'group'); tabs.setAttribute('aria-label', 'Filter revisions');
+      const content = el('div', '', 'revision-list');
+      const footer = el('div', '', 'revision-progress');
+      const tabButtons = (['decide', 'done'] as const).map(value => {
+        const control = button('', () => { tab = value; openId = null; render(); });
+        tabs.append(control); return {value, control};
+      });
+      search.addEventListener('input', () => {query = search.value; openId = null; render();});
+      let openId: string | null = null;
+      function render() {
+        const pending = revisions.filter(r => r.status === 'pending');
+        const done = revisions.filter(r => r.status !== 'pending');
+        tabButtons.forEach(({value, control}) => {
+          control.textContent = `${value === 'decide' ? 'To decide' : 'Done'} ${value === 'decide' ? pending.length : done.length}`;
+          control.setAttribute('aria-pressed', String(value === tab));
+        });
+        const match = (r: Revision) => [r.path, r.reason, r.before, r.after, who(r)].join('\n').toLocaleLowerCase().includes(query.toLocaleLowerCase());
+        const shown = (tab === 'decide' ? pending : done).filter(match);
+        node.dataset.pending = String(pending.length);
+        const scenes = new Set(pending.map(r => r.path)).size;
+        count.textContent = !revisions.length ? 'No saved revisions' : pending.length ? `${pending.length} to decide in ${scenes} ${scenes === 1 ? 'scene' : 'scenes'}` : 'All decided';
+        footer.replaceChildren();
+        if (revisions.length) {
+          const bar = el('div', '', 'revision-bar'); const fill = el('div'); fill.style.width = `${Math.round(100 * done.length / revisions.length)}%`; bar.append(fill);
+          footer.append(bar, el('span', `${done.length} of ${revisions.length} decided`));
+        }
+        content.replaceChildren();
+        if (!shown.length) content.append(el('p', query ? 'No revisions match your search.' : tab === 'decide' ? (revisions.length ? 'Nothing left to decide.' : 'No saved revisions for this project.') : 'Nothing decided yet.', 'muted'));
+        if (tab === 'decide') {
+          shown.sort((a, b) => a.path.localeCompare(b.path));
+          if (!openId || !shown.some(r => r.id === openId)) openId = shown[0]?.id ?? null;
+          let group: HTMLElement | null = null, last = '';
+          for (const revision of shown) {
+            if (revision.path !== last) {
+              last = revision.path;
+              const n = shown.filter(r => r.path === last).length;
+              group = el('section', '', 'revision-group');
+              group.append(el('h3', `${last} · ${n} to decide`, 'path'));
+              content.append(group);
+            }
+            const item = revisionItem(revision, node, render, revision.id === openId, () => { openId = openId === revision.id ? null : revision.id; render(); });
+            group!.append(item);
+          }
+        } else for (const revision of shown) content.append(revisionItem(revision, node, render, true));
+      }
+      if (!revisions.some(r => r.status === 'pending') && revisions.length) tab = 'done';
+      node.append(tabs, content, footer, el('p', 'Revision records retain local decisions, not an authenticated revision ledger.', 'muted')); render();
       display(node, close);
     } catch (error) { hooks.report(`Revisions could not be loaded: ${String(error)}`, true); }
     finally { if (current === version) loading = false; }
   }
-  function revisionItem(revision: Revision, node: HTMLDialogElement, render: () => void) {
+  function revisionItem(revision: Revision, node: HTMLDialogElement, render: () => void, expanded: boolean, toggle?: () => void) {
     const item = el('article', '', 'proposal-entry revision-entry'); item.dataset.revisionId = revision.id;
-    item.dataset.status = revision.status;
-    item.append(el('h3', revision.path, 'path'), el('p', `${revisionStatus[revision.status]} · ${revision.source}`, 'revision-state'));
-    if (revision.receipt) {item.append(receiptItem(revision.receipt, node)); return item;}
-    if (revision.refreshed) item.append(el('p', 'Updated comparison · your saved edits elsewhere in the scene are preserved.'));
-    if (revision.unavailable) item.append(el('p', revision.unavailable, 'drafting-warning'));
-    if (revision.reason) item.append(el('p', revision.reason));
-    if (revision.before !== undefined && revision.after !== undefined) item.append(createProposalDiff(revision.before, revision.after));
-    else item.append(el('p', 'Open this revision to see its exact changes.'));
-    if (revision.proposal) {
-      const source = el('details'); source.append(el('summary', 'Suggestion source'), el('p', attribution(revision.proposal.origin))); item.append(source);
-    }
+    item.dataset.status = revision.status; item.dataset.source = sourceKind(revision);
+    const body = el('div', '', 'revision-body');
+    if (toggle) {
+      const head = button('', toggle, 'revision-toggle');
+      head.setAttribute('aria-expanded', String(expanded));
+      head.append(el('span', who(revision), 'revision-who'), el('span', snippet(revision.reason ?? revision.before ?? ''), 'revision-gist'));
+      item.append(head);
+      body.hidden = !expanded;
+    } else item.append(el('h3', revision.path, 'path'));
+    item.append(body);
+    const state = el('p', revision.status === 'pending' ? '' : `${revisionStatus[revision.status]} · ${who(revision)}`, 'revision-state');
+    state.hidden = revision.status === 'pending';
+    body.append(state);
+    if (revision.receipt) {body.append(receiptItem(revision.receipt, node)); return item;}
+    if (toggle) body.append(el('p', who(revision), 'revision-by'));
+    if (revision.refreshed) body.append(el('p', 'Updated comparison · your saved edits elsewhere in the scene are preserved.'));
+    if (revision.unavailable) body.append(el('p', revision.unavailable, 'drafting-warning'));
+    if (revision.reason) body.append(el('p', revision.reason, 'revision-reason'));
+    if (revision.before !== undefined && revision.after !== undefined) body.append(createProposalDiff(revision.before, revision.after));
+    else body.append(el('p', 'Open the full comparison to see the exact changes.'));
     if (revision.status !== 'pending' && revision.status !== 'outdated') return item;
     const actions = el('div', '', 'revision-actions');
     const accept = button('Accept', () => {
@@ -204,13 +261,17 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
         return true;
       };
       const refreshAfter = async (operation: Promise<boolean | void>) => {
+        lastApplied = null;
         const applied = await operation;
         if (!node.isConnected || repositoryId !== hooks.repository()?.id || disposed) return;
         const scroll = node.scrollTop;
-        // After a confirmed Accept, move to the next pending revision. Accept here applies in one step, so this only
-        // brings the next one into view and focus; nothing is applied until the author chooses Accept again.
         const waiting = Math.max(0, Number(node.dataset.pending ?? 0) - 1);
-        if (applied) progressNote = waiting ? `Applied. Showing the next one: ${waiting} ${waiting === 1 ? 'revision' : 'revisions'} still waiting for your decision.` : 'Applied. All pending revisions are decided.';
+        if (!applied && lastReport) { progressNote = lastReport.message; progressError = lastReport.error; }
+        const result = lastApplied as {receiptId: string; path: string} | null;
+        if (applied) {
+          progressNote = `Applied to ${result?.path ?? revision.path}. Your text is updated.${waiting ? ` ${waiting} left to decide.` : ' All decided.'}`;
+          progressUndo = result?.receiptId ?? '';
+        }
         remove(node); await open();
         const refreshed = [...dialogs.keys()].find(dialog => dialog.classList.contains('revisions-dialog'));
         if (refreshed) {
@@ -231,11 +292,20 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
           return (await core.prepareReviewEdit!(repositoryId, reviewId, edit.id)).proposalId;
         }));
       } else if (revision.proposal) void refreshAfter(change(revision.proposal.id, 'apply', undefined, displayed));
-    });
+    }, 'primary');
     accept.disabled = Boolean(revision.unavailable || (revision.review && !core.prepareReviewEdit)
       || (revision.proposal && (revision.before === undefined || revision.after === undefined)));
     actions.append(accept);
-    const details = button('Details', () => {
+    if (revision.review && core.rejectReviewEdit) actions.append(button('Keep mine', () => {void keepReview(revision, item, render);}));
+    else if (revision.proposal && core.rejectProposal) actions.append(button('Keep mine', () => {void reject(revision.proposal!.id, item, receipt => {
+      revision.status = 'kept';
+      revision.receipt = {...receipt, baseText:receipt.baseText ?? revision.before, replacementText:receipt.replacementText ?? revision.after};
+      render();
+    });}));
+    const more = el('details', '', 'revision-more');
+    more.append(el('summary', 'More'));
+    const menu = el('div', '', 'revision-more-menu');
+    const full = button('Full comparison', () => {
       const repositoryId = hooks.repository()?.id; if (!repositoryId) return;
       remove(node);
       if (revision.review) {
@@ -249,18 +319,16 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
         });
       } else if (revision.proposal) void change(revision.proposal.id, 'apply');
     });
-    details.disabled = accept.disabled; actions.append(details);
+    full.disabled = accept.disabled; menu.append(full);
     if (revision.review && hooks.openReview) {
       const {reviewId} = revision.review;
-      actions.append(button('Back to review', () => {remove(node); void Promise.resolve(hooks.openReview!(reviewId, revision.path)).catch(error => hooks.report(`The review could not be opened: ${String(error)}`, true));}));
+      menu.append(button('Open in review', () => {remove(node); void Promise.resolve(hooks.openReview!(reviewId, revision.path)).catch(error => hooks.report(`The review could not be opened: ${String(error)}`, true));}));
     }
-    if (revision.review && core.rejectReviewEdit) actions.append(button('Keep mine', () => {void keepReview(revision, item, render);}));
-    else if (revision.proposal && core.rejectProposal) actions.append(button('Keep mine', () => {void reject(revision.proposal!.id, item, receipt => {
-      revision.status = 'kept';
-      revision.receipt = {...receipt, baseText:receipt.baseText ?? revision.before, replacementText:receipt.replacementText ?? revision.after};
-      render();
-    });}));
-    item.append(actions); return item;
+    if (revision.proposal) {
+      const source = el('details'); source.append(el('summary', 'Suggestion source'), el('p', attribution(revision.proposal.origin))); menu.append(source);
+    }
+    more.append(menu); actions.append(more);
+    body.append(actions); return item;
   }
   async function keepReview(revision: Revision, item: HTMLElement, render: () => void) {
     const repositoryId = hooks.repository()?.id; const current = version;

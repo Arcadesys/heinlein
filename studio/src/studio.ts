@@ -1175,12 +1175,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if (!disposed && selectionCaptureVersion === request) {status.textContent = error instanceof Error ? error.message : 'The selection could not be captured. Highlight the passage again.'; status.classList.add('error');}
     } finally {if (selectionCaptureVersion === request) selectionCapturePending = false;}
   }
-  async function runProposal(action: () => Promise<void>) {
-    if(refuseReferenceAction())return;
-    if (disposed || structuralBusy || selecting || !repository) return;
-    if (repositoryDetached) { reportDetachedRepository(); return; }
+  async function runProposal(action: () => Promise<void>): Promise<string | void> {
+    if(refuseReferenceAction())return 'Open the scene itself to accept this revision.';
+    if (disposed || !repository) return;
+    if (structuralBusy || selecting) return 'Another Studio operation is still running. Wait for it to finish, then accept again.';
+    if (repositoryDetached) { reportDetachedRepository(); return 'The project folder is not available. Reopen it, then accept again.'; }
     if (dirty || saving || staging || writeInFlight || recovery || recoveryPending || guardPending || writePaused) {
-      status.textContent = 'Save your scene and resolve local recovery before reviewing a proposal. Your current editor and recovery are preserved.'; status.classList.add('error'); return;
+      const why = dirty ? 'the scene has unsaved edits' : saving || writeInFlight || staging ? 'a save is in progress' : writePaused ? `saving is paused (${writePaused})` : 'local recovery needs a decision';
+      const message = `Save your scene and resolve local recovery before reviewing a proposal: ${why}. Your current editor and recovery are preserved.`;
+      status.textContent = message; status.classList.add('error'); return message;
     }
     proposalBusy = true; structuralBusy = true; proposalEditRevision = edits;
     documentRequest++; manuscriptRequest++; directoryRequest++;
