@@ -151,3 +151,17 @@ describe('completed review returns to the manuscript', () => {
     expect(closePane).not.toHaveBeenCalled();
   });
 });
+
+
+it.each(['x', 'é', '🐺'])('accepts 2,000 Unicode characters of advisory feedback (%s)', async character => {
+ const text=character.repeat(2000), feedback={overview:text,assessment:{strengths:text,improvements:text},strengths:[text],improvements:[{text,evidence:text,editIds:[]}]};
+ const core=bridge();core.requestReview.mockImplementation(async request=>({...response(request),edits:[],readingFeedback:[{coverageId:'consolidation',path:'Selected review scope',reviewer:'Consolidated review',feedback}]}));
+ await start(core);button('Run review').click();await vi.waitFor(()=>expect(panel!.element.textContent).toContain(text));
+ expect(panel!.element.textContent).not.toContain('Invalid reading feedback');
+ expect(core.saveDocument).not.toHaveBeenCalled();expect(core.applyProposalReview).not.toHaveBeenCalled();
+});
+it.each(['x', 'é', '🐺'])('rejects 2,001 Unicode characters of advisory feedback (%s)', async character => {
+ const core=bridge();core.requestReview.mockImplementation(async request=>({...response(request),readingFeedback:[{path:'scene.md',reviewer:'Editor',feedback:{...reading,assessment:{strengths:'Clear.',improvements:character.repeat(2001)}}}]}));
+ await start(core);button('Run review').click();await vi.waitFor(()=>expect(button('Retry review').hidden).toBe(false));
+ expect(panel!.element.textContent).toContain('Invalid reading feedback');expect(panel!.element.querySelectorAll('[data-edit-action="accept"]')).toHaveLength(0);
+});

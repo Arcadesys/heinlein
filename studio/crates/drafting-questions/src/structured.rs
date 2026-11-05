@@ -44,6 +44,12 @@ fn valid_text(text: &str, max: usize) -> bool {
             .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
 }
 
+// JSON Schema maxLength counts Unicode scalar values, not UTF-8 bytes. Only
+// advisory prose uses this helper; patch text retains its existing byte limits.
+pub(crate) fn valid_prose(text: &str, max_chars: usize) -> bool {
+    valid_text(text, max_chars.saturating_mul(4)) && text.chars().count() <= max_chars
+}
+
 /// Also checks overlapping occurrences, e.g. "aa" in "aaa".
 pub fn locate(source: &str, original: &str) -> Result<(usize, usize), QuestionError> {
     if original.is_empty() {
@@ -68,11 +74,11 @@ impl Response {
         }
         let result: Self = serde_json::from_str(text).map_err(|_| invalid())?;
         if result.schema_version != 2
-            || !valid_text(&result.answer, 2000)
+            || !valid_prose(&result.answer, 2000)
             || result.strengths.len() > 32
             || result.findings.len() > 32
             || result.edits.len() > 32
-            || result.strengths.iter().any(|s| !valid_text(s, 2000))
+            || result.strengths.iter().any(|s| !valid_prose(s, 2000))
         {
             return Err(invalid());
         }
@@ -100,8 +106,8 @@ impl Response {
         }
         for finding in &result.findings {
             let mut linked = HashSet::new();
-            if !valid_text(&finding.text, 2000)
-                || !valid_text(&finding.evidence, 2000)
+            if !valid_prose(&finding.text, 2000)
+                || !valid_prose(&finding.evidence, 2000)
                 || finding.edit_ids.len() > 32
                 || finding
                     .edit_ids
@@ -164,6 +170,29 @@ mod tests {
         response["output"][0]["content"][0]["text"] = json!(value.to_string());
         serde_json::to_vec(&response).unwrap()
     }
+    #[test]
+    fn advisory_fields_follow_character_limits_while_patch_text_stays_byte_bounded() {
+        for character in ["x", "é", "🐺"] {
+            for field in ["answer", "strength", "finding", "evidence"] {
+                for count in [2000, 2001] {
+                    let mut value = advice();
+                    let text = json!(character.repeat(count));
+                    match field {
+                        "answer" => value["answer"] = text,
+                        "strength" => value["strengths"] = json!([text]),
+                        "finding" => value["findings"][0]["text"] = text,
+                        "evidence" => value["findings"][0]["evidence"] = text,
+                        _ => unreachable!(),
+                    }
+                    assert_eq!(Response::parse(&value.to_string()).is_ok(), count == 2000, "{character} {field} {count}");
+                }
+            }
+        }
+        let mut value = advice();
+        value["edits"][0]["original"] = json!("🐺".repeat(1001));
+        assert!(Response::parse(&value.to_string()).is_err());
+    }
+
     #[test]
     fn review_requires_both_assessments_without_forcing_findings_or_edits() {
         let ask: Value = serde_json::from_slice(

@@ -668,15 +668,38 @@ impl ReviewSession {
                 if coverage_id == drafting_questions::review_workflow::CONSOLIDATION_ID {
                     return None;
                 }
+                let workflow = self.result.workflow.as_ref()?;
+                let coverage = workflow
+                    .coverage
+                    .iter()
+                    .find(|call| &call.id == coverage_id)?;
+                let request_id = coverage.request_id.as_ref()?;
+                let definition = workflow.definitions.get(coverage.reviewer)?;
                 Some(drafting_questions::review_workflow::ReviewerReport {
                     coverage_id: coverage_id.clone(),
                     path: entry.path.clone(),
                     reviewer: entry.reviewer.clone(),
                     feedback: entry.feedback.clone(),
+                    // Native ingestion remaps feedback links and patch IDs together.
+                    // Exact duplicates retain every contributing call's provenance.
+                    edits: self
+                        .result
+                        .edits
+                        .iter()
+                        .filter(|finding| {
+                            finding.edit.path == entry.path
+                                && finding.provenance.iter().any(|provenance| {
+                                    &provenance.request_id == request_id
+                                        && provenance.instance_id == definition.instance_id
+                                })
+                        })
+                        .map(|finding| finding.edit.clone())
+                        .collect(),
                 })
             })
             .collect()
     }
+
     pub fn ingest(
         &mut self,
         batch: drafting_questions::review_workflow::Batch,
@@ -1808,6 +1831,78 @@ mod tests {
             .restore(&"b".repeat(64), "reopened", |_| false)
             .is_err());
     }
+    #[test]
+    fn consolidation_context_keeps_call_provenance_links_and_unlinked_patches_after_reopen() {
+        use drafting_questions::review::LinkedImprovement;
+        let seed = session();
+        let shared = seed.view().edits[0].edit.clone();
+        let unlinked = seed.view().edits[1].edit.clone();
+        let mut session = workflow_session(3);
+        for (index, edits) in [
+            vec![shared.clone(), unlinked],
+            vec![ReviewEdit {
+                id: "second-reviewer-id".into(),
+                reason: "Another rationale.".into(),
+                ..shared
+            }],
+            vec![],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let ids = edits
+                .first()
+                .map(|e| vec![e.id.clone()])
+                .unwrap_or_default();
+            let mut batch = call(&session, index, edits);
+            batch.calls[0].reading_feedback = Some(ReadingFeedback {
+                overview: "Reading feedback.".into(),
+                assessment: None,
+                strengths: vec![],
+                improvements: vec![ReadingImprovement::Linked(LinkedImprovement {
+                    text: "A focused observation.".into(),
+                    edit_ids: ids,
+                    evidence: None,
+                })],
+            });
+            session.ingest(batch, &Default::default()).unwrap();
+        }
+        let reports = session.reviewer_reports();
+        assert_eq!(
+            reports.iter().map(|r| r.edits.len()).collect::<Vec<_>>(),
+            vec![2, 1, 0]
+        );
+        assert_eq!(reports[0].edits[0].id, reports[1].edits[0].id);
+        assert_eq!(reports[0].edits[0].original, "Bad");
+        assert_eq!(reports[1].edits[0].replacement, "Good");
+        for report in &reports {
+            report
+                .feedback
+                .validate_links(&report.edits, false)
+                .unwrap();
+        }
+        // Display names are identical; provenance, not names or paths, owns each patch.
+        assert_eq!(reports[0].reviewer, reports[2].reviewer);
+        let before = serde_json::to_value(&reports).unwrap();
+        session.revision = 1;
+        let restored: ReviewSession =
+            serde_json::from_str(&serde_json::to_string(&session).unwrap()).unwrap();
+        let restored = restored
+            .restore(&"b".repeat(64), "reopened", |_| false)
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(restored.reviewer_reports()).unwrap(),
+            before
+        );
+        assert!(restored
+            .result
+            .workflow
+            .as_ref()
+            .unwrap()
+            .decisions
+            .is_empty());
+    }
+
     #[test]
     fn retry_failed_chunks_keeps_completed_results_and_refuses_changed_capture() {
         let mut s = workflow_session(2);

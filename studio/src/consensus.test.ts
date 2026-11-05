@@ -25,8 +25,13 @@ describe('review consensus', () => {
   it('counts a reviewer once and writes plain sentences', () => {
     const c = summarizeConsensus([edit('1', ['Line', 'Line']), edit('2', ['Line'])]);
     expect(c.agreed).toEqual([]);
-    expect(consensusSentence(c)).toBe('1 reviewer · 2 suggestions · 2 from one reviewer');
+    expect(consensusSentence(c)).toBe('1 reviewer · 2 suggestions · 2 with one reviewer each');
     expect(consensusSentence(summarizeConsensus([]))).toBe('0 suggestions');
+  });
+
+  it('does not imply that every single-reviewer suggestion came from the same reviewer', () => {
+    const c = summarizeConsensus([edit('1', ['Line']), edit('2', ['Voice']), edit('3', ['Line'])]);
+    expect(consensusSentence(c)).toBe('2 reviewers · 3 suggestions · 3 with one reviewer each');
   });
 
   it('labels agreement and tolerates missing provenance', () => {
