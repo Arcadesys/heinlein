@@ -23,7 +23,12 @@ for(const width of [650,1200])for(const zoom of [100,150,200,300]){
   await expect(goal).toHaveAccessibleName(/Daily goal: 1,000 \/ 1,250/);
   expect(await goal.evaluate(el=>getComputedStyle(el).opacity)).toBe('1');
   expect(await goal.locator('..').evaluate(el=>getComputedStyle(el).opacity)).toBe('1');
-  expect(await page.locator('.active-document-pane').boundingBox()).toEqual(beforeGrowth);
+  // Typing intentionally collapses tools; count growth must not alter prose width.
+  const duringGrowth=await page.locator('.active-document-pane').boundingBox();
+  expect(duringGrowth!.x).toBe(beforeGrowth!.x);expect(duringGrowth!.width).toBe(beforeGrowth!.width);
+  expect(await page.locator('.cm-content').evaluate(el=>el.getBoundingClientRect().width)).toBe(before.width);
+  await page.getByRole('button',{name:'Show tabs and tools',exact:true}).click();
+  await expect.poll(()=>page.locator('.active-document-pane').boundingBox()).toEqual(beforeGrowth);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   await page.screenshot({path:info.outputPath(`counter-${width}-${zoom}.png`)});
  });

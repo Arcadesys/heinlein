@@ -559,3 +559,100 @@ it('quiet decision refresh preserves highlights invalidated by typing until expl
  expect(panel!.element.querySelector('.review-mark-status')!.textContent).toContain('Highlights are off because the open text changed');expect(marksChanged.mock.calls.at(-1)![0]).toBeNull();
  await f.click('Refresh review');expect(marksChanged.mock.calls.at(-1)![0]).not.toBeNull();expect(panel!.element.querySelector('.review-mark-status')!.textContent).not.toContain('Highlights are off because the open text changed');
 });
+
+function authenticationFixture() {
+    const f = fixture();
+    let saved!: ReviewResult;
+    const original = f.core.requestReview.getMockImplementation()!;
+    f.core.requestReview.mockImplementation(async request => {
+        saved = await original(request);
+        const completed = saved.workflow!.coverage[0];
+        saved.workflow!.coverage.push({...completed,id:'auth-failed',status:'failed',error:'authentication',diagnostics:{httpStatus:401,providerRequestId:'req_safe-123'}}, {...completed,id:'remaining',status:'queued',requestId:null});
+        return structuredClone(saved);
+    });
+    const reconnect = vi.fn(async () => ({status:{...await f.core.questionStatus(),generation:4},review:structuredClone(saved)}));
+    const continuation = vi.fn(async (_repo:string,_review:string,requestId:string,_connection?:unknown):Promise<ReviewResult> => ({...structuredClone(saved),requestId,workflow:{...saved.workflow!,coverage:saved.workflow!.coverage.map(c=>({...c,status:'completed',error:null}))}}));
+    Object.assign(f.core,{reauthenticateReview:reconnect,continueReview:continuation});
+    return {...f,reconnect,continuation,saved:()=>saved};
+}
+it('explains authentication and only retries after explicit same-account reconnect and a second click', async () => {
+    const f = authenticationFixture(); await f.start();
+    expect(panel!.element.textContent).toContain('ChatGPT did not authorize this review call');
+    expect(panel!.element.querySelector('[role=status]')!.textContent).toContain('Review paused: ChatGPT authorization failed. 1 of 3 calls completed.');
+    expect(panel!.element.textContent).toContain('HTTP 401 · Request req_safe-123');
+    expect(f.button('Continue next reviewer batch').hidden).toBe(true);
+    expect(f.reconnect).not.toHaveBeenCalled(); expect(f.continuation).not.toHaveBeenCalled();
+    const original = structuredClone(f.saved());
+    await f.click('Reconnect ChatGPT for this review');
+    expect(f.reconnect).toHaveBeenCalledWith('repo','review-stable',true);
+    expect(f.continuation).not.toHaveBeenCalled();
+    expect(f.button('Retry after reconnecting').hidden).toBe(false);
+    expect(f.saved()).toEqual(original);
+    await f.click('Retry after reconnecting');
+    expect(f.continuation).toHaveBeenCalledOnce();
+    expect(f.continuation.mock.calls[0][3]).toEqual({generation:4,accountId:'selected-account',model:'chosen-model'});
+    expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(3);
+    expect(f.core.requestReview).toHaveBeenCalledOnce();
+});
+it('failed reauthentication keeps all results and does not enable retry', async () => {
+    const f = authenticationFixture(); await f.start();
+    f.reconnect.mockRejectedValueOnce(new Error('Sign-in was cancelled.'));
+    await f.click('Reconnect ChatGPT for this review');
+    expect(panel!.element.textContent).toContain('Sign-in was cancelled.');
+    expect(f.continuation).not.toHaveBeenCalled();
+    expect(f.button('Continue next reviewer batch').hidden).toBe(true);
+    expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(3);
+});
+it.each(['account','model','review','older revision'])('rejects a reauthentication response for another %s', async mismatch => {
+    const f = authenticationFixture(); await f.start();
+    const status = {...await f.core.questionStatus(),generation:4};
+    const review = structuredClone(f.saved());
+    if (mismatch === 'account') status.activeAccountId='different-account';
+    if (mismatch === 'model') status.model='different-model';
+    if (mismatch === 'review') review.reviewId='different-review';
+    if (mismatch === 'older revision') review.revision=0;
+    f.reconnect.mockResolvedValueOnce({status,review});
+    await f.click('Reconnect ChatGPT for this review');
+    expect(panel!.element.textContent).toContain('were not reconnected');
+    expect(f.continuation).not.toHaveBeenCalled();
+    expect(f.button('Continue next reviewer batch').hidden).toBe(true);
+});
+it('a second authentication failure consumes the hint and requires another explicit reconnect', async () => {
+    const f = authenticationFixture(); await f.start();
+    f.continuation.mockImplementation(async (_repo,_review,requestId)=>{f.saved().requestId=requestId;return structuredClone(f.saved());});
+    await f.click('Reconnect ChatGPT for this review'); await f.click('Retry after reconnecting');
+    expect(f.button('Reconnect ChatGPT for this review').hidden).toBe(false);
+    expect(f.button('Continue next reviewer batch').hidden).toBe(true);
+    expect(f.reconnect).toHaveBeenCalledOnce(); expect(f.continuation).toHaveBeenCalledOnce();
+    await f.click('Reconnect ChatGPT for this review');
+    expect(f.reconnect).toHaveBeenCalledTimes(2); expect(f.continuation).toHaveBeenCalledOnce();
+    expect(f.button('Retry after reconnecting').hidden).toBe(false);
+});
+it('does not display arbitrary diagnostic strings', async () => {
+    const f = authenticationFixture();
+    const original = f.core.requestReview.getMockImplementation()!;
+    f.core.requestReview.mockImplementation(async request=>{
+        const answer=await original(request);
+        answer.workflow!.coverage[1].diagnostics={httpStatus:999,providerCode:'secret-body',providerRequestId:'not-a-request-secret'};
+        return answer;
+    });
+    await f.start();
+    expect(panel!.element.textContent).not.toContain('secret-body');
+    expect(panel!.element.textContent).not.toContain('not-a-request-secret');
+    expect(panel!.element.textContent).not.toContain('HTTP 999');
+});
+
+it('ignores a late reconnect after clearing the review and does not permit duplicate reconnects', async () => {
+    const f = authenticationFixture(); await f.start();
+    let finish!: (result: Awaited<ReturnType<typeof f.reconnect>>) => void;
+    const response = {status:{...await f.core.questionStatus(),generation:4},review:structuredClone(f.saved())};
+    f.reconnect.mockImplementationOnce(() => new Promise(resolve => {finish = resolve;}));
+    await f.click('Reconnect ChatGPT for this review');
+    expect(f.button('Reconnect ChatGPT for this review').disabled).toBe(true);
+    f.button('Reconnect ChatGPT for this review').click();
+    expect(f.reconnect).toHaveBeenCalledOnce();
+    panel!.clear(); finish(response); await tick();
+    expect(panel!.element.hidden).toBe(true);
+    expect(panel!.element.textContent).not.toContain('Account reconnected. Choose Retry');
+    expect(f.continuation).not.toHaveBeenCalled();
+});

@@ -74,7 +74,12 @@ impl Rejection {
 }
 impl Intent {
     pub fn new(repo: &Repository, review: Review) -> Self {
-        let confirmed_by = if review.kind == "apply" { "studioAuthorAccept" } else { "studioNativeAuthor" }.into();
+        let confirmed_by = if review.kind == "apply" {
+            "studioAuthorAccept"
+        } else {
+            "studioNativeAuthor"
+        }
+        .into();
         Self {
             schema_version: 1,
             id: id(),
@@ -87,7 +92,8 @@ impl Intent {
     fn validate(&self) -> Result<()> {
         if self.schema_version != 1
             || !valid_id(&self.id)
-            || !(self.confirmed_by == "studioNativeAuthor" || (self.confirmed_by == "studioAuthorAccept" && self.review.kind == "apply"))
+            || !(self.confirmed_by == "studioNativeAuthor"
+                || (self.confirmed_by == "studioAuthorAccept" && self.review.kind == "apply"))
             || self.created_at_ms == 0
         {
             return Err("Invalid local operation intent".into());

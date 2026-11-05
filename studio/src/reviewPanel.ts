@@ -56,8 +56,24 @@ function retryableCall(code: string | null) { return ['network', 'timeout', 'ret
 // Explicit author action only. Startup recovery continues to use retryableCall.
 function manuallyRetryableCall(code: string | null) { return retryableCall(code) || ['invalidResponse', 'protocol', 'outputLimit', 'responseTooLarge', 'invalidAssessment', 'assessmentTooLong', 'invalidConsolidation'].includes(code ?? ''); }
 function callFailure(code: string | null) {
-    const reasons: Record<string, string> = {retryExhaustedNetwork: 'Connection interrupted after three attempts. Successful chunks were kept.', retryExhaustedTimeout: 'The chunk timed out after three attempts. Successful chunks were kept.', retryExhaustedProvider: 'OpenAI remained unavailable after three attempts. Successful chunks were kept.', outputLimit: 'The model reached its response token limit before finishing the review.', timeout: 'The response timed out.', cancelled: 'The call was cancelled.', usageLimit: 'ChatGPT usage limit reached.', staleConnection: 'The ChatGPT account or model changed.', invalidReviewOrModel: 'The response did not match the selected model or review format.', incompleteReview: 'Consolidation needs all individual assessments to complete.', consolidationTooLarge: 'The individual assessments exceed the consolidation limit. Review a smaller scope; individual results are retained.', assessmentTooLong: 'A reading assessment exceeded the 2,000-character limit. Completed reviews and suggestions were kept.', invalidAssessment: 'A reading assessment was empty or contained unsupported characters. Completed reviews and suggestions were kept.', invalidConsolidation: 'The consolidated assessment did not match the required format. Individual reviews and suggestions were kept.', invalidConsolidationContext: 'The saved reviewer patch context could not be validated. Individual reviews and suggestions were kept.', invalidReview: 'The review response exceeded supported limits or could not be validated. Completed reviews and suggestions were kept.', responseTooLarge: 'The response exceeded the supported byte limit. Completed reviews and suggestions were kept.', invalidResponse: 'The response could not be validated.', protocol: 'The response could not be validated.', findingLimit: 'The retained suggestion limit was reached.'};
+    const reasons: Record<string, string> = {authentication: 'ChatGPT did not authorize this review call. Reconnect the same account before retrying. Completed results are saved.', retryExhaustedNetwork: 'Connection interrupted after three attempts. Successful chunks were kept.', retryExhaustedTimeout: 'The chunk timed out after three attempts. Successful chunks were kept.', retryExhaustedProvider: 'OpenAI remained unavailable after three attempts. Successful chunks were kept.', outputLimit: 'The model reached its response token limit before finishing the review.', timeout: 'The response timed out.', cancelled: 'The call was cancelled.', usageLimit: 'ChatGPT usage limit reached.', staleConnection: 'The ChatGPT account or model changed.', invalidReviewOrModel: 'The response did not match the selected model or review format.', incompleteReview: 'Consolidation needs all individual assessments to complete.', consolidationTooLarge: 'The individual assessments exceed the consolidation limit. Review a smaller scope; individual results are retained.', assessmentTooLong: 'A reading assessment exceeded the 2,000-character limit. Completed reviews and suggestions were kept.', invalidAssessment: 'A reading assessment was empty or contained unsupported characters. Completed reviews and suggestions were kept.', invalidConsolidation: 'The consolidated assessment did not match the required format. Individual reviews and suggestions were kept.', invalidConsolidationContext: 'The saved reviewer patch context could not be validated. Individual reviews and suggestions were kept.', invalidReview: 'The review response exceeded supported limits or could not be validated. Completed reviews and suggestions were kept.', responseTooLarge: 'The response exceeded the supported byte limit. Completed reviews and suggestions were kept.', invalidResponse: 'The response could not be validated.', protocol: 'The response could not be validated.', findingLimit: 'The retained suggestion limit was reached.'};
     return reasons[code ?? ''] ?? 'The call did not return a valid review.';
+}
+function safeCallDiagnostics(call: ReviewCoverage): ReviewCoverage['diagnostics'] {
+    const d = call.diagnostics;
+    if (!d) return undefined;
+    const safe: NonNullable<ReviewCoverage['diagnostics']> = {};
+    if (Number.isInteger(d.httpStatus) && d.httpStatus! >= 400 && d.httpStatus! <= 599) safe.httpStatus = d.httpStatus;
+    const safeCodes = ['subscription_sharing_usage_limit_exceeded', 'subscription_sharing_user_not_eligible', 'subscription_sharing_usage_unavailable', 'subscription_sharing_unsupported_capability', 'subscription_sharing_route_not_supported', 'subscription_sharing_invalid_user', 'chatpass_v2_scope_not_authorized', 'chatpass_v2_invalid_authorization_context', 'subscription_sharing_user_unavailable'];
+    if (d.providerCode && safeCodes.includes(d.providerCode)) safe.providerCode = d.providerCode;
+    if (typeof d.providerRequestId === 'string' && /^req_[A-Za-z0-9_-]{1,124}$/.test(d.providerRequestId)) safe.providerRequestId = d.providerRequestId;
+    return Object.keys(safe).length ? safe : undefined;
+}
+function callDiagnostic(call: ReviewCoverage) {
+    const d = safeCallDiagnostics(call);
+    if (!d) return '';
+    const parts = [d.httpStatus ? `HTTP ${d.httpStatus}` : '', d.providerCode, d.providerRequestId ? `Request ${d.providerRequestId}` : ''].filter(Boolean);
+    return `Diagnostic: ${parts.join(' · ')}`;
 }
 /** Display-only trim of surrounding text so one diff reads as one line. The exact patch is in its details. */
 function trimmed(before: string, after: string, limit: number) {
@@ -183,6 +199,10 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     let scope: ReviewScope | null = null;
     let recaptureLibrary: (() => Promise<CapturedLibraryScope>) | null = null;
     let result: ReviewResult | null = null;
+    // Display hint only. Native continuation independently validates and consumes its proof.
+    let authenticationProof: {reviewId:string;generation:number;revision?:number} | null = null;
+    const authenticationFailed = () => Boolean(result?.workflow?.coverage.some(c => c.status === 'failed' && c.error === 'authentication'));
+    const authenticationRecovered = () => Boolean(authenticationProof && authenticationProof.reviewId === result?.reviewId && authenticationProof.revision === result?.revision && authenticationProof.generation === config?.generation && config?.activeAccountId === result?.workflow?.accountId && config?.model === result?.model);
     let marksInvalidatedByTyping = false;
     let config: QuestionStatus | null = null;
     let generation = 0;
@@ -316,7 +336,9 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const continueNote = el('p', 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count. Finish the remaining batches before applying suggestions; changed source needs a fresh review.', 'review-guidance');
     continueNote.hidden = true;
     const resultActions = el('div', '', 'review-result-actions');
-    resultActions.append(continueNote, continueBatch);
+    const reconnectReview = button('Reconnect ChatGPT for this review', () => { void reauthenticate(); });
+    reconnectReview.hidden = true;
+    resultActions.append(continueNote, reconnectReview, continueBatch);
     resultsView.append(edits, resultActions);
     body.append(menu, setupView, resultsView);
 
@@ -428,7 +450,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         connection.hidden = showingResults || checking || ready() || !core.requestReview;
         connection.dataset.state = checking ? 'checking' : ready() ? 'ready' : 'problem';
         connectionText.textContent = config?.message ?? 'ChatGPT connection could not be checked.';
-        if (hooks.headerTabs) setHeinleinStatus(chip, checking ? 'checking' : ready() ? 'ready' : 'attention', checking ? 'Checking connection' : ready() ? `Ready · ${config!.model}` : config?.usageLimited ? 'Usage limited' : 'Not connected');
+        if (hooks.headerTabs && authenticationFailed() && !authenticationRecovered()) setHeinleinStatus(chip, 'attention', 'Review needs reconnection');
+        else if (hooks.headerTabs) setHeinleinStatus(chip, checking ? 'checking' : ready() ? 'ready' : 'attention', checking ? 'Checking connection' : ready() ? `Ready · ${config!.model}` : config?.usageLimited ? 'Usage limited' : 'Not connected');
         run.hidden = showingResults;
         advisory.hidden = showingResults;
         markStatus.hidden = !showingResults || markStatus.dataset.marked === undefined || !result!.edits.some(waiting);
@@ -442,10 +465,13 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         retry.disabled = Boolean(problem || pending || busy || automaticRunning || checking || !ready() || !core.requestReview || (workflowMode && !preparedRequest));
         const interruptedChunks = result?.workflow?.coverage.some(c => c.status === 'running' || c.status === 'cancelled');
         const failedChunks = result?.workflow?.coverage.some(c => c.status === 'failed' && manuallyRetryableCall(c.error));
-        continueBatch.textContent = failedChunks ? 'Retry failed chunks' : interruptedChunks ? 'Resume interrupted chunks' : 'Continue next reviewer batch';
-        continueBatch.hidden = automaticRunning || !core.continueReview || !result?.workflow?.coverage.some(c => ((c.status === 'queued' || c.status === 'notRun') && c.error !== 'findingLimit') || c.status === 'running' || c.status === 'cancelled' || (c.status === 'failed' && manuallyRetryableCall(c.error)));
-        continueNote.textContent = failedChunks || interruptedChunks ? 'Retry sends only failed chunks and remaining calls, keeping completed results and decisions. Invalid responses need another explicit retry; only connection failures retry automatically, up to three attempts. Additional plan usage may count. If the source changed, choose Start a new review to capture the current text.' : 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count. Finish the remaining batches before applying suggestions; changed source needs a fresh review.';
-        continueNote.hidden = continueBatch.hidden;
+        const authFailed = authenticationFailed(), authRecovered = authenticationRecovered();
+        reconnectReview.hidden = !authFailed || authRecovered || !core.reauthenticateReview;
+        reconnectReview.disabled = Boolean(pending || busy || automaticRunning || checking);
+        continueBatch.textContent = authFailed && authRecovered ? 'Retry after reconnecting' : failedChunks ? 'Retry failed chunks' : interruptedChunks ? 'Resume interrupted chunks' : 'Continue next reviewer batch';
+        continueBatch.hidden = (authFailed && !authRecovered) || automaticRunning || !core.continueReview || !result?.workflow?.coverage.some(c => (authFailed && authRecovered && c.error === 'authentication') || ((c.status === 'queued' || c.status === 'notRun') && c.error !== 'findingLimit') || c.status === 'running' || c.status === 'cancelled' || (c.status === 'failed' && manuallyRetryableCall(c.error)));
+        continueNote.textContent = authFailed ? (authRecovered ? 'Account reconnected. Retry sends only unfinished calls, keeping completed assessments, suggestions and decisions. Additional plan usage may count. Your manuscript stays unchanged.' : core.reauthenticateReview ? 'Reconnect the same ChatGPT account in your browser to authorize a retry. Rechecking setup alone does not recover this failure. Reconnecting sends no review calls; choose Retry afterward. Completed results are kept.' : 'This review needs same-account reauthentication. Update Heinlein Studio to recover it without repeating completed calls.') : failedChunks || interruptedChunks ? 'Retry sends only failed chunks and remaining calls, keeping completed results and decisions. Invalid responses need another explicit retry; only connection failures retry automatically, up to three attempts. Additional plan usage may count. If the source changed, choose Start a new review to capture the current text.' : 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count. Finish the remaining batches before applying suggestions; changed source needs a fresh review.';
+        continueNote.hidden = !authFailed && continueBatch.hidden;
         continueBatch.disabled = Boolean(pending || busy || checking || !ready());
         setupView.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>('input,select,textarea,button').forEach(e => e.disabled = Boolean(pending || busy || automaticRunning) || e.dataset.full === 'true');
         refreshReview.hidden = !result || !core.getReview;
@@ -478,6 +504,31 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         counter.setAttribute('aria-label', cards.length ? `${at < 0 ? 'No card opened' : `Card ${at + 1}`} of ${cards.length}` : 'No suggestions waiting');
         previous.disabled = next.disabled = !cards.length;
     }
+    async function reauthenticate() {
+        if (pending || busy || automaticRunning || !scope || !result?.workflow || !authenticationFailed() || !core.reauthenticateReview) return;
+        const token = generation, repositoryId = scope.repositoryId, captured = result;
+        authenticationProof = null;
+        busy = true; update();
+        say('Reconnect the same ChatGPT account in your browser. No review calls are sent.', 'warning');
+        try {
+            const answer = await core.reauthenticateReview(repositoryId, captured.reviewId, true);
+            if (!live(token) || result?.reviewId !== captured.reviewId || scope?.repositoryId !== repositoryId) return;
+            const retained = validate(answer.review, captured.requestId);
+            if (retained.reviewId !== captured.reviewId || (retained.revision ?? 0) < (captured.revision ?? 0) || retained.model !== captured.model || retained.workflow?.accountId !== captured.workflow?.accountId ||
+                !answer.status.configured || answer.status.activeAccountId !== captured.workflow?.accountId || answer.status.model !== captured.model || answer.status.signInPending) {
+                throw new Error('The original review account and model were not reconnected. Saved results are unchanged.');
+            }
+            config = answer.status;
+            result = retained;
+            authenticationProof = {reviewId:retained.reviewId,generation:answer.status.generation,revision:retained.revision};
+            say('Account reconnected. Choose Retry after reconnecting to resume unfinished calls. Completed results are kept.');
+            render();
+        } catch (error) {
+            if (live(token)) { authenticationProof = null; say(message(error), 'warning'); }
+        } finally {
+            if (live(token)) { busy = false; update(); }
+        }
+    }
     async function configure() { if (checking)
         return; const token = generation; checking = true; update(); try {
         let next = await core.questionStatus?.();
@@ -503,7 +554,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         void core.cancelQuestion?.(id).catch(() => { });
         retry.hidden = Boolean(result?.workflow);
     } }
-    function clear() { closeSuggestion(); suspended=false; cancelRequest(); background.clear(); element.hidden = true; hooks.visibilityChanged?.(false); element.classList.remove('review-tucked'); scope = null; recaptureLibrary = null; result = null; marksInvalidatedByTyping = false; config = null; savedRecords = []; shownReview = null; historyOpen = null; view = 'setup'; receipts.clear(); publishMarks(); saved.replaceChildren(); savedSection.hidden = true; edits.replaceChildren(); historyHost.replaceChildren(); aboutHost.replaceChildren(); sources.replaceChildren(); sourceSignature = ''; batchPreview.replaceChildren(); blob.textContent = ''; say(''); toggleMenu(false); update(); }
+    function clear() { closeSuggestion(); suspended=false; cancelRequest(); background.clear(); element.hidden = true; hooks.visibilityChanged?.(false); element.classList.remove('review-tucked'); scope = null; recaptureLibrary = null; result = null; authenticationProof = null; marksInvalidatedByTyping = false; config = null; savedRecords = []; shownReview = null; historyOpen = null; view = 'setup'; receipts.clear(); publishMarks(); saved.replaceChildren(); savedSection.hidden = true; edits.replaceChildren(); historyHost.replaceChildren(); aboutHost.replaceChildren(); sources.replaceChildren(); sourceSignature = ''; batchPreview.replaceChildren(); blob.textContent = ''; say(''); toggleMenu(false); update(); }
     function untuck() {
         if (element.classList.contains('review-tucked')) {
             element.classList.remove('review-tucked');
@@ -543,6 +594,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (value?.schemaVersion === 2) {
             if (!value.reviewId || !value.workflow || !Array.isArray(value.edits) || value.edits.length > 1024 || !Array.isArray(value.workflow.coverage) || value.workflow.coverage.length > 385 || (requestId && value.requestId !== requestId) || new Set(value.edits.map(e => e.id)).size !== value.edits.length)
                 throw new Error('Invalid consolidated review. Reload the saved record.');
+            for (const call of value.workflow.coverage) call.diagnostics = safeCallDiagnostics(call);
             for (const e of value.edits) {
                 const source = value.workflow.sources.find(s => s.path === e.path && !s.readOnly);
                 if (!source || !e.id || !Number.isSafeInteger(e.fromUtf8) || !Number.isSafeInteger(e.toUtf8) || e.fromUtf8 < 0 || e.toUtf8 < e.fromUtf8 || !['pending', 'prepared', 'accepted', 'rejected', 'supersededByAuthorChoice', 'blockedByAppliedDecision'].includes(e.status) || ![e.original, e.replacement, e.reason, e.patch].every(s => typeof s === 'string') || bytes(e.original) > 4000 || bytes(e.replacement) > 4000 || (e.fromUtf8 === e.toUtf8 && (!e.replacement || e.original)))
@@ -909,11 +961,13 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             edits.append(el('p', `${rejected} suggestion(s) dismissed. Rejected · local receipt retained.`, 'review-guidance'));
         const w = result.workflow;
         if (w && incomplete) {
-            edits.append(el('p', 'This review is incomplete. When the project reopens, interrupted calls and temporary failures are retried once, keeping completed results. Cancelled calls require explicit continuation.', 'drafting-warning'));
+            edits.append(el('p', authenticationFailed() ? 'This review is paused after an authorization failure. Completed results are kept. Reconnect the same account, then explicitly retry the unfinished calls.' : 'This review is incomplete. When the project reopens, interrupted calls and temporary failures are retried once, keeping completed results. Cancelled calls require explicit continuation.', 'drafting-warning'));
             w.coverage.forEach((call, index) => {
                 if (['failed', 'cancelled', 'running', 'interrupted'].includes(call.status)) {
                     const reviewer = w.definitions[call.reviewer]?.definition.displayName ?? 'Consolidation';
                     edits.append(el('p', `${reviewer} · chunk ${index + 1} of ${w.coverage.length}: ${call.status === 'running' || call.status === 'interrupted' ? 'This call was interrupted.' : callFailure(call.error)}`, 'drafting-warning'));
+                    const diagnostic = callDiagnostic(call);
+                    if (diagnostic) edits.append(el('p', diagnostic, 'review-guidance'));
                 }
             });
         }
@@ -1045,6 +1099,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     async function submit(continuing = false) {
         if (pending || busy || (!continuing && scopeProblem()) || !ready() || !scope || !core.requestReview)
             return;
+        if (continuing && authenticationFailed() && !authenticationRecovered()) { say('Reconnect the same ChatGPT account before retrying this review. Completed results are kept.', 'warning'); return; }
         const continuationProblem = continuing ? hooks.recoveryUnavailable?.() : null;
         if (continuationProblem) { say(continuationProblem, 'warning'); return; }
         if (!globalThis.crypto?.randomUUID) {
@@ -1111,6 +1166,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                     say(`${reviewer} · chunk ${event.chunkIndex} of ${event.totalCalls} · ${phase}. ${event.completedCalls} of ${event.totalCalls} calls completed.`);
                 }
             };
+            authenticationProof = null; // Each explicit retry consumes the native recovery proof.
             const answer = continuing && oldResult && core.continueReview ? await core.continueReview(scope.repositoryId, oldResult.reviewId, requestId, connection, onProgress) : await core.requestReview(request, connection, onProgress);
             if (!live(token) || pending !== requestId)
                 return;
@@ -1121,7 +1177,9 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             completedSuccessfully = !result.workflow || result.workflow.coverage.every(call => call.status === 'completed');
             const completed = result.workflow?.coverage.filter(c => c.status === 'completed').length;
             const total = result.workflow?.coverage.length;
-            if (completed !== undefined && completed !== total)
+            if (authenticationFailed())
+                say(`Review paused: ChatGPT authorization failed. ${completed} of ${total} calls completed. Reconnect the same account to resume; completed results are saved.`, 'warning');
+            else if (completed !== undefined && completed !== total)
                 say(`Review incomplete. ${completed} of ${total} calls completed. ${plural(result.edits.filter(waiting).length, 'suggestion')} retained. Check the call details below.`, 'warning');
             else say(`Review ready. ${plural(result.edits.filter(waiting).length, 'suggestion')} to decide, one at a time.`);
             background.finish(requestId, completed !== undefined && completed !== total ? 'attention' : 'complete',
@@ -1716,7 +1774,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 }
                 say('Chapter review complete. Consolidated feedback is open. Choose Review assessment for individual passes.');
             } else {
-                say('Chapter review incomplete. Completed passes are saved. Check the call details before continuing.', 'warning');
+                say(authenticationFailed() ? 'Chapter review paused: ChatGPT authorization failed. Reconnect the same account to resume; completed assessments are saved.' : 'Chapter review incomplete. Completed passes are saved. Check the call details before continuing.', 'warning');
             }
         } catch (error) {
             if (live(token)) say(message(error), 'warning');

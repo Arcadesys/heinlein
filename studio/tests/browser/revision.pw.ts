@@ -248,6 +248,7 @@ test('demo marks: caret, drag selection, typing and layout stay ordinary editing
     await expect(page.locator('.cm-review-mark')).toHaveCount(0);
     await page.keyboard.press('Backspace');
     await expect(page.locator('.cm-review-mark')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Show tabs and tools', exact: true }).click();
     await openHeinleinReview(page);
     await expect(panel.locator('.review-mark-status')).toContainText('Highlights are off because the open text changed');
 });

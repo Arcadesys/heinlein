@@ -52,6 +52,8 @@ for(const high of [false,true])test(`document tabs and saved reading panes ${hig
   await page.waitForTimeout(5200);
   const after=await page.evaluate(()=>{const v=(window as any).documentFixture.view(),at=v.coordsAtPos(v.state.selection.main.head);return{top:at.top,width:v.contentDOM.getBoundingClientRect().width};});expect(after.top).toBeCloseTo(stable.top,0);expect(after.width).toBe(stable.width);
  }
+ // Restore the tools before navigating away from the live writer.
+ const restore=page.getByRole('button',{name:'Show tabs and tools',exact:true});if(await restore.isVisible())await restore.click();
  // Keyboard activation changes the sole writer, rather than activating on focus.
  await other.focus();await page.keyboard.press('Enter');await expect(other).toHaveAttribute('aria-selected','true');expect(await page.locator('.active-document-pane .cm-content').count()).toBe(1);await expect(page.locator('.active-document-pane .path')).toContainText(paths[1]);
  expect(await page.evaluate(()=>(window as any).documentFixture.fixture.externalCalls)).toEqual([]);expect(errors).toEqual([]);

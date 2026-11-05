@@ -544,6 +544,113 @@ pub(crate) async fn connect_question_account(
     host.status(status)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReauthenticatedReview {
+    status: QuestionStatus,
+    review: crate::review_state::ReviewResult,
+}
+
+/// Reauthenticate the captured account, but never dispatch or requeue a model call.
+#[tauri::command]
+pub(crate) async fn reauthenticate_review(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    repository_id: String,
+    review_id: String,
+    allow_chatgpt_plan: bool,
+) -> Result<ReauthenticatedReview, NativeError> {
+    main_window(&window)?;
+    if !allow_chatgpt_plan {
+        return Err(NativeError::Auth {
+            code: "consentRequired",
+            message: "Allow ChatGPT plan usage before reconnecting this review.".into(),
+        });
+    }
+    if host.review_active.swap(true, Ordering::SeqCst) {
+        return Err(NativeError::revision(
+            "Wait for the active reviewer batch to settle",
+        ));
+    }
+    struct Active<'a>(&'a std::sync::atomic::AtomicBool);
+    impl Drop for Active<'_> {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::SeqCst);
+        }
+    }
+    let _active = Active(&host.review_active);
+    let auth = host.auth(&app)?;
+    let (account, model, revision) = super::with_repository(&app, &repository_id, |repo| {
+        let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
+        ensure_review(&app, &mut slot, repo, &repository_id, &review_id)?;
+        let session = review_session(&mut slot, &repository_id, &review_id)?;
+        session.clear_authentication_recovery();
+        let (account, model) = session.recovery_connection()?;
+        let mapping = repo.load_drafting().map_err(|e| e.to_string())?;
+        if !session.request.snapshots.iter().chain(&session.request.workflow.as_ref().ok_or("Invalid review")?.context).all(|snapshot|
+            crate::review_state::captured_scene_matches(snapshot, mapping.recovery_required, &mapping.scenes)
+                && repo.read(&snapshot.path).is_ok_and(|current| !current.generated_compatibility && current.text == snapshot.source)) {
+            return Err("The captured source or context changed. Start a fresh review; completed results were preserved.".into());
+        }
+        Ok((account, model, session.revision))
+    }).map_err(NativeError::revision)?;
+    let before = auth.status()?;
+    if before.active_account_id.as_deref() != Some(account.as_str())
+        || before.selected_model.as_deref() != Some(model.as_str())
+    {
+        return Err(NativeError::revision(
+            "Select this review's original account and model before reconnecting",
+        ));
+    }
+    host.questions.cancel_active()?;
+    let connected = auth
+        .connect(Some(&account), |url| {
+            if !safe_authorization_url(url) {
+                return Err(AuthError::Browser);
+            }
+            app.opener()
+                .open_url(url, None::<&str>)
+                .map_err(|_| AuthError::Browser)
+        })
+        .await?;
+    if connected.active_account_id.as_deref() != Some(account.as_str())
+        || !connected.models.iter().any(|m| m.slug == model)
+    {
+        return Err(NativeError::revision("Reauthentication did not restore this review's account and model. Completed results were preserved."));
+    }
+    let connected = auth.select_model(&model)?;
+    let connection = QuestionConnection {
+        generation: connected.generation,
+        account_id: account,
+        model,
+    };
+    if !matches_connection(&auth.status()?, &connection) {
+        return Err(QuestionError::stale_connection().into());
+    }
+    let review = super::with_repository(&app, &repository_id, |repo| {
+        let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
+        ensure_review(&app, &mut slot, repo, &repository_id, &review_id)?;
+        let session = review_session(&mut slot, &repository_id, &review_id)?;
+        if session.revision != revision || !session.authentication_failed()
+            || !session.connection_matches(&connection.account_id, &connection.model, connection.generation) {
+            return Err("The review changed while reconnecting. Completed results were preserved.".into());
+        }
+        let mapping = repo.load_drafting().map_err(|e| e.to_string())?;
+        if !session.request.snapshots.iter().chain(&session.request.workflow.as_ref().ok_or("Invalid review")?.context).all(|snapshot|
+            crate::review_state::captured_scene_matches(snapshot, mapping.recovery_required, &mapping.scenes)
+                && repo.read(&snapshot.path).is_ok_and(|current| !current.generated_compatibility && current.text == snapshot.source)) {
+            return Err("The captured source or context changed while reconnecting. Completed results were preserved.".into());
+        }
+        session.authorize_authentication_recovery(connection.generation);
+        Ok(session.view())
+    }).map_err(NativeError::revision)?;
+    Ok(ReauthenticatedReview {
+        status: host.status(connected)?,
+        review,
+    })
+}
+
 #[tauri::command]
 pub(crate) fn cancel_question_sign_in(
     window: tauri::WebviewWindow,
@@ -1347,10 +1454,12 @@ async fn request_review_workflow_inner(
   if let Some(id)=request.workflow.as_ref().and_then(|o|o.review_id.as_ref()){
    ensure_review(&app,&mut slot,repo,&request.repository_id,id)?;
    let session=slot.as_mut().ok_or("Review unavailable")?;
+   let authenticated=session.consume_authentication_recovery(connection.generation);
+   if session.authentication_failed() && !authenticated {return Err("Reconnect this review’s original ChatGPT account before explicitly retrying authentication failures. Completed results were preserved.".into())}
    let mut old=session.request.clone();old.request_id=request.request_id.clone();old.workflow.as_mut().unwrap().review_id=Some(id.clone());
    if serde_json::to_value(&old).map_err(|_|"Invalid review")?!=serde_json::to_value(&request).map_err(|_|"Invalid review")?||!session.connection_matches(&connection.account_id,&connection.model,connection.generation){return Err("Continue requires the same captured scope, reviewer definitions, account and model".into())}
    let mapping=repo.load_drafting().map_err(|e|e.to_string())?;
-   if session.requeue_failed(|snapshot| crate::review_state::captured_scene_matches(snapshot, mapping.recovery_required, &mapping.scenes) && repo.read(&snapshot.path).is_ok_and(|current| !current.generated_compatibility && current.text == snapshot.source))? {session.persist(&review_records(&app)?,repo)?;}
+   if session.requeue_failed_after_authentication(authenticated, |snapshot| crate::review_state::captured_scene_matches(snapshot, mapping.recovery_required, &mapping.scenes) && repo.read(&snapshot.path).is_ok_and(|current| !current.generated_compatibility && current.text == snapshot.source))? {session.persist(&review_records(&app)?,repo)?;}
    session.set_request_id(request.request_id.clone());session.bind_batch_generation(connection.generation);
   }else{
    let mapping=repo.load_drafting().map_err(|e|e.to_string())?;

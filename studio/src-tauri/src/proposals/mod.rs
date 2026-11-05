@@ -215,7 +215,8 @@ pub(crate) async fn apply_proposal_review(
         // Accept in the bundled Studio window is the author's approval of the
         // displayed, exact-bound edit. Do not ask for that same decision again.
         // Reverts retain their separate confirmation. MCP exposes no apply route.
-        let confirmed = !uses_native_confirmation(&review.kind) || confirm_retained_review(&app, &window, &review)?;
+        let confirmed = !uses_native_confirmation(&review.kind)
+            || confirm_retained_review(&app, &window, &review)?;
         if !confirmed {
             state
                 .proposals

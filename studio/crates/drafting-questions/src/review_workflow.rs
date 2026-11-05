@@ -118,6 +118,53 @@ pub struct ContextRange {
     pub from_utf8: usize,
     pub to_utf8: usize,
 }
+/// Safe machine diagnostics only. Never persist provider bodies or free-form messages.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CoverageDiagnostics {
+    pub http_status: Option<u16>,
+    pub provider_code: Option<String>,
+    pub provider_request_id: Option<String>,
+}
+impl CoverageDiagnostics {
+    fn from_error(error: &QuestionError) -> Option<Self> {
+        let value = Self {
+            http_status: error.http_status,
+            provider_code: error.provider_code.map(str::to_owned),
+            provider_request_id: crate::safe_request_id(error.provider_request_id.as_deref()),
+        };
+        if value.http_status.is_none()
+            && value.provider_code.is_none()
+            && value.provider_request_id.is_none()
+        {
+            None
+        } else {
+            Some(value)
+        }
+    }
+    pub fn valid(&self) -> bool {
+        self.http_status
+            .is_none_or(|status| (100..=599).contains(&status))
+            && self
+                .provider_request_id
+                .as_ref()
+                .is_none_or(|id| crate::safe_request_id(Some(id)).as_ref() == Some(id))
+            && self.provider_code.as_deref().is_none_or(|code| {
+                matches!(
+                    code,
+                    "subscription_sharing_user_not_eligible"
+                        | "subscription_sharing_usage_limit_exceeded"
+                        | "subscription_sharing_usage_unavailable"
+                        | "subscription_sharing_unsupported_capability"
+                        | "subscription_sharing_route_not_supported"
+                        | "subscription_sharing_invalid_user"
+                        | "chatpass_v2_scope_not_authorized"
+                        | "chatpass_v2_invalid_authorization_context"
+                        | "subscription_sharing_user_unavailable"
+                )
+            })
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Coverage {
@@ -133,6 +180,8 @@ pub struct Coverage {
     pub status: String,
     pub request_id: Option<String>,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<CoverageDiagnostics>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -398,6 +447,7 @@ pub fn plan(r: &ReviewRequest) -> Result<Vec<Coverage>, QuestionError> {
                 status: "queued".into(),
                 request_id: None,
                 error: None,
+                diagnostics: None,
             });
         }
     }
@@ -414,6 +464,7 @@ pub fn plan(r: &ReviewRequest) -> Result<Vec<Coverage>, QuestionError> {
             status: "queued".into(),
             request_id: None,
             error: None,
+            diagnostics: None,
         });
     }
     Ok(calls)
@@ -825,6 +876,7 @@ impl QuestionService {
                     }
                     Err(e) => {
                         coverage.status = if cancelled { "cancelled" } else { "failed" }.into();
+                        coverage.diagnostics = CoverageDiagnostics::from_error(&e);
                         let code = e.code.to_string();
                         if e.is_usage_limit() {
                             let _ = flight.finish::<()>(Err(e));
@@ -993,6 +1045,7 @@ impl QuestionService {
                 Err(e) => {
                     coverage.status = if cancelled { "cancelled" } else { "failed" }.into();
                     coverage.error = Some(e.code.to_string());
+                    coverage.diagnostics = CoverageDiagnostics::from_error(&e);
                     calls.push(CallResult {
                         reading_feedback: None,
                         provider_response_id: e.provider_request_id.clone(),
@@ -1000,6 +1053,10 @@ impl QuestionService {
                         edits: vec![],
                         model: config.model.clone(),
                     });
+                    if e.code == "authentication" {
+                        progress(calls.last().unwrap())?;
+                        break;
+                    }
                     if e.is_usage_limit() {
                         progress(calls.last().unwrap())?;
                         let _ = flight.finish::<()>(Err(e));
@@ -1733,6 +1790,70 @@ mod tests {
                 .collect::<Vec<_>>()
         );
     }
+    #[tokio::test]
+    async fn authentication_failure_stops_batch_without_retry_and_keeps_safe_diagnostics() {
+        for status in [401, 403] {
+            let r = request(&"paragraph\n\n".repeat(12000));
+            let coverage = plan(&r).unwrap();
+            let service = QuestionService::default();
+            let permit = service
+                .reserve(&r.question_request().unwrap(), "account")
+                .unwrap();
+            let config = Configuration::new("synthetic-token", "test-model")
+                .unwrap()
+                .with_account("account")
+                .unwrap();
+            let mut dispatched = 0;
+            let batch = service.review_batch_with(r, config, permit, coverage.clone(), vec![definitions().remove(1)], 1024, vec![], |_| Ok(()), |_, _| {
+                dispatched += 1;
+                let result = if dispatched == 1 { Ok(response(serde_json::json!([]))) } else {
+                    Err(crate::provider_error(status, Some(&serde_json::json!({"error":{"message":"secret-body","code":"untrusted-secret"}})), Some("req_synthetic")))
+                };
+                async move { result }
+            }, Duration::from_secs(1)).await.unwrap();
+            assert_eq!(dispatched, 2);
+            assert_eq!(batch.calls.len(), 2);
+            assert_eq!(batch.calls[0].coverage.status, "completed");
+            let failure = &batch.calls[1].coverage;
+            assert_eq!(failure.error.as_deref(), Some("authentication"));
+            let diagnostics = failure.diagnostics.as_ref().unwrap();
+            assert_eq!(diagnostics.http_status, Some(status));
+            assert_eq!(
+                diagnostics.provider_request_id.as_deref(),
+                Some("req_synthetic")
+            );
+            assert!(diagnostics.provider_code.is_none());
+            assert!(diagnostics.valid());
+            let serialized = serde_json::to_string(&batch.calls).unwrap();
+            assert!(!serialized.contains("secret"));
+            assert!(coverage.len() > batch.calls.len());
+            assert!(!super::retryable_coverage_error("authentication"));
+            assert!(!super::manual_retryable_coverage_error("authentication"));
+        }
+    }
+
+    #[test]
+    fn coverage_diagnostics_are_optional_and_reject_untrusted_strings() {
+        let planned = plan(&request("A short sentence.")).unwrap();
+        let mut legacy = serde_json::to_value(&planned[0]).unwrap();
+        legacy.as_object_mut().unwrap().remove("diagnostics");
+        assert!(serde_json::from_value::<super::Coverage>(legacy)
+            .unwrap()
+            .diagnostics
+            .is_none());
+        let mut value = super::CoverageDiagnostics {
+            http_status: Some(401),
+            provider_code: None,
+            provider_request_id: Some("req_safe".into()),
+        };
+        assert!(value.valid());
+        value.provider_code = Some("secret-provider-body".into());
+        assert!(!value.valid());
+        value.provider_code = None;
+        value.provider_request_id = Some("Bearer secret".into());
+        assert!(!value.valid());
+    }
+
     #[tokio::test]
     async fn serial_batch_stops_at_eight_and_retains_good_siblings_after_schema_failure() {
         let r = request(&"paragraph\n\n".repeat(12000));

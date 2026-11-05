@@ -240,6 +240,17 @@ Hover over the Manuscript tab while dragging a repository file to reveal its
 existing import targets; imports still require their usual preview and confirmation.
 The pill fades while you type and returns when the pointer moves.
 
+While you type in a project source document, its document tabs, Markdown editor
+tools, and saved split actions slide into a compact **Tabs and tools** row. Click
+that button or press **Escape** to restore them without leaving the writer. Tab
+restores the controls before keyboard navigation. Editor search, completion and
+IME cancellation keep their existing Escape behavior. Typing in Questions or
+settings does not hide the tools; Reading and document changes restore them.
+The manuscript keeps its width and line wrapping. Scrolled writing stays anchored
+when it fits within the resized pane; the caret stays visible. Save/error notices
+and project navigation remain available. Reduced
+motion uses an immediate transition.
+
 - **Cmd/Ctrl+K** jumps to a scene, **Cmd/Ctrl+P** browses files and
   **Cmd/Ctrl+Shift+P** lists every command. Type `/` or `>` to switch scope, Tab
   cycles scopes, and Alt+↑/↓ reorders the highlighted ms/ scene through the usual

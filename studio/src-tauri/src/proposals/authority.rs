@@ -165,11 +165,21 @@ pub struct ProposalPreview {
 fn current_proposal(repo: &Repository, mut proposal: PendingProposal) -> Result<PendingProposal> {
     proposal.validate().map_err(|e| e.to_string())?;
     let current = repo.read(&proposal.path).map_err(|e| e.to_string())?;
-    if current.generated_compatibility { return Err("Generated compatibility scenes cannot be changed".into()); }
+    if current.generated_compatibility {
+        return Err("Generated compatibility scenes cannot be changed".into());
+    }
     if current.text != proposal.base_text && proposal.origin.kind == "localMcp" {
-        let replacement = reconcile::reconcile(&proposal.base_text, &proposal.replacement_text, &current.text)
-            .map_err(|message| format!("{message}. Review a new proposal against the current source"))?;
-        if replacement == current.text { return Err("These changes are already present in the current scene".into()); }
+        let replacement = reconcile::reconcile(
+            &proposal.base_text,
+            &proposal.replacement_text,
+            &current.text,
+        )
+        .map_err(|message| {
+            format!("{message}. Review a new proposal against the current source")
+        })?;
+        if replacement == current.text {
+            return Err("These changes are already present in the current scene".into());
+        }
         proposal.base_hash = current.content_hash;
         proposal.replacement_hash = proposal_store::text_hash(&replacement);
         proposal.diff_hash = diff_hash(&proposal.path, &current.text, &replacement);
@@ -235,14 +245,21 @@ impl Authority {
                 .into_iter()
                 .filter(|p| !consumed.contains(&p.id))
                 .map(|summary| {
-                    let proposal = proposals.get(repo, &summary.id).map_err(|e| e.to_string())?;
+                    let proposal = proposals
+                        .get(repo, &summary.id)
+                        .map_err(|e| e.to_string())?;
                     let original_base = proposal.base_hash.clone();
                     let (preview, unavailable) = match current_proposal(repo, proposal.clone()) {
                         Ok(preview) => (preview, None),
                         Err(message) => (proposal, Some(message)),
                     };
-                    Ok(ProposalPreview { summary: preview.summary(), refreshed: preview.base_hash != original_base,
-                        base_text: preview.base_text, replacement_text: preview.replacement_text, unavailable })
+                    Ok(ProposalPreview {
+                        summary: preview.summary(),
+                        refreshed: preview.base_hash != original_base,
+                        base_text: preview.base_text,
+                        replacement_text: preview.replacement_text,
+                        unavailable,
+                    })
                 })
                 .collect::<Result<Vec<_>>>()?,
             receipts: records,
