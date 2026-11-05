@@ -142,7 +142,7 @@ test('Cmd+N keeps writing and opens a focused blank Markdown draft with discover
   expect(await page.evaluate(()=>(window as any).draftFixture.externalCalls)).toEqual([]);
   await page.getByRole('button',{name:'More actions'}).click();const newDraft=page.locator('button[aria-keyshortcuts="Meta+N Control+N"]');await expect(newDraft).toHaveAccessibleName('New draft');await page.keyboard.press('Escape');await writing(page).focus();
   await page.keyboard.insertText('Second draft');await page.keyboard.press('Control+n');await expect(writing(page)).toHaveText('');await expect(writing(page)).toBeFocused();
-  await page.keyboard.press('Meta+/');const help=page.getByRole('dialog',{name:'Keyboard shortcuts'});await expect(help).toContainText('New scene in project / new standalone draft');
+  await page.keyboard.press('Meta+/');const help=page.getByRole('dialog',{name:'Keyboard shortcuts'});await expect(help).toContainText('New standalone draft');
   const layout=await help.evaluate(e=>({client:e.clientWidth,scroll:e.scrollWidth,overflow:[...e.querySelectorAll('*')].filter(n=>n.getBoundingClientRect().right>e.getBoundingClientRect().right+1).map(n=>({tag:n.tagName,text:n.textContent?.slice(0,40),width:n.getBoundingClientRect().width}))}));
   expect(layout.scroll,JSON.stringify(layout)).toBeLessThanOrEqual(layout.client+1);
   expect((await new AxeBuilder({page}).include('.help-sheet').analyze()).violations).toEqual([]);
@@ -159,5 +159,25 @@ test('immediate Escape then Cmd+N retains kept writing and new editor focus',asy
   await page.keyboard.press('Escape');await page.keyboard.press('Meta+n');
   await expect(writing(page)).toHaveText('');await expect(writing(page)).toBeFocused();
   expect(await page.evaluate(()=>[...(window as any).draftFixture.records.values()].map((d:any)=>d.text))).toEqual(['Already kept — café 🦊']);
+  expect(await page.evaluate(()=>(window as any).draftFixture.externalCalls)).toEqual([]);
+});
+
+test('wide standalone chats use the existing gutter without changing source or reading layout',async({page})=>{
+  await page.setViewportSize({width:3200,height:1000});
+  await page.goto('/tests/browser/standalone.html');await expect(writing(page)).toBeFocused();
+  await page.keyboard.insertText('A standalone draft — with agents beside it.\n\nThe writing width stays unchanged.');
+  await activate(page.getByRole('button',{name:'Keep on this Mac',exact:true}));
+  const sourceBox=await writing(page).boundingBox(),source=await writing(page).textContent();
+  await activate(page.getByRole('button',{name:'Heinlein',exact:true}));
+  await expect(page.locator('.conversation-rail-dock')).toBeVisible();
+  await expect(page.locator('.conversation-rail-dialog')).not.toBeVisible();
+  expect(await writing(page).boundingBox()).toEqual(sourceBox);expect(await writing(page).textContent()).toBe(source);
+  await activate(page.getByRole('button',{name:'Close chats',exact:true}));
+  await activate(page.getByRole('button',{name:'Reading',exact:true}));
+  const reader=page.getByRole('region',{name:'Draft reading view'}),readingBox=await reader.boundingBox();
+  await activate(page.getByRole('button',{name:'Heinlein',exact:true}));
+  await expect(page.locator('.conversation-rail-dock')).toBeVisible();
+  await expect(page.locator('.conversation-rail-dialog')).not.toBeVisible();
+  expect(await reader.boundingBox()).toEqual(readingBox);
   expect(await page.evaluate(()=>(window as any).draftFixture.externalCalls)).toEqual([]);
 });

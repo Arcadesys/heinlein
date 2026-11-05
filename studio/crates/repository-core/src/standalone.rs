@@ -473,6 +473,16 @@ impl DraftStore {
     }
     #[cfg(unix)]
     fn atomic<T: Serialize>(&self, name: &str, value: &T, new: bool) -> Result<()> {
+        self.atomic_checked(name, value, new, || Ok(()))
+    }
+    #[cfg(unix)]
+    fn atomic_checked<T: Serialize>(
+        &self,
+        name: &str,
+        value: &T,
+        new: bool,
+        guard: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
         self.check()?;
         let bytes = serde_json::to_vec(value).map_err(|_| error())?;
         if bytes.len() as u64 > MAX_RECORD_BYTES {
@@ -495,6 +505,7 @@ impl DraftStore {
             self.check()?;
             #[cfg(test)]
             fault(name, "publish")?;
+            guard()?;
             if new {
                 linkat(
                     &self.directory,
@@ -805,3 +816,134 @@ impl DraftStore {
 #[cfg(all(test, unix))]
 #[path = "standalone_tests.rs"]
 mod tests;
+
+/// Native-only single-document adapter. The directory is identity metadata, never
+/// a project or a second manuscript copy. Weak ownership makes release revocable.
+pub(crate) struct ReviewDocument {
+    store: std::sync::Arc<DraftStore>,
+    lease: std::sync::Weak<DraftLease>,
+}
+impl crate::Repository {
+    pub fn standalone_review(
+        identity: &Path,
+        store: std::sync::Arc<DraftStore>,
+        lease: &std::sync::Arc<DraftLease>,
+    ) -> crate::Result<Self> {
+        let directory = crate::recovery::open_directory(identity, true)?;
+        crate::recovery::private_metadata(&directory, true)?;
+        let mut repo = Self::open(identity)?;
+        repo.standalone_review = Some(ReviewDocument {
+            store,
+            lease: std::sync::Arc::downgrade(lease),
+        });
+        repo.read("draft.md")?;
+        Ok(repo)
+    }
+}
+impl ReviewDocument {
+    fn current(&self) -> crate::Result<(std::sync::Arc<DraftLease>, Draft)> {
+        let lease = self.lease.upgrade().ok_or(crate::Error::RecoveryBusy)?;
+        self.store
+            .check_lease(&lease)
+            .map_err(|_| crate::Error::RecoveryBusy)?;
+        let loaded = self
+            .store
+            .read(lease.id())
+            .map_err(|_| crate::Error::InvalidRecovery)?;
+        if loaded.recovery_required || loaded.draft.state != "active" {
+            return Err(crate::Error::PendingRecovery);
+        }
+        Ok((lease, loaded.draft))
+    }
+    fn document(draft: Draft) -> crate::Document {
+        crate::Document {
+            path: "draft.md".into(),
+            size_bytes: draft.text.len() as u64,
+            content_hash: draft.text_hash,
+            frontmatter: crate::frontmatter(&draft.text),
+            text: draft.text,
+            generated_compatibility: false,
+        }
+    }
+    pub(crate) fn read(&self, path: &str) -> crate::Result<crate::Document> {
+        if path != "draft.md" {
+            return Err(crate::Error::Denied);
+        }
+        Ok(Self::document(self.current()?.1))
+    }
+    pub(crate) fn save(
+        &self,
+        path: &str,
+        hash: &str,
+        text: &str,
+        guard: impl FnOnce() -> crate::Result<()>,
+    ) -> crate::Result<crate::Document> {
+        if path != "draft.md" {
+            return Err(crate::Error::Denied);
+        }
+        let (lease, before) = self.current()?;
+        if before.text_hash != hash {
+            return Err(crate::Error::Conflict);
+        }
+        if text.len() as u64 > crate::MAX_FILE_BYTES {
+            return Err(crate::Error::TooLarge);
+        }
+        if text
+            .bytes()
+            .any(|b| b == 0 || (b < 32 && !matches!(b, 9 | 10 | 13)))
+        {
+            return Err(crate::Error::UnsupportedText);
+        }
+        let mut next = before.clone();
+        next.text = text.into();
+        next.text_hash = crate::content_hash(text);
+        next.revision = before
+            .revision
+            .checked_add(1)
+            .ok_or(crate::Error::Conflict)?;
+        next.updated_at = now();
+        next.validate().map_err(|_| crate::Error::UnsupportedText)?;
+        self.store
+            .atomic(&format!("{}.last.json", lease.id()), &before, false)
+            .map_err(|_| crate::Error::RecoveryIo)?;
+        let mut guard_error = None;
+        self.store
+            .atomic_checked(&format!("{}.json", lease.id()), &next, false, || {
+                if let Err(e) = guard() {
+                    guard_error = Some(e);
+                    return Err("Editor changed".into());
+                }
+                let (_, current) = self.current().map_err(|_| "Draft writer changed")?;
+                self.store.match_revision(&current, before.revision, hash)
+            })
+            .map_err(|_| guard_error.unwrap_or(crate::Error::SaveUncertain))?;
+        Ok(Self::document(next))
+    }
+    pub(crate) fn mapping(&self) -> crate::Result<crate::DraftingState> {
+        let (_, draft) = self.current()?;
+        Ok(crate::DraftingState {
+            manifest_path: String::new(),
+            revision: Some(draft.text_hash),
+            project: "Standalone draft".into(),
+            groups: vec![],
+            scenes: vec![crate::DraftingScene {
+                id: draft.id.clone(),
+                title: "Standalone draft".into(),
+                path: "draft.md".into(),
+                group_id: None,
+                reference: false,
+            }],
+            reference_sheets: vec![],
+            library: vec![crate::drafting::LibraryEntry {
+                id: draft.id,
+                kind: crate::drafting::LibraryEntryKind::Scene,
+                parent_id: None,
+            }],
+            library_legacy: false,
+            untracked_paths: vec![],
+            missing_paths: vec![],
+            recovery_required: false,
+            group_move_issue: None,
+        })
+    }
+}

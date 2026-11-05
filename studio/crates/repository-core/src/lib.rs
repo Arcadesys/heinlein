@@ -253,6 +253,7 @@ fn declares_assembled_path(raw: &GuardManifest, base: &str, path: &str) -> bool 
 pub struct Repository {
     root: PathBuf,
     save_gate: Mutex<()>,
+    standalone_review: Option<standalone::ReviewDocument>,
     #[cfg(unix)]
     fd: OwnedFd,
 }
@@ -406,6 +407,7 @@ impl Repository {
             root,
             fd,
             save_gate: Mutex::new(()),
+            standalone_review: None,
         })
     }
     #[cfg(not(unix))]
@@ -457,6 +459,13 @@ impl Repository {
         String::from_utf8(bytes).map_err(|_| Error::UnsupportedText)
     }
     fn allowed(&self, path: &str, is_dir: bool) -> Result<()> {
+        if self.standalone_review.is_some() {
+            return if path == "draft.md" && !is_dir {
+                Ok(())
+            } else {
+                Err(Error::Denied)
+            };
+        }
         let components = parts(path)?;
         if components.iter().any(|s| blocked(s)) {
             return Err(Error::Denied);
@@ -542,6 +551,9 @@ impl Repository {
         Err(Error::UnsupportedPlatform)
     }
     pub fn read(&self, path: &str) -> Result<Document> {
+        if let Some(draft) = &self.standalone_review {
+            return draft.read(path);
+        }
         self.allowed(path, false)?;
         if !text_extension(path) {
             return Err(Error::UnsupportedText);
@@ -622,6 +634,9 @@ impl Repository {
         text: &str,
         before_commit: impl FnOnce() -> Result<()>,
     ) -> Result<Document> {
+        if let Some(draft) = &self.standalone_review {
+            return draft.save(path, expected_hash, text, before_commit);
+        }
         self.require_clean_structure()?;
         self.allowed(path, false)?;
         if !matches!(

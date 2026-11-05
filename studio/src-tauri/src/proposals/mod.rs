@@ -2,7 +2,8 @@
 pub(crate) mod authority;
 #[cfg(target_os = "macos")]
 pub(crate) mod parent;
-use super::{check_window, recovery_store, with_repository, BrowserState};
+use super::standalone::with_review_repository as with_repository;
+use super::{check_window, recovery_store, BrowserState};
 use authority::{Authority, Binding, Listing, Outcome, ReceiptStore, Review};
 #[cfg(target_os = "macos")]
 use parent::ValidatedConfirmationParent;
@@ -11,17 +12,19 @@ use std::sync::atomic::Ordering;
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
-fn uses_native_confirmation(kind: &str) -> bool {
-    kind != "apply"
+fn uses_native_confirmation(kind: &str, standalone: bool) -> bool {
+    standalone || kind != "apply"
 }
 
 #[cfg(test)]
 mod acceptance_policy_tests {
     #[test]
     fn accept_is_one_action_while_revert_and_unknown_operations_still_confirm() {
-        assert!(!super::uses_native_confirmation("apply"));
-        assert!(super::uses_native_confirmation("revert"));
-        assert!(super::uses_native_confirmation("unknown"));
+        assert!(!super::uses_native_confirmation("apply", false));
+        assert!(super::uses_native_confirmation("apply", true));
+        assert!(super::uses_native_confirmation("revert", true));
+        assert!(super::uses_native_confirmation("revert", false));
+        assert!(super::uses_native_confirmation("unknown", false));
     }
 }
 
@@ -214,9 +217,10 @@ pub(crate) async fn apply_proposal_review(
         }
         // Accept in the bundled Studio window is the author's approval of the
         // displayed, exact-bound edit. Do not ask for that same decision again.
-        // Reverts retain their separate confirmation. MCP exposes no apply route.
-        let confirmed = !uses_native_confirmation(&review.kind)
-            || confirm_retained_review(&app, &window, &review)?;
+        // Standalone drafts and reverts retain native confirmation. MCP exposes no apply route.
+        let confirmed =
+            !uses_native_confirmation(&review.kind, repository_id.starts_with("standalone-"))
+                || confirm_retained_review(&app, &window, &review)?;
         if !confirmed {
             state
                 .proposals

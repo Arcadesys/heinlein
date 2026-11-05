@@ -258,6 +258,10 @@ fn select_repository_with_origin(
     guard_auth_repository_separation(repo.root(), private_storage)?;
     if let Some(parent) = private_storage.parent() {
         guard_auth_repository_separation(repo.root(), &parent.join("standalone-drafts-v1"))?;
+        guard_auth_repository_separation(
+            repo.root(),
+            &parent.join("standalone-review-identities-v1"),
+        )?;
         guard_auth_repository_separation(repo.root(), &parent.join("projects-v1"))?;
     }
     let (manifests, warning) = match repo.discover() {

@@ -16,9 +16,10 @@ use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 #[derive(Default)]
 pub(crate) struct Host {
-    store: Option<DraftStore>,
-    leases: HashMap<String, DraftLease>,
+    store: Option<Arc<DraftStore>>,
+    leases: HashMap<String, Arc<DraftLease>>,
     plans: HashMap<String, Plan>,
+    reviews: HashMap<String, (String, Arc<Repository>)>,
 }
 struct Plan {
     handle: String,
@@ -36,6 +37,14 @@ enum Target {
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) enum Request {
     List,
+    ReviewSession {
+        handle: String,
+        revision: u64,
+        hash: String,
+    },
+    Refresh {
+        handle: String,
+    },
     Create {
         text: String,
     },
@@ -173,7 +182,7 @@ fn confirm_placement(
     Ok(confirmed)
 }
 fn lease<'a>(host: &'a Host, handle: &str) -> Result<&'a DraftLease, String> {
-    host.leases.get(handle).ok_or(
+    host.leases.get(handle).map(AsRef::as_ref).ok_or(
         "Draft writer expired. Reopen it from Drafts; your visible text is unchanged.".into(),
     )
 }
@@ -210,7 +219,7 @@ fn opened(host: &mut Host, id: &str) -> Result<Value, String> {
     let (handle, reason) = match store.acquire(id) {
         Ok(lease) => {
             let key = super::id();
-            host.leases.insert(key.clone(), lease);
+            host.leases.insert(key.clone(), Arc::new(lease));
             (Some(key), None)
         }
         Err(e) => (None, Some(e)),
@@ -352,14 +361,58 @@ fn execute(
         .lock()
         .map_err(|_| "Local draft storage unavailable")?;
     if host.store.is_none() {
-        host.store = Some(DraftStore::open(store_path(app)?)?);
+        host.store = Some(Arc::new(DraftStore::open(store_path(app)?)?));
     }
     match request {
         Request::List => value(host.store.as_ref().unwrap().list()?),
+        Request::Refresh { handle } => {
+            let id = lease(&host, &handle)?.id();
+            Ok(
+                json!({"handle":handle,"loaded":host.store.as_ref().unwrap().read(id)?,"pending":host.store.as_ref().unwrap().pending(id)?}),
+            )
+        }
+        Request::ReviewSession {
+            handle,
+            revision,
+            hash,
+        } => {
+            validate_capture(
+                &host,
+                &handle,
+                revision,
+                &hash,
+                state
+                    .unsaved_changes
+                    .load(std::sync::atomic::Ordering::SeqCst),
+            )?;
+            let writer = host.leases.get(&handle).ok_or("Draft writer expired")?;
+            let scene_id = writer.id().to_owned();
+            let repository_id = format!("standalone-{handle}");
+            if !host.reviews.contains_key(&repository_id) {
+                let identity = app
+                    .path()
+                    .app_data_dir()
+                    .map_err(|_| "Private storage unavailable")?
+                    .join("standalone-review-identities-v1")
+                    .join(&scene_id);
+                let repo = Repository::standalone_review(
+                    &identity,
+                    Arc::clone(host.store.as_ref().unwrap()),
+                    writer,
+                )
+                .map_err(|e| e.to_string())?;
+                host.reviews
+                    .insert(repository_id.clone(), (handle.clone(), Arc::new(repo)));
+            }
+            let repo = &host.reviews.get(&repository_id).unwrap().1;
+            Ok(
+                json!({"repositoryId":repository_id,"projectKey":repo.project_key(),"path":"draft.md","sceneId":scene_id}),
+            )
+        }
         Request::Create { text } => {
             let (lease, draft) = host.store.as_ref().unwrap().create(&text)?;
             let handle = id();
-            host.leases.insert(handle.clone(), lease);
+            host.leases.insert(handle.clone(), Arc::new(lease));
             Ok(
                 json!({"handle":handle,"loaded":{"draft":draft,"warning":null,"recoveryRequired":false},"pending":[]}),
             )
@@ -367,6 +420,7 @@ fn execute(
         Request::Open { id } => opened(&mut host, &id),
         Request::Release { handle } => {
             host.plans.retain(|_, p| p.handle != handle);
+            host.reviews.retain(|_, (h, _)| h != &handle);
             host.leases.remove(&handle);
             Ok(Value::Null)
         }
@@ -735,6 +789,37 @@ fn execute(
         }
     }
 }
+/// Only editorial routes call this resolver; project, filesystem and sharing
+/// commands continue to require the actual native-selected project identity.
+pub(crate) fn with_review_repository<T>(
+    app: &tauri::AppHandle,
+    identity: &str,
+    operation: impl FnOnce(&Repository) -> Result<T, String>,
+) -> Result<T, String> {
+    if !identity.starts_with("standalone-") {
+        return super::with_repository(app, identity, operation);
+    }
+    let state = app.state::<BrowserState>();
+    let repo = {
+        let host = state.standalone.lock().map_err(|_| "Draft unavailable")?;
+        let (handle, repo) = host
+            .reviews
+            .get(identity)
+            .ok_or("Draft review session expired")?;
+        lease(&host, handle)?;
+        Arc::clone(repo)
+    };
+    repo.read("draft.md").map_err(|e| e.to_string())?;
+    operation(&repo)
+}
+pub(crate) fn review_session_active(state: &BrowserState, identity: &str) -> bool {
+    state.standalone.lock().is_ok_and(|host| {
+        host.reviews.get(identity).is_some_and(|(handle, repo)| {
+            host.leases.contains_key(handle) && repo.read("draft.md").is_ok()
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -749,11 +834,44 @@ mod tests {
         let (lease, d) = store.create("Synthetic — text\r\n").unwrap();
         let handle = id();
         let mut host = Host {
-            store: Some(store),
+            store: Some(Arc::new(store)),
             ..Host::default()
         };
-        host.leases.insert(handle.clone(), lease);
+        host.leases.insert(handle.clone(), Arc::new(lease));
         (t, host, handle, d)
+    }
+    #[test]
+    fn review_session_identity_requires_live_native_writer_not_project_selection() {
+        let (t, mut host, handle, draft) = fixture();
+        let repo = Repository::standalone_review(
+            &t.path().join("review-identities").join(&draft.id),
+            Arc::clone(host.store.as_ref().unwrap()),
+            host.leases.get(&handle).unwrap(),
+        )
+        .unwrap();
+        let identity = format!("standalone-{handle}");
+        host.reviews
+            .insert(identity.clone(), (handle.clone(), Arc::new(repo)));
+        let state = BrowserState::default();
+        *state.standalone.lock().unwrap() = host;
+        assert!(review_session_active(&state, &identity));
+        assert!(!review_session_active(&state, &draft.id));
+        assert!(!review_session_active(&state, "other-project"));
+        assert!(state.selected.lock().unwrap().is_none());
+        state.standalone.lock().unwrap().leases.remove(&handle);
+        assert!(!review_session_active(&state, &identity));
+        assert!(state.selected.lock().unwrap().is_none());
+    }
+    #[test]
+    fn standalone_review_requests_cannot_supply_repository_roots() {
+        assert!(serde_json::from_value::<Request>(
+            json!({"kind":"reviewSession","handle":"opaque","revision":1,"hash":"hash"})
+        )
+        .is_ok());
+        assert!(serde_json::from_value::<Request>(json!({"kind":"reviewSession","handle":"opaque","revision":1,"hash":"hash","root":"/tmp/project"})).is_err());
+        assert!(
+            serde_json::from_value::<Request>(json!({"kind":"refresh","handle":"opaque"})).is_ok()
+        );
     }
     #[test]
     fn only_live_opaque_writer_and_exact_kept_revision_can_prepare_or_place() {

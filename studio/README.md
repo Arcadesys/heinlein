@@ -266,6 +266,17 @@ No Git commit, pull, checkout or push is performed.
 
 ## Layout and keyboard
 
+**Cmd/Ctrl+N** always starts a standalone draft, even while a project is open.
+The current writing must pass its existing save/recovery checks before switching.
+Use the Library’s **New scene** action to add writing to a project instead.
+
+Standalone drafts have **Heinlein**, **Review draft**, and **Revisions**. Opening
+these keeps the draft locally and prepares its own review identity, without
+creating a project or sending text. Choose **Ask**, **Suggest edits**, or
+**Run review** to send the displayed text through your connected account.
+Accepted revisions update only that draft, with source and writer-lease checks;
+its independent copies are unchanged. Saved review history stays with the draft.
+
 The page fills the window. Everything else floats: a status pill at the top
 (project, scene, word count, save state, daily goal, proposals), the file browser,
 manuscript outline, and scene passages in one tabbed navigation drawer on the left (Cmd/Ctrl+\
