@@ -56,10 +56,10 @@ export interface DraftingSelection { id: string; files: {name: string; sizeBytes
 export type ProposalOrigin =
   | { kind: 'localMcp'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedLocalProcess' }
   | { kind: 'nativeOpenAi'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedProviderMetadata'; provider: 'openai'; model: string; requestId: string; review?:{reviewId:string;findingId:string;fingerprint:string;competing:string[]} };
-export interface ProposalSummary { id: string; path: string; baseHash: string; replacementHash: string; diffHash: string; origin: ProposalOrigin; createdAtMs: number }
+export interface ProposalSummary { id: string; path: string; baseHash: string; replacementHash: string; diffHash: string; origin: ProposalOrigin; createdAtMs: number; baseText?: string; replacementText?: string; refreshed?: boolean; unavailable?: string | null }
 export interface ProposalReview { id: string; kind: 'apply' | 'revert'; proposalId: string; path: string; baseHash: string; replacementHash: string; diffHash: string; baseText: string; replacementText: string; origin: ProposalOrigin; expiresAtMs: number; parentReceiptId: string | null }
 export interface ProposalBinding { reviewId: string; proposalId: string; baseHash: string; replacementHash: string; diffHash: string }
-export interface ProposalReceipt { id: string; kind: 'apply' | 'revert' | 'reject'; proposalId: string; path: string; baseHash: string; replacementHash: string; diffHash: string; origin: ProposalOrigin; parentReceiptId: string | null; status: 'completed' | 'failed' | 'uncertain' | 'rejected'; message: string | null; createdAtMs: number; revertAvailable: boolean }
+export interface ProposalReceipt { id: string; kind: 'apply' | 'revert' | 'reject'; proposalId: string; path: string; baseHash: string; replacementHash: string; diffHash: string; origin: ProposalOrigin; parentReceiptId: string | null; status: 'completed' | 'failed' | 'uncertain' | 'rejected'; message: string | null; createdAtMs: number; revertAvailable: boolean; authorAction?: string; baseText?: string; replacementText?: string }
 export interface ProposalListing { pending: ProposalSummary[]; receipts: ProposalReceipt[] }
 export interface ProposalOutcome { receipt: ProposalReceipt; warning: string | null }
 export interface QuestionAccount { id: string; label: string; signedIn: boolean; planEnabled: boolean }

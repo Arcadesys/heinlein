@@ -1,5 +1,5 @@
 //! Trusted, in-process Studio authority. Proposal JSON and stored receipts are data,
-//! never capabilities. Only a live review plan plus native author confirmation can
+//! never capabilities. Only a live review plan plus explicit Studio author acceptance can
 //! save a scene. This is deliberately not the ADR's future revision ledger/transport.
 use proposal_store::{diff_hash, PendingProposal, ProposalOrigin, ProposalStore, ProposalSummary};
 use repository_core::{RecoveryStore, Repository};
@@ -10,6 +10,8 @@ use std::{
 };
 #[path = "receipts.rs"]
 mod receipts;
+#[path = "reconcile.rs"]
+mod reconcile;
 pub use receipts::ReceiptStore;
 
 type Result<T> = std::result::Result<T, String>;
@@ -136,12 +138,46 @@ pub struct Receipt {
     pub message: Option<String>,
     pub created_at_ms: u64,
     pub revert_available: bool,
+    pub base_text: String,
+    pub replacement_text: String,
+    pub author_action: String,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Listing {
-    pub pending: Vec<ProposalSummary>,
+    pub pending: Vec<ProposalPreview>,
     pub receipts: Vec<Receipt>,
+}
+/// Display-only snapshots. Listing these never creates a review/apply capability.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposalPreview {
+    #[serde(flatten)]
+    pub summary: ProposalSummary,
+    pub base_text: String,
+    pub replacement_text: String,
+    pub refreshed: bool,
+    pub unavailable: Option<String>,
+}
+
+/// Refresh only an untrusted local proposal, before issuing an exact review.
+/// Native review findings retain their separate verified-offset/decision lineage.
+fn current_proposal(repo: &Repository, mut proposal: PendingProposal) -> Result<PendingProposal> {
+    proposal.validate().map_err(|e| e.to_string())?;
+    let current = repo.read(&proposal.path).map_err(|e| e.to_string())?;
+    if current.generated_compatibility { return Err("Generated compatibility scenes cannot be changed".into()); }
+    if current.text != proposal.base_text && proposal.origin.kind == "localMcp" {
+        let replacement = reconcile::reconcile(&proposal.base_text, &proposal.replacement_text, &current.text)
+            .map_err(|message| format!("{message}. Review a new proposal against the current source"))?;
+        if replacement == current.text { return Err("These changes are already present in the current scene".into()); }
+        proposal.base_hash = current.content_hash;
+        proposal.replacement_hash = proposal_store::text_hash(&replacement);
+        proposal.diff_hash = diff_hash(&proposal.path, &current.text, &replacement);
+        proposal.base_text = current.text;
+        proposal.replacement_text = replacement;
+        proposal.validate().map_err(|e| e.to_string())?;
+    }
+    Ok(proposal)
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -198,7 +234,17 @@ impl Authority {
                 .map_err(|e| e.to_string())?
                 .into_iter()
                 .filter(|p| !consumed.contains(&p.id))
-                .collect(),
+                .map(|summary| {
+                    let proposal = proposals.get(repo, &summary.id).map_err(|e| e.to_string())?;
+                    let original_base = proposal.base_hash.clone();
+                    let (preview, unavailable) = match current_proposal(repo, proposal.clone()) {
+                        Ok(preview) => (preview, None),
+                        Err(message) => (proposal, Some(message)),
+                    };
+                    Ok(ProposalPreview { summary: preview.summary(), refreshed: preview.base_hash != original_base,
+                        base_text: preview.base_text, replacement_text: preview.replacement_text, unavailable })
+                })
+                .collect::<Result<Vec<_>>>()?,
             receipts: records,
         })
     }
@@ -248,6 +294,7 @@ impl Authority {
             .map_err(|e| e.to_string())?;
         proposal.validate().map_err(|e| e.to_string())?;
         receipts.with_lock(repo, || receipts.require_unattempted(repo, &proposal.id))?;
+        let proposal = current_proposal(repo, proposal)?;
         let review = Review {
             id: id(),
             kind: "apply".into(),

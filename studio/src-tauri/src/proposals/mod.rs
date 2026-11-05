@@ -11,6 +11,20 @@ use std::sync::atomic::Ordering;
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+fn uses_native_confirmation(kind: &str) -> bool {
+    kind != "apply"
+}
+
+#[cfg(test)]
+mod acceptance_policy_tests {
+    #[test]
+    fn accept_is_one_action_while_revert_and_unknown_operations_still_confirm() {
+        assert!(!super::uses_native_confirmation("apply"));
+        assert!(super::uses_native_confirmation("revert"));
+        assert!(super::uses_native_confirmation("unknown"));
+    }
+}
+
 /// The same retained-plan dialog is used in production and actual-dialog fixtures.
 /// Only macOS attaches a parent; other platforms retain their existing semantics.
 fn confirm_retained_review(
@@ -198,10 +212,10 @@ pub(crate) async fn apply_proposal_review(
         if review.kind == "apply" {
             super::questions::guard_review_proposal(&app, &repository_id, &review.origin)?;
         }
-        // A renderer request alone is not author approval. Dialog content comes
-        // only from the retained plan. No authority lock is held while it is open:
-        // real dirty notifications can invalidate the plan during confirmation.
-        let confirmed = confirm_retained_review(&app, &window, &review)?;
+        // Accept in the bundled Studio window is the author's approval of the
+        // displayed, exact-bound edit. Do not ask for that same decision again.
+        // Reverts retain their separate confirmation. MCP exposes no apply route.
+        let confirmed = !uses_native_confirmation(&review.kind) || confirm_retained_review(&app, &window, &review)?;
         if !confirmed {
             state
                 .proposals

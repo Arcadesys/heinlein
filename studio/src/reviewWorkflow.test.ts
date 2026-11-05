@@ -115,7 +115,9 @@ it('explains a reviewer-loading failure without blaming the ChatGPT connection a
     await vi.waitFor(() => expect(f.button('Preview review').disabled).toBe(false));
     expect(panel!.element.querySelectorAll('[data-reviewer]')).toHaveLength(2);
 });
-it('requires explicit conflict choice and approves directly through native exact-patch route', async () => { const f = fixture(); await f.start(); const group = panel!.element.querySelector<HTMLElement>('.review-conflict')!; expect(group.querySelectorAll('[data-finding-id]')).toHaveLength(2); const accept = group.querySelector<HTMLButtonElement>('[data-edit-action="accept"]')!; expect(accept.disabled).toBe(true); expect(accept.textContent).toBe('Choose an alternative first'); expect(panel!.element.querySelectorAll('input[type=radio]:checked')).toHaveLength(0); group.querySelector<HTMLInputElement>('[data-finding-id="first"] input[type=radio]')!.click(); await tick(); expect(f.core.approveReviewEdit).not.toHaveBeenCalled(); group.remove(); const chosen = panel!.element.querySelector<HTMLElement>('.review-conflict')!; expect(chosen.querySelector<HTMLInputElement>('[data-finding-id="first"] input[type=radio]')!.checked).toBe(true); const approve = chosen.querySelector<HTMLButtonElement>('[data-edit-action="accept"]')!; expect(approve.textContent).toBe('Accept “good”…'); expect(approve.disabled).toBe(false); approve.click(); await tick(); expect(f.core.approveReviewEdit).toHaveBeenCalledWith('repo', 'review-stable', 'first'); expect(f.hooks.reviewProposal).not.toHaveBeenCalled(); expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(1); expect(panel!.element.textContent).toContain('supersededByAuthorChoice'); });
+it('requires explicit conflict choice and approves directly through native exact-patch route', async () => { const f = fixture(); await f.start(); const group = panel!.element.querySelector<HTMLElement>('.review-conflict')!; expect(group.querySelectorAll('[data-finding-id]')).toHaveLength(2); const accept = group.querySelector<HTMLButtonElement>('[data-edit-action="accept"]')!; expect(accept.disabled).toBe(true); expect(accept.textContent).toBe('Choose an alternative first'); expect(panel!.element.querySelectorAll('input[type=radio]:checked')).toHaveLength(0); group.querySelector<HTMLInputElement>('[data-finding-id="first"] input[type=radio]')!.click(); await tick(); expect(f.core.approveReviewEdit).not.toHaveBeenCalled(); group.remove(); const chosen = panel!.element.querySelector<HTMLElement>('.review-conflict')!; expect(chosen.querySelector<HTMLInputElement>('[data-finding-id="first"] input[type=radio]')!.checked).toBe(true); const approve = chosen.querySelector<HTMLButtonElement>('[data-edit-action="accept"]')!; expect(approve.textContent).toBe('Accept “good”…'); expect(approve.disabled).toBe(false); approve.click(); await tick(); expect(f.core.approveReviewEdit).toHaveBeenCalledWith('repo', 'review-stable', 'first'); expect(f.hooks.reviewProposal).not.toHaveBeenCalled(); expect(panel!.element.textContent).toContain('supersededByAuthorChoice');
+ // After a confirmed Accept the next waiting suggestion's accept flow loads on its own; it is not applied without its own confirmation.
+ await vi.waitFor(() => expect(f.core.approveReviewEdit).toHaveBeenLastCalledWith('repo', 'review-stable', 'unrelated')); });
 it('waits for durable rejection before hiding, keeps errors visible, then reopens dismissed state without rerun', async () => {
     const f = fixture();
     await f.start();
@@ -183,6 +185,15 @@ it('uses the selected passage by default and a full sheet for an explicit target
  await f.click('Preview review'); expect(f.core.previewReview.mock.calls[1][0].workflow!.ranges).toEqual([]);
  const selection=panel!.element.querySelector<HTMLInputElement>('.review-scope input[type=radio]:not(:checked)')!; selection.click();
  await f.click('Preview review'); expect(f.core.previewReview.mock.calls[2][0].workflow!.ranges).toEqual([{path:'scene.md',fromUtf8:5,toUtf8:8}]);
+});
+it('summarizes where reviewers landed and shows the stage without deciding anything', async () => {
+ const f=fixture(); await f.start();
+ const summary=panel!.element.querySelector('.review-consensus')!;
+ expect(summary.textContent).toContain('2 suggestions');
+ expect(summary.textContent).toContain('1 span with alternatives to choose');
+ expect(summary.textContent).toContain('Nothing changes until you choose Accept.');
+ expect(panel!.element.querySelector('.stage-strip [aria-current="step"]')!.textContent).toContain('Decide · 2 waiting');
+ expect(f.core.approveReviewEdit).not.toHaveBeenCalled(); expect(f.core.rejectReviewEdit).not.toHaveBeenCalled();
 });
 it('groups competing alternatives into one card, and Keep mine records each alternative as rejected without applying', async () => {
  const f=fixture(); await f.start();

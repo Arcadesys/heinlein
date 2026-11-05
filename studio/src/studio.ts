@@ -451,7 +451,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   appearance.append(el('kbd', formatKeys('⌘,')));
   appearance.title = 'Theme, fonts, text size and spacing (Cmd/Ctrl+,)';
   appearance.setAttribute('aria-haspopup', 'dialog');
-  const proposalsEntry = button('Proposed revisions', () => { void proposals.open(); });
+  const proposalsEntry = button('Revisions', () => { void proposals.open(); }, 'revisions-entry');
+  proposalsEntry.setAttribute('aria-haspopup', 'dialog');
+  proposalsEntry.title = 'All revisions · external proposals and in-app suggestions';
   proposalsEntry.hidden = true;
 
   // Floating status pill: where you are, what you've written, and the way into everything else.
@@ -861,14 +863,14 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   layout.append(navigation.element, preview);
   chromeReady = true;
   resetPreview();
-  appCommands=actionMenu('More actions',[...corner.children,...pill.children].filter(node=>node!==pillProject&&node!==pillSave&&node!==goalButton) as HTMLElement[],root,()=>repository?.name??'Heinlein Studio',refreshHeaderLayout);
-  pill.replaceChildren(pillProject,appCommands.button,goalButton,appCommands.storage);pill.prepend(navigation.element.querySelector('.navigation-toggle')!);corner.hidden=true;
+  appCommands=actionMenu('More actions',[...corner.children,...pill.children].filter(node=>node!==pillProject&&node!==pillSave&&node!==goalButton&&node!==proposalsEntry) as HTMLElement[],root,()=>repository?.name??'Heinlein Studio',refreshHeaderLayout);
+  pill.replaceChildren(pillProject,proposalsEntry,appCommands.button,goalButton,appCommands.storage);pill.prepend(navigation.element.querySelector('.navigation-toggle')!);corner.hidden=true;
   headerMedia=window.matchMedia?.('(max-width:760px)');headerMedia?.addEventListener?.('change',refreshHeaderLayout);
   function refreshHeaderLayout(){
     if(!appCommands)return;
     if(standalone?.active)pill.insertBefore(pillSave,appCommands.button);else noticeSlot.prepend(pillSave);
     // Project switching stays a direct action at every window size.
-    if(!appCommands.isOpen())pill.insertBefore(pillProject,appCommands.button);
+    if(!appCommands.isOpen())pill.insertBefore(pillProject,proposalsEntry);
     const compact=!!headerMedia?.matches&&preview.contains(documentWorkspace)&&!standalone?.active;
     appCommands.button.textContent=compact?'More':'More actions';
     appCommands.button.setAttribute('aria-label','More actions');
@@ -896,6 +898,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const proposals = createProposalPanel(core, {
     root, repository: () => repository, run: runProposal,
     changed: proposalChanged,
+    openReview: async (reviewId, path) => {
+      if (opened?.path !== path) { await showDocument(path); if (opened?.path !== path) return; }
+      draftingQuestions?.collapse(); await reviewPanel?.openSaved(reviewId); syncHeinleinLayout();
+    },
     applied: receiptId => {status.classList.remove('quiet');status.append(' ',button('Undo change',()=>{void proposals.revert(receiptId);},'status-undo'));},
     report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
   });
@@ -1709,7 +1715,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       Boolean(editor) && {key: 'ask', label: 'Ask Heinlein about selection', sub: 'Opens Questions with the highlighted passage', right: formatKeys('⌘J'), run: () => askShortcut()},
       Boolean(editor) && {key: 'split', label: 'Split scene at cursor', sub: 'Previews before anything moves', right: formatKeys('⌘⇧B'), run: splitAtCursor},
       Boolean(repository && !standalone?.active) && {key: 'new-scene', label: 'New scene', sub: 'Opens Add scene or manuscript setup', right: formatKeys('⌘N'), run: () => { void newWriting(); }},
-      proposals.supported && Boolean(repository) && {key: 'proposals', label: 'Proposed revisions', sub: 'Review pending MCP proposals and receipts', run: () => { void proposals.open(); }},
+      proposals.supported && Boolean(repository) && {key: 'proposals', label: 'Revisions', sub: 'All external and in-app revisions with before/after diffs', run: () => { void proposals.open(); }},
       {key: 'appearance', label: 'Appearance', sub: 'Theme, accent, fonts, size, spacing', right: formatKeys('⌘,'), run: () => { void openAppearance(); }},
       {key: 'larger', label: 'Larger text', right: formatKeys('⌘='), run: () => setZoom('in')},
       {key: 'smaller', label: 'Smaller text', right: formatKeys('⌘−'), run: () => setZoom('out')},

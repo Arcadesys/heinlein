@@ -6,6 +6,8 @@ const activate = async (locator: import('@playwright/test').Locator) => { await 
 const discard = async (panel: import('@playwright/test').Locator) => { await activate(panel.getByRole('button', { name: 'More review actions', exact: true })); await activate(panel.getByRole('button', { name: 'Discard review', exact: true })); };
 const closeHeinlein = async (panel: import('@playwright/test').Locator) => { const dialog = panel.page().getByRole('dialog', {name: 'Review suggestion', exact: true}); if (await dialog.isVisible()) await dialog.getByRole('button', {name:'Close suggestion', exact:true}).click(); else await panel.getByRole('button', { name: 'Close Heinlein', exact: true }).click(); };
 const suggestion = (page: import('@playwright/test').Page) => page.getByRole('dialog', {name:'Review suggestion', exact:true});
+// After a confirmed Accept the next waiting suggestion's native confirmation opens by itself. Decline it to stay where the test was.
+const declineNext = async (page: import('@playwright/test').Page) => { const next = page.getByRole('dialog', { name: 'Simulated final confirmation' }); await expect(next).toBeVisible(); await page.keyboard.press('Escape'); await expect(next).toBeHidden(); };
 test('prepared conflict choice and two sequential approvals keep unrelated Unicode prose', async ({ page }) => {
     await page.goto('/tests/browser/revision.html');
     const panel = page.getByRole('region', { name: 'Heinlein Review', exact: true });
@@ -118,6 +120,7 @@ test('demo example 1: exact context and explicit approval produce a receipt whil
     await activate(card.getByRole('button', approve));
     await activate(dialog.getByRole('button', { name: 'Confirm and apply', exact: true }));
     await expect(panel.locator('.review-decision-note')).toContainText('Local receipt receipt-example-approve');
+    await declineNext(page);
     await expect(panel.locator('.review-edit')).toHaveCount(3);
     await expect(panel.locator('[data-finding-id="example-dismiss"]').getByRole('button', approve)).toBeFocused();
     await expect(panel.locator('.review-progress')).toHaveText('4 suggestions · 1 decided');
@@ -164,6 +167,7 @@ test('demo example 3: overlaps need an explicit choice, then record the winner a
     await activate(page.getByRole('dialog', { name: 'Simulated final confirmation' }).getByRole('button', { name: 'Confirm and apply', exact: true }));
     await expect(panel.locator('.review-conflict')).toHaveCount(0);
     await expect(panel.locator('.review-decision-note')).toContainText('1 competing alternative was dismissed');
+    await declineNext(page);
     const history = panel.locator('.review-history');
     await expect(history).toContainText('Applied after your confirmation');
     await expect(history).toContainText('Not applied · you approved a competing alternative');
@@ -251,6 +255,7 @@ test('demo marks: resolving one removes only that mark and later ranges still la
     const panel = await openDemo(page);
     await activate(panel.locator('[data-finding-id="example-approve"]').getByRole('button', approve));
     await activate(page.getByRole('dialog', { name: 'Simulated final confirmation' }).getByRole('button', { name: 'Confirm and apply', exact: true }));
+    await declineNext(page);
     await expect(mark(page, 'example-approve')).toHaveCount(0);
     await expect(mark(page, 'example-dismiss')).toHaveText('Nobody looked up.');
     await expect(mark(page, 'example-overlap-spelling')).toHaveText('grey');
@@ -294,6 +299,7 @@ test('demo marks: an approved insertion keeps the other marks on their exact wor
     await expect(page.locator('.cm-content [data-review-id]')).toHaveCount(8);
     await activate(panel.locator('[data-finding-id="marker-insert"]').getByRole('button', approve));
     await activate(page.getByRole('dialog', { name: 'Simulated final confirmation' }).getByRole('button', { name: 'Confirm and apply', exact: true }));
+    await declineNext(page);
     await expect(mark(page, 'marker-insert')).toHaveCount(0);
     await expect(mark(page, 'example-approve')).toHaveText('were');
     await expect(mark(page, 'marker-delete')).toHaveText(' again');

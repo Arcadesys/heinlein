@@ -274,10 +274,11 @@ private. Configure Codex once with the server's `--studio-selection` launch mode
 the same running server follows confirmed project changes and invalidates old
 snapshots. See the launch instructions below for the one-time setup.
 
-The **MCP proposals** button lists pending proposals for the selected repository
-and attributed local operation receipts. Save and resolve recovery first. Review
-the full before/after source, then explicitly confirm the retained change in a
-separate native dialog. MCP itself can only read explicitly selected persisted
+The **Revisions** button lists external proposals, saved in-app suggestions,
+and decision history for the selected repository. Save and resolve recovery
+first. Inspect the displayed diff, then choose **Accept** once to apply it.
+**Details** opens optional scene context. Changed comparisons must be refreshed
+and accepted again; guarded revert retains its separate native confirmation. MCP itself can only read explicitly selected persisted
 scenes and propose changes; it cannot write or approve a draft. No client is
 installed or configured automatically.
 
@@ -396,7 +397,7 @@ Context starts empty. Capture a selection or the current scene only when you wan
 to include it, inspect the exact context/history preview, then choose **Send to
 OpenAI**. You can keep writing and saving while the answer is pending. Ask returns
 advice. Choose **Suggest revision** explicitly for a proposed edit to a clean saved
-selection. Review the exact pending proposal, then accept through native confirmation
+selection. Review the exact pending proposal, then choose Accept
 or reject it. Changed source or dirty/recovery conflicts block application. Accepted
 changes keep attributed receipts and the existing guarded, same-session revert.
 

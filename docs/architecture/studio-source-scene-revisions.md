@@ -1,5 +1,72 @@
 # Source scenes, assembled chapters, and proposed revisions
 
+## Unified revisions view
+
+The header's Revisions button opens an overlay for the selected project. External
+proposals, saved in-app review findings, and recorded decisions share one list,
+with All, Pending, and History filters and scene/phrase search. Prepared in-app
+proposals are deduplicated by review/finding identity; their operation receipts
+replace decided finding cards. Receipt previews expose the before/after bytes
+already retained in immutable intents and rejections, without changing storage.
+Refresh and Close stay at the top of the overlay. Loading failures retain their
+actual error in expandable details and leave the other available source visible.
+Outdated, already-present, and exact duplicate proposals remain inspectable in
+History instead of being counted as actionable Pending revisions. This display
+classification neither rejects an author's alternatives nor rewrites records.
+
+Both sources use the same before/after renderer: red highlighted strikethrough
+for removals, green highlighted underline for additions. Accept is the single author action for either source. It prepares an in-app
+finding if needed, verifies the displayed proposal binding or finding identity,
+and applies through the native source/recovery/receipt guards without a second
+confirmation. A changed comparison is refused and refreshed for another explicit
+Accept. Details opens the optional whole-scene comparison; guarded revert retains
+its separate native confirmation. New apply receipts record studioAuthorAccept;
+legacy studioNativeAuthor receipts remain readable. Keep mine uses each
+source's existing explicit rejection path. Opening, searching, and filtering the
+list neither sends a model request nor creates an apply grant. This is proposal
+and decision history, not a log of individual typing/autosave operations.
+
+## Reading the revision workflow
+
+Review results show a read-only stage strip (Ask, Review run, Decide, Done) and, above
+the suggestion cards, a consensus summary: reviewer count, how many suggestions two or
+more reviewers agreed on, and how many spans have competing alternatives. Agreement is
+derived from the saved reviewer provenance; it is a signal, never a decision. Cards are
+ordered agreed, then alternatives, then single-reviewer, and each shows "Agreed by ..."
+or "Only ...". There is intentionally no bulk Accept: every apply keeps its own native
+confirmation, stale-source check, and receipt. Accept opens the exact comparison;
+the decline action is **Keep mine** on every surface (review cards, chat revision cards,
+and the Revisions overlay). "Reject" remains only in receipts and internal names.
+
+### Moving through the queue
+
+After a confirmed Accept in the review pane, Studio opens the next waiting suggestion's
+exact-patch confirmation, in card order, until none remain. Cancelling a confirmation,
+a failed or warned apply, a source-changed (stale) card, or a competing-alternatives
+group that still needs a choice stops the chain and leaves focus on that card. Keep mine
+does not open the next confirmation. In the Revisions overlay Accept applies in one step,
+so it never applies the next revision on its own: after an Accept it reloads, says how
+many revisions are still waiting, and moves focus to the next pending Accept button.
+Pending in-app findings also offer **Back to review**, which closes the overlay and reopens
+that saved review on its scene; it decides nothing.
+
+## Independent proposal changes
+
+Local MCP proposals can be prepared against a newer saved scene when their exact
+changes are disjoint from the intervening edits. Preparation uses a bounded
+three-way comparison in original UTF-8 coordinates. It preserves saved changes,
+skips identical changes already present, and refuses overlapping or ambiguous
+positions. Proposal records remain immutable. Cards show the refreshed comparison
+or explain why a proposal is unavailable; listing creates no apply authority.
+
+Opening review binds the current full source and reconciled replacement to new
+hashes before author confirmation. Later disk changes still invalidate that live
+review; apply never rebases or substitutes text after confirmation. Receipts and
+guarded revert retain the actual reviewed bytes. Native model review findings
+continue using their verified accepted-edit lineage and offset mapping.
+
+## Source mapping
+
 Source scenes are the editable Markdown files. A manifest's chapter `source` may
 name its first scene; that scene stays editable unless explicitly declared as a
 generated output in `sources`. The chapter reading action is distinct from

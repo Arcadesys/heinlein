@@ -74,13 +74,13 @@ describe('explicit revision requests', () => {
     if (change === 'scene') state.documentEpoch++;
     if (change === 'hash') state.sourceHash = 'different';
     panel.stateChanged(); expect(button('Review proposed revision').disabled).toBe(true); button('Review proposed revision').click(); expect(review).not.toHaveBeenCalled();
-    expect(panel.element.textContent).toContain('A suggested change, with reasoning.'); expect(button('Reject proposed revision').disabled).toBe(false);
-    button('Reject proposed revision').click(); await vi.waitFor(() => expect(bridge.rejectProposal).toHaveBeenCalledWith('repo', 'proposal-1'));
+    expect(panel.element.textContent).toContain('A suggested change, with reasoning.'); expect(button('Keep mine').disabled).toBe(false);
+    button('Keep mine').click(); await vi.waitFor(() => expect(bridge.rejectProposal).toHaveBeenCalledWith('repo', 'proposal-1'));
   });
   it('invalidates review when context is recaptured and records explicit rejection only once', async () => {
     const bridge = await start(); await sendRevision(); button('Capture current scene').click(); expect(button('Review proposed revision').disabled).toBe(true);
-    button('Reject proposed revision').click(); button('Reject proposed revision').click(); await vi.waitFor(() => expect(panel.element.textContent).toContain('rejection-1'));
-    expect(bridge.rejectProposal).toHaveBeenCalledTimes(1); expect(button('Reject proposed revision').disabled).toBe(true); expect(review).not.toHaveBeenCalled();
+    button('Keep mine').click(); button('Keep mine').click(); await vi.waitFor(() => expect(panel.element.textContent).toContain('rejection-1'));
+    expect(bridge.rejectProposal).toHaveBeenCalledTimes(1); expect(button('Keep mine').disabled).toBe(true); expect(review).not.toHaveBeenCalled();
   });
   it('waits for local preparation and rejects edit/undo before provider dispatch', async () => {
     const waiting = deferred<void>(); prepare.mockReturnValueOnce(waiting.promise); const bridge = await start(); mode('revision'); write(); button('Send to OpenAI').click();
@@ -102,16 +102,16 @@ describe('explicit revision requests', () => {
     const bridge = core(); const waiting = deferred<QuestionRevisionAnswer>(); bridge.suggestQuestionRevision.mockReturnValueOnce(waiting.promise); bridge.cancelQuestion.mockResolvedValueOnce(false);
     await start(bridge); mode('revision'); write(); button('Send to OpenAI').click(); await vi.waitFor(() => expect(bridge.suggestQuestionRevision).toHaveBeenCalledTimes(1));
     button('Cancel request').click(); await vi.waitFor(() => expect(panel.element.textContent).toContain('already finishing'));
-    expect(panel.element.textContent).toContain('check Proposed revisions'); waiting.resolve(answer(bridge.suggestQuestionRevision.mock.calls[0][0])); await Promise.resolve(); expect(button('Review proposed revision')).toBeUndefined();
+    expect(panel.element.textContent).toContain('check Revisions'); waiting.resolve(answer(bridge.suggestQuestionRevision.mock.calls[0][0])); await Promise.resolve(); expect(button('Review proposed revision')).toBeUndefined();
   });
   it('reports unconfirmed rejection without changing attribution or retrying automatically', async () => {
-    const bridge = core(); bridge.rejectProposal.mockRejectedValueOnce(new Error('write unavailable')); await start(bridge); await sendRevision(); button('Reject proposed revision').click();
+    const bridge = core(); bridge.rejectProposal.mockRejectedValueOnce(new Error('write unavailable')); await start(bridge); await sendRevision(); button('Keep mine').click();
     await vi.waitFor(() => expect(panel.element.textContent).toContain('Rejection could not be confirmed')); expect(bridge.rejectProposal).toHaveBeenCalledTimes(1); expect(review).not.toHaveBeenCalled();
     expect(panel.element.textContent).toContain('native OpenAI');
   });
   it('does not restore rejected proposal text after closing during the native decision', async () => {
     const bridge = core(); const waiting = deferred<Awaited<ReturnType<typeof bridge.rejectProposal>>>(); const receipt = await bridge.rejectProposal('repo', 'proposal-1'); bridge.rejectProposal.mockReturnValueOnce(waiting.promise);
-    await start(bridge); await sendRevision(); button('Reject proposed revision').click(); button('Close questions').click(); waiting.resolve(receipt); await Promise.resolve();
+    await start(bridge); await sendRevision(); button('Keep mine').click(); button('Close questions').click(); waiting.resolve(receipt); await Promise.resolve();
     expect(panel.element.textContent).not.toContain('A different 🐺 passage.'); expect(panel.element.textContent).not.toContain('rejection-1');
   });
   it('rejects mismatched saved hashes and oversized total payloads before dispatch', async () => {
