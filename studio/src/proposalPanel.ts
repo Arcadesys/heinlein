@@ -143,7 +143,10 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
         filters.forEach(({value, control}) => control.setAttribute('aria-pressed', String(value === filter)));
         const shown = revisions.filter(revision => (filter === 'all' || (filter === 'pending') === (revision.status === 'pending'))
           && [revision.path, revision.reason, revision.before, revision.after].join('\n').toLocaleLowerCase().includes(query.toLocaleLowerCase()));
-        count.textContent = `${shown.length} of ${revisions.length} revisions · ${revisions.filter(r => r.status === 'pending').length} pending`;
+        const pending = revisions.filter(r => r.status === 'pending'), scenes = new Set(pending.map(r => r.path)).size;
+        count.textContent = `${shown.length} of ${revisions.length} revisions · ${pending.length} pending${pending.length ? ` in ${scenes} ${scenes === 1 ? 'scene' : 'scenes'}` : ''}`;
+        // Keep each scene's pending revisions together; the model's own order is otherwise unchanged.
+        shown.sort((a, b) => (a.status === 'pending' && b.status === 'pending' ? a.path.localeCompare(b.path) : 0));
         content.replaceChildren();
         if (!shown.length) content.append(el('p', revisions.length ? 'No revisions match this filter.' : 'No saved revisions for this project.'));
         for (const revision of shown) content.append(revisionItem(revision, node, render));

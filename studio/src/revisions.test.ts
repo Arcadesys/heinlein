@@ -72,7 +72,7 @@ describe('one revisions list',()=>{
     const search=document.querySelector<HTMLInputElement>('[aria-label="Find revisions"]')!;
     search.value='rhythm'; search.dispatchEvent(new Event('input'));
     expect(document.querySelectorAll('.revision-entry')).toHaveLength(1);
-    expect(document.querySelector('.revision-count')?.textContent).toBe('1 of 3 revisions · 2 pending');
+    expect(document.querySelector('.revision-count')?.textContent).toBe('1 of 3 revisions · 2 pending in 1 scene');
     panel.destroy();
   });
   it.each(['external','in-app'])('accepts the displayed %s diff with one click and no second confirmation',async kind=>{
@@ -114,7 +114,7 @@ describe('one revisions list',()=>{
     const entry=entries.find(e=>e.textContent?.includes(kind==='external'?'External proposal':'In-app review'))!;
     [...entry.querySelectorAll('button')].find(b=>b.textContent==='Keep mine')!.click(); await tick();
     expect(document.querySelectorAll('.revision-entry')).toHaveLength(1);
-    expect(document.querySelector('.revision-count')?.textContent).toBe('1 of 3 revisions · 1 pending');
+    expect(document.querySelector('.revision-count')?.textContent).toBe('1 of 3 revisions · 1 pending in 1 scene');
     button('History').click(); expect(document.querySelectorAll('.revision-entry')).toHaveLength(2);
     expect(core.applyProposalReview).not.toHaveBeenCalled(); expect(core.prepareReviewEdit).not.toHaveBeenCalled(); panel.destroy();
   });
