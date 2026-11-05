@@ -1061,6 +1061,24 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         snapshots: [{path: opened.path, source: editor.text(), sourceHash: opened.contentHash}]};
     },
     chapterLabel: () => chapterReviewSources()?.label ?? null,
+    recapture: async previous => {
+      const session = repository, epoch = documentEpoch;
+      const unavailable = () => disposed || !session || repository !== session || previous.repositoryId !== session.id || documentEpoch !== epoch || repositoryDetached || selecting || structuralBusy || proposalBusy || recoveryPending || recovery || dirty || saving || staging || writeInFlight || guardPending || writePaused;
+      if (unavailable()) throw new Error('Save your writing and finish the current local operation before capturing a new review. Nothing was sent.');
+      if (!previous.snapshots.length || previous.snapshots.length > 128 || new Set(previous.snapshots.map(s => s.path)).size !== previous.snapshots.length)
+        throw new Error('The saved scope has no usable source mapping. Choose the scope again.');
+      const snapshots = [];
+      let total = 0;
+      for (const snapshot of previous.snapshots) {
+        const document = await core.readDocument(session!.id, snapshot.path);
+        if (unavailable()) throw new Error('The project or writing changed during capture. Capture the review again. Nothing was sent.');
+        if (document.path !== snapshot.path || document.generatedCompatibility) throw new Error('A review source is unavailable or is generated output. Choose the scope again.');
+        total += questionBytes(document.text);
+        if (total > 1024 * 1024) throw new Error('This scope exceeds 1 MiB of source text. Nothing was truncated or sent.');
+        snapshots.push({...snapshot, source: document.text, sourceHash: document.contentHash});
+      }
+      return {...previous, snapshots, selectedRange: undefined};
+    },
     captureChapter: async () => {
       const session = repository, epoch = documentEpoch, active = opened, source = editor?.text();
       const chapter = chapterReviewSources();
@@ -1080,6 +1098,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         snapshots.push({path, source: text, sourceHash: document.contentHash});
       }
       return {repositoryId: session.id, scope: 'chapter', label: chapter.label, snapshots};
+    },
+    recoveryUnavailable: () => {
+      if (disposed || !repository || repositoryDetached || selecting || structuralBusy || proposalBusy || drafting.state?.recoveryRequired) return 'Finish the current project operation before resuming saved reviews.';
+      if (dirty || saving || staging || writeInFlight || recovery || recoveryPending || guardPending || writePaused) return 'Save your writing and resolve recovery before resuming saved reviews.';
+      return null;
     },
     unavailable: reviewing => {
       if (!repository || !opened || repositoryDetached || disposed) return 'Open the reviewed repository before accepting an edit.';
@@ -2002,6 +2025,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.classList.remove('error');
     status.textContent = 'Opening your writing…';
     let resumed:ProjectResume|null=null;
+    let reviewRecoveryRepository: RepositorySession | null = null;
     try {
       const selected = await select();
       if (disposed || current !== generation) return;
@@ -2061,8 +2085,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       await refreshRecent();
       void refreshSharing();
       if(selected.resume&&await showDocument(selected.resume.path,true,()=>!disposed&&generation===current,undefined,selected.resume))resumed=selected.resume;
+      if (!draftingLoadFailed) reviewRecoveryRepository = selected;
     } catch (error) { if (!disposed && current === generation) { if (repositoryDetached) reportDetachedRepository(); else reportError(error); } }
-    finally { if (!disposed && current === generation) { selecting = false; open.disabled = false; layout.inert = false; editor?.setEditable(!recoveryPending && (editor !== previousEditor || !wasReadOnly)); [...recent.querySelectorAll('button'), ...projectEntries.querySelectorAll('button')].forEach(node => { node.disabled = false; }); if (dirty && !writePaused) scheduleAutosave(); if(resumed)focusResumedDocument(resumed); } }
+    finally { if (!disposed && current === generation) { selecting = false; open.disabled = false; layout.inert = false; editor?.setEditable(!recoveryPending && (editor !== previousEditor || !wasReadOnly)); [...recent.querySelectorAll('button'), ...projectEntries.querySelectorAll('button')].forEach(node => { node.disabled = false; }); if (dirty && !writePaused) scheduleAutosave(); if(resumed)focusResumedDocument(resumed); if (reviewRecoveryRepository && repository === reviewRecoveryRepository && !repositoryDetached) void reviewPanel?.recoverOutstanding(repository.id, repository.projectKey ?? repository.id); } }
   }
   async function showDirectory(path: string) {
     const current = generation;

@@ -656,6 +656,16 @@ impl QuestionService {
         Ok(false)
     }
 
+    /// Includes cancellations remembered before a request acquired its permit.
+    /// Native durable workflows use this after early errors to retain an author's stop.
+    pub fn was_cancelled(&self, id: &str) -> Result<bool, QuestionError> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| QuestionError::unavailable())?;
+        Ok(state.cancelled_ids.iter().any(|cancelled| cancelled == id))
+    }
+
     /// Call only for an explicit author Send action. There are no automatic
     /// retries, polling, model discovery, or network work during initialization.
     pub async fn ask(

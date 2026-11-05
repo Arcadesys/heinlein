@@ -381,3 +381,181 @@ it.each(['running','cancelled'])('explicitly resumes a saved %s chunk without st
  await f.click('Resume interrupted chunks');expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.continuation).toHaveBeenCalledOnce();
  expect(f.continuation.mock.calls[0].slice(0,2)).toEqual(['repo','review-stable']);
 });
+
+
+async function recoveryFixture(completed = 2) {
+ const f = automaticFixture();
+ const request: ReviewRequest = {...scope, requestId: 'old-request', workflow: {reviewers: ['mechanical', 'contextual'], context: [], contextNote: '', ranges: [], consolidate: true}};
+ const saved = await f.make(request, completed);
+ saved.workflow!.coverage[completed].status = 'running';
+ f.core.listReviews.mockImplementation(async () => [structuredClone(saved)]);
+ f.continuation.mockImplementation(async (_repo, _review, id) => f.make({...request, requestId: id}, 10));
+ return {...f, saved, request};
+}
+it('automatically recovers the same saved review while staying hidden and preserving focus', async () => {
+ const f = await recoveryFixture();
+ const writer = document.createElement('textarea'); document.body.append(writer); writer.focus();
+ await panel!.recoverOutstanding('repo', 'project');
+ expect(f.continuation).toHaveBeenCalledOnce();
+ expect(f.continuation.mock.calls[0].slice(0,2)).toEqual(['repo','review-stable']);
+ expect(f.core.requestReview).not.toHaveBeenCalled(); expect(f.core.previewReview).not.toHaveBeenCalled();
+ expect(panel!.element.hidden).toBe(true); expect(document.activeElement).toBe(writer);
+ expect(panel!.element.textContent).toContain('1 interrupted review finished');
+ expect(panel!.element.textContent).toContain('Individual mechanics assessment.');
+ await panel!.recoverOutstanding('repo', 'project'); expect(f.continuation).toHaveBeenCalledOnce();
+});
+it('finishes every remaining batch without rerunning successful calls or creating a new review', async () => {
+ const f = await recoveryFixture();
+ f.continuation.mockImplementationOnce(async (_repo,_review,id) => f.make({...f.request,requestId:id},8));
+ await panel!.recoverOutstanding('repo');
+ expect(f.continuation).toHaveBeenCalledTimes(2);
+ expect(f.continuation.mock.calls.every(call => call[1] === f.saved.reviewId)).toBe(true);
+ expect(f.core.requestReview).not.toHaveBeenCalled();
+});
+it.each(['cancelled','outputLimit','invalidResponse','protocol','invalidConsolidation','usageLimit','invalidReviewOrModel','findingLimit'])('does not automatically restart a stopped or nonretryable job (%s)',async reason=>{
+ const f=await recoveryFixture();const call=f.saved.workflow!.coverage[2];call.status=reason==='cancelled'?'cancelled':'failed';call.error=reason;
+ await panel!.recoverOutstanding('repo');expect(f.continuation).not.toHaveBeenCalled();expect(f.core.questionStatus).not.toHaveBeenCalled();
+});
+it('tries transient saved failures once and stops if retries are exhausted again',async()=>{
+ const f=await recoveryFixture();f.saved.workflow!.coverage[2].status='failed';f.saved.workflow!.coverage[2].error='retryExhaustedTimeout';
+ f.continuation.mockImplementation(async(_repo,_review,id)=>({...structuredClone(f.saved),requestId:id}));
+ await panel!.recoverOutstanding('repo');await panel!.recoverOutstanding('repo');
+ expect(f.continuation).toHaveBeenCalledOnce();expect(panel!.element.textContent).toContain('1 needs attention');
+ expect(panel!.element.textContent).toContain('Individual mechanics assessment.');
+});
+it('stops recovery when a successful continuation makes no progress',async()=>{
+ const f=await recoveryFixture();f.saved.workflow!.coverage[2].status='queued';
+ f.continuation.mockImplementation(async(_repo,_review,id)=>({...structuredClone(f.saved),requestId:id}));
+ await panel!.recoverOutstanding('repo');expect(f.continuation).toHaveBeenCalledOnce();expect(panel!.element.textContent).toContain('1 needs attention');
+});
+it.each(['account','model','disconnected','usage','draft'])('preserves saved results without sending when recovery is blocked by %s',async kind=>{
+ const f=await recoveryFixture();
+ if(kind==='account')f.saved.workflow!.accountId='other-account';
+ if(kind==='model')f.saved.model='other-model';
+ if(kind==='draft')Object.assign(f.hooks,{recoveryUnavailable:()=> 'Resolve draft recovery first.'});
+ if(kind==='disconnected'||kind==='usage')f.core.questionStatus.mockResolvedValue({...await f.core.questionStatus(),configured:kind!=='disconnected',usageLimited:kind==='usage'});
+ await panel!.recoverOutstanding('repo');expect(f.continuation).not.toHaveBeenCalled();expect(f.core.requestReview).not.toHaveBeenCalled();expect(panel!.element.textContent).toContain('1 needs attention');
+});
+it('restores an existing saved connection before recovery without changing account or model',async()=>{
+ const f=await recoveryFixture(),ready=await f.core.questionStatus();f.core.questionStatus.mockResolvedValue({...ready,configured:false,models:[]});
+ const restore=vi.fn(async()=>ready);Object.assign(f.core,{restoreQuestionConnection:restore});
+ await panel!.recoverOutstanding('repo');expect(restore).toHaveBeenCalledOnce();expect(f.continuation).toHaveBeenCalledOnce();
+});
+it('ignores duplicate startup triggers and stops later batches after project change',async()=>{
+ const f=await recoveryFixture();let finish!:(result:ReviewResult)=>void;
+ f.continuation.mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+ const first=panel!.recoverOutstanding('repo');await vi.waitFor(()=>expect(f.continuation).toHaveBeenCalledOnce());
+ await panel!.recoverOutstanding('repo');panel!.clear();finish(await f.make({...f.request,requestId:f.continuation.mock.calls[0][2]},8));await first;
+ expect(f.continuation).toHaveBeenCalledOnce();expect(f.core.cancelQuestion).toHaveBeenCalledWith(f.continuation.mock.calls[0][2]);expect(panel!.element.textContent).not.toContain('interrupted review finished');
+});
+it('a native stale-source refusal keeps individual results and does not start a replacement review',async()=>{
+ const f=await recoveryFixture();f.continuation.mockRejectedValue(new Error('The captured source or context changed.'));
+ await panel!.recoverOutstanding('repo');expect(f.continuation).toHaveBeenCalledOnce();expect(f.core.requestReview).not.toHaveBeenCalled();expect(panel!.element.textContent).toContain('Individual mechanics assessment.');expect(panel!.element.textContent).toContain('1 needs attention');
+});
+it('continues independent outstanding jobs after one needs attention',async()=>{
+ const f=await recoveryFixture(),second={...structuredClone(f.saved),reviewId:'review-second'};
+ f.core.listReviews.mockResolvedValue([f.saved,second]);
+ f.continuation.mockImplementation(async(_repo,reviewId,id)=>{if(reviewId===f.saved.reviewId)throw Error('Captured text changed');return {...await f.make({...f.request,requestId:id},10),reviewId};});
+ await panel!.recoverOutstanding('repo');expect(f.continuation).toHaveBeenCalledTimes(2);expect(panel!.element.textContent).toContain('1 saved review finished; 1 needs attention');expect(panel!.element.textContent).toContain('Captured text changed');
+ panel!.show();expect(panel!.element.querySelector('[aria-current=true].review-saved-item')?.getAttribute('aria-label')).toBe(`Reopen saved review ${f.saved.reviewId}`);
+});
+
+it('hiding or navigating during startup discovery does not strand recovery in a busy state',async()=>{
+ const f=await recoveryFixture();let loaded!:(records:ReviewResult[])=>void;
+ f.core.listReviews.mockImplementationOnce(()=>new Promise(resolve=>{loaded=resolve;}));
+ const recovery=panel!.recoverOutstanding('repo');panel!.hide();panel!.documentChanged();loaded([f.saved]);await recovery;
+ expect(f.continuation).toHaveBeenCalledOnce();expect(panel!.element.textContent).toContain('1 interrupted review finished');
+ panel!.show();await vi.waitFor(()=>expect(f.button('Start a new review').disabled).toBe(false));
+});
+it('opening or refreshing a different saved review during connection restoration cannot replace the recovery job',async()=>{
+ const f=await recoveryFixture(),ready=await f.core.questionStatus();let configure!:(value:typeof ready)=>void;
+ f.core.questionStatus.mockImplementationOnce(()=>new Promise(resolve=>{configure=resolve;}));
+ const recovery=panel!.recoverOutstanding('repo');await tick();
+ await panel!.openSaved('different-review');panel!.show();configure(ready);await recovery;
+ expect(f.core.getReview).not.toHaveBeenCalled();expect(f.continuation).toHaveBeenCalledOnce();expect(f.continuation.mock.calls[0][1]).toBe(f.saved.reviewId);
+});
+
+it('saved review rows become available again after startup recovery settles',async()=>{
+ const f=await recoveryFixture();await panel!.recoverOutstanding('repo');panel!.show();
+ await vi.waitFor(()=>expect(f.button(`Reopen saved review ${f.saved.reviewId}`).disabled).toBe(false));const saved=f.button(`Reopen saved review ${f.saved.reviewId}`);saved.click();await tick();expect(f.core.getReview).toHaveBeenCalledTimes(2);
+});
+
+it.each(['invalidResponse','protocol','outputLimit','responseTooLarge','invalidAssessment','assessmentTooLong','invalidConsolidation'])('offers an explicit retry for %s without sending on reopen',async error=>{
+ const f=fixture(); await f.start(); Object.assign(f.record().workflow!.coverage[0],{status:'failed',error});
+ const continuation=vi.fn<NonNullable<LocalCore['continueReview']>>(async(_repo,_review,requestId)=>({...structuredClone(f.record()),requestId})); Object.assign(f.core,{continueReview:continuation});
+ panel!.hide();panel!.show();await vi.waitFor(()=>expect(f.button('Retry failed chunks').disabled).toBe(false));
+ expect(continuation).not.toHaveBeenCalled();expect(panel!.element.textContent).toContain('Invalid responses need another explicit retry');
+ await f.click('Retry failed chunks');await tick();expect(continuation).toHaveBeenCalledOnce();expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.button('Retry failed chunks').hidden).toBe(false);
+});
+it.each(['usageLimit','staleConnection','invalidReviewOrModel','invalidConsolidationContext','invalidReview'])('does not offer retry for terminal %s',async error=>{
+ const f=fixture();await f.start();Object.assign(f.core,{continueReview:vi.fn()});Object.assign(f.record().workflow!.coverage[0],{status:'failed',error});
+ panel!.hide();panel!.show();await vi.waitFor(()=>expect(f.core.getReview).toHaveBeenCalled());await tick();expect(f.button('Continue next reviewer batch').hidden).toBe(true);
+});
+it('captures current text, preserves reviewers and decisions, and invalidates the previous preview',async()=>{
+ const f=fixture();await f.start();f.record().edits[0].status='accepted';f.record().revision=2;
+ const snapshots=[{...scope.snapshots[0],source:'Current author-approved text.',sourceHash:'f'.repeat(64)}];
+ const recapture=vi.fn(async(previous:ReviewScope)=>({...previous,snapshots}));Object.assign(f.hooks,{recapture});
+ await f.click('Start a new review');expect(recapture).toHaveBeenCalledOnce();expect(f.button('Preview review').disabled).toBe(false);expect(f.record().edits[0].status).toBe('accepted');
+ expect(panel!.element.querySelector('.review-sources')!.textContent).toContain('Current author-approved text.');
+ await f.click('Preview review');const request=f.core.previewReview.mock.calls.at(-1)![0];expect(request.snapshots).toEqual(snapshots);expect(request.workflow!.reviewers).toEqual(['contextual']);expect(f.core.requestReview).toHaveBeenCalledOnce();
+});
+it('recaptures saved paths and target/context roles rather than a different open scene',async()=>{
+ const f=fixture();await f.start();f.record().scope='chapter';f.record().workflow!.sources.push({...f.record().workflow!.sources[0],id:'context',path:'context.md',readOnly:true,order:1});await panel!.openSaved('review-stable');
+ const recapture=vi.fn(async(previous:ReviewScope)=>({...previous,snapshots:previous.snapshots.map(s=>({...s,source:`Current ${s.path}`}))}));Object.assign(f.hooks,{recapture});
+ await f.click('Start a new review');await f.click('Preview review');expect(recapture.mock.calls[0][0].snapshots.map(s=>s.path)).toEqual(['scene.md','context.md']);
+ const request=f.core.previewReview.mock.calls.at(-1)![0];expect(request.scope).toBe('chapter');expect(request.snapshots.map(s=>s.path)).toEqual(['scene.md']);expect(request.workflow!.context.map(s=>s.path)).toEqual(['context.md']);
+});
+it('preserves the saved review on failed capture and ignores late completion after closing',async()=>{
+ const f=fixture();await f.start();const recapture=vi.fn<(scope:ReviewScope)=>Promise<ReviewScope>>().mockRejectedValueOnce(new Error('Save your writing first.'));Object.assign(f.hooks,{recapture});
+ await f.click('Start a new review');expect(panel!.element.textContent).toContain('Save your writing first.');expect(panel!.element.querySelector<HTMLElement>('.review-results')!.hidden).toBe(false);
+ let finish!:(scope:ReviewScope)=>void;recapture.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));f.button('Start a new review').click();f.button('Start a new review').click();await tick();expect(recapture).toHaveBeenCalledTimes(2);
+ panel!.clear();finish(scope);await tick();expect(panel!.element.hidden).toBe(true);expect(f.core.requestReview).toHaveBeenCalledOnce();
+});
+it('refreshes decisions when showing a hidden pane without replaying reviewers',async()=>{
+ const f=fixture();await f.start();panel!.hide();f.record().edits[0].status='accepted';f.record().edits[1].status='supersededByAuthorChoice';f.record().revision=8;panel!.show();panel!.show();
+ await vi.waitFor(()=>expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('3 suggestions · 2 decided'));expect(f.core.getReview).toHaveBeenCalledOnce();expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.core.approveReviewEdit).not.toHaveBeenCalled();
+});
+it('opens another saved review without a refresh race and ignores late refresh after clear',async()=>{
+ const f=fixture();await f.start();panel!.hide();const other={...structuredClone(f.record()),reviewId:'other'};f.core.getReview.mockResolvedValueOnce(other);
+ await panel!.openSaved('other');expect(f.core.getReview).toHaveBeenCalledOnce();expect(panel!.element.querySelector('.review-json')!.textContent).toContain('"reviewId": "other"');
+ panel!.hide();let finish!:(result:ReviewResult)=>void;f.core.getReview.mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));panel!.show();panel!.clear();finish(other);await tick();expect(panel!.element.hidden).toBe(true);expect(panel!.element.querySelector('.review-json')!.textContent).not.toContain('"reviewId": "other"');
+});
+it('does not reuse another library picker or its context filter for a reopened saved review',async()=>{
+ const f=fixture();await f.start();
+ const other={path:'other.md',source:'Other library',sourceHash:'e'.repeat(64)};
+ const libraryCapture=vi.fn(async()=>({ordered:[other],targets:[other],context:[other],bytes:13}));
+ panel!.openLibrary({...scope,snapshots:[other],targetPaths:['other.md'],contextPaths:['other.md']},libraryCapture);
+ await vi.waitFor(()=>expect(f.button('Preview review').disabled).toBe(false));
+ f.record().workflow!.sources.push({...f.record().workflow!.sources[0],id:'ctx',path:'context.md',readOnly:true,order:1});
+ await panel!.openSaved('review-stable');
+ Object.assign(f.hooks,{recapture:async(previous:ReviewScope)=>({...previous,snapshots:previous.snapshots.map(s=>({...s,source:`Fresh ${s.path}`}))})});
+ await f.click('Start a new review');await f.click('Preview review');expect(libraryCapture).not.toHaveBeenCalled();
+ const request=f.core.previewReview.mock.calls.at(-1)![0];expect(request.snapshots.map(s=>s.path)).toEqual(['scene.md']);expect(request.workflow!.context.map(s=>s.path)).toEqual(['context.md']);
+});
+it('does not substitute another reviewer when all saved reviewers are unavailable',async()=>{
+ const f=fixture();await f.start();f.record().workflow!.definitions[0].definition.id='deleted-reviewer';await panel!.openSaved('review-stable');await f.click('Start a new review');
+ expect(panel!.element.textContent).toContain('Unavailable saved reviewers: deleted-reviewer');expect(f.button('Preview review').disabled).toBe(true);expect(panel!.element.querySelectorAll('[data-reviewer][aria-pressed=true]')).toHaveLength(0);
+ f.button('Mechanical review').click();expect(f.button('Preview review').disabled).toBe(false);await f.click('Preview review');expect(f.core.previewReview.mock.calls.at(-1)![0].workflow!.reviewers).toEqual(['mechanical']);
+});
+it('a refused continuation never exposes a full resubmission of the old capture',async()=>{
+ const f=fixture();await f.start();Object.assign(f.record().workflow!.coverage[0],{status:'failed',error:'invalidResponse'});
+ const continuation=vi.fn().mockRejectedValue(new Error('The captured source or context changed. Start a fresh review.'));
+ Object.assign(f.core,{continueReview:continuation});panel!.hide();panel!.show();await vi.waitFor(()=>expect(f.button('Retry failed chunks').disabled).toBe(false));await f.click('Retry failed chunks');
+ expect(f.button('Retry review').hidden).toBe(true);expect(panel!.element.textContent).toContain('Start a fresh review');expect(f.core.requestReview).toHaveBeenCalledOnce();
+});
+it('fresh library review keeps excluded targets excluded and validates only the retained capture before sending',async()=>{
+ const f=fixture();const other={path:'other.md',source:'Excluded source',sourceHash:'b'.repeat(64)};
+ const captured={ordered:[scope.snapshots[0],other],targets:[scope.snapshots[0],other],context:[scope.snapshots[0]],bytes:100};
+ panel!.openLibrary({...scope,snapshots:captured.ordered,targetPaths:['scene.md','other.md'],contextPaths:['scene.md']},async()=>structuredClone(captured));
+ await vi.waitFor(()=>expect(f.button('Preview review').disabled).toBe(false));
+ panel!.element.querySelector<HTMLInputElement>('.review-target input[data-path="other.md"]')!.click();
+ await f.click('Preview review');await f.click('Run review');await f.click('Start a new review');await f.click('Preview review');await f.click('Run review');
+ expect(f.core.requestReview).toHaveBeenCalledTimes(2);expect(f.core.requestReview.mock.calls[1][0].snapshots.map(s=>s.path)).toEqual(['scene.md']);expect(f.core.requestReview.mock.calls[1][0].workflow!.context).toEqual([]);
+});
+it('quiet decision refresh preserves highlights invalidated by typing until explicit refresh',async()=>{
+ const f=fixture();const marksChanged=vi.fn((input:unknown,report:(count:number|null)=>void)=>report(input?2:null));Object.assign(f.hooks,{marksChanged});await f.start();
+ panel!.marksInvalidated();panel!.hide();f.record().edits[0].status='accepted';f.record().revision=2;panel!.show();
+ await vi.waitFor(()=>expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('3 suggestions · 1 decided'));
+ expect(panel!.element.querySelector('.review-mark-status')!.textContent).toContain('Highlights are off because the open text changed');expect(marksChanged.mock.calls.at(-1)![0]).toBeNull();
+ await f.click('Refresh review');expect(marksChanged.mock.calls.at(-1)![0]).not.toBeNull();expect(panel!.element.querySelector('.review-mark-status')!.textContent).not.toContain('Highlights are off because the open text changed');
+});

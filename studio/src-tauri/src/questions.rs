@@ -494,12 +494,27 @@ pub(crate) async fn suggest_question_revision(
 
 #[tauri::command]
 pub(crate) fn cancel_question(
+    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     host: State<'_, QuestionHost>,
     request_id: String,
 ) -> Result<bool, NativeError> {
     main_window(&window)?;
-    Ok(host.questions.cancel(&request_id)?)
+    let accepted = host.questions.cancel(&request_id)?;
+    // Persist before acknowledging a stop, rather than waiting for credentials
+    // or an in-flight provider response to settle.
+    let mut slot = host.review.lock().map_err(|_| NativeError::unavailable())?;
+    if let Some(session) = slot.as_mut().filter(|s| s.request.request_id == request_id) {
+        let repository_id = session.request.repository_id.clone();
+        super::with_repository(&app, &repository_id, |repo| {
+            if session.cancel_remaining() {
+                session.persist(&review_records(&app)?, repo)?;
+            }
+            Ok(())
+        })
+        .map_err(NativeError::revision)?;
+    }
+    Ok(accepted)
 }
 
 #[tauri::command]
@@ -627,6 +642,32 @@ pub(crate) fn open_question_usage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_cancellation_history_survives_pre_admission_and_early_failure() {
+        for before_admission in [true, false] {
+            let service = QuestionService::default();
+            let request = QuestionRequest {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                question: "Review this scene".into(),
+                context: String::new(),
+                history: vec![],
+            };
+            assert!(!service.was_cancelled(&request.request_id).unwrap());
+            if before_admission {
+                assert!(!service.cancel(&request.request_id).unwrap());
+                assert!(
+                    matches!(service.reserve(&request, "account"), Err(error) if error.code == "cancelled")
+                );
+            } else {
+                let permit = service.reserve(&request, "account").unwrap();
+                assert!(service.cancel(&request.request_id).unwrap());
+                // Credential acquisition can fail and drop the permit without a batch.
+                drop(permit);
+            }
+            assert!(service.was_cancelled(&request.request_id).unwrap());
+        }
+    }
 
     fn revision_target() -> RevisionTarget {
         RevisionTarget {
@@ -980,10 +1021,20 @@ pub(crate) fn get_review(
     if !selected_revision_session(&app.state::<super::BrowserState>(), &repository_id) {
         return Err("Repository changed".into());
     }
-    let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
+    let mut cached = host.review.lock().map_err(|_| "Review unavailable")?;
+    let mut local = None;
+    // Viewing a different saved review must not evict an in-flight batch.
+    let slot = if cached
+        .as_ref()
+        .is_some_and(|s| s.matches(&repository_id, &review_id))
+    {
+        &mut *cached
+    } else {
+        &mut local
+    };
     super::with_repository(&app, &repository_id, |repo| {
-        ensure_review(&app, &mut slot, repo, &repository_id, &review_id)?;
-        Ok(review_session(&mut slot, &repository_id, &review_id)?.view())
+        ensure_review(&app, slot, repo, &repository_id, &review_id)?;
+        Ok(review_session(slot, &repository_id, &review_id)?.view())
     })
 }
 
@@ -1009,8 +1060,8 @@ pub(crate) async fn prepare_review_edit(
         let epoch = state.mutation_gate.generation();
         if !clean_generation(&state,epoch) { return Err("Save the exact reviewed snapshot and resolve recovery before accepting edits".into()); }
         let host = app.state::<QuestionHost>();
-        if host.review_active.load(Ordering::SeqCst){return Err("Wait for the active reviewer batch to settle before approval".into())}
         let mut slot = host.review.lock().map_err(|_|"Review unavailable")?;
+        if host.review_active.load(Ordering::SeqCst){return Err("Wait for the active reviewer batch to settle before approval".into())}
         super::with_repository(&app,&repository_id,|repo|ensure_review(&app,&mut slot,repo,&repository_id,&review_id))?;
         let session = review_session(&mut slot,&repository_id,&review_id)?;
         let (store,_) = super::proposals::stores(&app)?;
@@ -1061,6 +1112,9 @@ pub(crate) async fn reject_review_edit(
             .map_err(|_| "Repository operation in progress")?;
         let host = app.state::<QuestionHost>();
         let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
+        if host.review_active.load(Ordering::SeqCst) {
+            return Err("Wait for the active reviewer batch before rejecting edits".into());
+        }
         super::with_repository(&app, &repository_id, |repo| {
             ensure_review(&app, &mut slot, repo, &repository_id, &review_id)
         })?;
@@ -1200,7 +1254,67 @@ fn ensure_review(
     }
     Ok(())
 }
+fn persist_review_cancellation(
+    app: &tauri::AppHandle,
+    host: &QuestionHost,
+    request: &drafting_questions::review::ReviewRequest,
+) -> Result<(), String> {
+    let mut cached = host.review.lock().map_err(|_| "Review unavailable")?;
+    let mut local = None;
+    let slot = if cached
+        .as_ref()
+        .is_some_and(|s| s.request.request_id == request.request_id)
+    {
+        &mut *cached
+    } else {
+        let Some(id) = request.workflow.as_ref().and_then(|w| w.review_id.as_ref()) else {
+            return Ok(());
+        };
+        // A later admitted request owns its own cancellation decision.
+        if host.review_active.load(Ordering::SeqCst)
+            && cached
+                .as_ref()
+                .is_some_and(|s| s.matches(&request.repository_id, id))
+        {
+            return Ok(());
+        }
+        super::with_repository(app, &request.repository_id, |repo| {
+            ensure_review(app, &mut local, repo, &request.repository_id, id)
+        })?;
+        &mut local
+    };
+    super::with_repository(app, &request.repository_id, |repo| {
+        if let Some(session) = slot.as_mut() {
+            if session.cancel_remaining() {
+                session.persist(&review_records(app)?, repo)?;
+            }
+        }
+        Ok(())
+    })
+}
 async fn request_review_workflow(
+    app: tauri::AppHandle,
+    host: State<'_, QuestionHost>,
+    request: drafting_questions::review::ReviewRequest,
+    connection: QuestionConnection,
+    on_progress: tauri::ipc::Channel<ReviewProgress>,
+) -> Result<crate::review_state::ReviewResult, NativeError> {
+    let result = request_review_workflow_inner(
+        app.clone(),
+        host.clone(),
+        request.clone(),
+        connection,
+        on_progress,
+    )
+    .await;
+    // A stop can arrive before admission, while loading credentials, or just as
+    // dispatch fails. Those paths never produce a Batch to ingest.
+    if host.questions.was_cancelled(&request.request_id)? {
+        persist_review_cancellation(&app, &host, &request).map_err(NativeError::revision)?;
+    }
+    result
+}
+async fn request_review_workflow_inner(
     app: tauri::AppHandle,
     host: State<'_, QuestionHost>,
     mut request: drafting_questions::review::ReviewRequest,
@@ -1235,7 +1349,8 @@ async fn request_review_workflow(
    let session=slot.as_mut().ok_or("Review unavailable")?;
    let mut old=session.request.clone();old.request_id=request.request_id.clone();old.workflow.as_mut().unwrap().review_id=Some(id.clone());
    if serde_json::to_value(&old).map_err(|_|"Invalid review")?!=serde_json::to_value(&request).map_err(|_|"Invalid review")?||!session.connection_matches(&connection.account_id,&connection.model,connection.generation){return Err("Continue requires the same captured scope, reviewer definitions, account and model".into())}
-   if session.requeue_failed(|snapshot| repo.read(&snapshot.path).is_ok_and(|current| !current.generated_compatibility && current.text == snapshot.source))? {session.persist(&review_records(&app)?,repo)?;}
+   let mapping=repo.load_drafting().map_err(|e|e.to_string())?;
+   if session.requeue_failed(|snapshot| crate::review_state::captured_scene_matches(snapshot, mapping.recovery_required, &mapping.scenes) && repo.read(&snapshot.path).is_ok_and(|current| !current.generated_compatibility && current.text == snapshot.source))? {session.persist(&review_records(&app)?,repo)?;}
    session.set_request_id(request.request_id.clone());session.bind_batch_generation(connection.generation);
   }else{
    let mapping=repo.load_drafting().map_err(|e|e.to_string())?;
@@ -1400,10 +1515,10 @@ pub(crate) fn choose_review_edit(
 ) -> Result<crate::review_state::ReviewResult, String> {
     super::check_window(&window)?;
     let host = app.state::<QuestionHost>();
+    let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
     if host.review_active.load(Ordering::SeqCst) {
         return Err("Wait for the active reviewer batch before choosing alternatives".into());
     }
-    let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
     super::with_repository(&app, &repository_id, |repo| {
         ensure_review(&app, &mut slot, repo, &repository_id, &review_id)?;
         let r = review_session(&mut slot, &repository_id, &review_id)?;
@@ -1453,10 +1568,10 @@ pub(crate) fn guard_review_proposal(
         return Ok(None);
     };
     let host = app.state::<QuestionHost>();
+    let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
     if host.review_active.load(Ordering::SeqCst) {
         return Err("Wait for the active reviewer batch to settle".into());
     }
-    let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
     super::with_repository(app, repository_id, |repo| {
         ensure_review(app, &mut slot, repo, repository_id, &a.review_id)?;
         let r = review_session(&mut slot, repository_id, &a.review_id)?;
@@ -1521,7 +1636,9 @@ pub(crate) async fn continue_review(
 ) -> Result<crate::review_state::ReviewResult, NativeError> {
     main_window(&window)?;
     let request = super::with_repository(&app, &repository_id, |repo| {
-        let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
+        // Admission happens in request_review_workflow. Do not replace the active
+        // batch's cache while merely preparing a continuation request.
+        let mut slot = None;
         ensure_review(&app, &mut slot, repo, &repository_id, &review_id)?;
         let mut request = review_session(&mut slot, &repository_id, &review_id)?
             .request

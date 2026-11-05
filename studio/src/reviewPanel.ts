@@ -24,9 +24,12 @@ interface Hooks {
     closePane?():void;
     reviewChanged?(result:ReviewResult,scope:ReviewScope):void;
     capture(): ReviewScope | null;
+    /** Read the current text for this exact saved scope without sending a review. */
+    recapture?(previous: ReviewScope): Promise<ReviewScope>;
     chapterLabel?(): string | null;
     captureChapter?(): Promise<ReviewScope>;
     unavailable(reviewing?: boolean): string | null;
+    recoveryUnavailable?(): string | null;
     reviewProposal(id: string, guard: () => string | null): Promise<void>;
     openConnection(): void;
     focusEditor(): void;
@@ -50,6 +53,8 @@ function icon(path: string, box = 14) { const ns = 'http://www.w3.org/2000/svg',
 function iconButton(label: string, path: string, action: () => void, cls: string, box = 14) { const n = button('', action, cls); n.setAttribute('aria-label', label); n.append(icon(path, box)); return n; }
 function message(error: unknown) { return error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' ? error.message : 'The review could not be completed. Retry when your connection is ready.'; }
 function retryableCall(code: string | null) { return ['network', 'timeout', 'retryExhaustedNetwork', 'retryExhaustedTimeout', 'retryExhaustedProvider'].includes(code ?? ''); }
+// Explicit author action only. Startup recovery continues to use retryableCall.
+function manuallyRetryableCall(code: string | null) { return retryableCall(code) || ['invalidResponse', 'protocol', 'outputLimit', 'responseTooLarge', 'invalidAssessment', 'assessmentTooLong', 'invalidConsolidation'].includes(code ?? ''); }
 function callFailure(code: string | null) {
     const reasons: Record<string, string> = {retryExhaustedNetwork: 'Connection interrupted after three attempts. Successful chunks were kept.', retryExhaustedTimeout: 'The chunk timed out after three attempts. Successful chunks were kept.', retryExhaustedProvider: 'OpenAI remained unavailable after three attempts. Successful chunks were kept.', outputLimit: 'The model reached its response token limit before finishing the review.', timeout: 'The response timed out.', cancelled: 'The call was cancelled.', usageLimit: 'ChatGPT usage limit reached.', staleConnection: 'The ChatGPT account or model changed.', invalidReviewOrModel: 'The response did not match the selected model or review format.', incompleteReview: 'Consolidation needs all individual assessments to complete.', consolidationTooLarge: 'The individual assessments exceed the consolidation limit. Review a smaller scope; individual results are retained.', assessmentTooLong: 'A reading assessment exceeded the 2,000-character limit. Completed reviews and suggestions were kept.', invalidAssessment: 'A reading assessment was empty or contained unsupported characters. Completed reviews and suggestions were kept.', invalidConsolidation: 'The consolidated assessment did not match the required format. Individual reviews and suggestions were kept.', invalidConsolidationContext: 'The saved reviewer patch context could not be validated. Individual reviews and suggestions were kept.', invalidReview: 'The review response exceeded supported limits or could not be validated. Completed reviews and suggestions were kept.', responseTooLarge: 'The response exceeded the supported byte limit. Completed reviews and suggestions were kept.', invalidResponse: 'The response could not be validated.', protocol: 'The response could not be validated.', findingLimit: 'The retained suggestion limit was reached.'};
     return reasons[code ?? ''] ?? 'The call did not return a valid review.';
@@ -178,11 +183,15 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     let scope: ReviewScope | null = null;
     let recaptureLibrary: (() => Promise<CapturedLibraryScope>) | null = null;
     let result: ReviewResult | null = null;
+    let marksInvalidatedByTyping = false;
     let config: QuestionStatus | null = null;
     let generation = 0;
     let pending: string | null = null;
     let busy = false;
     let automaticRunning = false;
+    let recoveringStartup = false;
+    // Reopening a panel or switching back never creates a startup retry loop.
+    const recoveredJobs = new Set<string>();
     let disposed = false;
     const background = createReviewActivity(() => show());
     let checking = false;
@@ -267,7 +276,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const historyHost = el('div'), aboutHost = el('div');
     const markHelp = el('details', '', 'review-mark-help');
     markHelp.append(el('summary', 'How to read and open the marks'), el('p', `A solid underline is a change, a line through is a removal, a wavy underline is competing alternatives and a small bar is an insertion. Click one to open it here, or use ${formatKeys('⌘⌥]')} and ${formatKeys('⌘⌥[')} to move between them and ${formatKeys('⌘⌥O')} to open one. Marks never apply or choose anything.`));
-    const startNew = button('Start a new review', () => { view = 'setup'; toggleMenu(false); update(); (firstSetupControl() ?? run).focus(); });
+    const startNew = button('Start a new review', () => { void startFreshReview(); });
     const discard = button('Discard review', () => { clear(); hooks.focusEditor(); });
     strip.prepend(startNew);
     menu.append(refreshReview, json, historyHost, aboutHost, markHelp, discard);
@@ -358,12 +367,13 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (open) { body.scrollTop = 0; menu.querySelector<HTMLElement>('button:not(:disabled),summary')?.focus(); }
     }
     function firstSetupControl() { return [...setupView.querySelectorAll<HTMLElement>('input:not(:disabled),button:not(:disabled)')].find(control => !control.closest('[hidden]') && !control.closest('details:not([open])')); }
-    function live(token: number) { return !disposed && (!element.hidden || suspended) && token === generation; }
+    function live(token: number) { return !disposed && (!element.hidden || suspended || recoveringStartup) && token === generation; }
     function included() { return scope ? scope.snapshots.filter(s => !workflowMode || selectedPaths.has(s.path) || !scope!.contextPaths || scope!.contextPaths.includes(s.path)) : []; }
     function scopeProblem() {
         if (!scope)
             return 'Open an editable source file or a mapped assembled chapter.';
         if (workflowMode) {
+            if (!reviewerIds.length) return 'Choose at least one available reviewer before previewing this new review.';
             const total = scope.snapshots.reduce((n, s) => n + bytes(s.source), 0) + bytes(contextNote);
             if (!selectedPaths.size)
                 return 'Choose at least one editable source. Unchecked sources are read-only context.';
@@ -431,15 +441,16 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         run.disabled = previewing ? Boolean(problem || pending || busy || automaticRunning || checking || !definitions.length) : Boolean(problem || pending || busy || automaticRunning || checking || !ready() || !core.requestReview);
         retry.disabled = Boolean(problem || pending || busy || automaticRunning || checking || !ready() || !core.requestReview || (workflowMode && !preparedRequest));
         const interruptedChunks = result?.workflow?.coverage.some(c => c.status === 'running' || c.status === 'cancelled');
-        const failedChunks = result?.workflow?.coverage.some(c => c.status === 'failed' && retryableCall(c.error));
+        const failedChunks = result?.workflow?.coverage.some(c => c.status === 'failed' && manuallyRetryableCall(c.error));
         continueBatch.textContent = failedChunks ? 'Retry failed chunks' : interruptedChunks ? 'Resume interrupted chunks' : 'Continue next reviewer batch';
-        continueBatch.hidden = automaticRunning || !result?.workflow?.coverage.some(c => ((c.status === 'queued' || c.status === 'notRun') && c.error !== 'findingLimit') || c.status === 'running' || c.status === 'cancelled' || (c.status === 'failed' && retryableCall(c.error)));
-        continueNote.textContent = failedChunks || interruptedChunks ? 'Retry sends only failed chunks and remaining calls, keeping completed results. Each chunk gets up to three attempts. Additional plan usage may count. Changed source requires a fresh review.' : 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count. Finish the remaining batches before applying suggestions; changed source needs a fresh review.';
+        continueBatch.hidden = automaticRunning || !core.continueReview || !result?.workflow?.coverage.some(c => ((c.status === 'queued' || c.status === 'notRun') && c.error !== 'findingLimit') || c.status === 'running' || c.status === 'cancelled' || (c.status === 'failed' && manuallyRetryableCall(c.error)));
+        continueNote.textContent = failedChunks || interruptedChunks ? 'Retry sends only failed chunks and remaining calls, keeping completed results and decisions. Invalid responses need another explicit retry; only connection failures retry automatically, up to three attempts. Additional plan usage may count. If the source changed, choose Start a new review to capture the current text.' : 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count. Finish the remaining batches before applying suggestions; changed source needs a fresh review.';
         continueNote.hidden = continueBatch.hidden;
         continueBatch.disabled = Boolean(pending || busy || checking || !ready());
         setupView.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>('input,select,textarea,button').forEach(e => e.disabled = Boolean(pending || busy || automaticRunning) || e.dataset.full === 'true');
         refreshReview.hidden = !result || !core.getReview;
-        refreshReview.disabled = Boolean(busy || pending);
+        refreshReview.disabled = Boolean(busy || pending || automaticRunning);
+        saved.querySelectorAll<HTMLButtonElement>('button').forEach(button => button.disabled = Boolean(busy || pending || automaticRunning));
         startNew.disabled = discard.disabled = Boolean(busy || pending || automaticRunning);
         cancel.hidden = !pending && !automaticRunning;
         keepWriting.hidden = !pending;
@@ -447,8 +458,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         connect.disabled = Boolean(pending || busy);
         const blocked = result?.edits.some(waiting) ? hooks.unavailable(false) : null;
         for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLElement>('[data-blocked]').forEach(n => { n.textContent = blocked ?? ''; n.hidden = !blocked; });
-        for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLButtonElement>('button[data-edit-action]').forEach(n => { n.disabled = Boolean(busy || pending || (n.dataset.editAction === 'accept' && (blocked || n.dataset.unavailable === 'true'))); });
-        for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLInputElement>('input[type=radio]').forEach(n => { n.disabled = Boolean(busy || pending); });
+        for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLButtonElement>('button[data-edit-action]').forEach(n => { n.disabled = Boolean(busy || pending || automaticRunning || (n.dataset.editAction === 'accept' && (blocked || n.dataset.unavailable === 'true'))); });
+        for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLInputElement>('input[type=radio]').forEach(n => { n.disabled = Boolean(busy || pending || automaticRunning); });
         for (const host of [edits, dialogBody]) host.querySelectorAll<HTMLElement>('[data-approve-reason]').forEach(n => { const why = n.dataset.approveReason ?? ''; n.textContent = why; n.hidden = !why; });
         dialogClose.disabled = Boolean(busy);
         dialogPrevious.disabled = Boolean(busy || pending || dialogIndex <= 0);
@@ -488,11 +499,11 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             update();
         }
     } }
-    function cancelRequest() { automaticRunning = false; const id = pending; if (id) background.cancel(id); pending = null; activity.hidden = true; clearTimeout(timer); generation++; checking = false; busy = false; if (id) {
+    function cancelRequest() { automaticRunning = false; recoveringStartup = false; const id = pending; if (id) background.cancel(id); pending = null; activity.hidden = true; clearTimeout(timer); generation++; checking = false; busy = false; if (id) {
         void core.cancelQuestion?.(id).catch(() => { });
-        retry.hidden = false;
+        retry.hidden = Boolean(result?.workflow);
     } }
-    function clear() { closeSuggestion(); suspended=false; cancelRequest(); background.clear(); element.hidden = true; hooks.visibilityChanged?.(false); element.classList.remove('review-tucked'); scope = null; recaptureLibrary = null; result = null; config = null; savedRecords = []; shownReview = null; historyOpen = null; view = 'setup'; receipts.clear(); publishMarks(); saved.replaceChildren(); savedSection.hidden = true; edits.replaceChildren(); historyHost.replaceChildren(); aboutHost.replaceChildren(); sources.replaceChildren(); sourceSignature = ''; batchPreview.replaceChildren(); blob.textContent = ''; say(''); toggleMenu(false); update(); }
+    function clear() { closeSuggestion(); suspended=false; cancelRequest(); background.clear(); element.hidden = true; hooks.visibilityChanged?.(false); element.classList.remove('review-tucked'); scope = null; recaptureLibrary = null; result = null; marksInvalidatedByTyping = false; config = null; savedRecords = []; shownReview = null; historyOpen = null; view = 'setup'; receipts.clear(); publishMarks(); saved.replaceChildren(); savedSection.hidden = true; edits.replaceChildren(); historyHost.replaceChildren(); aboutHost.replaceChildren(); sources.replaceChildren(); sourceSignature = ''; batchPreview.replaceChildren(); blob.textContent = ''; say(''); toggleMenu(false); update(); }
     function untuck() {
         if (element.classList.contains('review-tucked')) {
             element.classList.remove('review-tucked');
@@ -666,6 +677,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             const paths = (record.workflow?.sources ?? []).filter(s => !s.readOnly).map(s => s.path).join(', ');
             // The accessible name stays the stable record name; the row shows what the author recognises.
             const reopen = button('', () => { void reopenSaved(record.reviewId); }, 'review-saved-item');
+            reopen.disabled = Boolean(automaticRunning || pending || busy);
             reopen.setAttribute('aria-label', `Reopen saved review ${record.reviewId}`);
             reopen.append(el('span', [paths, names].filter(Boolean).join(' · ') || 'Saved review', 'review-saved-what'), el('span', `${list.filter(e => !waiting(e)).length} of ${list.length} decided`, 'review-saved-count'));
             if (record.reviewId === result?.reviewId) {
@@ -829,6 +841,11 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             update();
             return;
         }
+        if (marksInvalidatedByTyping) {
+            hooks.marksChanged?.(null, () => {});
+            showInvalidatedMarks();
+            return;
+        }
         const open = shown.edits.filter(waiting).length;
         hooks.marksChanged?.({ repositoryId: within.repositoryId, projectKey: shown.projectKey ?? null, edits: shown.edits, baselineHash: path => shown.workflow?.sources.find(s => s.path === path)?.sourceHash ?? within.snapshots.find(s => s.path === path)?.sourceHash }, marked => {
             if (result !== shown)
@@ -892,7 +909,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             edits.append(el('p', `${rejected} suggestion(s) dismissed. Rejected · local receipt retained.`, 'review-guidance'));
         const w = result.workflow;
         if (w && incomplete) {
-            edits.append(el('p', 'This review is incomplete. Failed or interrupted calls are never automatically retried.', 'drafting-warning'));
+            edits.append(el('p', 'This review is incomplete. When the project reopens, interrupted calls and temporary failures are retried once, keeping completed results. Cancelled calls require explicit continuation.', 'drafting-warning'));
             w.coverage.forEach((call, index) => {
                 if (['failed', 'cancelled', 'running', 'interrupted'].includes(call.status)) {
                     const reviewer = w.definitions[call.reviewer]?.definition.displayName ?? 'Consolidation';
@@ -1028,6 +1045,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     async function submit(continuing = false) {
         if (pending || busy || (!continuing && scopeProblem()) || !ready() || !scope || !core.requestReview)
             return;
+        const continuationProblem = continuing ? hooks.recoveryUnavailable?.() : null;
+        if (continuationProblem) { say(continuationProblem, 'warning'); return; }
         if (!globalThis.crypto?.randomUUID) {
             say('A secure request identifier is unavailable. Reopen Studio.');
             return;
@@ -1038,7 +1057,9 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             try {
                 const current = await recaptureLibrary();
                 if (!live(token)) return;
-                if (JSON.stringify(current.ordered) !== JSON.stringify(scope.snapshots)) {
+                const paths = new Set(scope.snapshots.map(snapshot => snapshot.path));
+                const retained = current.ordered.filter(snapshot => paths.has(snapshot.path));
+                if (retained.length !== paths.size || JSON.stringify(retained) !== JSON.stringify(scope.snapshots)) {
                     say('A selected source changed. Close this review and prepare it again before sending.');
                     preparedRequest = null; return;
                 }
@@ -1053,8 +1074,9 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         let completedSuccessfully = false;
         pending = requestId;
         background.start(requestId, scope.label, workflowMode ? coverage.length || null : 1);
+        if (continuing && oldResult?.workflow) background.progress(requestId, oldResult.workflow.coverage.filter(c => c.status === 'completed').length, oldResult.workflow.coverage.length);
         activityPhase = '';
-        activityDetail.textContent = 'Preparing the selected review calls…';
+        activityDetail.textContent = continuing ? 'Resuming unfinished calls; completed results are kept…' : 'Preparing the selected review calls…';
         callProgress.removeAttribute('value');
         if (!continuing)
             result = null;
@@ -1062,7 +1084,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         retry.hidden = true;
         say(workflowMode ? 'Your selected reviewers are reviewing this captured scope. You can keep writing.' : 'Proofreader and editor are reviewing this snapshot. You can keep writing.');
         update();
-        if (workflowMode) {
+        if (workflowMode && !element.hidden) {
             activity.focus({preventScroll: true});
             activity.scrollIntoView?.({block: 'nearest'});
         }
@@ -1092,7 +1114,10 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             const answer = continuing && oldResult && core.continueReview ? await core.continueReview(scope.repositoryId, oldResult.reviewId, requestId, connection, onProgress) : await core.requestReview(request, connection, onProgress);
             if (!live(token) || pending !== requestId)
                 return;
+            if (continuing && answer.reviewId !== oldResult?.reviewId)
+                throw new Error('The continued response belongs to another review. Saved results were preserved.');
             result = validate(answer, requestId);
+            if (!continuing) marksInvalidatedByTyping = false;
             completedSuccessfully = !result.workflow || result.workflow.coverage.every(call => call.status === 'completed');
             const completed = result.workflow?.coverage.filter(c => c.status === 'completed').length;
             const total = result.workflow?.coverage.length;
@@ -1111,7 +1136,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             if (live(token)) {
                 background.finish(requestId, 'attention', 'Review could not be completed.');
                 say(message(error), 'warning');
-                retry.hidden = false;
+                // Continuation must never fall back to resubmitting an old full capture.
+                retry.hidden = continuing && Boolean(oldResult?.workflow);
             }
         }
         finally {
@@ -1123,8 +1149,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             }
         }
     }
-    async function refreshResult() {
-        if (!result || !scope || busy || pending || !core.getReview)
+    async function refreshResult(quiet = false) {
+        if (!result || !scope || busy || pending || automaticRunning || !core.getReview)
             return;
         const token = generation;
         const repositoryId = scope.repositoryId;
@@ -1133,10 +1159,13 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         update();
         try {
             const next = await core.getReview(repositoryId, reviewId);
-            if (live(token)) {
+            if (live(token) && result?.reviewId === reviewId && scope?.repositoryId === repositoryId) {
+                if (next.reviewId !== reviewId || (next.revision ?? 0) < (result.revision ?? 0))
+                    throw new Error('The saved review changed identity or moved backwards. Its displayed decisions were preserved.');
                 result = validate(next);
+                if (!quiet) marksInvalidatedByTyping = false;
                 render();
-                say('Review decisions refreshed from the native host.');
+                if (!quiet) say('Review decisions refreshed from the native host.');
             }
         }
         catch (error) {
@@ -1150,8 +1179,72 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             }
         }
     }
+    async function startFreshReview() {
+        if (!scope || busy || pending || automaticRunning) return;
+        const token = generation;
+        const prior = scope;
+        const saved = result?.workflow;
+        // A reopened review can belong to different sources from the open editor.
+        // Retain those exact paths and target/context roles, never guess a new chapter.
+        const previous: ReviewScope = saved ? {
+            ...prior, scope: result!.scope,
+            snapshots: [...saved.sources].sort((a, b) => a.order - b.order).map(source =>
+                prior.snapshots.find(snapshot => snapshot.path === source.path) ?? {path: source.path, source: '', sourceHash: source.sourceHash}),
+            targetPaths: saved.sources.filter(source => !source.readOnly).map(source => source.path),
+            // Saved records do not carry the original library picker callback.
+            // Without one, all non-target sources remain explicit read-only context.
+            contextPaths: recaptureLibrary ? prior.contextPaths : undefined,
+            selectedRange: undefined,
+        } : prior;
+        const selectedReviewers = saved?.definitions.map(item => item.definition.id) ?? reviewerIds;
+        busy = true;
+        invalidatePreview();
+        toggleMenu(false);
+        say('Capturing current source text for a new review…');
+        try {
+            let captured: ReviewScope | null;
+            if (recaptureLibrary) {
+                const current = await recaptureLibrary();
+                const paths = new Set(previous.snapshots.map(s => s.path));
+                const snapshots = current.ordered.filter(s => paths.has(s.path));
+                if (snapshots.length !== paths.size) throw new Error('A saved review source is no longer in the selected library scope. Choose the scope again.');
+                captured = {...previous, snapshots, targetPaths: previous.targetPaths ?? current.targets.map(s => s.path), contextPaths: current.context.filter(s => paths.has(s.path)).map(s => s.path), selectedRange: undefined};
+            } else if (hooks.recapture) captured = await hooks.recapture(previous);
+            else {
+                captured = previous.scope === 'chapter' && hooks.captureChapter ? await hooks.captureChapter() : hooks.capture();
+                if (!captured || captured.repositoryId !== previous.repositoryId || captured.scope !== previous.scope ||
+                    JSON.stringify(captured.snapshots.map(s => s.path)) !== JSON.stringify(previous.snapshots.map(s => s.path)))
+                    throw new Error('Open the original review scope before capturing a new review. The saved review is unchanged.');
+                captured = {...previous, snapshots: captured.snapshots, selectedRange: undefined};
+            }
+            if (!live(token)) return;
+            if (!captured || captured.repositoryId !== prior.repositoryId) throw new Error('The review project changed during capture. Nothing was sent.');
+            scope = {...captured, snapshots: captured.snapshots.map(snapshot => ({...snapshot}))};
+            selectedPaths = new Set(scope.targetPaths ?? scope.snapshots.map(snapshot => snapshot.path));
+            useSelection = false;
+            reviewerIds = selectedReviewers.filter(id => definitions.some(definition => definition.id === id));
+            const missingReviewers = selectedReviewers.filter(id => !reviewerIds.includes(id));
+            view = 'setup';
+            sourceSignature = '';
+            sources.replaceChildren();
+            if (!workflowMode) for (const snapshot of scope.snapshots) {
+                const text = el('pre', snapshot.source, 'question-text'); text.tabIndex = 0;
+                sources.append(el('h3', snapshot.path), text);
+            }
+            scopeCards_(); settings();
+            retry.hidden = true;
+            say(`Current text captured. Preview this new review before sending. The earlier review and its decisions are saved.${missingReviewers.length ? ` Unavailable saved reviewers: ${missingReviewers.join(', ')}. Choose available reviewers in setup; none were substituted.` : ''}`);
+        } catch (error) {
+            if (live(token)) say(message(error), 'warning');
+        } finally {
+            if (live(token)) {
+                busy = false; update();
+                if (!element.hidden && view === 'setup') (firstSetupControl() ?? run).focus();
+            }
+        }
+    }
     async function act(editIds: string[], accept: boolean) {
-        if (busy || pending || !result || !scope || !editIds.length)
+        if (busy || pending || automaticRunning || !result || !scope || !editIds.length)
             return;
         const modalDecision = suggestionDialog.open;
         const preferredIds = modalDecision ? [...dialogCards.slice(dialogIndex), ...dialogCards.slice(0, dialogIndex)].flatMap(suggestionIds) : [];
@@ -1478,11 +1571,13 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (live(token))
             say(message(error), 'warning');
     } }
-    async function reopenSaved(id: string) { if (busy || pending || !scope || !core.getReview)
+    async function reopenSaved(id: string) { if (busy || pending || automaticRunning || !scope || !core.getReview)
         return; const token = generation; busy = true; update(); try {
         const next = await core.getReview(scope.repositoryId, id);
         if (live(token)) {
             result = validate(next);
+            recaptureLibrary = null;
+            marksInvalidatedByTyping = false;
             render();
             say('Saved review reopened without running reviewers.');
             title.focus();
@@ -1498,7 +1593,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             update();
         }
     } }
-    async function chooseAlternative(id: string) { if (busy || pending || !scope || !result || !core.chooseReviewEdit)
+    async function chooseAlternative(id: string) { if (busy || pending || automaticRunning || !scope || !result || !core.chooseReviewEdit)
         return; const modalChoice = suggestionDialog.open; const token = generation; const position = Math.max(0, [...edits.querySelectorAll<HTMLElement>('.review-edit')].findIndex(n => n.dataset.findingId === id)); let chosen: string | undefined; let failed = false; busy = true; update(); try {
         const next = await core.chooseReviewEdit(scope.repositoryId, result.reviewId, id);
         if (live(token)) {
@@ -1520,6 +1615,10 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     function openScope(override?: ReviewScope, recapture?: () => Promise<CapturedLibraryScope>, automatic = false) {
             if (disposed)
                 return;
+            if (recoveringStartup) {
+                if (scope) { suspended = false; element.hidden = false; hooks.visibilityChanged?.(true); update(); title.focus({preventScroll: true}); }
+                return;
+            }
             if (!element.hidden) {
                 untuck();
                 update();
@@ -1625,17 +1724,145 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             if (live(token)) { automaticRunning = false; update(); if (completedSuccessfully) returnToInlineSuggestions(); }
         }
     }
+    /** Resume durable jobs only after their project opens. Native continuation validates
+     * the original capture, account/model and single-review permit before sending. */
+    async function recoverOutstanding(repositoryId: string, projectKey = repositoryId) {
+        if (disposed || pending || busy || automaticRunning || !workflowMode || !core.listReviews || !core.continueReview) return;
+        const token = generation;
+        // Startup has no visible pane yet. Keep the existing hidden-review lifetime
+        // guard active without opening Chats or moving the author's focus.
+        suspended = true;
+        recoveringStartup = true;
+        const liveHere = () => live(token);
+        automaticRunning = true;
+        update();
+        let attempted = 0, finished = 0, attention = 0;
+        const problems: string[] = [];
+        let firstAttention: ReviewResult | null = null;
+        let lastRequest: string | null = null;
+        try {
+            const records = await core.listReviews(repositoryId);
+            if (!liveHere()) return;
+            // Cancel is an explicit stop, not a crash. Permanent/provider-output errors
+            // also need an author's decision rather than repeated automatic usage.
+            const jobs = records.filter(record => {
+                const calls = record.workflow?.coverage;
+                return record.schemaVersion === 2 && calls?.length &&
+                    !recoveredJobs.has(`${projectKey}:${record.reviewId}`) &&
+                    calls.some(call => call.status !== 'completed') &&
+                    calls.every(call => call.status === 'completed' ||
+                        (!call.error && ['queued', 'notRun', 'running'].includes(call.status)) ||
+                        (call.status === 'failed' && (retryableCall(call.error) ||
+                            (call.id === 'consolidation' && call.error === 'incompleteReview')))) &&
+                    calls.some(call => ['queued', 'notRun', 'running'].includes(call.status) ||
+                        (call.status === 'failed' && retryableCall(call.error)));
+            });
+            if (!jobs.length) return;
+            await configure();
+            if (!liveHere()) return;
+            for (const saved of jobs) {
+                if (!liveHere()) return;
+                recoveredJobs.add(`${projectKey}:${saved.reviewId}`);
+                attempted++;
+                // No recapture or fresh review: the native store owns the original text
+                // and reviewer definitions. Empty UI snapshots cannot mint edit authority.
+                scope = {repositoryId, scope: saved.scope, label: saved.workflow!.sources.filter(s => !s.readOnly).map(s => s.path).join(', ') || 'Saved review', snapshots: []};
+                suspended = element.hidden;
+                recaptureLibrary = null;
+                preparedRequest = null;
+                selectedPaths = new Set(saved.workflow!.sources.filter(s => !s.readOnly).map(s => s.path));
+                coverage = saved.workflow!.coverage;
+                definitions = saved.workflow!.definitions.map(d => d.definition);
+                result = validate(saved);
+                lastRequest = `recovery:${saved.reviewId}`;
+                savedRecords = records;
+                view = 'results';
+                render();
+                const problem = hooks.recoveryUnavailable?.() ?? (!ready() ? 'Reconnect ChatGPT to finish saved reviews.' :
+                    saved.workflow!.accountId !== config!.activeAccountId || saved.model !== config!.model ? 'Select the original ChatGPT account and model to finish this saved review.' : null);
+                if (problem) {
+                    problems.push(problem);
+                    firstAttention ??= result;
+                    attention++;
+                    lastRequest = `recovery:${saved.reviewId}`;
+                    background.start(lastRequest, scope.label, coverage.length);
+                    background.finish(lastRequest, 'attention', `${problem} Completed results are saved.`);
+                    say(problem, 'warning');
+                    continue;
+                }
+                let answer: ReviewResult | undefined = result;
+                let previous = coverage.filter(c => c.status === 'completed').length;
+                do {
+                    const unavailable = hooks.recoveryUnavailable?.();
+                    if (unavailable) { problems.push(unavailable); break; }
+                    answer = await submit(true);
+                    if (!liveHere()) return;
+                    if (!answer) { if (status.textContent) problems.push(status.textContent); break; }
+                    lastRequest = answer.requestId;
+                    const calls = answer.workflow!.coverage;
+                    const completed = calls.filter(c => c.status === 'completed').length;
+                    if (completed === calls.length) { finished++; break; }
+                    // Native dispatch already retries transient errors. Recovery makes
+                    // one attempt, then stops on exhaustion or lack of forward progress.
+                    if (completed <= previous || calls.some(c => c.error || !['completed', 'queued', 'notRun'].includes(c.status))) {
+                        const failed = calls.find(c => c.error);
+                        problems.push(failed ? callFailure(failed.error) : 'The next batch made no progress.');
+                        break;
+                    }
+                    previous = completed;
+                } while (liveHere());
+                if (!answer?.workflow?.coverage.every(c => c.status === 'completed')) { firstAttention ??= result; attention++; }
+            }
+            if (liveHere() && attempted) {
+                // The notification opens a job that actually needs attention, even
+                // when a later independent job completed successfully.
+                if (firstAttention) {
+                    result = firstAttention;
+                    scope = {repositoryId, scope: result.scope, label: result.workflow!.sources.filter(s => !s.readOnly).map(s => s.path).join(', ') || 'Saved review', snapshots: []};
+                    coverage = result.workflow!.coverage;
+                    definitions = result.workflow!.definitions.map(d => d.definition);
+                    selectedPaths = new Set(result.workflow!.sources.filter(s => !s.readOnly).map(s => s.path));
+                    lastRequest = `recovery:${result.reviewId}`;
+                    render();
+                }
+                const note = attention ? `${plural(finished, 'saved review')} finished; ${attention} ${attention === 1 ? 'needs' : 'need'} attention. Completed results are preserved. ${[...new Set(problems)].slice(0, 3).join(' ')}` : `${plural(finished, 'interrupted review')} finished. Completed results and decisions were kept.`;
+                say(note, attention ? 'warning' : 'note');
+                hooks.announce?.(note);
+                // Replace the last batch notification with the overall recovery result.
+                if (lastRequest && scope) {
+                    background.start(lastRequest, scope.label, null);
+                    background.finish(lastRequest, attention ? 'attention' : 'complete', note);
+                }
+            }
+        } catch (error) {
+            if (liveHere()) {
+                say(message(error), 'warning');
+                hooks.announce?.(`Saved reviews could not be resumed: ${message(error)}`);
+            }
+        } finally {
+            if (token === generation && !disposed) { recoveringStartup = false; automaticRunning = false; update(); }
+        }
+    }
     function hide() { closeSuggestion(); suspended=Boolean(scope); element.hidden=true; toggleMenu(false); hooks.visibilityChanged?.(false); background.setVisible(false); }
-    function show() { if (scope && element.hidden && !disposed) {suspended=false; element.hidden=false; element.classList.remove('review-tucked'); hooks.visibilityChanged?.(true); update(); if (!pending && !ready()) void configure(); title.focus({preventScroll:true});} else openScope(); }
+    function show(refresh = true) { if (scope && element.hidden && !disposed) {suspended=false; element.hidden=false; element.classList.remove('review-tucked'); hooks.visibilityChanged?.(true); update(); if (!pending && !recoveringStartup && !ready()) void configure(); title.focus({preventScroll:true});} else openScope();
+        if (refresh && view === 'results' && !recoveringStartup) void refreshResult(true);
+    }
     const keepWriting = button('Keep writing', () => { hide();hooks.closePane?.(); hooks.focusEditor(); });
     keepWriting.className = 'review-keep-writing';
     footActions.prepend(keepWriting);
     const outside = (event: PointerEvent) => {
         if (hooks.headerTabs && pending && !element.hidden && event.target instanceof Node && !element.contains(event.target)) { hide(); hooks.closePane?.(); hooks.focusEditor(); }
     };
+    function showInvalidatedMarks() {
+        markStatus.dataset.marked = '0';
+        legend.hidden = true;
+        markNote.hidden = false;
+        markNote.textContent = 'Highlights are off because the open text changed. Save your text, then choose Refresh review under More review actions to show the ones that still match.';
+        update();
+    }
     document.addEventListener('pointerdown', outside, true);
-    return { element, async openSaved(id:string) { if(pending||busy){show();return;} if(!scope)openScope();if(!scope)return;show();await reopenSaved(id); }, activityElement: background.element, reviewChapter, show, hide,
-        documentChanged() { if (pending || result) hide(); else clear(); }, visible:()=>!element.hidden&&!element.classList.contains('review-tucked'), open: () => openScope(), librarySupported: workflowMode, openLibrary: (captured: ReviewScope, recapture: () => Promise<CapturedLibraryScope>) => { if (pending) { show(); say('A review is already running. Wait for it or cancel it before starting another.'); return; } if (workflowMode) { clear(); openScope(captured, recapture); } }, clear, stateChanged: update,
+    return { element, async openSaved(id:string) { if(pending||busy||automaticRunning){show();return;} if(!scope)openScope();if(!scope)return;show(false);await reopenSaved(id); }, activityElement: background.element, reviewChapter, recoverOutstanding, show, hide,
+        documentChanged() { if (pending || result || recoveringStartup) hide(); else clear(); }, visible:()=>!element.hidden&&!element.classList.contains('review-tucked'), open: () => openScope(), librarySupported: workflowMode, openLibrary: (captured: ReviewScope, recapture: () => Promise<CapturedLibraryScope>) => { if (pending) { show(); say('A review is already running. Wait for it or cancel it before starting another.'); return; } if (workflowMode) { clear(); openScope(captured, recapture); } }, clear, stateChanged: update,
         /** Places the host's library picker entry among the scope choices. Its own handler and guards stay with the host. */
         adoptLibraryEntry(node: HTMLElement) {
             libraryEntry = node;
@@ -1666,11 +1893,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         },
         marksInvalidated() {
             if (result && result.edits.some(waiting)) {
-                markStatus.dataset.marked = '0';
-                legend.hidden = true;
-                markNote.hidden = false;
-                markNote.textContent = 'Highlights are off because the open text changed. Save your text, then choose Refresh review under More review actions to show the ones that still match.';
-                update();
+                marksInvalidatedByTyping = true;
+                showInvalidatedMarks();
             }
         }, destroy() { clear(); disposed = true; document.removeEventListener('pointerdown', outside, true); background.destroy(); element.remove(); } };
 }

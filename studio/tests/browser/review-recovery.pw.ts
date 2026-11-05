@@ -1,0 +1,35 @@
+import {test, expect} from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+test('@smoke restart resumes unfinished review jobs without replaying completed work or disturbing writing', async ({page}, info) => {
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/tests/browser/review-recovery.html');
+  const writer = page.locator('.active-document-pane .cm-content');
+  const activity = page.locator('.review-background');
+  await expect(activity.getByRole('button', {name: /Review in progress/})).toBeVisible();
+  const original = await page.evaluate(() => JSON.stringify((window as any).recoveryFixture.state().documents));
+  expect(await page.evaluate(() => (window as any).recoveryFixture.state().attempts)).toBe(1);
+  // Reload while the second call is pending, simulating an interrupted renderer/app.
+  await page.reload();
+  await expect(activity.getByRole('button', {name: /Review in progress/})).toBeVisible();
+  await expect(activity.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1');
+  expect(await page.evaluate(() => (window as any).recoveryFixture.state().attempts)).toBe(2);
+  await page.evaluate(async () => {await document.fonts.ready;});
+  await writer.focus();
+  const geometry = () => writer.evaluate(n => ({text: n.textContent, width: n.getBoundingClientRect().width, height: n.getBoundingClientRect().height}));
+  const before = await geometry();
+  await page.evaluate(() => (window as any).recoveryFixture.finish());
+  await expect(activity).toContainText('1 interrupted review finished');
+  expect(await geometry()).toEqual(before); await expect(writer).toBeFocused();
+  await expect(page.locator('.heinlein-review-panel')).toBeHidden();
+  const state = await page.evaluate(() => (window as any).recoveryFixture.state());
+  expect(state.saved.workflow.coverage.map((call: any) => call.status)).toEqual(['completed', 'completed', 'completed']);
+  expect(state.saved.workflow.coverage[0].requestId).toBe('old-0'); expect(state.fresh).toBe(0);
+  expect(JSON.stringify(state.documents)).toBe(original);
+  expect((await new AxeBuilder({page}).include('.review-background').analyze()).violations).toEqual([]);
+  await page.screenshot({path: `/tmp/heinlein-recovery-${info.project.name}.png`});
+  await activity.getByRole('button', {name: 'Open review', exact: true}).click();
+  await expect(page.locator('.heinlein-review-panel')).toContainText('The completed first assessment survives restart.');
+  await page.reload(); await expect(writer).toBeVisible(); await expect(activity).toBeHidden();
+  expect(await page.evaluate(() => (window as any).recoveryFixture.state().attempts)).toBe(2);
+  expect(errors).toEqual([]);
+});

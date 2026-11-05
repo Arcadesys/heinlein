@@ -501,7 +501,13 @@ fn parse_consolidation(
     bytes: &[u8],
 ) -> Result<ReadingFeedback, QuestionError> {
     let answer = parse_response(id, bytes)?;
-    if answer.incomplete || answer.model != model {
+    if answer.model != model {
+        return Err(QuestionError::new(
+            "invalidReviewOrModel",
+            "The consolidation response did not match the selected model. Individual reviews were kept.",
+        ));
+    }
+    if answer.incomplete {
         return Err(QuestionError::invalid_response());
     }
     let response = structured::Response::parse(&answer.text).map_err(|error| {
@@ -611,6 +617,23 @@ pub fn retryable_coverage_error(code: &str) -> bool {
             | "retryExhaustedTimeout"
             | "retryExhaustedProvider"
     )
+}
+/// An explicit author action may retry malformed model output as well as transport
+/// failures. This is not an automatic-retry policy: each continuation still uses
+/// the normal bounded batch, unchanged capture and response validation. Unknown,
+/// identity, permission, usage, context and unsafe-edit errors remain terminal.
+pub fn manual_retryable_coverage_error(code: &str) -> bool {
+    retryable_coverage_error(code)
+        || matches!(
+            code,
+            "invalidResponse"
+                | "protocol"
+                | "outputLimit"
+                | "responseTooLarge"
+                | "invalidAssessment"
+                | "assessmentTooLong"
+                | "invalidConsolidation"
+        )
 }
 fn transient(error: &QuestionError) -> bool {
     !error.is_usage_limit()
@@ -1453,15 +1476,16 @@ mod tests {
                 _ => unreachable!(),
             }
             envelope["output"][0]["content"][0]["text"] = serde_json::json!(value.to_string());
-            assert!(
-                parse_consolidation(
-                    "batch",
-                    "test-model",
-                    &serde_json::to_vec(&envelope).unwrap()
-                )
-                .is_err(),
-                "{case}"
-            );
+            let error = parse_consolidation(
+                "batch",
+                "test-model",
+                &serde_json::to_vec(&envelope).unwrap(),
+            )
+            .unwrap_err();
+            if case == "model" {
+                assert_eq!(error.code, "invalidReviewOrModel");
+                assert!(!manual_retryable_coverage_error(error.code));
+            }
         }
     }
     #[tokio::test(start_paused = true)]
@@ -1948,6 +1972,35 @@ mod custom_reviewer_tests {
 
 #[cfg(test)]
 mod retry_tests {
+    #[test]
+    fn invalid_output_is_manual_only_and_transport_retry_policy_is_unchanged() {
+        for code in [
+            "invalidResponse",
+            "protocol",
+            "outputLimit",
+            "responseTooLarge",
+            "invalidAssessment",
+            "assessmentTooLong",
+            "invalidConsolidation",
+        ] {
+            assert!(super::manual_retryable_coverage_error(code), "{code}");
+            assert!(!super::retryable_coverage_error(code), "{code}");
+            assert!(
+                !super::transient(&crate::QuestionError::new(code, "test")),
+                "{code}"
+            );
+        }
+        for code in [
+            "network",
+            "timeout",
+            "retryExhaustedNetwork",
+            "retryExhaustedTimeout",
+            "retryExhaustedProvider",
+        ] {
+            assert!(super::manual_retryable_coverage_error(code), "{code}");
+            assert!(super::retryable_coverage_error(code), "{code}");
+        }
+    }
     use super::*;
     #[tokio::test(start_paused = true)]
     async fn retry_transport_is_bounded_cancellation_aware_and_body_stable() {
