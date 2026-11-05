@@ -48,6 +48,7 @@ mod mcp_access;
 mod persistence_tests;
 mod preferences;
 mod preferences_store;
+mod project_creation;
 mod projects;
 mod proposals;
 mod questions;
@@ -253,7 +254,7 @@ fn select_repository_with_origin(
         return Err("Heinlein is quitting".into());
     }
     state.mutation_gate.note_activity();
-    let repo = Repository::open(&path).map_err(|e| e.to_string())?;
+    let repo = Repository::open(&path).map_err(project_creation::open_error)?;
     guard_auth_repository_separation(repo.root(), private_storage)?;
     if let Some(parent) = private_storage.parent() {
         guard_auth_repository_separation(repo.root(), &parent.join("standalone-drafts-v1"))?;

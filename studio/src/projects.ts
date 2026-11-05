@@ -1,16 +1,16 @@
 import type {LocalCore,RepositorySession} from './localCore';
 export interface ProjectResume {path:string;sourceHash:string;sceneId:string|null;anchor:number;head:number;scrollTop:number;readingScrollTop?:number|null}
 export interface Project {id:string;name:string;revision:number;kind:'local'|'managed';workspaceId:string|null;resume:ProjectResume|null;unavailable:string|null;github:{owner:string;repository:string;accountId:number;branch:string}|null;writingLocation?:string}
-export type ProjectRequest={action:'list'|'lastOpened'|'clearLastOpened'}|{action:'settings'|'previewOpen';id:string}|{action:'activate'|'cancel';previewId:string}|{action:'rename';id:string;revision:number;name:string}|{action:'saveResume';repositoryId:string;projectId:string;revision:number;resume:ProjectResume};
+export type ProjectRequest={action:'list'|'lastOpened'|'clearLastOpened'}|{action:'create';name:string}|{action:'settings'|'previewOpen';id:string}|{action:'activate'|'cancel';previewId:string}|{action:'rename';id:string;revision:number;name:string}|{action:'saveResume';repositoryId:string;projectId:string;revision:number;resume:ProjectResume};
 export type ProjectResponse=Project[]|Project|RepositorySession|{id:string}|null;
 const el=<K extends keyof HTMLElementTagNameMap>(tag:K,text='')=>{const n=document.createElement(tag);n.textContent=text;return n;};
-export function createProjectLibrary(core:LocalCore,hooks:{current():RepositorySession|null;switchProject(id:string):Promise<boolean>;openLocal():Promise<boolean>;openGitHub():void;newDraft():Promise<void>;drafts():Promise<void>;metadata(project:Project):void;focusWriting():void}){
+export function createProjectLibrary(core:LocalCore,hooks:{current():RepositorySession|null;switchProject(id:string):Promise<boolean>;openLocal():Promise<boolean>;createLocal(name:string):Promise<boolean>;openGitHub():void;newDraft():Promise<void>;drafts():Promise<void>;metadata(project:Project):void;focusWriting():void}){
  const element=el('dialog');element.className='project-library github-panel';element.setAttribute('aria-labelledby','project-library-title');
- let generation=0,busy=false,opener:HTMLElement|null=null;
+ let generation=0,busy=false,opener:HTMLElement|null=null,focusAfterAction:HTMLElement|null=null;
  const title=el('h2','Projects');title.id='project-library-title';title.tabIndex=-1;
  const status=el('p');status.setAttribute('role','status');const body=el('section');
  function controls(){element.querySelectorAll<HTMLButtonElement|HTMLInputElement>('button,input').forEach(b=>b.disabled=busy);element.setAttribute('aria-busy',String(busy));status.setAttribute('aria-busy',String(busy&&!!status.textContent));}
- async function act(run:()=>Promise<void>){if(busy)return;busy=true;controls();try{await run();}catch(e){status.textContent=String(e);}finally{busy=false;controls();}}
+ async function act(run:()=>Promise<void>){if(busy)return;busy=true;controls();try{await run();}catch(e){status.textContent=String(e);}finally{busy=false;controls();if(element.open&&focusAfterAction?.isConnected)focusAfterAction.focus();focusAfterAction=null;}}
  function button(text:string,run:()=>Promise<void>){const b=el('button',text);b.type='button';b.onclick=()=>void act(run);return b;}
  function close(writing=false){generation++;element.close();if(writing)hooks.focusWriting();else opener?.focus();}
  async function request<T>(r:ProjectRequest){if(!core.projectRequest)throw Error('The project library is unavailable in this host.');return await core.projectRequest(r) as T;}
@@ -21,7 +21,7 @@ export function createProjectLibrary(core:LocalCore,hooks:{current():RepositoryS
   const active=projects.find(p=>p.id===hooks.current()?.projectId);if(active)hooks.metadata(active);
   body.replaceChildren(para('Choose the writing you want to return to. Project changes stay on this Mac until you explicitly send them.','project-intro'));
   const addTitle=el('h3','Add a project');addTitle.className='project-section-title';
-  const actions=div('project-actions',button('Start or open a folder…',async()=>{if(await hooks.openLocal())close(true);}),button('Bring in from GitHub…',async()=>{close();hooks.openGitHub();}));actions.setAttribute('role','group');actions.setAttribute('aria-label','Add a project');actions.firstElementChild?.classList.add('project-primary');body.append(addTitle,actions);
+  const actions=div('project-actions',button('New project…',async()=>createForm()),button('Open an existing folder…',async()=>{if(await hooks.openLocal())close(true);}),button('Bring in from GitHub…',async()=>{close();hooks.openGitHub();}));actions.setAttribute('role','group');actions.setAttribute('aria-label','Add a project');actions.firstElementChild?.classList.add('project-primary');body.append(addTitle,actions);
   const listTitle=el('h3','Recently opened');listTitle.id='project-list-title';listTitle.className='project-section-title';body.append(listTitle,para('Projects opened here, newest first.','project-help'));
   if(!projects.length)body.append(para('No recently opened projects here yet. Open a folder or bring in a GitHub project to add it here. You can also keep writing in standalone drafts.','project-empty'));
   else{const list=el('ul');list.className='project-list';list.setAttribute('aria-labelledby','project-list-title');
@@ -38,6 +38,18 @@ export function createProjectLibrary(core:LocalCore,hooks:{current():RepositoryS
   const draftsTitle=el('h3','Standalone drafts');draftsTitle.className='project-section-title';
   const drafts=el('section');drafts.className='project-drafts';drafts.setAttribute('aria-label','Standalone drafts');drafts.append(draftsTitle,para('Start immediately without a project. Choose a destination later.'),div('project-actions',button('New standalone draft',async()=>{await hooks.newDraft();close(true);}),button('Find standalone drafts',async()=>{close();await hooks.drafts();})));
   const refresh=button('Refresh projects',library);refresh.classList.add('project-quiet');body.append(drafts,div('project-footer',refresh));title.focus();
+ }
+ function createForm(){
+  title.textContent='New project';status.textContent='';body.replaceChildren();
+  const label=el('label','Project name'),input=el('input');input.type='text';input.maxLength=240;input.autocomplete='off';label.append(input);
+  const create=button('Choose location…',async()=>{
+   const name=input.value.trim();focusAfterAction=input;
+   if(!name||new TextEncoder().encode(name).length>240||name.startsWith('.')||/[\\/\\\\:\u0000-\u001f\u007f-\u009f]/u.test(name)){status.textContent='Use a plain project name of up to 240 bytes, without slashes, colons, control characters, or a leading dot.';input.focus();return;}
+   if(await hooks.createLocal(name))close(true);else{status.textContent='Project creation canceled. Your current writing is still here.';input.focus();}
+  });create.classList.add('project-primary');
+  input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.isComposing){event.preventDefault();if(!busy)create.click();}});
+  body.append(label,para('Choose the parent folder next. Heinlein will create a new folder with this name and an empty first scene. Existing folders are never overwritten. Nothing is sent to GitHub.','project-help'),div('project-actions',create,button('Cancel',library)));
+  input.focus();
  }
  function group(heading:string,...kids:Node[]){const s=el('section');s.className='project-settings-group';if(heading)s.append(el('h3',heading));s.append(...kids);return s;}
  async function settings(id:string){const view=generation;const p=await request<Project>({action:'settings',id});if(!element.open||view!==generation)return;hooks.metadata(p);title.textContent=`Manage — ${p.name}`;body.replaceChildren();

@@ -109,6 +109,19 @@ and package metadata; they exclude manuscripts, examples, credentials, and app
 profiles. Release notes and the release manifest identify source provenance,
 checks, and remaining runtime limits.
 
+## New local projects
+
+Open **Projects → New project…**, enter a project name, and choose the parent
+folder. Confirm the displayed destination. Heinlein creates a new folder containing
+an empty **First scene** and a manuscript index, then switches to that project.
+Existing folders and files are never overwritten. Cancel keeps the current writing
+and leaves the project name available for another attempt.
+
+Use **Open an existing folder…** for writing that already has a folder. Creating a
+project does not send anything to GitHub or copy writing out of the current project.
+If an error says creation may have finished, check the displayed location and open
+that existing folder before trying to create another copy.
+
 ## GitHub projects
 
 Choose **GitHub projects…** to open an existing github.com repository as a separate

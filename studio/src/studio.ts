@@ -569,6 +569,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     current:()=>standalone?.active?null:repository,
     switchProject,
     openLocal:async()=>{const before=repository?.id;await dirtySync;if(writeInFlight)await writeInFlight;await stageQueue;if(dirty&&!await saveCurrent())return false;await selectRepository(()=>core.pickRepository());return !!repository&&repository.id!==before&&!repositoryDetached;},
+    createLocal:async name=>{const before=repository?.id;let failure:unknown=null;await dirtySync;if(writeInFlight)await writeInFlight;await stageQueue;if(dirty&&!await saveCurrent())throw Error('Keep the current writing and resolve its save message before creating a project.');await selectRepository(async()=>{try{return await core.projectRequest!({action:'create',name}) as RepositorySession|null;}catch(error){failure=error;throw error;}});if(failure)throw failure;return !!repository&&repository.id!==before&&!repositoryDetached;},
     openGitHub:()=>{void github.open(true);},
     newDraft:async()=>{await standalone?.newDraft();},drafts:async()=>{await standalone?.list();},
     metadata:p=>{if(repository?.projectId===p.id&&p.revision>=(repository.projectRevision??0)){repository.name=p.name;repository.projectRevision=p.revision;renderOrigin();if(chromeReady)renderPill();}},

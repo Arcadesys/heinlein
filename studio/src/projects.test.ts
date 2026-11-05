@@ -10,7 +10,7 @@ beforeEach(()=>{document.body.replaceChildren();HTMLDialogElement.prototype.show
 afterEach(()=>{library?.destroy();library=undefined;});
 function setup(projects:Project[]){
  const request=vi.fn(async()=>structuredClone(projects));
- const hooks={current:()=>null,switchProject:vi.fn(async(_id:string)=>true),openLocal:vi.fn(async()=>false),openGitHub:vi.fn(),newDraft:vi.fn(async()=>{}),drafts:vi.fn(async()=>{}),metadata:vi.fn(),focusWriting:vi.fn()};
+ const hooks={current:()=>null,switchProject:vi.fn(async(_id:string)=>true),openLocal:vi.fn(async()=>false),createLocal:vi.fn(async(_name:string)=>false),openGitHub:vi.fn(),newDraft:vi.fn(async()=>{}),drafts:vi.fn(async()=>{}),metadata:vi.fn(),focusWriting:vi.fn()};
  library=createProjectLibrary({projectRequest:request} as unknown as LocalCore,hooks);document.body.append(library.element);return{request,hooks};
 }
 const names=()=>[...library!.element.querySelectorAll('.project-name')].map(n=>n.textContent);
@@ -27,7 +27,7 @@ it('reloads native order when returning to Projects and keeps every existing ide
  const f=setup([local,managed]);await library!.open();
  button('Open Lantern chapters').click();await tick();expect(f.hooks.switchProject).toHaveBeenCalledWith('managed-stable');
  f.request.mockResolvedValueOnce([managed,local]);await library!.open();expect(names()).toEqual(['Lantern chapters','River notebook']);
- expect(library!.element.querySelectorAll('.project-row')).toHaveLength(2);expect(button('Manage River notebook')).toBeTruthy();expect(button('Start or open a folder…')).toBeTruthy();
+ expect(library!.element.querySelectorAll('.project-row')).toHaveLength(2);expect(button('Manage River notebook')).toBeTruthy();expect(button('Open an existing folder…')).toBeTruthy();
  expect(f.request).toHaveBeenCalledTimes(2);
 });
 it('refreshes the native history without optimistic sorting after a refused open',async()=>{
@@ -50,4 +50,20 @@ it('distinguishes independent local and managed projects with the same name befo
  button('Open The Zoo · GitHub copy').click();await tick();expect(f.hooks.switchProject).toHaveBeenLastCalledWith('managed-stable');
  await library!.open();button('Open The Zoo · Local folder').click();await tick();expect(f.hooks.switchProject).toHaveBeenLastCalledWith('local-stable');
  expect(f.request.mock.calls).toEqual([[{action:'list'}],[{action:'list'}]]);
+});
+
+it('new project has a separate named create flow, preserves input on cancel, and never invokes open-existing',async()=>{
+ const f=setup([]);await library!.open();button('New project…').click();await tick();
+ const input=library!.element.querySelector('input')!;input.value='New story';
+ button('Choose location…').click();button('Choose location…').click();await tick();
+ expect(f.hooks.createLocal).toHaveBeenCalledTimes(1);expect(f.hooks.createLocal).toHaveBeenCalledWith('New story');expect(f.hooks.openLocal).not.toHaveBeenCalled();
+ expect(library!.element.open).toBe(true);expect(input.value).toBe('New story');expect(library!.element.textContent).toContain('creation canceled');
+ f.hooks.createLocal.mockResolvedValueOnce(true);button('Choose location…').click();await tick();expect(library!.element.open).toBe(false);expect(f.hooks.focusWriting).toHaveBeenCalled();
+});
+it('new project validates names and keeps the form visible on native failure',async()=>{
+ const f=setup([]);await library!.open();button('New project…').click();await tick();const input=library!.element.querySelector('input')!;
+ for(const name of ['', '../escape', 'a/b', 'a:b', '🦊'.repeat(61)]){input.value=name;button('Choose location…').click();await tick();}expect(f.hooks.createLocal).not.toHaveBeenCalled();
+ input.value='New story';f.hooks.createLocal.mockRejectedValueOnce(Error('Folder already exists; nothing overwritten'));button('Choose location…').click();await tick();
+ expect(library!.element.open).toBe(true);expect(input.value).toBe('New story');expect(library!.element.textContent).toContain('Folder already exists');
+ button('Cancel').click();await tick();expect(library!.element.querySelector('h2')?.textContent).toBe('Projects');expect(f.hooks.openLocal).not.toHaveBeenCalled();
 });
