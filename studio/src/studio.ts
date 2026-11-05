@@ -6,12 +6,15 @@ import {readThreads,putThread,sceneThreadScope,groupThreadScope,chapterThreadSco
 import {actionMenu} from './actionMenu';
 import {createMarkdownExport} from './markdownExport';
 import {createDocumentTabs,type DocumentTab} from './documentTabs';
+import {createTypingChrome} from './typingChrome';
 import {createReferencePane,REFERENCE_ACTION_MESSAGE} from './referencePane';
 import {requestGitHub} from './githubRequests';
 import type {GitHubLocalEvidence} from './githubTypes';
 import {createProjectLibrary,type Project,type ProjectResume} from './projects';
 import {createRepositoryHome, documentOrigin, sharingStatus} from './repositoryHome';
 import {wordCount} from './writingFeedback';
+import {createWordCountDialog} from './wordCountDialog';
+import './wordCounts.css';
 import {createStandaloneDrafts} from './standaloneDrafts';
 import {createUpdatePanel} from './updatePanel';
 import {createGitHubPanel} from './githubPanel';
@@ -94,6 +97,7 @@ export const SAVE_NOTICE_IDLE_MS = 5000;
 
 export function mountStudio(root: HTMLElement, core: LocalCore) {
   // The status pill mirrors the writing panel; it is built further down, so render only once it exists.
+  let wordCounts: ReturnType<typeof createWordCountDialog> | undefined;
   let chromeReady = false; let draftingStarted = false; let writingSummary: WritingSummary | null = null;
   const writing = createWritingPanel(summary => { writingSummary = summary; if (chromeReady) renderPill(); });
   let generation = 0;
@@ -468,6 +472,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const pillScene = button('No scene open', () => {}, 'pill-scene pill-menu'); pillScene.disabled = true;
   pillChapter.setAttribute('aria-label', 'Chapters');
   const pillWords = el('span', '', 'pill-mono pill-words');
+  const countButton = button('Word counts', () => wordCounts?.open(), 'word-count-entry');
+  countButton.setAttribute('aria-haspopup', 'dialog');
+  // Mouse activation preserves the editor as the return target, including its caret.
+  countButton.addEventListener('pointerdown', event => {if (event.button === 0) event.preventDefault();});
+  wordCounts = createWordCountDialog(() => standalone?.active ? {index:null, counts:new Map(), pending:new Set(), current:{path:'', title:'Standalone draft', words:wordCount(standalone.text), included:false}, activeGroupId:null} : writing.counts(), () => writing.refreshCounts());
   const pillSave = el('span', '', 'pill-save'); const pillSaveLabel = el('span', 'Nothing open');
   const pillDot = el('span', '', 'pill-dot'); pillDot.setAttribute('aria-hidden', 'true');
   pillSave.append(pillDot, pillSaveLabel);
@@ -756,8 +765,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const documentTabs=createDocumentTabs({open:openDocumentTab,close:closeDocumentTab,read:tab=>{if(!repositoryDetached&&!selecting)void reference.read({path:tab.path,sceneId:tab.sceneId});}});
   for(const host of [activeDocumentPane,documentCommandBar])for(const event of ['focusin','pointerdown'])host.addEventListener(event,e=>{if((e.target as Element)?.closest('.markdown-editor,.source-text,.markdown-reader,.md-view-toggle'))reference.activateWriter();});activeDocumentPane.tabIndex=-1;
   activeDocumentPane.addEventListener('scroll',scheduleProjectPosition);
-  readingPanes.append(activeDocumentPane,reference.element);documentWorkspace.append(documentTabs.element,documentCommandBar,splitReadingOffer,readingPanes);
-  function mountActive(page:HTMLElement){if(window.matchMedia?.('(max-width:760px)').matches)navigation.close();activeDocumentPane.replaceChildren(page);if(!preview.contains(documentWorkspace))preview.replaceChildren(documentWorkspace);refreshHeaderLayout();}
+  const typingChrome=createTypingChrome({root,writerPane:activeDocumentPane,controls:[documentTabs.element,documentCommandBar,splitReadingOffer],canHide:()=>!disposed&&!structuralBusy&&!selecting&&!repositoryDetached&&!recoveryPending&&!root.inert&&!readingActive()});
+  readingPanes.append(activeDocumentPane,reference.element);documentWorkspace.append(typingChrome.element,readingPanes);
+  function mountActive(page:HTMLElement){typingChrome.reset();if(window.matchMedia?.('(max-width:760px)').matches)navigation.close();activeDocumentPane.replaceChildren(page);if(!preview.contains(documentWorkspace))preview.replaceChildren(documentWorkspace);refreshHeaderLayout();}
   function refuseReferenceAction(){if(!reference.fromReference())return false;status.textContent=REFERENCE_ACTION_MESSAGE;status.classList.add('error');return true;}
   function writerAction(run:()=>void){if(!refuseReferenceAction())run();}
   // Reading has no editing selection: nothing may act on the hidden editor's caret or selection from there.
@@ -770,6 +780,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   function writerScrollTop(){return readingActive()?readerSourceScroll:primaryScroller()?.scrollTop??0;}
   function showSourceView(){if(readingActive())setDocumentView('source');}
   function setDocumentView(mode:'source'|'reading'){
+    typingChrome.reset();
     const reader=documentReader,view=documentView;
     if(!reader||!view)return;
     if(mode==='reading'&&recoveryPending){status.textContent='Resolve recovery in Source before using Reading.';status.classList.add('error');return;}
@@ -864,7 +875,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   chromeReady = true;
   resetPreview();
   appCommands=actionMenu('More actions',[...corner.children,...pill.children].filter(node=>node!==pillProject&&node!==pillSave&&node!==goalButton&&node!==proposalsEntry) as HTMLElement[],root,()=>repository?.name??'Heinlein Studio',refreshHeaderLayout);
-  pill.replaceChildren(pillProject,proposalsEntry,appCommands.button,goalButton,appCommands.storage);pill.prepend(navigation.element.querySelector('.navigation-toggle')!);corner.hidden=true;
+  pill.replaceChildren(pillProject,proposalsEntry,appCommands.button,countButton,goalButton,appCommands.storage);pill.prepend(navigation.element.querySelector('.navigation-toggle')!);corner.hidden=true;
   headerMedia=window.matchMedia?.('(max-width:760px)');headerMedia?.addEventListener?.('change',refreshHeaderLayout);
   function refreshHeaderLayout(){
     if(!appCommands)return;
@@ -875,7 +886,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     appCommands.button.textContent=compact?'More':'More actions';
     appCommands.button.setAttribute('aria-label','More actions');
   }
-  root.replaceChildren(glow, ...(projectLibrary.supported ? [pill, layout] : [layout, pill]), noticeSlot, goalCard, corner, firstStory.element, github.element, updates.element, updates.notice, projectLibrary.element,mcpAccess.element,chatRail.element);
+  root.replaceChildren(glow, ...(projectLibrary.supported ? [pill, layout] : [layout, pill]), noticeSlot, goalCard, wordCounts.element, corner, firstStory.element, github.element, updates.element, updates.notice, projectLibrary.element,mcpAccess.element,chatRail.element);
   const drafting = createDraftingPanel(core, {
     root, repository: () => standalone?.active?null:repository, run: runStructural, runOrganization: runLibraryOrganization, verify: verifyStructuralBuffer, selectedPath:()=>opened?.path??null,currentGroup:()=>{const match=currentChapter?/^__chapter__\/(.+)\.md$/.exec(currentChapter.chapter.source):null;return match?decodeURIComponent(match[1]):null;},
     show: () => { renderPill(); draftingEntry.hidden = Boolean(drafting.state?.revision); outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
@@ -1754,6 +1765,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       Boolean(drafting.state?.revision) && {key: 'legacy', label: 'Copy legacy scenes…', sub: 'Independent copies; the old manuscript is unchanged', run: () => drafting.importRepository('copy')},
       drafting.canUndo && {key: 'undo-structure', label: 'Undo last manuscript change', run: () => drafting.undoLastChange()},
       !draftingEntry.hidden && {key: 'drafting', label: 'Show library', run: () => { showProject(); void openDrafting(); }},
+      {key: 'word-counts', label: 'Word counts…', sub: 'Scene, group and whole manuscript, including unsaved text', run: () => wordCounts?.open()},
       {key: 'goal', label: 'Set daily goal…', sub: writingSummary ? `Currently ${writingSummary.goal.toLocaleString()} words` : '', run: () => toggleGoal(true)},
       {key: 'navigation', label: 'Toggle navigation drawer', right: formatKeys('⌘\\'), run: () => navigation.toggle()},
       Boolean(repository) && {key: 'files', label: 'Show source files', run: () => { showNavView('files'); navigation.select(); }},
@@ -1801,6 +1813,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       else newDraftButton.setAttribute('aria-keyshortcuts', 'Meta+N Control+N');
     }
     refreshHeaderLayout();
+    wordCounts?.update();
     pillProject.textContent = projectLibrary.supported?(standalone?.active?'Standalone draft · Projects…':repository?.name??'Projects…'):documentOrigin(repository,Boolean(standalone?.active));
     if(projectLibrary.supported)pillProject.setAttribute('aria-label',`Projects. ${standalone?.active?'Standalone draft':repository?.name??'No project selected'}`);
     const scene = opened && drafting.state?.scenes.find(item => item.path === opened!.path);
@@ -1882,6 +1895,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   applyZoom(false);
 
   function resetPreview() {
+    typingChrome.reset();
     threadScopeOverride=null;threadContext=null;threadSidebar.render();
     if(projectPositionTimer){clearTimeout(projectPositionTimer);projectPositionTimer=null;}
     standalone?.detach();
@@ -2210,7 +2224,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     selectionAsk?.destroy(); selectionAsk = null;
     draftingQuestions?.clear(); questionButton = null;
     if (!reviewApplying) reviewPanel?.documentChanged(); currentChapter = null;
-    if (doc.generatedCompatibility) writing.clearScene();
+    if (doc.generatedCompatibility || assembled) writing.clearScene();
     else writing.openScene(repository?.projectKey ?? '', doc.path, doc.text, drafting.state?.scenes.find(scene => scene.path === doc.path)?.id);
     cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; recoveryErrorMessage = null; recovery = draft; recoveryPending = Boolean(draft && draft.text !== doc.text); writePaused = null; writeBaseHash = doc.contentHash;
     editor?.destroy(); editor = null; opened = doc; saveButton = null; dirtyBadge = null; setDirty(false);
@@ -2285,7 +2299,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         setDirty(raw !== opened?.text);
         scheduleAutosave();
       }, () => { void saveCurrent(); }, kind => writing.typed(kind), message => { status.textContent=message; });
-      editor.view.dispatch({effects: StateEffect.appendConfig.of(reviewMarks())});
+      editor.view.dispatch({effects: StateEffect.appendConfig.of([reviewMarks(),typingChrome.extension])});
       if(core.projectRequest){editor.view.dispatch({effects:StateEffect.appendConfig.of(EditorView.updateListener.of(update=>{if(update.selectionSet)scheduleProjectPosition();}))});editor.view.scrollDOM.addEventListener('scroll',scheduleProjectPosition);}
       createDocumentDetails(metadata, editor);
       editor.view.dispatch({effects: StateEffect.appendConfig.of(EditorView.updateListener.of(update => {if (update.docChanged) questionMarkerSignature = ''; if (update.docChanged || update.selectionSet) draftingQuestions?.stateChanged();}))});
@@ -2321,18 +2335,20 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     reviewChapter.title = 'Runs mechanical, story/clarity, and all saved custom agents, then consolidation. Sends this chapter to your selected ChatGPT account and model.';
     toolbar.append(reviewChapter, button('Heinlein', () => writerAction(()=>openHeinlein('scene'))), revise);
     text.replaceWith(explanation, toolbar, host, sources);
-    const writer=assembled.recoveryNotices?.length?null:createChapterWriter(core,repository!.id,assembled);
+    writing.openChapter(repository?.projectKey ?? '', assembled.chapter.source, assembled.parts.map(part => part.document));
+    const countProjectKey = repository?.projectKey ?? '';
+    const writer=assembled.recoveryNotices?.length?null:createChapterWriter(core,repository!.id,assembled, doc => writing.saved(countProjectKey, doc.path, doc.text));
     chapterWriter=writer;
     const reader = createEditor(host, assembled.text, () => {}, () => {void saveCurrent();});
     chapterEditor = reader; reader.setEditable(Boolean(writer));
     saveButton=button('Save chapter',()=>{void saveCurrent();},'primary');dirtyBadge=el('span','Saved on this Mac','badge');dirtyBadge.setAttribute('role','status');toolbar.append(saveButton,dirtyBadge);
     if(writer)reader.view.dispatch({effects:StateEffect.appendConfig.of(chapterEditExtension(assembled,next=>{
-      writer.changed(next);currentChapter=writer.view();edits++;noteEditing();setDirty(true);
+      writer.changed(next);currentChapter=writer.view();writing.changedChapter(currentChapter.parts.map(part => part.document));edits++;noteEditing();setDirty(true);
       const epoch=documentEpoch;void writer.stage().then(()=>{if(active(epoch)&&chapterWriter===writer)setDirty(writer.dirty()||saving);}).catch(error=>{if(active(epoch)){writePaused='error';status.textContent=`Chapter recovery could not be kept: ${String(error)}. Keep this window open and retry Save.`;}});
       draftingQuestions?.stateChanged();scheduleAutosave();
     },message=>{status.textContent=message;}))});
     else for(const issue of assembled.recoveryNotices??[])explanation.after(button(`${issue.message} Open ${issue.path}`,()=>{void showDocument(issue.path);}));
-    reader.view.dispatch({effects: StateEffect.appendConfig.of(reviewMarks())});
+    reader.view.dispatch({effects: StateEffect.appendConfig.of([reviewMarks(),typingChrome.extension])});
     mountDocumentView(toolbar, host, reader.view, () => ({text: reader.text(), ranges: (currentChapter??assembled).parts.map((part,index,parts) => ({from:index?parts[index-1].to:part.from,to:part.to}))}), mode => { explanation.textContent = mode === 'reading' ? 'Reading the current chapter. Switch to Source to edit its sheets together.' : sourceHint; });
     reader.view.contentDOM.setAttribute('aria-label', 'Chapter manuscript');
     reader.view.contentDOM.setAttribute('aria-readonly', String(!writer));
@@ -2469,6 +2485,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   const unbindPreferences=bindPreferenceStatus(root,settingsNote);
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { unbindPreferences();headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();editorCommands?.destroy();navigation.destroy();markdownExport.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();chatRail.destroy();threadSidebar.destroy();mcpAccess.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); checkUpdatesUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { wordCounts?.destroy();typingChrome.destroy();unbindPreferences();headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();editorCommands?.destroy();navigation.destroy();markdownExport.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();chatRail.destroy();threadSidebar.destroy();mcpAccess.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); checkUpdatesUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

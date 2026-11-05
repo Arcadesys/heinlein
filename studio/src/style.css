@@ -753,7 +753,7 @@ dialog { color: var(--fg); }
 .project-first > .status-pill { background:var(--bg); }
 .project-first > .status-pill .pill-save:not([data-state="error"]) { color:var(--fg); }
 :root[data-fade-chrome] .studio.typing > .status-pill.chrome:not(:hover):not(:focus-within) { opacity:1; }
-:root[data-fade-chrome] .studio.typing > .status-pill.chrome:not(:hover):not(:focus-within) > :not(.project-switcher):not(.pill-save):not(.pill-goal) { opacity:.12; }
+:root[data-fade-chrome] .studio.typing > .status-pill.chrome:not(:hover):not(:focus-within) > :not(.project-switcher):not(.pill-save):not(.pill-goal):not(.word-count-entry) { opacity:.12; }
 /* Primary manuscript creation controls follow the project-library target sizes. */
 .drafting-actions button { min-height:44px; font-size:1rem; }
 .drafting-dialog :is(button,input,select) { min-height:44px; font-size:1rem; }
@@ -1148,8 +1148,8 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 /* Enlarged controls retain their own scroll area so the manuscript stays readable. */
 @media (max-width:600px) {
   .document-workspace .document-command-bar { max-block-size:max(4rem,12vh); overflow:auto; }
-  .document-workspace:has(.reference-pane:not([hidden])):has(.active-document-pane:focus-within) > .split-reading-offer,
-  .document-workspace:has(.reference-pane:focus-within) > .split-reading-offer { display:none; }
+  .document-workspace:has(.reference-pane:not([hidden])):has(.active-document-pane:focus-within) .typing-chrome-content > .split-reading-offer,
+  .document-workspace:has(.reference-pane:focus-within) .typing-chrome-content > .split-reading-offer { display:none; }
 }
 
 /* Activity/count text must not wrap the editor toolbar and move the manuscript. */
@@ -1197,3 +1197,16 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 .revision-bar { flex:1; height:4px; border-radius:2px; background:var(--border); }
 .revision-bar > div { height:100%; border-radius:2px; background:var(--accent); }
 .revisions-dialog > input[hidden] { display:none; }
+
+/* Only document tabs/tools retreat. The project header and save/error notices
+   stay visible; a full-size restore target never overlaps the manuscript. */
+.typing-chrome { position:relative; flex:none; display:grid; grid-template-rows:1fr; min-block-size:48px; transition:grid-template-rows 160ms ease-out; }
+.typing-chrome-clip { grid-area:1 / 1; min-block-size:0; overflow:hidden; }
+.typing-chrome-content { transform:translateY(0); opacity:1; transition:transform 160ms ease-out,opacity 120ms ease-out; }
+.typing-chrome.is-typing { grid-template-rows:0fr; }
+.typing-chrome.is-typing .typing-chrome-content { transform:translateY(-100%); opacity:0; visibility:hidden; transition:transform 160ms ease-out,opacity 120ms ease-out,visibility 0s linear 160ms; }
+.typing-chrome-reveal { grid-area:1 / 1; align-self:stretch; justify-self:start; position:relative; margin-inline:4px; max-inline-size:min(calc(100% - 8px),calc(100vw - 8px)); min-block-size:auto; padding:4px 12px; font-size:1rem; line-height:max(38px,1.55em); background:var(--bg); color:var(--fg); }
+.typing-chrome-reveal[hidden] { display:none; }
+@media(prefers-reduced-motion:reduce) {
+ .typing-chrome,.typing-chrome-content,.typing-chrome.is-typing .typing-chrome-content { transition:none; }
+}

@@ -137,6 +137,7 @@ test('editing the manuscript removes stale anchors and disables applying the old
   await page.setViewportSize({width:1600,height:1000});await openPassage(page);await sendRevision(page);await fixture(page,'finish');const pane=page.locator('.question-panel');await expect(pane.getByRole('button',{name:'Review changes…',exact:true})).toBeVisible();
   await pane.getByRole('button',{name:'Close Heinlein',exact:true}).click();await page.keyboard.press('ArrowRight');await page.keyboard.type('!');
   await expect(page.locator('.question-passage-chip[aria-label="1 suggestion at this passage"]')).toHaveCount(0);
+  await page.getByRole('button',{name:'Show tabs and tools',exact:true}).click();
   await page.locator('.editor-toolbar button[aria-controls="drafting-questions"]').click();await pane.locator('.question-passage-picker > summary').click();
   await expect(pane.getByRole('button',{name:/Passage 1 · Source changed/})).toBeVisible();await expect(pane.getByRole('button',{name:'Review changes…',exact:true})).toBeDisabled();expect((await state(page)).sent).toBe(1);expect((await state(page)).applied).toBe(0);
 });

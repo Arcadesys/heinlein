@@ -869,6 +869,7 @@ fn production_main() {
             questions::suggest_question_revision,
             questions::cancel_question,
             questions::connect_question_account,
+            questions::reauthenticate_review,
             questions::cancel_question_sign_in,
             questions::select_question_account,
             questions::select_question_model,

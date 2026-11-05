@@ -14,6 +14,28 @@ rendered with your writing appearance settings. Link destinations appear as text
 embedded images are not loaded, and raw HTML stays literal. Frontmatter remains
 available in Source. Resolve any pending recovery in Source first.
 
+## Word counts
+
+Choose **Word counts** in the writing header, or search for it in the command
+palette. The button stays visible when tabs and tools slide away during typing.
+The read-only dialog shows the current scene, the whole manuscript, and a group
+picker with scene-by-scene totals. A group includes its nested groups; duplicate
+scene titles show their source paths. Closing returns to the prior focus without
+changing the editor selection or saving anything.
+
+The manuscript boundary is its indexed source scenes, each counted once.
+Reference sheets, untracked files, generated chapter exports and deleted scenes
+are excluded. Unsaved text in the open scene or assembled group editor replaces
+its saved count, rather than being added twice. Loading and unreadable scenes are
+labelled, and **Recount saved scenes** retries reads without saving the editor.
+An uninitialized library is not presented as an empty manuscript.
+
+Counts use the existing Unicode word-like segment count of Markdown source.
+Complete opening frontmatter is excluded. Punctuation, emoji and formatting marks
+alone do not count; words in code and link destinations do. Reading and Source
+use the same source text. This feature does not change the separate daily-growth
+credit rules or write manuscript data.
+
 ## Preferences and daily progress
 
 The daily counter stays directly available in the writing header. Its width is
@@ -239,6 +261,17 @@ and Questions as a card docked right while the page stays full width behind it.
 Hover over the Manuscript tab while dragging a repository file to reveal its
 existing import targets; imports still require their usual preview and confirmation.
 The pill fades while you type and returns when the pointer moves.
+
+While you type in a project source document, its document tabs, Markdown editor
+tools, and saved split actions slide into a compact **Tabs and tools** row. Click
+that button or press **Escape** to restore them without leaving the writer. Tab
+restores the controls before keyboard navigation. Editor search, completion and
+IME cancellation keep their existing Escape behavior. Typing in Questions or
+settings does not hide the tools; Reading and document changes restore them.
+The manuscript keeps its width and line wrapping. Scrolled writing stays anchored
+when it fits within the resized pane; the caret stays visible. Save/error notices
+and project navigation remain available. Reduced
+motion uses an immediate transition.
 
 - **Cmd/Ctrl+K** jumps to a scene, **Cmd/Ctrl+P** browses files and
   **Cmd/Ctrl+Shift+P** lists every command. Type `/` or `>` to switch scope, Tab

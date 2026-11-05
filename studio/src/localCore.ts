@@ -79,7 +79,8 @@ export interface ReviewSnapshot { path: string; source: string; sourceHash: stri
 export interface ReviewerDefinition {id:string; version:number; displayName:string; instructions:string}
 export interface CustomReviewer {id:string; version:number; displayName:string; description:string; instructions:string; output:'notes'|'notes_and_edits'}
 export interface ReviewOptions {consolidate?:boolean;reviewers:string[]; context:ReviewSnapshot[]; contextNote:string; ranges:{path:string;fromUtf8:number;toUtf8:number}[];reviewId?:string|null;fullContextOrder?:string[]}
-export interface ReviewCoverage {contextRanges?:{sourceIndex:number;fromUtf8:number;toUtf8:number}[];id:string; sourceIndex:number;fromUtf8:number;toUtf8:number;windowFrom:number;windowTo:number;reviewer:number;status:string;requestId:string|null;error:string|null}
+export interface ReviewCallDiagnostics {httpStatus?:number|null;providerCode?:string|null;providerRequestId?:string|null}
+export interface ReviewCoverage {diagnostics?:ReviewCallDiagnostics|null;contextRanges?:{sourceIndex:number;fromUtf8:number;toUtf8:number}[];id:string; sourceIndex:number;fromUtf8:number;toUtf8:number;windowFrom:number;windowTo:number;reviewer:number;status:string;requestId:string|null;error:string|null}
 export interface ReviewRequest { requestId: string; repositoryId: string; scope: 'scene' | 'chapter'; snapshots: ReviewSnapshot[]; workflow?:ReviewOptions|null }
 /** Activity only: streamed provider text is never an actionable review result. */
 export interface ReviewProgress {requestId:string; completedCalls:number; totalCalls:number; reviewer:number; sourceIndex:number; chunkIndex:number; status:string; receivedBytes:number; suggestions:number}
@@ -113,6 +114,7 @@ export interface LocalCore {
   chooseReviewEdit?(repositoryId:string,reviewId:string,editId:string):Promise<ReviewResult>;
   approveReviewEdit?(repositoryId:string,reviewId:string,editId:string):Promise<ProposalOutcome|null>;
   continueReview?(repositoryId:string,reviewId:string,requestId:string,connection:QuestionConnection,onProgress?: (progress: ReviewProgress) => void):Promise<ReviewResult>;
+  reauthenticateReview?(repositoryId:string,reviewId:string,allowChatgptPlan:true):Promise<{status:QuestionStatus;review:ReviewResult}>;
   prepareReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<{proposalId: string}>;
   rejectReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<ReviewResult>;
   getReview?(repositoryId: string, reviewId: string): Promise<ReviewResult>;
@@ -204,6 +206,7 @@ export const localCore: LocalCore = {
   suggestQuestionRevision: (request, connection, target) => invoke('suggest_question_revision', {request, connection, target}),
   cancelQuestion: requestId => invoke('cancel_question', {requestId}),
   connectQuestionAccount: options => invoke('connect_question_account', options),
+  reauthenticateReview: (repositoryId,reviewId,allowChatgptPlan) => invoke('reauthenticate_review', {repositoryId,reviewId,allowChatgptPlan}),
   cancelQuestionSignIn: () => invoke('cancel_question_sign_in'),
   selectQuestionAccount: accountId => invoke('select_question_account', {accountId}),
   selectQuestionModel: slug => invoke('select_question_model', {slug}),

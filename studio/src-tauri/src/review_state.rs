@@ -94,6 +94,8 @@ pub(crate) struct ReviewSession {
     expected: HashMap<String, String>,
     #[serde(skip)]
     prepared: HashMap<String, PendingProposal>,
+    #[serde(skip)]
+    authentication_recovery: Option<(u64, u64)>,
 }
 // Validated native receipt data, not persisted approval authority.
 type ReviewReceiptEvidence = (
@@ -170,6 +172,7 @@ impl ReviewSession {
             result,
             expected,
             prepared: HashMap::new(),
+            authentication_recovery: None,
         })
     }
     pub fn matches(&self, repository_id: &str, review_id: &str) -> bool {
@@ -565,6 +568,7 @@ impl ReviewSession {
             result,
             expected,
             prepared: HashMap::new(),
+            authentication_recovery: None,
         })
     }
     pub fn id(&self) -> &str {
@@ -597,24 +601,58 @@ impl ReviewSession {
             .is_some_and(|v| v.account_id == account)
             && self.result.model == model
     }
+    pub fn authentication_failed(&self) -> bool {
+        self.coverage()
+            .iter()
+            .any(|c| c.status == "failed" && c.error.as_deref() == Some("authentication"))
+    }
+    pub fn recovery_connection(&self) -> Result<(String, String), String> {
+        let workflow = self
+            .result
+            .workflow
+            .as_ref()
+            .ok_or("This review cannot reconnect")?;
+        if !self.authentication_failed() {
+            return Err("This review has no authentication failure".into());
+        }
+        Ok((workflow.account_id.clone(), self.result.model.clone()))
+    }
+    pub fn clear_authentication_recovery(&mut self) {
+        self.authentication_recovery = None;
+    }
+    /// Only the native OAuth completion path may grant this ephemeral proof.
+    pub fn authorize_authentication_recovery(&mut self, generation: u64) {
+        self.authentication_recovery = Some((self.revision, generation));
+    }
+    pub fn consume_authentication_recovery(&mut self, generation: u64) -> bool {
+        self.authentication_recovery.take() == Some((self.revision, generation))
+    }
     /// Explicit continuation retries recoverable output/transport failures and interrupted calls.
     /// Caller holds the native single-review permit; no active batch is replaced. Completed
     /// reports, findings and decisions remain immutable. A changed capture needs
     /// a fresh review rather than rebasing old results onto new writing.
+    #[cfg(test)]
     pub fn requeue_failed(
         &mut self,
         source_matches: impl Fn(&drafting_questions::review::ReviewSnapshot) -> bool,
     ) -> Result<bool, String> {
+        self.requeue_failed_after_authentication(false, source_matches)
+    }
+    pub fn requeue_failed_after_authentication(
+        &mut self,
+        authenticated: bool,
+        source_matches: impl Fn(&drafting_questions::review::ReviewSnapshot) -> bool,
+    ) -> Result<bool, String> {
         use drafting_questions::review_workflow::manual_retryable_coverage_error;
+        let retryable = |code: &str| {
+            manual_retryable_coverage_error(code) || (authenticated && code == "authentication")
+        };
         let Some(workflow) = self.result.workflow.as_ref() else {
             return Ok(false);
         };
         let retry = workflow.coverage.iter().any(|c| {
             matches!(c.status.as_str(), "running" | "cancelled")
-                || (c.status == "failed"
-                    && c.error
-                        .as_deref()
-                        .is_some_and(manual_retryable_coverage_error))
+                || (c.status == "failed" && c.error.as_deref().is_some_and(retryable))
         });
         let queued = workflow
             .coverage
@@ -638,15 +676,13 @@ impl ReviewSession {
         for c in &mut self.result.workflow.as_mut().unwrap().coverage {
             if matches!(c.status.as_str(), "running" | "cancelled")
                 || (c.status == "failed"
-                    && (c
-                        .error
-                        .as_deref()
-                        .is_some_and(manual_retryable_coverage_error)
+                    && (c.error.as_deref().is_some_and(retryable)
                         || (c.id == drafting_questions::review_workflow::CONSOLIDATION_ID
                             && c.error.as_deref() == Some("incompleteReview"))))
             {
                 c.status = "queued".into();
                 c.error = None;
+                c.diagnostics = None;
                 c.request_id = None;
             }
         }
@@ -1204,6 +1240,7 @@ impl ReviewSession {
                     || c.window_to != p.window_to
                     || c.context_ranges != p.context_ranges
                     || c.reviewer != p.reviewer
+                    || c.diagnostics.as_ref().is_some_and(|d| !d.valid())
                     || ![
                         "queued",
                         "running",
@@ -2077,8 +2114,60 @@ mod tests {
     }
 
     #[test]
+    fn authentication_recovery_requires_ephemeral_revision_and_generation_bound_proof() {
+        let mut s = workflow_session(2);
+        let edit = session().view().edits[0].edit.clone();
+        s.ingest(call(&s, 0, vec![edit]), &Default::default())
+            .unwrap();
+        let mut failed = call(&s, 1, vec![]);
+        failed.calls[0].coverage.status = "failed".into();
+        failed.calls[0].coverage.error = Some("authentication".into());
+        s.ingest(failed, &Default::default()).unwrap();
+        assert!(s.authentication_failed());
+        assert!(!s.consume_authentication_recovery(7));
+        assert!(!s.requeue_failed(|_| true).unwrap());
+        let before = serde_json::to_value(s.view()).unwrap();
+        s.authorize_authentication_recovery(7);
+        assert!(!s.consume_authentication_recovery(8));
+        assert!(!s.consume_authentication_recovery(7));
+        s.authorize_authentication_recovery(7);
+        s.revision += 1;
+        assert!(!s.consume_authentication_recovery(7));
+        s.revision -= 1;
+        s.authorize_authentication_recovery(7);
+        let mut restored: ReviewSession =
+            serde_json::from_value(serde_json::to_value(&s).unwrap()).unwrap();
+        assert!(!restored.consume_authentication_recovery(7));
+        assert_eq!(before, serde_json::to_value(s.view()).unwrap());
+        let authenticated = s.consume_authentication_recovery(7);
+        assert!(authenticated);
+        assert!(s
+            .requeue_failed_after_authentication(authenticated, |_| false)
+            .is_err());
+        assert_eq!(before, serde_json::to_value(s.view()).unwrap());
+        assert!(!s.consume_authentication_recovery(7));
+        s.authorize_authentication_recovery(9);
+        let authenticated = s.consume_authentication_recovery(9);
+        assert!(s
+            .requeue_failed_after_authentication(authenticated, |_| true)
+            .unwrap());
+        assert_eq!(s.coverage()[0].status, "completed");
+        assert_eq!(s.coverage()[1].status, "queued");
+        assert_eq!(
+            before["edits"],
+            serde_json::to_value(s.view()).unwrap()["edits"]
+        );
+        assert_eq!(
+            before["readingFeedback"],
+            serde_json::to_value(s.view()).unwrap()["readingFeedback"]
+        );
+        assert!(!s.consume_authentication_recovery(9));
+    }
+
+    #[test]
     fn manual_retry_leaves_auth_usage_context_and_unknown_failures_terminal() {
         for error in [
+            "authentication",
             "invalidAccount",
             "accountUnavailable",
             "staleConnection",
