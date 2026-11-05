@@ -1,0 +1,28 @@
+/* Outside the tabs/tools that slide away when writing. The label never changes width. */
+.studio > .status-pill > .word-count-entry { flex:0 0 auto; min-block-size:48px; font-size:1rem; color:var(--fg); opacity:1; }
+:root[data-fade-chrome] .studio.typing > .status-pill.chrome > .word-count-entry { opacity:1; }
+.appearance-dialog.word-count-dialog { width:min(42rem,calc(100vw - 16px)); max-width:calc(100vw - 16px); max-height:calc(100vh - 16px); padding:clamp(8px,3vw,20px); box-sizing:border-box; font-size:1rem; color:var(--fg); background:var(--bg); }
+.word-count-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.5rem; }
+.word-count-dialog .word-count-heading h2 { margin:0; font-size:1.75rem; }
+.word-count-dialog :is(button,select,summary) { min-block-size:48px; font:inherit; }
+.word-count-dialog p { line-height:1.5; overflow-wrap:anywhere; }
+.word-count-overview { margin-block:1rem; padding:clamp(8px,3vw,20px); border:2px solid var(--fg); border-radius:.5rem; }
+.word-count-overview dt { font-weight:600; overflow-wrap:anywhere; }
+.word-count-overview dd { margin:.25rem 0 1rem; font-size:1.4rem; font-weight:700; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.word-count-overview dd:last-child { margin-bottom:0; }
+.word-count-dialog label { display:grid; gap:.5rem; font-weight:600; }
+.word-count-dialog select { min-width:0; width:100%; color:var(--fg); background:var(--bg); border:2px solid var(--fg-muted); }
+.word-count-group-total { font-weight:700; font-variant-numeric:tabular-nums; }
+.word-count-scenes { padding:0; list-style:none; }
+.word-count-scenes li { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:.5rem 1rem; padding:.75rem .25rem; border-bottom:1px solid var(--fg-muted); overflow-wrap:anywhere; }
+.word-count-scenes li[hidden] { display:none; }
+.word-count-scenes li.is-current { border-inline-start:4px solid var(--fg); padding-inline-start:.5rem; }
+.word-count-number { font-variant-numeric:tabular-nums; font-weight:700; }
+.word-count-dialog :focus-visible { outline:3px solid var(--fg); outline-offset:3px; }
+.word-count-path,.word-count-current { display:block; font-size:1rem; line-height:1.5; }
+.word-count-current { font-weight:600; }
+.word-count-current[hidden] { display:none; }
+
+.word-count-dialog button { max-inline-size:100%; white-space:normal; overflow-wrap:normal; padding:.5em .75em; }
+
+.word-count-dialog [hidden] { display:none; }

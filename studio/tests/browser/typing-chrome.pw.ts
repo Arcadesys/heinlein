@@ -74,10 +74,21 @@ test('scrolled passage and reference width remain steady, including reduced moti
   await open(page);await page.emulateMedia({reducedMotion:'reduce'});
   await page.evaluate(async()=>{document.documentElement.dataset.zoom='200';await document.fonts.ready;});
   await page.evaluate(()=>{const v=(window as any).documentFixture.view();v.dispatch({selection:{anchor:v.state.doc.line(24).from+5},scrollIntoView:true});v.focus();});await page.waitForTimeout(200);
-  await page.evaluate(()=>{const v=(window as any).documentFixture.view(),p=document.querySelector('.active-document-pane')!;p.scrollTop+=v.coordsAtPos(v.state.selection.main.head).top-p.getBoundingClientRect().top-p.clientHeight/2;});
+  // Center the full caret, not only its top. At enlarged text sizes the latter
+  // can trigger native input scrolling even when no chrome collapse happens.
+  await page.evaluate(()=>{const v=(window as any).documentFixture.view(),p=document.querySelector('.active-document-pane')!,caret=v.coordsAtPos(v.state.selection.main.head);p.scrollTop+=(caret.top+caret.bottom)/2-p.getBoundingClientRect().top-p.clientHeight/2;});
+  const visibleCaret=async()=>{const bounds=await page.evaluate(()=>{const v=(window as any).documentFixture.view(),pane=document.querySelector('.active-document-pane')!.getBoundingClientRect(),caret=v.coordsAtPos(v.state.selection.main.head);return{top:caret.top,bottom:caret.bottom,paneTop:pane.top,paneBottom:pane.bottom};});expect(bounds.top).toBeGreaterThanOrEqual(bounds.paneTop);expect(bounds.bottom).toBeLessThanOrEqual(bounds.paneBottom);};
+  await visibleCaret();
   const before=await sample(page),reference=await page.locator('.reference-pane').boundingBox();
-  await type(page);const after=await sample(page);
-  expect(after.width).toBe(before.width);expect(after.caret).toBeCloseTo(before.caret!,0);expect((await page.locator('.reference-pane').boundingBox())!.width).toBe(reference!.width);
+  let after=before;
+  for(let cycle=0;cycle<4;cycle++) {
+    await type(page);after=await sample(page);
+    expect(after.width).toBe(before.width);expect(after.caret).toBeCloseTo(before.caret!,0);expect((await page.locator('.reference-pane').boundingBox())!.width).toBe(reference!.width);await visibleCaret();
+    if(cycle<3) {
+      await page.keyboard.press('Backspace');await page.keyboard.press('Escape');await expect(chrome(page)).not.toHaveClass(/is-typing/);await page.waitForTimeout(220);
+      const restored=await sample(page);expect(restored.text).toBe(before.text);expect(restored.head).toBe(before.head);expect(restored.width).toBe(before.width);expect(restored.caret).toBeCloseTo(before.caret!,0);await visibleCaret();
+    }
+  }
   expect(await chrome(page).evaluate(el=>getComputedStyle(el).transitionDuration)).toBe('0s');
   await page.locator('.reference-source').focus();await expect(chrome(page)).not.toHaveClass(/is-typing/);
   await page.keyboard.type('no changes');await expect(chrome(page)).not.toHaveClass(/is-typing/);expect((await sample(page)).text).toBe(after.text);

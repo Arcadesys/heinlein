@@ -753,7 +753,7 @@ dialog { color: var(--fg); }
 .project-first > .status-pill { background:var(--bg); }
 .project-first > .status-pill .pill-save:not([data-state="error"]) { color:var(--fg); }
 :root[data-fade-chrome] .studio.typing > .status-pill.chrome:not(:hover):not(:focus-within) { opacity:1; }
-:root[data-fade-chrome] .studio.typing > .status-pill.chrome:not(:hover):not(:focus-within) > :not(.project-switcher):not(.pill-save):not(.pill-goal) { opacity:.12; }
+:root[data-fade-chrome] .studio.typing > .status-pill.chrome:not(:hover):not(:focus-within) > :not(.project-switcher):not(.pill-save):not(.pill-goal):not(.word-count-entry) { opacity:.12; }
 /* Primary manuscript creation controls follow the project-library target sizes. */
 .drafting-actions button { min-height:44px; font-size:1rem; }
 .drafting-dialog :is(button,input,select) { min-height:44px; font-size:1rem; }

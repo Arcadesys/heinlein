@@ -14,6 +14,28 @@ rendered with your writing appearance settings. Link destinations appear as text
 embedded images are not loaded, and raw HTML stays literal. Frontmatter remains
 available in Source. Resolve any pending recovery in Source first.
 
+## Word counts
+
+Choose **Word counts** in the writing header, or search for it in the command
+palette. The button stays visible when tabs and tools slide away during typing.
+The read-only dialog shows the current scene, the whole manuscript, and a group
+picker with scene-by-scene totals. A group includes its nested groups; duplicate
+scene titles show their source paths. Closing returns to the prior focus without
+changing the editor selection or saving anything.
+
+The manuscript boundary is its indexed source scenes, each counted once.
+Reference sheets, untracked files, generated chapter exports and deleted scenes
+are excluded. Unsaved text in the open scene or assembled group editor replaces
+its saved count, rather than being added twice. Loading and unreadable scenes are
+labelled, and **Recount saved scenes** retries reads without saving the editor.
+An uninitialized library is not presented as an empty manuscript.
+
+Counts use the existing Unicode word-like segment count of Markdown source.
+Complete opening frontmatter is excluded. Punctuation, emoji and formatting marks
+alone do not count; words in code and link destinations do. Reading and Source
+use the same source text. This feature does not change the separate daily-growth
+credit rules or write manuscript data.
+
 ## Preferences and daily progress
 
 The daily counter stays directly available in the writing header. Its width is
