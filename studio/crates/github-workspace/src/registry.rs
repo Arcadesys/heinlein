@@ -14,7 +14,82 @@ pub struct StateDir {
     path: PathBuf,
     fd: File,
 }
-pub struct Lock(File);
+pub struct Lock {
+    file: File,
+    #[cfg(unix)]
+    _local: local_lock::Lease,
+}
+// Native commands run on separate worker threads. Queue contention inside this
+// process before attempting the nonblocking OS lock; another process must still
+// be refused. Key by inode so separately opened directories and hard links agree.
+#[cfg(unix)]
+mod local_lock {
+    use super::*;
+    use std::{
+        collections::HashMap,
+        os::unix::fs::MetadataExt,
+        sync::{Arc, Condvar, Mutex, OnceLock, Weak},
+        thread::{self, ThreadId},
+        time::{Duration, Instant},
+    };
+    #[derive(Default)]
+    struct Gate {
+        owner: Mutex<Option<ThreadId>>,
+        changed: Condvar,
+    }
+    pub(super) struct Lease(Arc<Gate>);
+    impl Lease {
+        pub(super) fn acquire(file: &File) -> Result<Self> {
+            type Gates = Mutex<HashMap<(u64, u64), Weak<Gate>>>;
+            static GATES: OnceLock<Gates> = OnceLock::new();
+            let metadata = file.metadata()?;
+            let gate = {
+                let mut gates = GATES
+                    .get_or_init(Default::default)
+                    .lock()
+                    .map_err(|_| Error::Storage)?;
+                gates.retain(|_, gate| gate.strong_count() > 0);
+                let entry = gates.entry((metadata.dev(), metadata.ino())).or_default();
+                match entry.upgrade() {
+                    Some(gate) => gate,
+                    None => {
+                        let gate = Arc::new(Gate::default());
+                        *entry = Arc::downgrade(&gate);
+                        gate
+                    }
+                }
+            };
+            let current = thread::current().id();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let mut owner = gate.owner.lock().map_err(|_| Error::Storage)?;
+            while let Some(thread) = *owner {
+                // Recursive acquisition remains an error, never a deadlock.
+                if thread == current {
+                    return Err(Error::Busy);
+                }
+                let remaining = deadline
+                    .checked_duration_since(Instant::now())
+                    .ok_or(Error::Busy)?;
+                owner = gate
+                    .changed
+                    .wait_timeout(owner, remaining)
+                    .map_err(|_| Error::Storage)?
+                    .0;
+            }
+            *owner = Some(current);
+            drop(owner);
+            Ok(Self(gate))
+        }
+    }
+    impl Drop for Lease {
+        fn drop(&mut self) {
+            if let Ok(mut owner) = self.0.owner.lock() {
+                *owner = None;
+                self.0.changed.notify_one();
+            }
+        }
+    }
+}
 /// Proof that this registry workspace lock is already held; never recursively flock it.
 pub struct WorkspaceLock {
     id: String,
@@ -26,7 +101,7 @@ mod metadata;
 impl Drop for Lock {
     fn drop(&mut self) {
         #[cfg(unix)]
-        let _ = flock(&self.0, FlockOperation::Unlock);
+        let _ = flock(&self.file, FlockOperation::Unlock);
     }
 }
 impl StateDir {
@@ -154,9 +229,19 @@ impl StateDir {
         if !fd.metadata()?.is_file() {
             return Err(Error::Storage);
         }
-        flock(&fd, FlockOperation::NonBlockingLockExclusive).map_err(|_| Error::Busy)?;
+        let local = local_lock::Lease::acquire(&fd)?;
+        flock(&fd, FlockOperation::NonBlockingLockExclusive).map_err(|error| {
+            if error == rustix::io::Errno::WOULDBLOCK {
+                Error::Busy
+            } else {
+                Error::Storage
+            }
+        })?;
         self.check()?;
-        Ok(Lock(fd))
+        Ok(Lock {
+            file: fd,
+            _local: local,
+        })
     }
     #[cfg(not(unix))]
     pub fn lock(&self, _: &str) -> Result<Lock> {

@@ -157,6 +157,65 @@ fn missing_checkout_never_reclones_and_failed_registry_stays_unregistered() {
         .is_err());
 }
 #[test]
+fn concurrent_native_requests_wait_for_the_same_workspace_and_catalog() {
+    use std::{sync::mpsc, time::Duration};
+    let f = Fixture::new();
+    for name in ["workspace.lock", "catalog.lock"] {
+        let path = f.root.join("private");
+        let dir = StateDir::open(&path).unwrap();
+        let first = dir.lock(name).unwrap();
+        let (started, ready) = mpsc::channel();
+        let (finished, result) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let other = StateDir::open(&path).unwrap();
+            started.send(()).unwrap();
+            let acquired = other.lock(name).unwrap();
+            finished.send(()).unwrap();
+            drop(acquired);
+        });
+        ready.recv().unwrap();
+        // The second request waits rather than returning a false Busy error.
+        assert!(matches!(
+            result.recv_timeout(Duration::from_millis(100)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(first);
+        result.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+        assert!(dir.lock(name).is_ok());
+    }
+}
+
+#[test]
+fn lock_contention_child() {
+    let Some(path) = std::env::var_os("HEINLEIN_TEST_LOCK_DIRECTORY") else {
+        return;
+    };
+    let dir = StateDir::open(std::path::Path::new(&path)).unwrap();
+    assert!(matches!(dir.lock("workspace.lock"), Err(Error::Busy)));
+}
+
+#[test]
+fn another_process_is_still_refused_and_release_allows_reopen() {
+    let f = Fixture::new();
+    let path = f.root.join("private");
+    let dir = StateDir::open(&path).unwrap();
+    let first = dir.lock("workspace.lock").unwrap();
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "lock_contention_child", "--nocapture"])
+        .env("HEINLEIN_TEST_LOCK_DIRECTORY", &path)
+        .output()
+        .unwrap();
+    assert!(
+        child.status.success(),
+        "{}",
+        String::from_utf8_lossy(&child.stdout)
+    );
+    drop(first);
+    assert!(dir.lock("workspace.lock").is_ok());
+}
+
+#[test]
 fn private_lock_and_malformed_state_fail_closed() {
     let f = Fixture::new();
     let dir = StateDir::open(&f.root.join("private")).unwrap();

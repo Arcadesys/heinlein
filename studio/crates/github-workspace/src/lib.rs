@@ -120,7 +120,7 @@ impl fmt::Display for Error {
             Self::UnsafeTree => "This repository contains unsafe paths, links, submodules or LFS content. Open a separate local folder instead.",
             Self::Limit => "This repository exceeds the managed-project size limit. Use a smaller writing repository or a local folder.",
             Self::Storage => "Managed project storage is unavailable. No new project or version was confirmed.",
-            Self::Busy => "Another Heinlein instance is using this project. Close it there before trying again.",
+            Self::Busy => "This project is busy in Heinlein. Wait for the current operation to finish, or close the project in another Heinlein instance, then try again.",
             Self::Missing => "The managed copy is missing. Heinlein will not clone over local drafts; preserve recovery files and locate the copy.",
             Self::Changed => "The project, account, branch or files changed. Review a fresh preview before continuing.",
             Self::Recovery => "An interrupted operation or recovery draft needs review before this project can change.",
