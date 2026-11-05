@@ -1165,3 +1165,35 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 /* Inline suggestion chips use paint only: no padding, font or line-height changes. */
 .cm-review-mark { border-radius: .2em; background: var(--surface); box-shadow: 0 0 0 1px var(--fg); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .cm-review-mark:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+.revisions-dialog { width:min(40rem, calc(100vw - 2rem)); }
+.revisions-dialog .revision-toolbar { align-items:center; justify-content:flex-end; flex-wrap:wrap; }
+.revisions-dialog .revision-toolbar .revision-count { flex:1; margin:0; color:var(--fg-muted); font-size:.9rem; }
+.revisions-dialog .revision-next { display:flex; align-items:center; gap:.75rem; margin-block:.5rem; padding:.5rem .75rem; border-radius:var(--radius-sm); background:color-mix(in srgb, var(--accent) 12%, transparent); font-size:.9rem; }
+.revisions-dialog .revision-next:empty { display:none; }
+.revisions-dialog .revision-next.drafting-warning { background:color-mix(in srgb, var(--warn) 14%, transparent); }
+.revisions-dialog .revision-next span { flex:1; }
+.revisions-dialog .revision-next button { min-height:32px; }
+.revision-filters { margin-block:.5rem; border-bottom:1px solid var(--border); gap:.25rem; }
+.revisions-dialog .revision-filters button { min-height:40px; border:0; border-radius:0; background:none; font-variant-numeric:tabular-nums; }
+.revision-load-error { margin-block:.5rem; }
+.revision-group { display:grid; gap:.5rem; margin-block:.75rem; }
+.revision-group > h3 { margin:0; font-size:.8rem; font-weight:500; color:var(--fg-muted); }
+.revision-group .revision-entry { border:1px solid var(--border); border-radius:12px; padding:0; }
+.revision-group .revision-entry[data-status="pending"] .revision-toggle[aria-expanded="true"] ~ .revision-body { border-top:1px solid var(--border); }
+.revisions-dialog .revision-toggle { display:flex; width:100%; gap:.6rem; align-items:baseline; text-align:start; border:0; background:none; padding:.6rem .85rem; min-height:44px; }
+.revision-who { font-weight:500; white-space:nowrap; }
+.revision-gist { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--fg-muted); }
+.revision-toggle[aria-expanded="true"] .revision-gist { display:none; }
+.revision-body { display:grid; gap:.6rem; padding:.75rem .85rem; }
+.revision-body[hidden] { display:none; }
+.revision-by { display:none; }
+.revision-reason { margin:0; }
+.revision-actions { align-items:center; }
+.revisions-dialog .revision-actions .primary { border-color:var(--fg); }
+.revision-more { margin-inline-start:auto; position:relative; }
+.revision-more > summary { cursor:pointer; list-style:none; padding:.6rem .85rem; min-height:48px; box-sizing:border-box; border:1px solid var(--border); border-radius:var(--radius-sm); }
+.revision-more-menu { display:grid; gap:.4rem; margin-top:.4rem; }
+.revision-progress { display:flex; align-items:center; gap:.75rem; margin-top:.75rem; font-size:.85rem; color:var(--fg-muted); }
+.revision-bar { flex:1; height:4px; border-radius:2px; background:var(--border); }
+.revision-bar > div { height:100%; border-radius:2px; background:var(--accent); }
+.revisions-dialog > input[hidden] { display:none; }

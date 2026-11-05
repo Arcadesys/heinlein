@@ -35,12 +35,12 @@ describe('one revisions list',()=>{
     core.listProposals.mockRejectedValueOnce(new Error('Specific storage error'));
     await panel.open();
     const dialog=document.querySelector('[aria-label="Revisions"]')!;
-    expect(dialog.querySelector('h2 + .revision-toolbar button')?.textContent).toBe('Refresh');
-    expect(dialog.textContent).toContain('Use Refresh above');
+    expect(dialog.querySelector('h2 + .revision-toolbar')).not.toBeNull();
+    expect(dialog.textContent).toContain('could not be loaded');
     expect(dialog.querySelector('details pre')?.textContent).toBe('Error: Specific storage error');
-    button('Refresh').click();await tick();
+    button('Try again').click();await tick();
     expect(core.listProposals).toHaveBeenCalledTimes(2);
-    expect(document.querySelectorAll('.revision-entry')).toHaveLength(3);
+    expect(document.querySelectorAll('.revision-entry')).toHaveLength(2);
     expect(core.applyProposalReview).not.toHaveBeenCalled();expect(changed).not.toHaveBeenCalled();panel.destroy();
   });
   it('keeps stale, already-present, and duplicate records in history without reviving decisions',()=>{
@@ -58,21 +58,22 @@ describe('one revisions list',()=>{
   });
   it('shows external, in-app, and historical before/after diffs with filters and literal text',async()=>{
     const {core,panel}=setup(); await panel.open();
-    expect(document.querySelectorAll('.revision-entry')).toHaveLength(3);
-    expect(document.querySelectorAll('.question-diff-remove')).toHaveLength(3);
-    expect(document.querySelectorAll('.question-diff-add')).toHaveLength(3);
-    expect(document.querySelectorAll('del.question-diff-remove')).toHaveLength(3);
-    expect(document.querySelectorAll('ins.question-diff-add')).toHaveLength(3);
+    expect(document.querySelectorAll('.revision-entry')).toHaveLength(2);
+    expect(document.querySelectorAll('.question-diff-remove')).toHaveLength(2);
+    expect(document.querySelectorAll('.question-diff-add')).toHaveLength(2);
+    expect(document.querySelectorAll('del.question-diff-remove')).toHaveLength(2);
+    expect(document.querySelectorAll('ins.question-diff-add')).toHaveLength(2);
     expect(document.querySelector('script')).toBeNull();
-    expect(document.querySelector('.proposal-receipt')?.textContent).toContain('<script>literal</script>');
     expect(core.prepareReviewEdit).not.toHaveBeenCalled(); expect(core.applyProposalReview).not.toHaveBeenCalled();
-    button('Pending').click(); expect(document.querySelectorAll('.revision-entry')).toHaveLength(2);
-    button('History').click(); expect(document.querySelectorAll('.revision-entry')).toHaveLength(1);
-    button('All revisions').click();
+    // Only the first card is open; the rest collapse to one line.
+    expect([...document.querySelectorAll<HTMLElement>('.revision-body')].filter(b=>!b.hidden)).toHaveLength(1);
+    button('Done 1').click(); expect(document.querySelectorAll('.revision-entry')).toHaveLength(1);
+    expect(document.querySelector('.proposal-receipt')?.textContent).toContain('<script>literal</script>');
+    button('To decide 2').click();
     const search=document.querySelector<HTMLInputElement>('[aria-label="Find revisions"]')!;
     search.value='rhythm'; search.dispatchEvent(new Event('input'));
     expect(document.querySelectorAll('.revision-entry')).toHaveLength(1);
-    expect(document.querySelector('.revision-count')?.textContent).toBe('1 of 3 revisions · 2 pending in 1 scene');
+    expect(document.querySelector('.revision-count')?.textContent).toBe('2 to decide in 1 scene');
     panel.destroy();
   });
   it.each(['external','in-app'])('accepts the displayed %s diff with one click and no second confirmation',async kind=>{
@@ -87,17 +88,17 @@ describe('one revisions list',()=>{
     expect(core.applyProposalReview).toHaveBeenCalledOnce();
     expect(document.querySelector('.revisions-dialog')).not.toBeNull();
     // The dialog reloads on the next pending revision and says so; it never applies that one for the author.
-    expect(document.querySelector('.revision-next')?.textContent).toContain('Applied. Showing the next one: 1 revision still waiting');
+    expect(document.querySelector('.revision-next')?.textContent).toContain('Applied to scene.md. Your text is updated. 1 left to decide.');
     expect(document.activeElement?.closest('[data-status="pending"]')).not.toBeNull();
     expect(changed).toHaveBeenCalledWith('scene.md'); panel.destroy();
   });
-  it('offers Back to review only for in-app findings and opens that review without deciding anything',async()=>{
+  it('offers Open in review only for in-app findings and opens that review without deciding anything',async()=>{
     const openReview=vi.fn();
     const {core,panel}=setup(openReview); await panel.open();
     const external=document.querySelector('[data-revision-id="external"]')!;
-    expect([...external.querySelectorAll('button')].some(b=>b.textContent==='Back to review')).toBe(false);
-    const inApp=[...document.querySelectorAll('.revision-entry')].find(e=>e.textContent?.includes('In-app review'))!;
-    [...inApp.querySelectorAll('button')].find(b=>b.textContent==='Back to review')!.click();await tick();
+    expect([...external.querySelectorAll('button')].some(b=>b.textContent==='Open in review')).toBe(false);
+    const inApp=document.querySelector('[data-source="review"]')!;
+    [...inApp.querySelectorAll('button')].find(b=>b.textContent==='Open in review')!.click();await tick();
     expect(openReview).toHaveBeenCalledWith('saved','scene.md');
     expect(document.querySelector('.revisions-dialog')).toBeNull();
     expect(core.applyProposalReview).not.toHaveBeenCalled(); expect(core.rejectReviewEdit).not.toHaveBeenCalled(); panel.destroy();
@@ -116,20 +117,19 @@ describe('one revisions list',()=>{
     core.listReviews.mockResolvedValue([{...saved,schemaVersion:1}]);
     core.reviewProposal.mockResolvedValue({...view,proposalId:'prepared',origin:legacyOrigin});
     await panel.open();
-    const entry=[...document.querySelectorAll('.revision-entry')].find(e=>e.textContent?.includes('In-app review'))!;
+    const entry=document.querySelector('[data-source="review"]')!;
     [...entry.querySelectorAll('button')].find(b=>b.textContent==='Accept')!.click();await tick();
     expect(core.prepareReviewEdit).toHaveBeenCalledWith('repo','saved','finding');
     expect(core.applyProposalReview).toHaveBeenCalledOnce();
     expect(document.querySelector('[aria-label="Review whole-scene proposal"]')).toBeNull();panel.destroy();
   });
   it.each(['external','in-app'])('keeps the author text for %s and updates filters without applying',async kind=>{
-    const {core,panel}=setup(); await panel.open(); button('Pending').click();
-    const entries=[...document.querySelectorAll('.revision-entry')];
-    const entry=entries.find(e=>e.textContent?.includes(kind==='external'?'External proposal':'In-app review'))!;
+    const {core,panel}=setup(); await panel.open();
+    const entry=document.querySelector(kind==='external'?'[data-source="external"]':'[data-source="review"]')!;
     [...entry.querySelectorAll('button')].find(b=>b.textContent==='Keep mine')!.click(); await tick();
     expect(document.querySelectorAll('.revision-entry')).toHaveLength(1);
-    expect(document.querySelector('.revision-count')?.textContent).toBe('1 of 3 revisions · 1 pending in 1 scene');
-    button('History').click(); expect(document.querySelectorAll('.revision-entry')).toHaveLength(2);
+    expect(document.querySelector('.revision-count')?.textContent).toBe('1 to decide in 1 scene');
+    button('Done 2').click(); expect(document.querySelectorAll('.revision-entry')).toHaveLength(2);
     expect(core.applyProposalReview).not.toHaveBeenCalled(); expect(core.prepareReviewEdit).not.toHaveBeenCalled(); panel.destroy();
   });
   it('deduplicates prepared and decided in-app proposals by their finding identity',()=>{
@@ -143,13 +143,13 @@ describe('one revisions list',()=>{
   it('shows available sources when one list fails and never fabricates missing revisions',async()=>{
     const {core,panel}=setup();core.listReviews.mockRejectedValue(new Error('unavailable'));await panel.open();
     expect(document.body.textContent).toContain('Saved in-app reviews could not be loaded');
-    expect(document.querySelectorAll('.revision-entry')).toHaveLength(2);
+    expect(document.querySelectorAll('.revision-entry')).toHaveLength(1);
     panel.destroy();
   });
   it('requires an explicit choice and a new exact review for conflicting alternatives',async()=>{
     const {core,panel}=setup();core.listReviews.mockResolvedValue([{...saved,edits:[{...edit,conflictGroup:'alternatives',selected:false}]}]);await panel.open();
-    const entry=[...document.querySelectorAll('.revision-entry')].find(e=>e.textContent?.includes('In-app review'))!;
-    [...entry.querySelectorAll('button')].find(b=>b.textContent==='Details')!.click();await tick();
+    const entry=document.querySelector('[data-source="review"]')!;
+    [...entry.querySelectorAll('button')].find(b=>b.textContent==='Full comparison')!.click();await tick();
     expect(core.chooseReviewEdit).toHaveBeenCalledWith('repo','saved','finding');
     expect(core.chooseReviewEdit.mock.invocationCallOrder[0]).toBeLessThan(core.prepareReviewEdit.mock.invocationCallOrder[0]);
     button('Cancel').click();await tick();expect(core.applyProposalReview).not.toHaveBeenCalled();panel.destroy();

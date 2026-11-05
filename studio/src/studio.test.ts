@@ -993,7 +993,7 @@ describe('trusted local proposal review', () => {
     const edit = (text: string) => editor.dispatch({changes: {from: 0, to: editor.state.doc.length, insert: text}, annotations: Transaction.userEvent.of('input.type')});
     return {core, app, editor, edit};
   }
-  async function openReview() { findButton('Revisions').click(); await settle(); [...document.querySelectorAll<HTMLButtonElement>('.revisions-dialog .revision-actions button')].find(b=>b.textContent==='Details')!.click(); await settle(); }
+  async function openReview() { findButton('Revisions').click(); await settle(); [...document.querySelectorAll<HTMLButtonElement>('.revisions-dialog .revision-actions button')].find(b=>b.textContent==='Full comparison')!.click(); await settle(); }
   it('labels refreshed comparisons and blocks only proposals that need reconciliation', async () => {
     const core = proposalBridge();
     core.listProposals = vi.fn(async () => ({pending: [
@@ -1004,11 +1004,14 @@ describe('trusted local proposal review', () => {
     findButton('Revisions').click(); await settle();
     const entries = [...document.querySelectorAll('.proposal-entry')];
     expect(entries[0].textContent).toContain('your saved edits elsewhere in the scene are preserved');
-    expect([...entries[0].querySelectorAll('button')].find(b => b.textContent === 'Details')?.disabled).toBe(false);
-    const blocked = [...entries[1].querySelectorAll('button')].find(b => b.textContent === 'Details')!;
-    expect(blocked.disabled).toBe(true);
-    expect(entries[1].textContent).toContain('overlapping edits');
-    blocked.click();
+    expect([...entries[0].querySelectorAll('button')].find(b => b.textContent === 'Full comparison')?.disabled).toBe(false);
+    // Out-of-date proposals move to Done, where they stay readable but cannot be accepted.
+    [...document.querySelectorAll('button')].find(b => b.textContent === 'Done 1')!.click();
+    const stale = document.querySelector('.proposal-entry')!;
+    const blocked = [...stale.querySelectorAll('button')].find(b => b.textContent === 'Full comparison');
+    expect(stale.textContent).toContain('overlapping edits');
+    expect(blocked?.disabled).toBe(true);
+    blocked!.click();
     expect(core.reviewProposal).not.toHaveBeenCalled();
     expect(core.applyProposalReview).not.toHaveBeenCalled();
   });
