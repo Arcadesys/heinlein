@@ -47,6 +47,8 @@ group that still needs a choice stops the chain and leaves focus on that card. K
 does not open the next confirmation. In the Revisions overlay Accept applies in one step,
 so it never applies the next revision on its own: after an Accept it reloads, says how
 many revisions are still waiting, and moves focus to the next pending Accept button.
+Pending in-app findings also offer **Back to review**, which closes the overlay and reopens
+that saved review on its scene; it decides nothing.
 
 ## Independent proposal changes
 

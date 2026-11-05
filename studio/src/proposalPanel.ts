@@ -17,6 +17,8 @@ interface Hooks {
   changed(path: string): Promise<void>;
   report(message: string, error?: boolean): void;
   applied?(receiptId: string): void;
+  /** Opens a saved in-app review on its scene so the writer can decide with the full review context. */
+  openReview?(reviewId: string, path: string): Promise<void> | void;
 }
 export function createProposalPanel(core: LocalCore, hooks: Hooks) {
   const supported = Boolean(core.listProposals && core.reviewProposal && core.reviewProposalRevert && core.applyProposalReview && core.cancelProposalReview);
@@ -248,6 +250,10 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
       } else if (revision.proposal) void change(revision.proposal.id, 'apply');
     });
     details.disabled = accept.disabled; actions.append(details);
+    if (revision.review && hooks.openReview) {
+      const {reviewId} = revision.review;
+      actions.append(button('Back to review', () => {remove(node); void Promise.resolve(hooks.openReview!(reviewId, revision.path)).catch(error => hooks.report(`The review could not be opened: ${String(error)}`, true));}));
+    }
     if (revision.review && core.rejectReviewEdit) actions.append(button('Keep mine', () => {void keepReview(revision, item, render);}));
     else if (revision.proposal && core.rejectProposal) actions.append(button('Keep mine', () => {void reject(revision.proposal!.id, item, receipt => {
       revision.status = 'kept';

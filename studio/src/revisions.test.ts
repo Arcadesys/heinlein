@@ -15,7 +15,7 @@ const receipt: ProposalReceipt = {id:'receipt',kind:'apply',proposalId:'previous
   baseText:'Old <script>literal</script> words.\r\n',replacementText:'New <script>literal</script> words.\r\n'};
 const tick = async () => {await new Promise(resolve => setTimeout(resolve, 0));};
 const button = (name:string) => [...document.querySelectorAll('button')].find(node=>node.textContent === name)!;
-function setup() {
+function setup(openReview?: (reviewId: string, path: string) => void) {
   const core = {
     listProposals:vi.fn(async()=>({pending:[proposal],receipts:[receipt]})),listReviews:vi.fn(async()=>[saved]),
     reviewProposal:vi.fn(async(_repo:string,id:string):Promise<ProposalReview>=>({...view,proposalId:id,origin:id==='prepared'?nativeOrigin:origin})),reviewProposalRevert:vi.fn(async()=>view),
@@ -25,7 +25,7 @@ function setup() {
     rejectProposal:vi.fn(async()=>({...receipt,kind:'reject' as const,status:'rejected' as const,proposalId:'external'})),
   };
   const changed = vi.fn(async()=>{}), report = vi.fn();
-  const panel = createProposalPanel(core as unknown as LocalCore,{root:document.body,repository:()=>({id:'repo',name:'Book',manifests:[]}),run:async action=>{await action();},changed,report});
+  const panel = createProposalPanel(core as unknown as LocalCore,{root:document.body,repository:()=>({id:'repo',name:'Book',manifests:[]}),run:async action=>{await action();},changed,report,openReview});
   return {core,panel,changed,report};
 }
 beforeEach(()=>document.body.replaceChildren());
@@ -90,6 +90,17 @@ describe('one revisions list',()=>{
     expect(document.querySelector('.revision-next')?.textContent).toContain('Applied. Showing the next one: 1 revision still waiting');
     expect(document.activeElement?.closest('[data-status="pending"]')).not.toBeNull();
     expect(changed).toHaveBeenCalledWith('scene.md'); panel.destroy();
+  });
+  it('offers Back to review only for in-app findings and opens that review without deciding anything',async()=>{
+    const openReview=vi.fn();
+    const {core,panel}=setup(openReview); await panel.open();
+    const external=document.querySelector('[data-revision-id="external"]')!;
+    expect([...external.querySelectorAll('button')].some(b=>b.textContent==='Back to review')).toBe(false);
+    const inApp=[...document.querySelectorAll('.revision-entry')].find(e=>e.textContent?.includes('In-app review'))!;
+    [...inApp.querySelectorAll('button')].find(b=>b.textContent==='Back to review')!.click();await tick();
+    expect(openReview).toHaveBeenCalledWith('saved','scene.md');
+    expect(document.querySelector('.revisions-dialog')).toBeNull();
+    expect(core.applyProposalReview).not.toHaveBeenCalled(); expect(core.rejectReviewEdit).not.toHaveBeenCalled(); panel.destroy();
   });
   it('refuses an unseen replacement after the displayed diff changes',async()=>{
     const {core,panel,report}=setup();await panel.open();

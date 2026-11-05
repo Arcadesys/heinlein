@@ -898,6 +898,10 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const proposals = createProposalPanel(core, {
     root, repository: () => repository, run: runProposal,
     changed: proposalChanged,
+    openReview: async (reviewId, path) => {
+      if (opened?.path !== path) { await showDocument(path); if (opened?.path !== path) return; }
+      draftingQuestions?.collapse(); await reviewPanel?.openSaved(reviewId); syncHeinleinLayout();
+    },
     applied: receiptId => {status.classList.remove('quiet');status.append(' ',button('Undo change',()=>{void proposals.revert(receiptId);},'status-undo'));},
     report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
   });
