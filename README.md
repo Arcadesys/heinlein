@@ -1,8 +1,109 @@
 # Heinlein
 
-Publishing the same manuscript in print, ebook, and web formats can mean maintaining several versions by hand. Heinlein builds branded PDF, EPUB, DOCX, HTML, and plain text from Markdown and project configuration, using the **FREE PLAY** imprint design system.
+Heinlein is a local writing workspace and publishing toolkit. Write in ordinary
+Markdown files, arrange them into a manuscript in **Heinlein Studio**, and use the
+separate publishing CLI to build PDF, EPUB, DOCX, HTML, and plain text with the
+**FREE PLAY** imprint design system.
 
-**Try it:** follow [Install](#install), then [build a manuscript](#one-shot-from-a-manuscript) or use the [preview server](#preview-server) to inspect the output.
+**Start here:** read [How a project works](#how-a-project-works) for the writing
+model, [Studio setup](studio/README.md#run) to run the desktop app, or
+[Install](#install) to use the publishing CLI.
+
+## How a project works
+
+A project is a folder on your computer. It holds your writing as **sheets**,
+organized into folders, with a small index maintained by Heinlein to remember
+their order.
+
+- **Sheets are Markdown files.** Each sheet is an ordinary `.md` or `.markdown`
+  file. A sheet can hold a scene, part of a chapter, or a note. You can read the
+  text in any Markdown editor. Some Studio commands call a sheet a *scene*.
+- **Folders organize sheets.** In the Library, these are called *groups*. Groups
+  can contain sheets and other groups, so you can arrange a project into parts,
+  chapters, or whatever structure suits your writing.
+- **The index keeps the order.** Heinlein records sheet identities, titles, paths,
+  group membership, and the order you choose. Reading order does not depend on
+  alphabetical filenames, and you do not need to renumber files when you move a
+  scene.
+
+![Heinlein Studio with a nested Library of groups and sheets on the left and the selected Markdown sheet open in the editor.](docs/screenshots/studio-library.png)
+
+*Studio's interface with an invented demo project. The screenshots contain no
+private manuscript text.*
+
+### Files on disk
+
+A Studio manuscript lives under `ms/` inside its project folder. For example:
+
+```text
+My story/
+└── ms/
+    ├── manuscript.json
+    ├── opening.md
+    ├── arrival.md
+    └── notes/
+        └── characters.md
+```
+
+The Markdown files contain your words. `ms/manuscript.json` contains the
+manuscript's structure and ordering metadata. Newly created sheets normally have
+names such as `sheet-<uuid>.md`; their readable titles live in the index. Existing
+files can keep descriptive names like those above.
+
+Library groups and disk folders are separate: a group is an arrangement of
+sheets in the Library, while **Source files** shows the actual directories. Moving
+or renaming a Library item updates its organization or display title without
+renaming its Markdown file. Use file operations when you mean to change the path
+on disk.
+
+![Heinlein Studio's Source files view showing the ms folder, Markdown sheets, a notes subfolder, and manuscript.json beside the formatted Reading view.](docs/screenshots/studio-source-files.png)
+
+*Source files shows the actual files on disk. Reading shows the selected sheet
+with its Markdown formatting.*
+
+### How Heinlein remembers the order
+
+Arrange sheets and groups in the Library with drag-and-drop or the move controls.
+Heinlein updates the index for you. Nested groups keep their own sheet order;
+viewing or exporting a group follows that arrangement. A sheet keeps its identity
+when it moves, even if its place in the story changes. Older manuscripts retain
+their existing flat reading order until you explicitly reorganize them.
+
+**Current file format:** Studio stores this index as **JSON** in
+`ms/manuscript.json`. The separate **YAML** file, `heinlein.yaml`, configures the
+publishing pipeline below; it does not currently store Studio's sheet order.
+You do not need to edit either file by hand for everyday writing and arranging
+in Studio.
+
+### A simple writing workflow
+
+1. Open a project folder in Studio and set up its Library.
+2. Add sheets for your writing, and groups to organize them.
+3. Write in the sheets. Studio saves locally; **Save** flushes pending edits.
+4. Move sheets or groups when the story's order changes. Heinlein maintains the
+   index, while the prose stays in the Markdown files.
+5. Use **Export as Markdown…** on a group or project to make a combined copy in
+   Library order. The copy includes reference sheets, adds headings, and omits
+   sheet YAML frontmatter. Review it before sharing. The source files stay
+   unchanged.
+
+Keep the project folder together when making backups or sharing a source copy:
+include the Markdown files **and** `ms/manuscript.json` so the arrangement travels
+with the writing. Files added outside Heinlein may need explicit inclusion in
+the Library. Missing files are reported rather than silently removed from the
+index.
+
+### From writing to publishing
+
+The Studio project is your editable source. The publishing CLI works from a
+manuscript Markdown file and, optionally, `heinlein.yaml`. That YAML file sets
+metadata, output formats, page layout, and output paths.
+
+Studio's optional **First story** guide can prepare a separate, text-only
+publishing copy with `manuscript.md`, `heinlein.yaml`, and a source receipt.
+The copy is a snapshot: later edits do not synchronize in either direction.
+See [the guide and its limits](studio/README.md#your-first-story), then use the
+CLI instructions below to build and inspect the output.
 
 ## Engineering to explore
 
@@ -164,8 +265,9 @@ The full pipeline test runs only when both `pandoc` and Chrome are present.
 - Multi-title catalog mode.
 - Imprints other than FREE PLAY.
 
-## Studio repository browser (pass 1)
+## Heinlein Studio
 
-An additive native, read-only browsing foundation lives in [`studio/`](studio/README.md).
-It opens local folders and scene manifests without modifying manuscripts or invoking
-the publishing pipeline. Editing and save/recovery are subsequent milestones.
+The native desktop writing app lives in [`studio/`](studio/README.md). It provides
+local Markdown editing, autosave and recovery, an ordered Library of sheets and
+groups, and explicit export and sharing workflows. See its README for setup,
+current features, and verification instructions.
