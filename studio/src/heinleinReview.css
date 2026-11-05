@@ -241,10 +241,17 @@
 .review-suggestion-position { flex: 1 1 8rem; margin: 0; text-align: center; font-weight: 700; }
 .review-suggestion-navigation button { flex: 1 1 6rem; }
 
-/* Stage strip and consensus summary: text-only, wrapping, no motion; colour is never the only signal. */
-.heinlein-review-panel .review-stages { display: flex; flex-wrap: wrap; gap: .25rem .9rem; margin: 0; padding: .4rem 1rem; list-style: none; border-bottom: 1px solid var(--border); font: 500 .75rem/1.4 var(--font-mono); color: var(--fg-muted); }
-.heinlein-review-panel .review-stages li { padding-block: .1rem; border-bottom: 2px solid transparent; }
-.heinlein-review-panel .review-stages li[aria-current="step"] { color: var(--fg); font-weight: 700; border-bottom-color: var(--fg); }
+/* Consensus summary: text-only and wrapping. */
 .heinlein-review-panel .review-consensus { display: grid; gap: .35rem; min-width: 0; padding: .75rem .85rem; border: 1px solid var(--border); border-radius: 10px; }
 .heinlein-review-panel .review-consensus .review-label { margin: 0; }
+.heinlein-review-panel .review-consensus button { justify-self: start; }
 .heinlein-review-panel .review-agreement { font-size: .8125rem; font-weight: 600; }
+
+/* Stage strip shared by the review pane and the Revisions overlay. State is text (number, check, bold), never colour alone. */
+.stage-strip { display: flex; flex-wrap: wrap; gap: .25rem 1.1rem; margin: 0; padding: .5rem 1rem; list-style: none; font: 500 .8125rem/1.4 var(--font-mono, monospace); color: var(--fg-muted); }
+.stage-strip li { display: inline-flex; align-items: baseline; gap: .4rem; padding-block: .15rem; border-bottom: 2px solid transparent; }
+.stage-strip .stage-mark { display: inline-grid; place-items: center; min-width: 1.35rem; height: 1.35rem; padding: 0 .2rem; border: 1px solid currentColor; border-radius: 999px; font-size: .75rem; }
+.stage-strip li[data-state="complete"] .stage-mark { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.stage-strip li[aria-current="step"] { color: var(--fg); font-weight: 700; border-bottom-color: var(--fg); }
+.stage-strip li[aria-current="step"] .stage-mark { border-width: 2px; }
+.revisions-dialog .stage-strip { padding-inline: 0; }

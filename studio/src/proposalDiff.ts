@@ -29,7 +29,8 @@ function linesDiff(before: string, after: string): Line[] {
 }
 
 export function createProposalDiff(before: string, after: string, compact = false): HTMLElement {
-  const node = document.createElement('section'); node.className = 'proposal-diff'; node.setAttribute('aria-label', 'Specific proposed changes');
+  // A group, not a landmark: one list can show many diffs and landmark names must stay unique.
+  const node = document.createElement('div'); node.className = 'proposal-diff'; node.setAttribute('role', 'group'); node.setAttribute('aria-label', 'Specific proposed changes');
   const lines = linesDiff(before, after), ranges: {start: number; end: number}[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].kind === 'equal') continue;
@@ -52,6 +53,8 @@ export function createProposalDiff(before: string, after: string, compact = fals
       replacement.className = mark.className; replacement.textContent = mark.textContent; mark.replaceWith(replacement);
     });
     comparison.querySelector('.question-diff-legend')!.textContent = '− Red strikethrough: removed. + Green underline: added.';
+    // Group, not region: the same "Change 1" label repeats across every diff in a list.
+    comparison.setAttribute('role', 'group');
     comparison.setAttribute('aria-label', `Change ${index + 1} comparison`);
     if (compact) {
       const summary = document.createElement('summary'); summary.append(document.createTextNode(`Change ${index + 1} · `));

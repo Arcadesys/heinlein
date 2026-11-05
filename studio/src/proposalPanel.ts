@@ -1,5 +1,7 @@
 import type { LocalCore, ProposalReview, ProposalReceipt, RepositorySession } from './localCore';
 import {createProposalDiff} from './proposalDiff';
+import {createStageStrip} from './stageStrip';
+import {stageOf} from './consensus';
 import {collectRevisions, revisionStatus, type Revision} from './revisions';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = ''): HTMLElementTagNameMap[K] {
@@ -122,6 +124,8 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
       const toolbar = el('div', '', 'revision-toolbar');
       toolbar.append(button('Refresh', () => {close(); void open();}), button('Close', close));
       node.append(toolbar);
+      const stages = createStageStrip('Revision progress');
+      node.append(stages.element);
       node.append(el('p', 'All saved suggestions for this project. Review the before and after, then choose what to keep. Your writing changes only after your confirmation.', 'muted'));
       function loadFailure(message: string, reason: unknown) {
         node.append(el('p', message, 'drafting-warning'));
@@ -146,6 +150,9 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
         const pending = revisions.filter(r => r.status === 'pending'), scenes = new Set(pending.map(r => r.path)).size;
         count.textContent = `${shown.length} of ${revisions.length} revisions · ${pending.length} pending${pending.length ? ` in ${scenes} ${scenes === 1 ? 'scene' : 'scenes'}` : ''}`;
         // Keep each scene's pending revisions together; the model's own order is otherwise unchanged.
+        // Nothing saved yet reads as Ask; open revisions as Decide; all decided as Done.
+        const waitingNow = pending.length;
+        stages.set(revisions.length ? stageOf({running: false, hasResult: true, waiting: waitingNow}) : 'ask', waitingNow ? `${waitingNow} waiting` : '');
         shown.sort((a, b) => (a.status === 'pending' && b.status === 'pending' ? a.path.localeCompare(b.path) : 0));
         content.replaceChildren();
         if (!shown.length) content.append(el('p', revisions.length ? 'No revisions match this filter.' : 'No saved revisions for this project.'));

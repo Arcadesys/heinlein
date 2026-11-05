@@ -26,7 +26,7 @@ const core = {
   prepareReviewEdit:async()=>{calls.push('prepare');return {proposalId:'native'};},
   reviewProposal:async(_repo:string,id:string)=>{
     calls.push(`review:${id}`);
-    exact={id:'exact',kind:'apply',proposalId:id,path:'scene.md',baseText:text,replacementText:id==='external'?text.replace('tapped','drummed'):text.replace('waited','lingered'),baseHash:text,replacementHash:'after',diffHash:'exact-diff',origin:id==='external'?origin:native,expiresAtMs:Date.now()+300000,parentReceiptId:null};
+    exact={id:'exact',kind:'apply',proposalId:id,path:'scene.md',baseText:text,replacementText:id==='external'?text.replace('tapped','drummed'):text.replace('waited','lingered'),baseHash:text,replacementHash:'after',diffHash:id==='external'?'diff':'exact-diff',origin:id==='external'?origin:native,expiresAtMs:Date.now()+300000,parentReceiptId:null};
     return structuredClone(exact);
   },
   applyProposalReview:async()=>{

@@ -1,7 +1,8 @@
 import {createReviewActivity} from './reviewActivity';
 import {renderMarkdown} from './markdown';
 import type { LocalCore, QuestionStatus, ReviewEdit, ReviewResult, ReviewRequest, ReviewerDefinition, CustomReviewer, ReviewCoverage, ReviewProgress, ProposalOutcome } from './localCore';
-import { agreementLabel, reviewersOf, consensusSentence, stageLabels, stageOf, summarizeConsensus, type Stage } from './consensus';
+import { createStageStrip } from './stageStrip';
+import { agreementLabel, reviewersOf, consensusSentence, stageOf, summarizeConsensus } from './consensus';
 import { changedSpan, decisionLabel, invisibleChangeNote, lineageDelta, patchContext, waiting, type PatchContext } from './reviewComparison';
 import type { ReviewMarkInput } from './reviewMarks';
 import { formatKeys } from './shortcuts';
@@ -330,20 +331,14 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     markStatus.hidden = true;
     footer.append(connection, footActions, advisory, markStatus);
     // Read-only stage indicator: where the writer is between asking and deciding. It never navigates.
-    const stages = el('ol', '', 'review-stages');
-    stages.setAttribute('aria-label', 'Revision progress');
-    const stageItems = (Object.keys(stageLabels) as Stage[]).map(key => { const item = el('li', stageLabels[key]); item.dataset.stage = key; stages.append(item); return item; });
+    const stages = createStageStrip();
     function updateStages() {
         // Competing alternatives are one decision, so count cards rather than raw edits.
         const open = summarizeConsensus(result?.edits.filter(waiting) ?? []).total;
         const now = stageOf({running: Boolean(pending || busy || automaticRunning), hasResult: Boolean(result) && view === 'results', waiting: open});
-        stageItems.forEach(item => {
-            const here = item.dataset.stage === now;
-            if (here) item.setAttribute('aria-current', 'step'); else item.removeAttribute('aria-current');
-            item.textContent = here && now === 'decide' ? `${stageLabels.decide} · ${open} waiting` : stageLabels[item.dataset.stage as Stage];
-        });
+        stages.set(now, now === 'decide' ? `${open} waiting` : '');
     }
-    element.append(head, stages, strip, status, activity, body, footer);
+    element.append(head, stages.element, strip, status, activity, body, footer);
 
     element.addEventListener('keydown', event => { if (event.key === 'Escape' && !event.isComposing) {
         event.preventDefault();
@@ -845,6 +840,27 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             update();
         });
     }
+    /** Where the reviewers landed, shown first so the decision context is above the reading overview and diff list. */
+    function consensusCard() {
+        const open = result!.edits.filter(edit => result!.schemaVersion === 2 ? waiting(edit) : false);
+        const holder = el('div');
+        holder.hidden = true;
+        if (result!.schemaVersion !== 2 || !open.length)
+            return holder;
+        const consensus = summarizeConsensus(open);
+        const summary = el('section', '', 'review-consensus');
+        summary.setAttribute('aria-label', 'Review consensus');
+        summary.append(el('h3', 'Where the reviewers landed', 'review-label'), el('p', consensusSentence(consensus)));
+        summary.append(el('p', 'Agreement is a signal, not a decision. Nothing changes until you choose Accept.', 'review-guidance'));
+        if (consensus.agreed.length) {
+            summary.append(button('Go to first agreed suggestion', () => {
+                const heading = edits.querySelector<HTMLElement>('[data-agreed="true"] h4');
+                heading?.scrollIntoView({block: 'nearest'});
+                heading?.focus();
+            }));
+        }
+        return summary;
+    }
     function render(preserveSuggestion = false) {
         if (preserveSuggestion) restoreSuggestionCard(); else closeSuggestion();
         edits.replaceChildren();
@@ -867,7 +883,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         const blocked = el('p', '', 'drafting-warning review-blocked');
         blocked.dataset.blocked = 'true';
         blocked.hidden = true;
-        edits.append(heading, blocked, readingFeedback(), diffList());
+        edits.append(heading, blocked, consensusCard(), readingFeedback(), diffList());
         const incomplete = result.workflow && !result.workflow.coverage.every(c => c.status === 'completed');
         if (!result.edits.length && incomplete)
             edits.append(el('p', 'No suggestions have been retained from this incomplete review.', 'review-guidance'));
@@ -890,19 +906,6 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         const current = hooks.capture();
         const groups = new Set<string>();
         if (result.schemaVersion === 2 && listed.length) {
-            const consensus = summarizeConsensus(listed);
-            const summary = el('section', '', 'review-consensus');
-            summary.setAttribute('aria-label', 'Review consensus');
-            summary.append(el('h3', 'Where the reviewers landed', 'review-label'), el('p', consensusSentence(consensus)));
-            summary.append(el('p', 'Agreement is a signal, not a decision. Nothing changes until you choose Accept.', 'review-guidance'));
-            if (consensus.agreed.length) {
-                summary.append(button('Go to first agreed suggestion', () => {
-                    const heading = edits.querySelector<HTMLElement>('[data-agreed="true"] h4');
-                    heading?.scrollIntoView({block: 'nearest'});
-                    heading?.focus();
-                }));
-            }
-            edits.append(summary);
             const rank = (edit: ReviewEdit) => edit.conflictGroup ? 1 : reviewersOf(edit).length > 1 ? 0 : 2;
             listed.sort((a, b) => rank(a) - rank(b));
         }

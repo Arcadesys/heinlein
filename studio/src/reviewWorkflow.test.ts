@@ -190,7 +190,7 @@ it('summarizes where reviewers landed and shows the stage without deciding anyth
  expect(summary.textContent).toContain('2 suggestions');
  expect(summary.textContent).toContain('1 span with alternatives to choose');
  expect(summary.textContent).toContain('Nothing changes until you choose Accept.');
- expect(panel!.element.querySelector('.review-stages [aria-current="step"]')!.textContent).toContain('Decide · 2 waiting');
+ expect(panel!.element.querySelector('.stage-strip [aria-current="step"]')!.textContent).toContain('Decide · 2 waiting');
  expect(f.core.approveReviewEdit).not.toHaveBeenCalled(); expect(f.core.rejectReviewEdit).not.toHaveBeenCalled();
 });
 it('groups competing alternatives into one card, and Keep mine records each alternative as rejected without applying', async () => {
