@@ -1,0 +1,27 @@
+import {test,expect} from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+test('@smoke failed output can be retried explicitly and changed writing starts a fresh capture',async({page},info)=>{
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.goto('/tests/browser/review-retry.html');
+ const writer=page.locator('.active-document-pane .cm-content');await expect(writer).toBeVisible();await page.evaluate(async()=>{await document.fonts.ready;});
+ const shape=()=>writer.evaluate(n=>({text:n.textContent,width:n.getBoundingClientRect().width,height:n.getBoundingClientRect().height}));const before=await shape();
+ await page.getByRole('button',{name:'Heinlein',exact:true}).click();await page.getByRole('button',{name:'Whole scene',exact:true}).click();
+ const panel=page.getByRole('region',{name:'Heinlein Review',exact:true});
+ await panel.getByRole('button',{name:'Reopen saved review saved-failed'}).click();
+ const retry=panel.getByRole('button',{name:'Retry failed chunks',exact:true});await expect(retry).toBeEnabled();
+ expect(await page.evaluate(()=>(window as any).retryFixture.state().attempts)).toBe(0);
+ await expect(panel).toContainText('The completed assessment is preserved.');
+ await retry.focus();await page.keyboard.press('Enter');await expect(retry).toBeEnabled();
+ expect(await page.evaluate(()=>(window as any).retryFixture.state().attempts)).toBe(1);
+ expect(await shape()).toEqual(before);
+ await expect(panel).toContainText('Invalid responses need another explicit retry');
+ expect((await new AxeBuilder({page}).include('.heinlein-review-panel').analyze()).violations).toEqual([]);
+ await retry.scrollIntoViewIfNeeded();await page.screenshot({path:`/tmp/heinlein-manual-retry-${info.project.name}.png`});
+ await panel.getByRole('button',{name:'Close Heinlein',exact:true}).click();await page.evaluate(()=>(window as any).retryFixture.acceptElsewhere());
+ await page.getByRole('button',{name:'Heinlein',exact:true}).click();await page.getByRole('button',{name:'Whole scene',exact:true}).click();
+ await expect(panel.locator('.review-progress')).toContainText('1 decided');
+ await panel.getByRole('button',{name:'Start a new review',exact:true}).click();await expect(panel).toContainText('Current text captured.');
+ await panel.getByRole('button',{name:'Preview review',exact:true}).click();await expect(panel.getByRole('button',{name:'Run review',exact:true})).toBeEnabled();
+ const state=await page.evaluate(()=>(window as any).retryFixture.state());expect(state.requests).toEqual([]);expect(state.previews[0].snapshots[0].source).toBe('Fresh current source after author approval.');expect(state.saved.edits[0].status).toBe('accepted');expect(state.attempts).toBe(1);
+ expect(await shape()).toEqual(before);expect(errors).toEqual([]);
+});

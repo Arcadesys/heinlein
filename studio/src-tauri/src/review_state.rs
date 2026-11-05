@@ -6,6 +6,21 @@ use proposal_store::{diff_hash, text_hash, PendingProposal, ProposalOrigin};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Continuations must retain the captured identity, not only identical prose.
+/// A newly mapped or replaced scene at the same path is a different capture.
+pub(crate) fn captured_scene_matches(
+    snapshot: &drafting_questions::review::ReviewSnapshot,
+    recovery_required: bool,
+    scenes: &[repository_core::DraftingScene],
+) -> bool {
+    !recovery_required
+        && snapshot.scene_id.as_deref()
+            == scenes
+                .iter()
+                .find(|scene| scene.path == snapshot.path)
+                .map(|scene| scene.id.as_str())
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct EditView {
@@ -582,7 +597,7 @@ impl ReviewSession {
             .is_some_and(|v| v.account_id == account)
             && self.result.model == model
     }
-    /// Explicit continuation retries transient failures and interrupted/cancelled calls.
+    /// Explicit continuation retries recoverable output/transport failures and interrupted calls.
     /// Caller holds the native single-review permit; no active batch is replaced. Completed
     /// reports, findings and decisions remain immutable. A changed capture needs
     /// a fresh review rather than rebasing old results onto new writing.
@@ -590,14 +605,16 @@ impl ReviewSession {
         &mut self,
         source_matches: impl Fn(&drafting_questions::review::ReviewSnapshot) -> bool,
     ) -> Result<bool, String> {
-        use drafting_questions::review_workflow::retryable_coverage_error;
+        use drafting_questions::review_workflow::manual_retryable_coverage_error;
         let Some(workflow) = self.result.workflow.as_ref() else {
             return Ok(false);
         };
         let retry = workflow.coverage.iter().any(|c| {
             matches!(c.status.as_str(), "running" | "cancelled")
                 || (c.status == "failed"
-                    && c.error.as_deref().is_some_and(retryable_coverage_error))
+                    && c.error
+                        .as_deref()
+                        .is_some_and(manual_retryable_coverage_error))
         });
         let queued = workflow
             .coverage
@@ -621,7 +638,10 @@ impl ReviewSession {
         for c in &mut self.result.workflow.as_mut().unwrap().coverage {
             if matches!(c.status.as_str(), "running" | "cancelled")
                 || (c.status == "failed"
-                    && (c.error.as_deref().is_some_and(retryable_coverage_error)
+                    && (c
+                        .error
+                        .as_deref()
+                        .is_some_and(manual_retryable_coverage_error)
                         || (c.id == drafting_questions::review_workflow::CONSOLIDATION_ID
                             && c.error.as_deref() == Some("incompleteReview"))))
             {
@@ -631,6 +651,28 @@ impl ReviewSession {
             }
         }
         Ok(true)
+    }
+    /// Durably retain an explicit stop even before a provider call is dispatched.
+    /// Completed calls and their findings are immutable; late progress cannot revive it.
+    pub fn cancel_remaining(&mut self) -> bool {
+        let Some(workflow) = self.result.workflow.as_mut() else {
+            return false;
+        };
+        let mut changed = false;
+        for c in &mut workflow.coverage {
+            if (matches!(c.status.as_str(), "queued" | "notRun" | "running") && c.error.is_none())
+                || (c.status == "failed"
+                    && c.error
+                        .as_deref()
+                        .is_some_and(drafting_questions::review_workflow::retryable_coverage_error))
+            {
+                c.status = "cancelled".into();
+                c.error = Some("cancelled".into());
+                c.request_id = None;
+                changed = true;
+            }
+        }
+        changed
     }
     pub fn bind_batch_generation(&mut self, generation: u64) {
         if let Some(w) = &mut self.result.workflow {
@@ -904,13 +946,7 @@ impl ReviewSession {
             }
         }
         if batch.cancelled {
-            if let Some(w) = &mut self.result.workflow {
-                for c in &mut w.coverage {
-                    if c.status == "queued" {
-                        c.status = "notRun".into()
-                    }
-                }
-            }
+            self.cancel_remaining();
         }
         self.regroup();
         Ok(())
@@ -1931,6 +1967,282 @@ mod tests {
         let count = s.finding_count();
         s.ingest(call(&s, 0, vec![]), &Default::default()).unwrap();
         assert_eq!(s.finding_count(), count);
+    }
+    #[test]
+    fn manual_invalid_output_retry_preserves_decisions_and_requeues_dependent_consolidation() {
+        use drafting_questions::review_workflow::CONSOLIDATION_ID;
+        let mut request = workflow_session(2).request;
+        request.workflow.as_mut().unwrap().consolidate = true;
+        let mut s = ReviewSession::workflow(
+            request,
+            "b".repeat(64),
+            "test-model".into(),
+            "account".into(),
+            1,
+        )
+        .unwrap();
+        let edit = session().view().edits[0].edit.clone();
+        s.ingest(call(&s, 0, vec![edit]), &Default::default())
+            .unwrap();
+        let id = s.view().edits[0].edit.id.clone();
+        s.rejected(&id, uuid::Uuid::new_v4().to_string()).unwrap();
+        for (index, error) in [(1, "invalidResponse"), (2, "incompleteReview")] {
+            let mut failed = call(&s, index, vec![]);
+            failed.calls[0].coverage.status = "failed".into();
+            failed.calls[0].coverage.error = Some(error.into());
+            s.ingest(failed, &Default::default()).unwrap();
+        }
+        assert_eq!(s.coverage()[2].id, CONSOLIDATION_ID);
+        let before = serde_json::to_value(&s).unwrap();
+        assert!(s.requeue_failed(|_| false).is_err());
+        assert_eq!(serde_json::to_value(&s).unwrap(), before);
+        let completed = serde_json::to_value(&s.coverage()[0]).unwrap();
+        let reports = serde_json::to_value(s.reviewer_reports()).unwrap();
+        let view = serde_json::to_value(s.view()).unwrap();
+        assert!(s.requeue_failed(|_| true).unwrap());
+        assert_eq!(serde_json::to_value(&s.coverage()[0]).unwrap(), completed);
+        assert_eq!(serde_json::to_value(s.reviewer_reports()).unwrap(), reports);
+        let after = serde_json::to_value(s.view()).unwrap();
+        assert_eq!(after["edits"], view["edits"]);
+        assert_eq!(
+            after["workflow"]["decisions"],
+            view["workflow"]["decisions"]
+        );
+        for coverage in &s.coverage()[1..] {
+            assert_eq!(coverage.status, "queued");
+            assert!(coverage.error.is_none());
+            assert!(coverage.request_id.is_none());
+        }
+        // One explicit action only queues work; it does not repeatedly schedule it.
+        assert!(!s.requeue_failed(|_| true).unwrap());
+    }
+
+    #[test]
+    fn manual_retry_after_accepted_edit_refuses_changed_capture_without_mutation() {
+        let mut s = workflow_session(2);
+        let edit = session().view().edits[0].edit.clone();
+        s.ingest(call(&s, 0, vec![edit]), &Default::default())
+            .unwrap();
+        let id = s.view().edits[0].edit.id.clone();
+        let proposal = s.candidate(&id, &"b".repeat(64)).unwrap();
+        s.prepared(&id, proposal.clone()).unwrap();
+        accept(&mut s, &proposal);
+        let mut failed = call(&s, 1, vec![]);
+        failed.calls[0].coverage.status = "failed".into();
+        failed.calls[0].coverage.error = Some("invalidResponse".into());
+        s.ingest(failed, &Default::default()).unwrap();
+        let current = s.expected("scenes/one.md").unwrap().to_owned();
+        let before = serde_json::to_value(&s).unwrap();
+        assert!(s
+            .requeue_failed(|snapshot| snapshot.source == current)
+            .is_err());
+        assert_eq!(serde_json::to_value(&s).unwrap(), before);
+        assert_eq!(s.view().edits[0].status, "accepted");
+    }
+
+    #[test]
+    fn manual_consolidation_output_retry_keeps_completed_individual_calls() {
+        for error in [
+            "invalidResponse",
+            "protocol",
+            "outputLimit",
+            "responseTooLarge",
+            "invalidAssessment",
+            "assessmentTooLong",
+            "invalidConsolidation",
+        ] {
+            let mut request = workflow_session(1).request;
+            request.workflow.as_mut().unwrap().consolidate = true;
+            let mut s = ReviewSession::workflow(
+                request,
+                "b".repeat(64),
+                "test-model".into(),
+                "account".into(),
+                1,
+            )
+            .unwrap();
+            s.ingest(call(&s, 0, vec![]), &Default::default()).unwrap();
+            let mut failed = call(&s, 1, vec![]);
+            failed.calls[0].coverage.status = "failed".into();
+            failed.calls[0].coverage.error = Some(error.into());
+            s.ingest(failed, &Default::default()).unwrap();
+            let before = serde_json::to_value(&s).unwrap();
+            assert!(s.requeue_failed(|_| false).is_err(), "{error}");
+            assert_eq!(serde_json::to_value(&s).unwrap(), before);
+            let completed = serde_json::to_value(&s.coverage()[0]).unwrap();
+            assert!(s.requeue_failed(|_| true).unwrap(), "{error}");
+            assert_eq!(serde_json::to_value(&s.coverage()[0]).unwrap(), completed);
+            assert_eq!(s.coverage()[1].status, "queued");
+        }
+    }
+
+    #[test]
+    fn manual_retry_leaves_auth_usage_context_and_unknown_failures_terminal() {
+        for error in [
+            "invalidAccount",
+            "accountUnavailable",
+            "staleConnection",
+            "planPermission",
+            "planUnavailable",
+            "usageUnavailable",
+            "usageLimit",
+            "subscription_sharing_usage_limit_exceeded",
+            "contextLength",
+            "invalidRequest",
+            "invalidReview",
+            "invalidReviewOrModel",
+            "consolidationTooLarge",
+            "modelMismatch",
+            "reviewStorage",
+            "unknown",
+            "incompleteReview",
+        ] {
+            let mut s = workflow_session(1);
+            let mut failed = call(&s, 0, vec![]);
+            failed.calls[0].coverage.status = "failed".into();
+            failed.calls[0].coverage.error = Some(error.into());
+            s.ingest(failed, &Default::default()).unwrap();
+            let before = serde_json::to_value(&s).unwrap();
+            assert!(!s.requeue_failed(|_| true).unwrap(), "{error}");
+            assert_eq!(serde_json::to_value(&s).unwrap(), before, "{error}");
+        }
+    }
+
+    #[test]
+    fn continuation_rejects_changed_scene_identity_and_structure_without_requeueing() {
+        let mut s = workflow_session(2);
+        s.ingest(call(&s, 0, vec![]), &Default::default()).unwrap();
+        let snapshot = s.request.snapshots[0].clone();
+        let scene = repository_core::DraftingScene {
+            id: snapshot
+                .scene_id
+                .clone()
+                .unwrap_or_else(|| "captured-scene".into()),
+            title: "Scene".into(),
+            path: snapshot.path.clone(),
+            group_id: None,
+            reference: false,
+        };
+        s.request.snapshots[0].scene_id = Some(scene.id.clone());
+        let before = serde_json::to_value(s.view()).unwrap();
+        assert!(s
+            .requeue_failed(|snapshot| captured_scene_matches(
+                snapshot,
+                true,
+                std::slice::from_ref(&scene)
+            ))
+            .is_err());
+        let mut replaced = scene.clone();
+        replaced.id = "replacement-scene".into();
+        assert!(s
+            .requeue_failed(|snapshot| captured_scene_matches(
+                snapshot,
+                false,
+                std::slice::from_ref(&replaced)
+            ))
+            .is_err());
+        assert!(s
+            .requeue_failed(|snapshot| captured_scene_matches(snapshot, false, &[]))
+            .is_err());
+        assert_eq!(before, serde_json::to_value(s.view()).unwrap());
+        assert!(!s
+            .requeue_failed(|snapshot| captured_scene_matches(
+                snapshot,
+                false,
+                std::slice::from_ref(&scene)
+            ))
+            .unwrap());
+        assert_eq!(s.coverage()[0].status, "completed");
+        let mut unmapped = snapshot;
+        unmapped.scene_id = None;
+        assert!(captured_scene_matches(&unmapped, false, &[]));
+        assert!(!captured_scene_matches(&unmapped, false, &[scene]));
+    }
+    #[test]
+    fn continuation_validates_read_only_context_before_retrying() {
+        let mut s = workflow_session(2);
+        s.ingest(call(&s, 0, vec![]), &Default::default()).unwrap();
+        let mut context = s.request.snapshots[0].clone();
+        context.path = "scenes/context.md".into();
+        s.request.workflow.as_mut().unwrap().context.push(context);
+        let mut failed = call(&s, 1, vec![]);
+        failed.calls[0].coverage.status = "failed".into();
+        failed.calls[0].coverage.error = Some("retryExhaustedTimeout".into());
+        s.ingest(failed, &Default::default()).unwrap();
+        let before = serde_json::to_value(s.view()).unwrap();
+        assert!(s
+            .requeue_failed(|snapshot| snapshot.path != "scenes/context.md")
+            .is_err());
+        assert_eq!(before, serde_json::to_value(s.view()).unwrap());
+        assert!(s.requeue_failed(|_| true).unwrap());
+        assert_eq!(s.coverage()[0].status, "completed");
+        assert_eq!(s.coverage()[1].status, "queued");
+    }
+    #[test]
+    fn immediate_cancellation_keeps_completed_results_and_ignores_late_progress() {
+        let mut s = workflow_session(4);
+        let edit = session().view().edits[0].edit.clone();
+        s.ingest(call(&s, 0, vec![edit]), &Default::default())
+            .unwrap();
+        let mut failed = call(&s, 1, vec![]);
+        failed.calls[0].coverage.status = "failed".into();
+        failed.calls[0].coverage.error = Some("retryExhaustedTimeout".into());
+        s.ingest(failed, &Default::default()).unwrap();
+        let late = call(&s, 2, vec![]);
+        let mut running = late.clone();
+        running.calls[0].coverage.status = "running".into();
+        s.ingest(running, &Default::default()).unwrap();
+        let completed = serde_json::to_value(s.view()).unwrap()["edits"].clone();
+        assert!(s.cancel_remaining());
+        assert!(!s.cancel_remaining());
+        assert_eq!(s.coverage()[0].status, "completed");
+        assert!(s.coverage()[1..].iter().all(|c| c.status == "cancelled"));
+        let stopped = serde_json::to_value(s.view()).unwrap();
+        s.ingest(late, &Default::default()).unwrap();
+        assert_eq!(serde_json::to_value(s.view()).unwrap(), stopped);
+        assert_eq!(stopped["edits"], completed);
+    }
+    #[test]
+    fn cancellation_before_dispatch_survives_reopen_and_requires_explicit_retry() {
+        for completed in [false, true] {
+            let mut s = workflow_session(2);
+            if completed {
+                s.ingest(call(&s, 0, vec![]), &Default::default()).unwrap();
+            }
+            // Remaining calls can be queued initially or notRun after an earlier stop.
+            s.result.workflow.as_mut().unwrap().coverage[1].status = "notRun".into();
+            let captured = serde_json::to_value(&s.request).unwrap();
+            s.ingest(
+                drafting_questions::review_workflow::Batch {
+                    calls: vec![],
+                    cancelled: true,
+                    limit_reached: false,
+                },
+                &Default::default(),
+            )
+            .unwrap();
+            assert_eq!(serde_json::to_value(&s.request).unwrap(), captured);
+            s.revision = 1;
+            let mut reopened: ReviewSession =
+                serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+            reopened = reopened
+                .restore(&"b".repeat(64), "reopened", |_| false)
+                .unwrap();
+            let coverage = reopened.coverage();
+            assert_eq!(
+                coverage[0].status,
+                if completed { "completed" } else { "cancelled" }
+            );
+            assert_eq!(coverage[1].status, "cancelled");
+            assert_eq!(coverage[1].error.as_deref(), Some("cancelled"));
+            assert!(coverage[1].request_id.is_none());
+            assert!(reopened.requeue_failed(|_| true).unwrap());
+            assert_eq!(
+                reopened.coverage()[0].status,
+                if completed { "completed" } else { "queued" }
+            );
+            assert_eq!(reopened.coverage()[1].status, "queued");
+        }
     }
     #[test]
     fn interrupted_or_cancelled_saved_chunk_resumes_without_replaying_completed_chunks() {
