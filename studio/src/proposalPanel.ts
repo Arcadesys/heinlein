@@ -26,6 +26,7 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
   let loading = false;
   let filter: 'all' | 'pending' | 'history' = 'all';
   let query = '';
+  let progressNote = '';
   function remove(node: HTMLDialogElement) { dialogs.delete(node); node.remove(); }
   function clear() { version++; loading = false; for (const cancel of [...dialogs.values()]) cancel(); }
   function dialog(title: string) {
@@ -64,9 +65,10 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
       display(node, () => finish(false));
     });
   }
-  async function change(id: string, kind: 'apply' | 'revert', guard?: () => string | null, presenter?: (view: ProposalReview) => Promise<boolean>, prepare?: () => Promise<string>) {
+  async function change(id: string, kind: 'apply' | 'revert', guard?: () => string | null, presenter?: (view: ProposalReview) => Promise<boolean>, prepare?: () => Promise<string>): Promise<boolean> {
     const repositoryId = hooks.repository()?.id; const current = version;
-    if (!repositoryId || disposed) return;
+    if (!repositoryId || disposed) return false;
+    let applied = false;
     await hooks.run(async () => {
       let view: ProposalReview | null = null;
       let submitted = false;
@@ -86,6 +88,7 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
         if (!outcome) { hooks.report('Native confirmation canceled. The manuscript was not changed.'); return; }
         if (outcome.receipt.status !== 'failed') await hooks.changed(outcome.receipt.path);
         hooks.report(outcome.warning ?? `${kind === 'revert' ? 'Proposal reverted' : 'Proposal applied'} to ${outcome.receipt.path}. An attributed local receipt has been kept.`, outcome.receipt.status !== 'completed');
+        applied = !outcome.warning && outcome.receipt.status === 'completed';
         if(kind==='apply'&&!outcome.warning&&outcome.receipt.status==='completed'&&outcome.receipt.revertAvailable)hooks.applied?.(outcome.receipt.id);
       } catch (error) {
         hooks.report(`Proposal operation stopped: ${String(error)}${submitted ? ' Check the local receipts and current source before any retry.' : ''}`, true);
@@ -93,6 +96,7 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
         if (view) await core.cancelProposalReview!(repositoryId, view.id).catch(() => {});
       }
     });
+    return applied;
   }
   function receiptItem(receipt: ProposalReceipt, node: HTMLDialogElement) {
     const item = el('article', '', 'proposal-receipt');
@@ -147,7 +151,8 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
         filters.forEach(({value, control}) => control.setAttribute('aria-pressed', String(value === filter)));
         const shown = revisions.filter(revision => (filter === 'all' || (filter === 'pending') === (revision.status === 'pending'))
           && [revision.path, revision.reason, revision.before, revision.after].join('\n').toLocaleLowerCase().includes(query.toLocaleLowerCase()));
-        const pending = revisions.filter(r => r.status === 'pending'), scenes = new Set(pending.map(r => r.path)).size;
+        const pending = revisions.filter(r => r.status === 'pending'); node.dataset.pending = String(pending.length);
+        const scenes = new Set(pending.map(r => r.path)).size;
         count.textContent = `${shown.length} of ${revisions.length} revisions · ${pending.length} pending${pending.length ? ` in ${scenes} ${scenes === 1 ? 'scene' : 'scenes'}` : ''}`;
         // Keep each scene's pending revisions together; the model's own order is otherwise unchanged.
         // Nothing saved yet reads as Ask; open revisions as Decide; all decided as Done.
@@ -158,7 +163,8 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
         if (!shown.length) content.append(el('p', revisions.length ? 'No revisions match this filter.' : 'No saved revisions for this project.'));
         for (const revision of shown) content.append(revisionItem(revision, node, render));
       }
-      node.append(controls, search, count, content); render();
+      const progress = el('p', progressNote, 'revision-next'); progress.setAttribute('role', 'status'); progressNote = '';
+      node.append(controls, search, count, progress, content); render();
       node.append(el('p', 'Revision records retain local decisions, not an authenticated revision ledger.', 'muted'));
       display(node, close);
     } catch (error) { hooks.report(`Revisions could not be loaded: ${String(error)}`, true); }
@@ -195,12 +201,23 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
         }
         return true;
       };
-      const refreshAfter = async (operation: Promise<void>) => {
-        await operation;
+      const refreshAfter = async (operation: Promise<boolean | void>) => {
+        const applied = await operation;
         if (!node.isConnected || repositoryId !== hooks.repository()?.id || disposed) return;
-        const scroll = node.scrollTop; remove(node); await open();
+        const scroll = node.scrollTop;
+        // After a confirmed Accept, move to the next pending revision. Accept here applies in one step, so this only
+        // brings the next one into view and focus; nothing is applied until the author chooses Accept again.
+        const waiting = Math.max(0, Number(node.dataset.pending ?? 0) - 1);
+        if (applied) progressNote = waiting ? `Applied. Showing the next one: ${waiting} ${waiting === 1 ? 'revision' : 'revisions'} still waiting for your decision.` : 'Applied. All pending revisions are decided.';
+        remove(node); await open();
         const refreshed = [...dialogs.keys()].find(dialog => dialog.classList.contains('revisions-dialog'));
-        if (refreshed) {refreshed.scrollTop = scroll; refreshed.querySelector<HTMLButtonElement>('.revision-actions button:not(:disabled)')?.focus({preventScroll:true});}
+        if (refreshed) {
+          refreshed.scrollTop = scroll;
+          const next = refreshed.querySelector<HTMLElement>('.revision-entry[data-status="pending"]');
+          const target = next?.querySelector<HTMLButtonElement>('.revision-actions button:not(:disabled)') ?? refreshed.querySelector<HTMLButtonElement>('.revision-actions button:not(:disabled)');
+          target?.focus({preventScroll: true});
+          if (applied) (next ?? refreshed.querySelector('.revision-next'))?.scrollIntoView?.({block: 'nearest'});
+        }
       };
       if (revision.review) {
         const {reviewId, edit} = revision.review;

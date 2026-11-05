@@ -86,6 +86,9 @@ describe('one revisions list',()=>{
     expect(core.applyProposalReview).toHaveBeenCalledWith('repo',{reviewId:view.id,proposalId:kind==='external'?'external':'prepared',baseHash:view.baseHash,replacementHash:view.replacementHash,diffHash:view.diffHash});
     expect(core.applyProposalReview).toHaveBeenCalledOnce();
     expect(document.querySelector('.revisions-dialog')).not.toBeNull();
+    // The dialog reloads on the next pending revision and says so; it never applies that one for the author.
+    expect(document.querySelector('.revision-next')?.textContent).toContain('Applied. Showing the next one: 1 revision still waiting');
+    expect(document.activeElement?.closest('[data-status="pending"]')).not.toBeNull();
     expect(changed).toHaveBeenCalledWith('scene.md'); panel.destroy();
   });
   it('refuses an unseen replacement after the displayed diff changes',async()=>{

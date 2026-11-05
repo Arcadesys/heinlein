@@ -972,6 +972,23 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         item.append(el('p', 'Accepted · local receipt retained. Guarded undo is available in Revisions.', 'review-guidance'));
         return item;
     }
+    /** Opens the next waiting suggestion's accept flow (its comparison dialog). Stops at a group that still needs a choice. */
+    function openNextAccept(token: number) {
+        if (!live(token) || busy || pending || element.hidden)
+            return;
+        for (const card of edits.querySelectorAll<HTMLElement>('.review-card')) {
+            const accept = card.querySelector<HTMLButtonElement>('button[data-edit-action="accept"]');
+            if (!accept || accept.disabled)
+                continue;
+            if (accept.dataset.unavailable === 'true') {
+                if (card.classList.contains('review-conflict'))
+                    return;
+                continue;
+            }
+            accept.click();
+            return;
+        }
+    }
     function focusCard(index: number, note?: string, warning = false) {
         const rows = [...edits.querySelectorAll<HTMLElement>('.review-edit')];
         const item = rows[Math.min(index, rows.length - 1)];
@@ -1147,6 +1164,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         let outcome: ProposalOutcome | null = null;
         let note: string | undefined;
         let failed = false;
+        let advance = false;
         busy = true;
         update();
         try {
@@ -1206,6 +1224,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 if (outcome?.warning)
                     note += ` ${outcome.warning}`;
                 failed = Boolean(outcome?.warning);
+                advance = accept && after?.status === 'accepted' && !failed;
             }
         }
         catch (error) {
@@ -1220,6 +1239,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 busy = false;
                 update();
                 if (!modalDecision || !resumeSuggestion(preferredIds, note, failed)) focusCard(position, note, failed);
+                // After a confirmed Accept, load the next suggestion's comparison. Nothing is applied until its own Accept.
+                if (advance && !modalDecision) queueMicrotask(() => openNextAccept(token));
             }
         }
     }

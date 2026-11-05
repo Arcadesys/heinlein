@@ -38,6 +38,16 @@ confirmation, stale-source check, and receipt. Accept opens the exact comparison
 the decline action is **Keep mine** on every surface (review cards, chat revision cards,
 and the Revisions overlay). "Reject" remains only in receipts and internal names.
 
+### Moving through the queue
+
+After a confirmed Accept in the review pane, Studio opens the next waiting suggestion's
+exact-patch confirmation, in card order, until none remain. Cancelling a confirmation,
+a failed or warned apply, a source-changed (stale) card, or a competing-alternatives
+group that still needs a choice stops the chain and leaves focus on that card. Keep mine
+does not open the next confirmation. In the Revisions overlay Accept applies in one step,
+so it never applies the next revision on its own: after an Accept it reloads, says how
+many revisions are still waiting, and moves focus to the next pending Accept button.
+
 ## Independent proposal changes
 
 Local MCP proposals can be prepared against a newer saved scene when their exact
