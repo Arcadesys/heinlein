@@ -217,8 +217,12 @@ same eight-call native batch limit and uses the same account, model,
 cancellation and progress handling. Older saved plans omit the flag and retain
 their original coverage.
 
-The final pass receives the validated, persisted individual assessments rather
-than another copy of the manuscript. It combines repeated observations, retains
+The final pass receives the validated individual assessments and their exact
+proposed original/replacement patches, including unlinked suggestions. Same-batch
+provider IDs and reopened canonical finding IDs stay paired with their own report's
+feedback links. Native request/reviewer-instance provenance assigns shared patches
+to every contributing call. The wire uses source indices rather than native paths,
+and contains no offsets or write authority. It combines repeated observations, retains
 important disagreements and scope limits, and must provide substantive strengths
 and improvement assessments. An explanation that no change is warranted is valid;
 empty findings and edits remain valid. Consolidation cannot create or decide
@@ -231,6 +235,11 @@ individual pass fails or an assessment is missing, consolidation is marked
 incomplete without sending partial reports. A consolidation failure, cancellation
 or input exceeding the 200,000-byte request cap retains individual results and
 is shown in call details. There are no automatic retries or silent truncation.
+
+Advisory prose limits count Unicode characters consistently with JSON Schema in
+native and renderer validation. Exact patch text and whole request/response limits
+remain UTF-8 byte limits. Assessment format/length failures have specific call
+details; neither repair nor retry modifies existing review decisions.
 
 
 ### One-action chapter review

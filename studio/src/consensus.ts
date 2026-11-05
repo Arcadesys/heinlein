@@ -40,7 +40,7 @@ export function consensusSentence(c: Consensus): string {
   const parts = [c.reviewers.length ? n(c.reviewers.length, 'reviewer') : '', n(c.total, 'suggestion')];
   if (c.agreed.length) parts.push(`${c.agreed.length} agreed by 2 or more reviewers`);
   if (c.alternatives.length) parts.push(`${n(c.alternatives.length, 'span')} with alternatives to choose`);
-  if (c.single.length) parts.push(`${c.single.length} from one reviewer`);
+  if (c.single.length) parts.push(`${c.single.length} with one reviewer each`);
   return parts.filter(Boolean).join(' · ');
 }
 

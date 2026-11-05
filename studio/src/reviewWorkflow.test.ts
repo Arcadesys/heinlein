@@ -52,7 +52,7 @@ it('streams activity before completion, ignores stale events, and stops showing 
     progress({...event,receivedBytes:4096});
     expect(panel!.element.textContent).toBe(cancelled);
 });
-it.each([['timeout', 'The response timed out.'], ['outputLimit', 'The model reached its response token limit before finishing the review.']])('labels a failed empty result (%s) as incomplete with its reason', async (error, reason) => {
+it.each([['timeout', 'The response timed out.'], ['outputLimit', 'The model reached its response token limit before finishing the review.'], ['assessmentTooLong', 'A reading assessment exceeded the 2,000-character limit.'], ['invalidAssessment', 'A reading assessment was empty or contained unsupported characters.'], ['invalidConsolidation', 'The consolidated assessment did not match the required format.'], ['invalidConsolidationContext', 'The saved reviewer patch context could not be validated.'], ['responseTooLarge', 'The response exceeded the supported byte limit.']])('labels a failed empty result (%s) as incomplete with its reason', async (error, reason) => {
     const f = fixture();
     const original = f.core.requestReview.getMockImplementation()!;
     f.core.requestReview.mockImplementation(async request => {

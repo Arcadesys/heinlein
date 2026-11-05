@@ -86,13 +86,17 @@ pub struct ReadingAssessment {
 impl ReadingAssessment {
     pub(crate) fn validate(&self) -> Result<(), QuestionError> {
         for text in [&self.strengths, &self.improvements] {
-            if text.trim().is_empty()
-                || text.len() > 2000
-                || text
-                    .chars()
-                    .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
-            {
-                return Err(invalid());
+            if text.chars().count() > 2000 {
+                return Err(QuestionError::new(
+                    "assessmentTooLong",
+                    "A reading assessment exceeded the 2,000-character limit. Completed reviews and suggestions were kept.",
+                ));
+            }
+            if !crate::structured::valid_prose(text, 2000) {
+                return Err(QuestionError::new(
+                    "invalidAssessment",
+                    "A reading assessment was empty or contained unsupported control characters. Completed reviews and suggestions were kept.",
+                ));
             }
         }
         Ok(())
@@ -141,17 +145,11 @@ impl ReadingFeedback {
         }
         if self.strengths.len() > 32
             || self.improvements.len() > 32
-            || self.improvements.iter().any(|p| matches!(p, ReadingImprovement::Linked(p) if p.evidence.as_ref().is_some_and(|e| e.trim().is_empty() || e.len() > 2000)))
+            || self.improvements.iter().any(|p| matches!(p, ReadingImprovement::Linked(p) if p.evidence.as_ref().is_some_and(|e| !crate::structured::valid_prose(e, 2000))))
             || std::iter::once(self.overview.as_str())
                 .chain(self.strengths.iter().map(String::as_str))
                 .chain(self.improvements.iter().map(ReadingImprovement::text))
-                .any(|text| {
-                    text.trim().is_empty()
-                        || text.len() > 2000
-                        || text
-                            .chars()
-                            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
-                })
+                .any(|text| !crate::structured::valid_prose(text, 2000))
         {
             return Err(invalid());
         }
