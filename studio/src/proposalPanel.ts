@@ -1,4 +1,6 @@
 import type { LocalCore, ProposalReview, ProposalReceipt, RepositorySession } from './localCore';
+import {createProposalDiff} from './proposalDiff';
+import {collectRevisions, revisionStatus, type Revision} from './revisions';
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = ''): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag); node.textContent = text; node.className = className; return node;
@@ -20,6 +22,8 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
   let version = 0;
   let disposed = false;
   let loading = false;
+  let filter: 'all' | 'pending' | 'history' = 'all';
+  let query = '';
   function remove(node: HTMLDialogElement) { dialogs.delete(node); node.remove(); }
   function clear() { version++; loading = false; for (const cancel of [...dialogs.values()]) cancel(); }
   function dialog(title: string) {
@@ -37,23 +41,28 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
   function review(view: ProposalReview): Promise<boolean> {
     return new Promise(resolve => {
       const node = dialog(view.kind === 'revert' ? 'Review guarded revert' : 'Review whole-scene proposal');
-      node.append(el('p', view.path, 'path'), el('p', attribution(view.origin), 'proposal-attribution'),
-        el('p', 'Recorded origins describe how this suggestion arrived; they do not authenticate its author or endorse its contents. This changes a working draft only; it does not approve a release.', 'drafting-warning'));
+      node.append(el('p', view.path, 'path'));
+      const origin = el('details', '', 'proposal-attribution');
+      origin.append(el('summary', 'Suggestion source'), el('p', attribution(view.origin)));
+      node.append(origin);
+      node.append(createProposalDiff(view.baseText, view.replacementText));
+      const fullSource = el('details', '', 'proposal-full-source');
+      fullSource.append(el('summary', 'Show full original and replacement'));
       const columns = el('div', '', 'proposal-comparison');
       for (const [title, text] of [['Before · exact current source', view.baseText], ['After · exact replacement', view.replacementText]]) {
         const section = el('section'); section.append(el('h3', title)); const source = el('pre', text, 'source-text'); source.tabIndex = 0; section.append(source); columns.append(section);
       }
-      node.append(columns);
+      fullSource.append(columns); node.append(fullSource);
       const hashes = el('details', '', 'proposal-bindings');
       hashes.append(el('summary', 'Exact review bindings'), el('p', `Proposal: ${view.proposalId}`), el('p', `Base SHA-256: ${view.baseHash}`), el('p', `Replacement SHA-256: ${view.replacementHash}`), el('p', `Whole-scene diff SHA-256: ${view.diffHash}`));
-      node.append(hashes, el('p', 'This one-use review expires after five minutes. Continue to a separate native author confirmation. Changed source or pending recovery will stop the operation.', 'muted'));
+      node.append(hashes, el('p', 'Accept applies this exact comparison. Changed source or pending recovery will stop the operation.', 'muted'));
       let done = false;
       const finish = (yes: boolean) => { if (done) return; done = true; remove(node); resolve(yes); };
-      node.append(button('Cancel', () => finish(false)), button('Continue to native confirmation', () => finish(true), 'primary'));
+      node.append(button('Cancel', () => finish(false)), button(view.kind === 'revert' ? 'Continue to native confirmation' : 'Accept revision', () => finish(true), 'primary'));
       display(node, () => finish(false));
     });
   }
-  async function change(id: string, kind: 'apply' | 'revert', guard?: () => string | null, presenter?: (view: ProposalReview) => Promise<boolean>) {
+  async function change(id: string, kind: 'apply' | 'revert', guard?: () => string | null, presenter?: (view: ProposalReview) => Promise<boolean>, prepare?: () => Promise<string>) {
     const repositoryId = hooks.repository()?.id; const current = version;
     if (!repositoryId || disposed) return;
     await hooks.run(async () => {
@@ -61,6 +70,8 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
       let submitted = false;
       try {
         const before = guard?.(); if (before) throw new Error(before);
+        if (prepare) id = await prepare();
+        if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
         view = kind === 'apply' ? await core.reviewProposal!(repositoryId, id) : await core.reviewProposalRevert!(repositoryId, id);
         if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
         const loaded = guard?.(); if (loaded) throw new Error(loaded);
@@ -83,10 +94,13 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
   }
   function receiptItem(receipt: ProposalReceipt, node: HTMLDialogElement) {
     const item = el('article', '', 'proposal-receipt');
-    item.append(el('h3', `${receipt.kind === 'reject' ? 'Reject' : receipt.kind === 'revert' ? 'Revert' : 'Apply'} · ${receipt.path} · ${receipt.status}`), el('p', attribution(receipt.origin)),
-      el('p', `Author action: ${receipt.kind === 'reject' ? 'Studio explicit rejection' : 'Studio native confirmation'} · Receipt: ${receipt.id}`), el('p', `Proposal: ${receipt.proposalId}`),
+    if (receipt.baseText !== undefined && receipt.replacementText !== undefined) item.append(createProposalDiff(receipt.baseText, receipt.replacementText));
+    const metadata = el('details'); metadata.append(el('summary', 'Revision record'));
+    metadata.append(el('h3', `${receipt.kind === 'reject' ? 'Reject' : receipt.kind === 'revert' ? 'Revert' : 'Apply'} · ${receipt.path} · ${receipt.status}`), el('p', attribution(receipt.origin)),
+      el('p', `Author action: ${receipt.kind === 'reject' ? 'Studio explicit rejection' : receipt.authorAction === 'studioAuthorAccept' ? 'Studio Accept' : 'Studio native confirmation'} · Receipt: ${receipt.id}`), el('p', `Proposal: ${receipt.proposalId}`),
       el('p', `Base: ${receipt.baseHash}`, 'path'), el('p', `Replacement: ${receipt.replacementHash}`, 'path'), el('p', `Diff: ${receipt.diffHash}`, 'path'));
-    if (receipt.parentReceiptId) item.append(el('p', `Reverts receipt: ${receipt.parentReceiptId}`));
+    if (receipt.parentReceiptId) metadata.append(el('p', `Reverts receipt: ${receipt.parentReceiptId}`));
+    item.append(metadata);
     if (receipt.message) item.append(el('p', receipt.message, receipt.status === 'completed' ? 'muted' : 'drafting-warning'));
     if (receipt.revertAvailable) item.append(button('Review revert', () => { remove(node); void change(receipt.id, 'revert'); }));
     return item;
@@ -95,27 +109,143 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
     if (!supported || !hooks.repository() || disposed || loading || dialogs.size) return;
     loading = true; const current = version; const repositoryId = hooks.repository()!.id;
     try {
-      const result = await core.listProposals!(repositoryId);
+      const [proposalResult, reviewResult] = await Promise.allSettled([
+        core.listProposals!(repositoryId), core.listReviews?.(repositoryId) ?? Promise.resolve([]),
+      ]);
       if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
-      const node = dialog('Proposed revisions and receipts');
-      node.append(el('p', 'OpenAI and local MCP clients can suggest revisions. Only an explicit author action in Studio can apply a reviewed whole-scene change.', 'muted'));
-      node.append(el('h3', 'Pending proposals'));
-      if (!result.pending.length) node.append(el('p', 'No pending proposals for this repository.'));
-      for (const proposal of result.pending) {
-        const item = el('article', '', 'proposal-entry');
-        item.append(el('p', proposal.path, 'path'), el('p', attribution(proposal.origin)), button('Review proposal', () => { remove(node); void change(proposal.id, 'apply'); }));
-        if (core.rejectProposal) item.append(button('Reject proposal', () => {void reject(proposal.id, item);}));
-        node.append(item);
-      }
-      node.append(el('h3', 'Local immutable operation receipts'), el('p', 'Receipts retain the recorded proposal origin and separate author action, including explicit rejection. They are local operation records, not an authenticated revision ledger. Revert is available only for confirmed applies from this Studio session, and only while the scene still matches.', 'muted'));
-      if (!result.receipts.length) node.append(el('p', 'No local operation receipts for this repository.'));
-      for (const receipt of result.receipts) node.append(receiptItem(receipt, node));
+      const listing = proposalResult.status === 'fulfilled' ? proposalResult.value : {pending: [], receipts: []};
+      const reviews = reviewResult.status === 'fulfilled' ? reviewResult.value : [];
+      const revisions = collectRevisions(listing, reviews);
+      const node = dialog('Revisions');
+      node.classList.add('revisions-dialog');
       const close = () => remove(node);
-      node.append(button('Close', close), button('Refresh', () => { close(); void open(); })); display(node, close);
-    } catch (error) { hooks.report(`Proposals could not be loaded: ${String(error)}`, true); }
+      const toolbar = el('div', '', 'revision-toolbar');
+      toolbar.append(button('Refresh', () => {close(); void open();}), button('Close', close));
+      node.append(toolbar);
+      node.append(el('p', 'All saved suggestions for this project. Review the before and after, then choose what to keep. Your writing changes only after your confirmation.', 'muted'));
+      function loadFailure(message: string, reason: unknown) {
+        node.append(el('p', message, 'drafting-warning'));
+        const details = el('details'); details.append(el('summary', 'Load error details'), el('pre', String(reason))); node.append(details);
+      }
+      if (proposalResult.status === 'rejected') loadFailure('External proposals and revision history could not be loaded. Use Refresh above to try again.', proposalResult.reason);
+      if (reviewResult.status === 'rejected') loadFailure('Saved in-app reviews could not be loaded. Use Refresh above to try again.', reviewResult.reason);
+      const controls = el('div', '', 'revision-filters'); controls.setAttribute('aria-label', 'Filter revisions');
+      const content = el('div', '', 'revision-list');
+      const count = el('p', '', 'revision-count'); count.setAttribute('role', 'status');
+      const search = el('input'); search.type = 'search'; search.placeholder = 'Find a scene or phrase'; search.value = query; search.setAttribute('aria-label', 'Find revisions');
+      const filters = (['all', 'pending', 'history'] as const).map(value => {
+        const label = value === 'all' ? 'All revisions' : value === 'pending' ? 'Pending' : 'History';
+        const control = button(label, () => {filter = value; render();});
+        controls.append(control); return {value, control};
+      });
+      search.addEventListener('input', () => {query = search.value; render();});
+      function render() {
+        filters.forEach(({value, control}) => control.setAttribute('aria-pressed', String(value === filter)));
+        const shown = revisions.filter(revision => (filter === 'all' || (filter === 'pending') === (revision.status === 'pending'))
+          && [revision.path, revision.reason, revision.before, revision.after].join('\n').toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+        count.textContent = `${shown.length} of ${revisions.length} revisions · ${revisions.filter(r => r.status === 'pending').length} pending`;
+        content.replaceChildren();
+        if (!shown.length) content.append(el('p', revisions.length ? 'No revisions match this filter.' : 'No saved revisions for this project.'));
+        for (const revision of shown) content.append(revisionItem(revision, node, render));
+      }
+      node.append(controls, search, count, content); render();
+      node.append(el('p', 'Revision records retain local decisions, not an authenticated revision ledger.', 'muted'));
+      display(node, close);
+    } catch (error) { hooks.report(`Revisions could not be loaded: ${String(error)}`, true); }
     finally { if (current === version) loading = false; }
   }
-  async function reject(id: string, item: HTMLElement) {
+  function revisionItem(revision: Revision, node: HTMLDialogElement, render: () => void) {
+    const item = el('article', '', 'proposal-entry revision-entry'); item.dataset.revisionId = revision.id;
+    item.dataset.status = revision.status;
+    item.append(el('h3', revision.path, 'path'), el('p', `${revisionStatus[revision.status]} · ${revision.source}`, 'revision-state'));
+    if (revision.receipt) {item.append(receiptItem(revision.receipt, node)); return item;}
+    if (revision.refreshed) item.append(el('p', 'Updated comparison · your saved edits elsewhere in the scene are preserved.'));
+    if (revision.unavailable) item.append(el('p', revision.unavailable, 'drafting-warning'));
+    if (revision.reason) item.append(el('p', revision.reason));
+    if (revision.before !== undefined && revision.after !== undefined) item.append(createProposalDiff(revision.before, revision.after));
+    else item.append(el('p', 'Open this revision to see its exact changes.'));
+    if (revision.proposal) {
+      const source = el('details'); source.append(el('summary', 'Suggestion source'), el('p', attribution(revision.proposal.origin))); item.append(source);
+    }
+    if (revision.status !== 'pending' && revision.status !== 'outdated') return item;
+    const actions = el('div', '', 'revision-actions');
+    const accept = button('Accept', () => {
+      const repositoryId = hooks.repository()?.id; if (!repositoryId) return;
+      node.querySelectorAll<HTMLButtonElement|HTMLInputElement>('button,input').forEach(control => {control.disabled = true;});
+      const displayed = async (view: ProposalReview) => {
+        if (revision.proposal) {
+          const p = revision.proposal;
+          if (view.baseHash !== p.baseHash || view.replacementHash !== p.replacementHash || view.diffHash !== p.diffHash
+            || view.baseText !== revision.before || view.replacementText !== revision.after) throw new Error('This revision changed since it was displayed. Refresh and accept the updated comparison.');
+        } else if (revision.review) {
+          const a = view.origin.kind === 'nativeOpenAi' ? view.origin.review : null;
+          if (view.origin.kind !== 'nativeOpenAi' || (revision.review.schemaVersion === 2
+            && (!a || a.reviewId !== revision.review.reviewId || a.findingId !== revision.review.edit.id
+            || (revision.review.edit.fingerprint && a.fingerprint !== revision.review.edit.fingerprint)))) throw new Error('This suggestion changed since it was displayed. Refresh and accept the updated comparison.');
+        }
+        return true;
+      };
+      const refreshAfter = async (operation: Promise<void>) => {
+        await operation;
+        if (!node.isConnected || repositoryId !== hooks.repository()?.id || disposed) return;
+        const scroll = node.scrollTop; remove(node); await open();
+        const refreshed = [...dialogs.keys()].find(dialog => dialog.classList.contains('revisions-dialog'));
+        if (refreshed) {refreshed.scrollTop = scroll; refreshed.querySelector<HTMLButtonElement>('.revision-actions button:not(:disabled)')?.focus({preventScroll:true});}
+      };
+      if (revision.review) {
+        const {reviewId, edit} = revision.review;
+        void refreshAfter(change('', 'apply', undefined, displayed, async () => {
+          if (edit.conflictGroup && !edit.selected) {
+            if (!core.chooseReviewEdit) throw new Error('Choose this alternative in its saved review first.');
+            await core.chooseReviewEdit(repositoryId, reviewId, edit.id);
+          }
+          return (await core.prepareReviewEdit!(repositoryId, reviewId, edit.id)).proposalId;
+        }));
+      } else if (revision.proposal) void refreshAfter(change(revision.proposal.id, 'apply', undefined, displayed));
+    });
+    accept.disabled = Boolean(revision.unavailable || (revision.review && !core.prepareReviewEdit)
+      || (revision.proposal && (revision.before === undefined || revision.after === undefined)));
+    actions.append(accept);
+    const details = button('Details', () => {
+      const repositoryId = hooks.repository()?.id; if (!repositoryId) return;
+      remove(node);
+      if (revision.review) {
+        const {reviewId, edit} = revision.review;
+        void change('', 'apply', undefined, undefined, async () => {
+          if (edit.conflictGroup && !edit.selected) {
+            if (!core.chooseReviewEdit) throw new Error('Choose this alternative first.');
+            await core.chooseReviewEdit(repositoryId, reviewId, edit.id);
+          }
+          return (await core.prepareReviewEdit!(repositoryId, reviewId, edit.id)).proposalId;
+        });
+      } else if (revision.proposal) void change(revision.proposal.id, 'apply');
+    });
+    details.disabled = accept.disabled; actions.append(details);
+    if (revision.review && core.rejectReviewEdit) actions.append(button('Keep mine', () => {void keepReview(revision, item, render);}));
+    else if (revision.proposal && core.rejectProposal) actions.append(button('Keep mine', () => {void reject(revision.proposal!.id, item, receipt => {
+      revision.status = 'kept';
+      revision.receipt = {...receipt, baseText:receipt.baseText ?? revision.before, replacementText:receipt.replacementText ?? revision.after};
+      render();
+    });}));
+    item.append(actions); return item;
+  }
+  async function keepReview(revision: Revision, item: HTMLElement, render: () => void) {
+    const repositoryId = hooks.repository()?.id; const current = version;
+    if (!repositoryId || !revision.review || !core.rejectReviewEdit || disposed) return;
+    item.querySelectorAll('button').forEach(button => {button.disabled = true;});
+    try {
+      const {reviewId, edit} = revision.review;
+      const updated = await core.rejectReviewEdit(repositoryId, reviewId, edit.id);
+      if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
+      if (updated.edits.find(value => value.id === edit.id)?.status !== 'rejected') throw new Error('The decision was not confirmed');
+      item.querySelector('.revision-actions')?.remove();
+      item.querySelector('.revision-state')!.textContent = `Kept mine · ${revision.source}`;
+      item.dataset.status = 'kept';
+      revision.status = 'kept'; render();
+      hooks.report('Kept your text. The suggestion remains in revision history.');
+    } catch (error) {if (!disposed && current === version && repositoryId === hooks.repository()?.id) hooks.report(`Decision could not be confirmed: ${String(error)}. Refresh revisions before trying again.`, true);}
+  }
+  async function reject(id: string, item: HTMLElement, decided: (receipt: ProposalReceipt) => void) {
     const repositoryId = hooks.repository()?.id; const current = version;
     if (!repositoryId || !core.rejectProposal || disposed) return;
     item.querySelectorAll('button').forEach(node => {node.disabled = true;});
@@ -123,7 +253,10 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
       const receipt = await core.rejectProposal(repositoryId, id);
       if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;
       if (receipt.kind !== 'reject' || receipt.status !== 'rejected' || receipt.proposalId !== id) throw new Error('Rejection was not confirmed');
-      item.replaceChildren(el('p', `Rejected · ${receipt.path}`), el('p', attribution(receipt.origin)), el('p', `Immutable local rejection receipt: ${receipt.id}`));
+      item.querySelector('.revision-actions')?.remove();
+      item.querySelector('.revision-state')!.textContent = 'Kept mine · External proposal'; item.dataset.status = 'kept';
+      item.append(el('p', `Immutable local rejection receipt: ${receipt.id}`));
+      decided(receipt);
       hooks.report('Suggestion rejected. The manuscript was not changed.');
     } catch (error) {
       if (disposed || current !== version || repositoryId !== hooks.repository()?.id) return;

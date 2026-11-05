@@ -103,9 +103,9 @@ test('passage chip survives collapse, background completion, exact diff and guar
   expect((await state(page)).source).toBe((await state(page)).original);
   expect((await new AxeBuilder({page}).include('.question-panel').analyze()).violations).toEqual([]);
   await page.screenshot({path:`/tmp/heinlein-questions-${info.project.name}-wide.png`});
-  await pane.getByRole('button',{name:'Review changes…',exact:true}).click();await expect(pane.getByRole('button',{name:'Continue to native confirmation'})).toBeEnabled();
+  await pane.getByRole('button',{name:'Review changes…',exact:true}).click();await expect(pane.getByRole('button',{name:'Accept revision'})).toBeEnabled();
   await expect(page.locator('dialog[open]:not(.conversation-rail-dialog)')).toHaveCount(0);await expect(pane.getByLabel('Original full scene')).toContainText('The station clock');expect((await state(page)).applied).toBe(0);
-  await pane.getByRole('button',{name:'Continue to native confirmation'}).click();await expect.poll(async()=>(await state(page)).applied).toBe(1);
+  await pane.getByRole('button',{name:'Accept revision'}).click();await expect.poll(async()=>(await state(page)).applied).toBe(1);
   expect((await state(page)).source).toContain('Rain drummed against');expect(errors).toEqual([]);
 });
 test('narrow and enlarged text retain keyboard access, diff labels and no overflow',async({page},info)=>{
@@ -129,7 +129,7 @@ test('narrow and enlarged text retain keyboard access, diff labels and no overfl
   await page.keyboard.press('Control+j');await expect(pane).toBeVisible();await expect(pane.locator('.question-diff-chip summary')).toContainText('drummed');
 });
 test('dismiss records rejection without applying',async({page})=>{
-  await openPassage(page);await sendRevision(page);await fixture(page,'finish');const pane=page.locator('.question-panel');await pane.getByRole('button',{name:'Dismiss',exact:true}).click();
+  await openPassage(page);await sendRevision(page);await fixture(page,'finish');const pane=page.locator('.question-panel');await pane.getByRole('button',{name:'Keep mine',exact:true}).click();
   await expect.poll(async()=>(await state(page)).rejected).toBe(1);expect((await state(page)).applied).toBe(0);expect((await state(page)).source).toBe((await state(page)).original);
 });
 

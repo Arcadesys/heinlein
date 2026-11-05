@@ -1,6 +1,7 @@
 import {createReviewActivity} from './reviewActivity';
 import {renderMarkdown} from './markdown';
 import type { LocalCore, QuestionStatus, ReviewEdit, ReviewResult, ReviewRequest, ReviewerDefinition, CustomReviewer, ReviewCoverage, ReviewProgress, ProposalOutcome } from './localCore';
+import { agreementLabel, reviewersOf, consensusSentence, stageLabels, stageOf, summarizeConsensus, type Stage } from './consensus';
 import { changedSpan, decisionLabel, invisibleChangeNote, lineageDelta, patchContext, waiting, type PatchContext } from './reviewComparison';
 import type { ReviewMarkInput } from './reviewMarks';
 import { formatKeys } from './shortcuts';
@@ -328,7 +329,21 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     markStatus.append(legend, markNote);
     markStatus.hidden = true;
     footer.append(connection, footActions, advisory, markStatus);
-    element.append(head, strip, status, activity, body, footer);
+    // Read-only stage indicator: where the writer is between asking and deciding. It never navigates.
+    const stages = el('ol', '', 'review-stages');
+    stages.setAttribute('aria-label', 'Revision progress');
+    const stageItems = (Object.keys(stageLabels) as Stage[]).map(key => { const item = el('li', stageLabels[key]); item.dataset.stage = key; stages.append(item); return item; });
+    function updateStages() {
+        // Competing alternatives are one decision, so count cards rather than raw edits.
+        const open = summarizeConsensus(result?.edits.filter(waiting) ?? []).total;
+        const now = stageOf({running: Boolean(pending || busy || automaticRunning), hasResult: Boolean(result) && view === 'results', waiting: open});
+        stageItems.forEach(item => {
+            const here = item.dataset.stage === now;
+            if (here) item.setAttribute('aria-current', 'step'); else item.removeAttribute('aria-current');
+            item.textContent = here && now === 'decide' ? `${stageLabels.decide} · ${open} waiting` : stageLabels[item.dataset.stage as Stage];
+        });
+    }
+    element.append(head, stages, strip, status, activity, body, footer);
 
     element.addEventListener('keydown', event => { if (event.key === 'Escape' && !event.isComposing) {
         event.preventDefault();
@@ -403,6 +418,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         setupView.hidden = showingResults;
         resultsView.hidden = !showingResults;
         strip.hidden = !showingResults;
+        updateStages();
         if (!showingResults) toggleMenu(false);
         connection.hidden = showingResults || checking || ready() || !core.requestReview;
         connection.dataset.state = checking ? 'checking' : ready() ? 'ready' : 'problem';
@@ -750,6 +766,11 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         const heading = cardHead(item, meta(edit), edit.sourceStale ? 'Source changed' : 'Waiting', Boolean(edit.sourceStale));
         const context = contextFor(edit, current);
         item.append(inlineDiff(edit, context, 60), ...diffNotes(edit, context));
+        if (result!.schemaVersion === 2 && agreementLabel(edit)) {
+            item.append(el('p', agreementLabel(edit), 'review-agreement'));
+            if (reviewersOf(edit).length > 1)
+                item.dataset.agreed = 'true';
+        }
         for (const comment of edit.comments ?? [edit.reason])
             item.append(renderMarkdown(comment));
         if (edit.sourceStale)
@@ -868,6 +889,23 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             edits.append(el('p', 'Every suggestion is decided. Your choices are recorded under More review actions.', 'review-guidance'));
         const current = hooks.capture();
         const groups = new Set<string>();
+        if (result.schemaVersion === 2 && listed.length) {
+            const consensus = summarizeConsensus(listed);
+            const summary = el('section', '', 'review-consensus');
+            summary.setAttribute('aria-label', 'Review consensus');
+            summary.append(el('h3', 'Where the reviewers landed', 'review-label'), el('p', consensusSentence(consensus)));
+            summary.append(el('p', 'Agreement is a signal, not a decision. Nothing changes until you choose Accept.', 'review-guidance'));
+            if (consensus.agreed.length) {
+                summary.append(button('Go to first agreed suggestion', () => {
+                    const heading = edits.querySelector<HTMLElement>('[data-agreed="true"] h4');
+                    heading?.scrollIntoView({block: 'nearest'});
+                    heading?.focus();
+                }));
+            }
+            edits.append(summary);
+            const rank = (edit: ReviewEdit) => edit.conflictGroup ? 1 : reviewersOf(edit).length > 1 ? 0 : 2;
+            listed.sort((a, b) => rank(a) - rank(b));
+        }
         for (const edit of listed) {
             const group = edit.conflictGroup;
             if (!group) {
@@ -895,7 +933,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                     entry.append(renderMarkdown(comment));
                 entry.append(el('h5', 'Text before this suggestion'), el('pre', item.original, 'question-text'), el('h5', 'Suggested text'), el('pre', item.replacement, 'question-text'));
                 if (item.status === 'accepted')
-                    entry.append(el('p', `${receipts.has(item.id) ? `Local receipt ${receipts.get(item.id)}. ` : ''}Open Proposed revisions to see receipts and any available guarded revert.`, 'review-guidance'));
+                    entry.append(el('p', `${receipts.has(item.id) ? `Local receipt ${receipts.get(item.id)}. ` : ''}Open Revisions to see receipts and any available guarded revert.`, 'review-guidance'));
                 if (item.status === 'rejected')
                     entry.append(el('p', 'Your source was not changed by this suggestion.', 'review-guidance'));
                 if (item.status === 'supersededByAuthorChoice') {
@@ -928,7 +966,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         item.append(inlineDiff(edit, null, 60));
         for (const comment of edit.comments ?? [edit.reason])
             item.append(renderMarkdown(comment));
-        item.append(el('p', 'Accepted · local receipt retained. Guarded undo is available in Proposed revisions.', 'review-guidance'));
+        item.append(el('p', 'Accepted · local receipt retained. Guarded undo is available in Revisions.', 'review-guidance'));
         return item;
     }
     function focusCard(index: number, note?: string, warning = false) {

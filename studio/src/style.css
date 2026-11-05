@@ -416,6 +416,38 @@ dialog { color: var(--fg); }
 .repository-choice input { width: 1.1rem; height: 1.1rem; flex: none; accent-color: var(--accent); }
 .proposal-dialog { width: min(1200px, 94vw); max-width: 94vw; }
 .proposal-comparison { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+.proposal-diff-hunk { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1rem; margin-block: 1rem; }
+.proposal-diff-hunk > h4 { margin-top: 0; }
+.proposal-diff .question-comparison { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
+.proposal-diff .question-comparison > section { min-width: 0; }
+.proposal-diff .question-diff-text { max-height: 40vh; overflow: auto; padding: .5rem; }
+.proposal-diff .question-diff-text mark { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.proposal-diff .question-diff-legend { grid-column: 1 / -1; }
+.proposal-full-source { margin-block: 1rem; }
+.proposal-diff summary { cursor: pointer; white-space: pre-wrap; overflow-wrap: anywhere; }
+.proposal-diff summary del, .proposal-diff summary ins { padding: .15em .35em; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--fg); }
+.proposal-diff summary del { text-decoration-style: solid; }
+.proposal-diff summary ins { text-decoration-style: solid; }
+.proposal-diff summary .muted { display: block; margin-top: .5rem; }
+.proposal-history { margin-block: 1rem; }
+.proposal-diff :is(.question-diff-text .question-diff-remove, summary del) { color:var(--fg); background:color-mix(in srgb, #e34458 24%, var(--bg)); text-decoration:line-through solid #e34458 .12em; }
+.proposal-diff :is(.question-diff-text .question-diff-add, summary ins) { color:var(--fg); background:color-mix(in srgb, #1cba68 24%, var(--bg)); text-decoration:underline solid #1cba68 .12em; text-underline-offset:.2em; }
+.proposal-diff .question-comparison > section { border:1px solid var(--border); border-radius:var(--radius-sm); padding:.75rem; }
+.proposal-diff .question-comparison h4 { margin:0 0 .5rem; }
+.proposal-diff h3 { font-size:1rem; }
+.revisions-dialog { box-sizing:border-box; max-height:90vh; overflow:auto; }
+.revisions-dialog > input { display:block; box-sizing:border-box; width:100%; min-height:48px; margin-block:.75rem; font:inherit; }
+.revision-filters,.revision-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
+.revision-toolbar { display:flex; gap:.5rem; position:sticky; top:0; padding-block:.5rem; background:var(--surface); z-index:1; }
+.revisions-dialog details pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+.revisions-dialog button { min-height:48px; }
+.revision-filters button[aria-pressed="true"] { border-color:var(--fg); box-shadow:inset 0 -3px 0 var(--fg); }
+.revision-entry { min-width:0; }
+.revision-state { font-weight:600; }
+.revision-count { font-variant-numeric:tabular-nums; }
+.revision-entry .proposal-receipt { border:0; }
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill:has(.revisions-entry:not([hidden])) { flex-wrap:nowrap; overflow-x:auto; }
+@media (max-width: 700px) { .proposal-diff .question-comparison { grid-template-columns: minmax(0, 1fr); } }
 .proposal-comparison .source-text { max-height: 50vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1rem; font-size: 1rem; }
 .proposal-attribution, .proposal-bindings p, .proposal-receipt p { overflow-wrap: anywhere; }
 .proposal-entry, .proposal-receipt { border-top: 1px solid var(--border); padding: .8rem 0; }

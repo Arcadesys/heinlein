@@ -166,8 +166,8 @@ describe('Studio Heinlein Review integration', () => {
     for (let index = 0; index < 2; index++) {
       button('Accept…').click(); await vi.waitFor(() => expect(document.querySelector('[aria-label="Review whole-scene proposal"]')).not.toBeNull());
       expect(native.applyProposalReview).toHaveBeenCalledTimes(index); expect(native.saveDocument).not.toHaveBeenCalled();
-      const comparison = document.querySelector('[aria-label="Review whole-scene proposal"]')!; expect(comparison.textContent).toContain('Native OpenAI suggestion'); expect(comparison.querySelector('pre')!.textContent).toBe(disk);
-      button('Continue to native confirmation').click(); await vi.waitFor(() => expect(native.getReview).toHaveBeenCalledTimes(index + 1));
+      const comparison = document.querySelector('[aria-label="Review whole-scene proposal"]')!; expect(comparison.textContent).toContain('Native OpenAI suggestion'); expect(comparison.querySelector('.proposal-full-source pre')!.textContent).toBe(disk);
+      button('Accept revision').click(); await vi.waitFor(() => expect(native.getReview).toHaveBeenCalledTimes(index + 1));
       await vi.waitFor(() => expect(panel().hidden).toBe(false)); expect(native.applyProposalReview).toHaveBeenCalledTimes(index + 1); expect(view().state.doc.toString()).toBe(disk.replace(/\r\n/g, '\n'));
     }
     expect(disk).toContain('paragraph'); expect(disk).toContain('Final line'); expect(native.saveDocument).not.toHaveBeenCalled();

@@ -55,12 +55,12 @@ describe('passage-linked Questions',()=>{
   it('distinguishes explicit cancellation from collapse',async()=>{
     const core=bridge();const waiting=deferred<Awaited<ReturnType<typeof core.askQuestion>>>();core.askQuestion.mockImplementation(()=>waiting.promise);await start(core);btn('Send to OpenAI').click();await vi.waitFor(()=>expect(core.askQuestion).toHaveBeenCalled());btn('Cancel request').click();expect(core.cancelQuestion).toHaveBeenCalledOnce();
   });
-  it('dismisses through the existing receipt command',async()=>{const core=await start();await revision();btn('Dismiss').click();await vi.waitFor(()=>expect(core.rejectProposal).toHaveBeenCalledOnce());await vi.waitFor(()=>expect(panel.passageItems()[0].label).toBe('Answer ready'));expect(state.source).toContain('Rain tapped');});
+  it('dismisses through the existing receipt command',async()=>{const core=await start();await revision();btn('Keep mine').click();await vi.waitFor(()=>expect(core.rejectProposal).toHaveBeenCalledOnce());await vi.waitFor(()=>expect(panel.passageItems()[0].label).toBe('Answer ready'));expect(state.source).toContain('Rain tapped');});
   it('presents whole-scene review in the pane and collapse cancels review only',async()=>{
     const review=vi.fn(async(_id:string,_snapshot:unknown,_guard:()=>string|null,presenter?:(view:ProposalReview)=>Promise<boolean>)=>{await presenter!({id:'review',kind:'apply',proposalId:'proposal',path:'scene.md',baseText:state.source,replacementText:state.source.replace('tapped','drummed'),baseHash:'base',replacementHash:'new',diffHash:'diff',origin} as ProposalReview);});
-    const core=await start(bridge(),review);await revision();btn('Review changes…').click();await vi.waitFor(()=>expect(btn('Continue to native confirmation')).toBeDefined());
+    const core=await start(bridge(),review);await revision();btn('Review changes…').click();await vi.waitFor(()=>expect(btn('Accept revision')).toBeDefined());
     expect(document.querySelector('dialog')).toBeNull();expect(panel.element.querySelector('[aria-label="Original full scene"]')?.textContent).toBe(state.source);
-    btn('Collapse').click();await vi.waitFor(()=>expect(btn('Continue to native confirmation')).toBeUndefined());expect(core.cancelQuestion).not.toHaveBeenCalled();
+    btn('Collapse').click();await vi.waitFor(()=>expect(btn('Accept revision')).toBeUndefined());expect(core.cancelQuestion).not.toHaveBeenCalled();
   });
   it('retains drafts per passage and bounds the number of retained passage sessions',async()=>{
     await start();const first=panel.passageItems()[0].id;write('First draft');

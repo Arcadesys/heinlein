@@ -184,6 +184,15 @@ it('uses the selected passage by default and a full sheet for an explicit target
  const selection=panel!.element.querySelector<HTMLInputElement>('.review-scope input[type=radio]:not(:checked)')!; selection.click();
  await f.click('Preview review'); expect(f.core.previewReview.mock.calls[2][0].workflow!.ranges).toEqual([{path:'scene.md',fromUtf8:5,toUtf8:8}]);
 });
+it('summarizes where reviewers landed and shows the stage without deciding anything', async () => {
+ const f=fixture(); await f.start();
+ const summary=panel!.element.querySelector('.review-consensus')!;
+ expect(summary.textContent).toContain('2 suggestions');
+ expect(summary.textContent).toContain('1 span with alternatives to choose');
+ expect(summary.textContent).toContain('Nothing changes until you choose Accept.');
+ expect(panel!.element.querySelector('.review-stages [aria-current="step"]')!.textContent).toContain('Decide · 2 waiting');
+ expect(f.core.approveReviewEdit).not.toHaveBeenCalled(); expect(f.core.rejectReviewEdit).not.toHaveBeenCalled();
+});
 it('groups competing alternatives into one card, and Keep mine records each alternative as rejected without applying', async () => {
  const f=fixture(); await f.start();
  const group=panel!.element.querySelector<HTMLElement>('.review-conflict')!;

@@ -1,6 +1,6 @@
 {
   "identifier": "repository-browser",
-  "description": "Bundled main window: bounded repository browsing, revision-guarded Markdown saves, host-private bounded recovery snapshots, unsaved-change close protection and appearance fonts. No generic filesystem, shell, network, renderer-only approval, or release approval permissions. Native-confirmed, exact whole-scene MCP proposal review and guarded revert; no MCP approval route. Explicit bounded drafting questions and source-bound pending revisions through native OpenAI transport; no renderer credentials or generic network access.",
+  "description": "Bundled main window: bounded repository browsing, revision-guarded Markdown saves, host-private bounded recovery snapshots, unsaved-change close protection and appearance fonts. No generic filesystem, shell, network, or release approval permissions. Explicit author Accept in the bundled main window applies an exact-bound revision; guarded revert retains native confirmation. MCP cannot approve or apply. Explicit bounded drafting questions and source-bound pending revisions through native OpenAI transport; no renderer credentials or generic network access.",
   "windows": [
     "main"
   ],

@@ -193,13 +193,13 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const historyText = el('div'); historyText.setAttribute('aria-label', 'Exact conversation history to send');
   const historyNote = el('p', '', 'muted'); historyDetails.append(historySummary, historyNote, historyText);
   const disclosure = el('p', 'Send shares your exact question, any revision target, the context preview, and the history preview with OpenAI using the selected ChatGPT account and model. Requests consume that plan’s usage allowance; account limits apply. Each request allows up to 2,000 output tokens. Manage ChatGPT usage to review usage or revoke access.', 'drafting-warning');
-  const guidance = el('p', 'Nothing is sent while you type or open this panel. Ask returns structured advice, quoted evidence and optional wording changes shown as diff chips. Suggest revision prepares exact-text patches in a saved proposal for your review, followed by a separate native author confirmation. It never applies an answer automatically.', 'muted');
+  const guidance = el('p', 'Nothing is sent while you type or open this panel. Ask returns structured advice, quoted evidence and optional wording changes shown as diff chips. Suggest revision prepares exact-text patches in a saved proposal for your review, applied only when you explicitly accept. It never applies an answer automatically.', 'muted');
   const status = el('p', '', 'question-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const send = button('Send to OpenAI', () => { void submit(); }, 'primary');
   const cancel = button('Cancel request', () => {
     if (!pending && !preparing) return;
     const wasSent = Boolean(pending); const wasRevision = pendingRevision; cancelPending(true);
-    status.textContent = !wasSent ? 'Local preparation canceled. No request was sent.' : wasRevision ? 'Stopped locally. A pending suggestion may already have been recorded; check Proposed revisions. OpenAI usage may still count. Your manuscript was not changed.' : 'Canceled locally. OpenAI may already have processed the request; it can still count toward your plan usage.'; update();
+    status.textContent = !wasSent ? 'Local preparation canceled. No request was sent.' : wasRevision ? 'Stopped locally. A pending suggestion may already have been recorded; check Revisions. OpenAI usage may still count. Your manuscript was not changed.' : 'Canceled locally. OpenAI may already have processed the request; it can still count toward your plan usage.'; update();
   }); cancel.hidden = true;
   const reset = button('Clear conversation', () => {
     if (storedKey) {try {localStorage.removeItem(storedKey);if(selectedThread&&threadProject){removeThread(threadProject,selectedThread.id);hooks.threadsChanged?.();}storageFailed=false;persistence.textContent='Saved conversation cleared.';} catch {storageFailed=true;persistence.textContent='Saved conversation could not be cleared. Try again before closing.';return;}}
@@ -208,7 +208,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     if(hooks.threadScope){storedKey=null;if(configuration)restoreConversation(configuration);}
     update();
     status.textContent = wasPending ? 'Conversation cleared and request canceled locally. Previously sent text cannot be recalled from OpenAI.' : 'Conversation cleared from this project’s saved chat. Previously sent text cannot be recalled from OpenAI.';
-    if (wasRevision) status.textContent += ' A pending suggestion may already have been recorded; check Proposed revisions.';
+    if (wasRevision) status.textContent += ' A pending suggestion may already have been recorded; check Revisions.';
     update(); question.focus({preventScroll: true});
   });
   const latestReply = button('Read latest reply', () => (integrated ? transcript.firstElementChild : transcript.lastElementChild)?.scrollIntoView({block: 'start'})); latestReply.hidden = true;
@@ -218,7 +218,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const streamingLabel = el('h4', 'OpenAI · Streaming answer');
   const streamingText = preview('', 'Live answer preview');
   streaming.setAttribute('aria-busy', 'false'); streaming.append(streamingLabel, streamingText);
-  const lifetime = el('p', 'Questions and answers are saved on this Mac for this project, account and model, including across scene changes and app restarts. The latest 100 turns are retained within 512 KB. Only recent messages that fit the request limit are sent. Exact scene snapshots and revision targets are not stored in chat history; saved revision proposals remain in Proposed revisions. Clear conversation removes this saved chat.', 'muted');
+  const lifetime = el('p', 'Questions and answers are saved on this Mac for this project, account and model, including across scene changes and app restarts. The latest 100 turns are retained within 512 KB. Only recent messages that fit the request limit are sent. Exact scene snapshots and revision targets are not stored in chat history; saved revision proposals remain in Revisions. Clear conversation removes this saved chat.', 'muted');
   const settings = el('details', '', 'question-settings'); settings.append(el('summary', 'Connection & conversation details'), connection, auth, guidance, count, historyDetails, disclosure, lifetime, reset);
   const welcome = el('section', '', 'question-welcome'); welcome.append(el('h4', 'A second pair of eyes'), el('p', 'Explore an idea, work through a scene, or ask what a reader might notice.'));
   const starters = el('div', '', 'question-starters');
@@ -604,9 +604,9 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const request = pending; const wasRevision = pendingRevision; pending = null; pendingRevision = false;
     if (request && core.cancelQuestion) {
       try {void core.cancelQuestion(request.requestId).then(accepted => {
-        if (reportOutcome && wasRevision && !accepted && live() && epoch === version) status.textContent = 'This revision request is already finishing. Its pending suggestion may have been recorded; check Proposed revisions. Your manuscript was not changed.';
+        if (reportOutcome && wasRevision && !accepted && live() && epoch === version) status.textContent = 'This revision request is already finishing. Its pending suggestion may have been recorded; check Revisions. Your manuscript was not changed.';
       }).catch(() => {
-        if (reportOutcome && wasRevision && live() && epoch === version) status.textContent = 'Stopped locally, but cancellation could not be confirmed. Check Proposed revisions for a pending suggestion. Your manuscript was not changed.';
+        if (reportOutcome && wasRevision && live() && epoch === version) status.textContent = 'Stopped locally, but cancellation could not be confirmed. Check Revisions for a pending suggestion. Your manuscript was not changed.';
       });} catch { /* local invalidation still wins */ }
     }
   }
@@ -691,7 +691,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       const details = el('details', '', 'question-response-details'); details.append(el('summary', 'Response details'), el('p', `${turn.contextBytes.toLocaleString()} UTF-8 bytes of context sent`, 'muted'), el('p', usage || 'Token usage was not returned.', 'muted'));
       const origin = el('p', `Recorded origin: native OpenAI · Model: ${turn.answer.model} · Request: ${turn.answer.requestId}. Provider metadata is not authenticated authorship.`, 'muted'); details.append(origin); section.append(details);
       if(turn.scenePath)section.append(el('p', `Scene: ${turn.scenePath}`, 'muted'));
-      if(turn.proposalId&&!turn.revision)section.append(el('p', 'Saved revision suggestion. Open Proposed revisions to review its current status.', 'muted'));
+      if(turn.proposalId&&!turn.revision)section.append(el('p', 'Saved revision suggestion. Open Revisions to review its current status.', 'muted'));
       const revision = turn.revision;
       if (revision) {
         const note = el('p', '', 'question-revision-status'); note.setAttribute('role', 'status');
@@ -704,7 +704,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
           }).finally(() => {revision.busy = false; if (live() && turns.includes(turn)) {refreshAction(); notifyPassages();}});
         });
         if (integrated) review.classList.add('primary');
-        const reject = button(integrated ? 'Dismiss' : 'Reject proposed revision', () => {
+        const reject = button('Keep mine', () => {
           if (!live() || revision.busy || revision.rejected || !core.rejectProposal) return;
           revision.busy = true; refreshAction(); const epoch = version;
           void core.rejectProposal(revision.snapshot.repositoryId, revision.proposalId).then(receipt => {
@@ -718,7 +718,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
         function refreshAction() {
           const stale = revisionGuard(revision!);
           review.disabled = revision!.busy || revision!.rejected || Boolean(stale); reject.disabled = revision!.busy || revision!.rejected;
-          note.textContent = revision!.rejected ? 'Rejected. The local decision receipt is retained.' : revision!.busy ? 'Opening the requested revision action…' : stale ?? (integrated ? '' : 'Review opens the exact whole-scene before/after comparison, then a separate native author confirmation.');
+          note.textContent = revision!.rejected ? 'Rejected. The local decision receipt is retained.' : revision!.busy ? 'Opening the requested revision action…' : stale ?? (integrated ? '' : 'Review opens the exact whole-scene before/after comparison, where Accept applies the displayed revision.');
         }
         if (integrated) {
           section.append(createQuestionDiffChips(revision.snapshot.selectedText, revision.replacementText));
@@ -752,7 +752,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       while (passages.length > 1 && (passages.reduce((n,p) => n + size(p), 0) > QUESTION_LIMITS.memory || passages.reduce((n,p) => n + p.turns.length, 0) > 4 || passages.length > 4)) {const index = passages.findIndex(p => p !== activePassage); if (index < 0) break; passages.splice(index, 1);}
       let trimmed = false;
       while (activePassage && size(activePassage) > QUESTION_LIMITS.memory && turns.length) {turns.shift(); forgotten++; trimmed = true;}
-      if (trimmed) {renderTranscript(); status.textContent = 'Earlier passage responses were released to keep this window within its memory limit. Saved proposals remain in Proposed revisions.';}
+      if (trimmed) {renderTranscript(); status.textContent = 'Earlier passage responses were released to keep this window within its memory limit. Saved proposals remain in Revisions.';}
       const items = passageItems(); passagePicker.hidden = items.length < 2 && !items.some(item => item.stale); passageSummary.textContent = `Passages · ${items.length}`;
       passageButtons.replaceChildren();
       items.forEach((item, index) => {const pick = button(`Passage ${index + 1} · ${item.label}`, () => activatePassage(item.id)); pick.setAttribute('aria-pressed', String(item.active)); passageButtons.append(pick);});
@@ -791,14 +791,14 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       const prior = [...element.children, ...body.children].filter(child => child !== header && child !== fullReview && child !== body).map(child => [child as HTMLElement, (child as HTMLElement).hidden] as const);
       prior.forEach(([child]) => {child.hidden = true;}); fullReview.hidden = false;
       const title = el('h3', 'Review whole-scene revision'); title.tabIndex = -1;
-      fullReview.replaceChildren(title, el('p', view.path), createQuestionComparison(view.baseText, view.replacementText, true), el('p', 'Review expires after five minutes. Continue to native author confirmation to apply this exact replacement.', 'muted'));
+      fullReview.replaceChildren(title, el('p', view.path), createQuestionComparison(view.baseText, view.replacementText, true), el('p', 'Review expires after five minutes. Accept applies this exact replacement.', 'muted'));
       let done = false;
       const finish = (accepted: boolean) => {if (done) return; done = true; fullReviewCancel = null; fullReview.hidden = true; fullReview.replaceChildren(); prior.forEach(([child, hidden]) => {child.hidden = hidden;}); resolve(accepted); if (!element.hidden) question.focus({preventScroll: true});};
       const bindings = el('details', '', 'question-review-bindings');
       const attribution = view.origin.kind === 'nativeOpenAi' ? `Native OpenAI suggestion · ${view.origin.model} · ${view.origin.requestId}. Provider metadata is not authenticated authorship.` : `Unverified local MCP client: ${view.origin.clientLabel} · ${view.origin.sessionId}`;
       bindings.append(el('summary', 'Review details'), el('p', attribution), el('p', `Proposal: ${view.proposalId} · Base: ${view.baseHash} · Replacement: ${view.replacementHash} · Diff: ${view.diffHash}`, 'path')); fullReview.append(bindings);
       fullReviewCancel = () => finish(false);
-      fullReview.append(button('Cancel review', () => finish(false)), button('Continue to native confirmation', () => finish(true), 'primary'));
+      fullReview.append(button('Cancel review', () => finish(false)), button('Accept revision', () => finish(true), 'primary'));
       title.focus({preventScroll: true}); element.scrollTop = 0;
     });
   }
@@ -850,7 +850,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       if (authBusy || configuration?.signInPending) {status.textContent = 'Finish or cancel the account connection before capturing a selection.'; return false;}
       const canceled = Boolean(pending) || preparing; const wasRevision = pendingRevision; if (canceled) cancelPending(true);
       capture('selection'); question.focus({preventScroll: true});
-      if (canceled) status.textContent = `Previous request stopped locally; it may still count toward plan usage.${wasRevision ? ' A pending suggestion may already exist; check Proposed revisions.' : ''} Selection captured. Write your question, then explicitly choose Send.`;
+      if (canceled) status.textContent = `Previous request stopped locally; it may still count toward plan usage.${wasRevision ? ' A pending suggestion may already exist; check Revisions.' : ''} Selection captured. Write your question, then explicitly choose Send.`;
       return true;
     },
     visible: () => !element.hidden,

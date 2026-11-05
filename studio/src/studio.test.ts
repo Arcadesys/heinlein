@@ -993,15 +993,36 @@ describe('trusted local proposal review', () => {
     const edit = (text: string) => editor.dispatch({changes: {from: 0, to: editor.state.doc.length, insert: text}, annotations: Transaction.userEvent.of('input.type')});
     return {core, app, editor, edit};
   }
-  async function openReview() { findButton('Proposed revisions').click(); await settle(); findButton('Review proposal').click(); await settle(); }
+  async function openReview() { findButton('Revisions').click(); await settle(); [...document.querySelectorAll<HTMLButtonElement>('.revisions-dialog .revision-actions button')].find(b=>b.textContent==='Details')!.click(); await settle(); }
+  it('labels refreshed comparisons and blocks only proposals that need reconciliation', async () => {
+    const core = proposalBridge();
+    core.listProposals = vi.fn(async () => ({pending: [
+      {...view, id: view.proposalId, createdAtMs: Date.now(), refreshed: true},
+      {...view, id: 'conflicting-proposal', createdAtMs: Date.now(), unavailable: 'This proposed passage also changed; reconcile the overlapping edits first'},
+    ], receipts: []}));
+    await setup(core);
+    findButton('Revisions').click(); await settle();
+    const entries = [...document.querySelectorAll('.proposal-entry')];
+    expect(entries[0].textContent).toContain('your saved edits elsewhere in the scene are preserved');
+    expect([...entries[0].querySelectorAll('button')].find(b => b.textContent === 'Details')?.disabled).toBe(false);
+    const blocked = [...entries[1].querySelectorAll('button')].find(b => b.textContent === 'Details')!;
+    expect(blocked.disabled).toBe(true);
+    expect(entries[1].textContent).toContain('overlapping edits');
+    blocked.click();
+    expect(core.reviewProposal).not.toHaveBeenCalled();
+    expect(core.applyProposalReview).not.toHaveBeenCalled();
+  });
   it('displays literal whole-scene bytes with unverified attribution and exact native binding', async () => {
     const {core} = await setup(); await openReview();
     const modal = document.querySelector('[aria-label="Review whole-scene proposal"]')!;
-    expect([...modal.querySelectorAll('pre')].map(n => n.textContent)).toEqual([view.baseText, view.replacementText]);
+    expect([...modal.querySelectorAll('.proposal-full-source pre')].map(n => n.textContent)).toEqual([view.baseText, view.replacementText]);
+    expect(modal.querySelector('.proposal-full-source')?.hasAttribute('open')).toBe(false);
+    expect(modal.querySelector('.proposal-diff .question-diff-remove')).not.toBeNull();
+    expect(modal.querySelector('.proposal-diff .question-diff-add')).not.toBeNull();
     expect(modal.textContent).toContain('Unverified local MCP client: <script>hostile client</script>');
     expect(modal.querySelector('img, script')).toBeNull();
     expect(document.querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('false');
-    findButton('Continue to native confirmation').click(); await settle();
+    findButton('Accept revision').click(); await settle();
     expect(core.applyProposalReview).toHaveBeenCalledWith(session.id, {reviewId: view.id, proposalId: view.proposalId, baseHash: view.baseHash, replacementHash: view.replacementHash, diffHash: view.diffHash});
     expect(core.cancelProposalReview).toHaveBeenCalledWith(session.id, view.id);
   });
@@ -1037,7 +1058,7 @@ describe('trusted local proposal review', () => {
       expect(vi.mocked(core.setUnsavedChanges).mock.calls.some(([dirty]) => dirty)).toBe(false);
       core.readDocument = vi.fn(async (_id, path) => ({path, text: view.replacementText, contentHash: view.replacementHash, sizeBytes: 50, frontmatter: null, generatedCompatibility: false})); return {receipt, warning: null};
     });
-    findButton('Continue to native confirmation').click(); await settle();
+    findButton('Accept revision').click(); await settle();
     const current = EditorView.findFromDOM(document.querySelector('.cm-editor') as HTMLElement)!;
     expect(current.state.doc.toString()).toBe(view.replacementText); expect(document.querySelector('.editor-toolbar .badge')?.textContent).toBe('Saved on this Mac');
     expect(current.contentDOM.getAttribute('contenteditable')).toBe('true'); expect(core.saveDocument).not.toHaveBeenCalled();
@@ -1045,7 +1066,7 @@ describe('trusted local proposal review', () => {
   it('preserves unexpected late editor text instead of replacing it after an apply', async () => {
     const {core, edit, editor} = await setup(); let finish!: (value: {receipt: typeof receipt; warning: null}) => void;
     core.applyProposalReview = vi.fn(() => new Promise<{receipt: typeof receipt; warning: null}>(resolve => { finish = resolve; }));
-    await openReview(); findButton('Continue to native confirmation').click(); await settle();
+    await openReview(); findButton('Accept revision').click(); await settle();
     // Programmatic editor events can still arrive even while DOM editing is disabled.
     edit('Late author — words'); finish({receipt, warning: null}); await settle();
     expect(editor.state.doc.toString()).toBe('Late author — words'); expect(core.readDocument).toHaveBeenCalledTimes(1);
@@ -1054,33 +1075,33 @@ describe('trusted local proposal review', () => {
   });
   it('keeps stale or failed native review from causing a replacement or retry', async () => {
     const {core, editor} = await setup(); core.applyProposalReview = vi.fn(async () => { throw new Error('Scene changed on disk'); });
-    await openReview(); findButton('Continue to native confirmation').click(); await settle();
+    await openReview(); findButton('Accept revision').click(); await settle();
     expect(core.applyProposalReview).toHaveBeenCalledOnce(); expect(core.readDocument).toHaveBeenCalledTimes(1); expect(editor.state.doc.toString()).toBe(view.baseText);
     expect(document.querySelector('.status')?.textContent).toContain('Check the local receipts');
   });
   it('shows native cancel without touching the current scene', async () => {
     const {core, editor} = await setup(); core.applyProposalReview = vi.fn(async () => null);
-    await openReview(); findButton('Continue to native confirmation').click(); await settle();
+    await openReview(); findButton('Accept revision').click(); await settle();
     expect(editor.state.doc.toString()).toBe(view.baseText); expect(core.readDocument).toHaveBeenCalledTimes(1); expect(document.querySelector('.status')?.textContent).toContain('Native confirmation canceled');
   });
   it('shows immutable attributed receipts and reviews exact guarded reversal', async () => {
     const {core} = await setup(); core.listProposals = vi.fn(async () => ({pending: [], receipts: [receipt]}));
-    findButton('Proposed revisions').click(); await settle();
+    findButton('Revisions').click(); await settle();
     expect(document.body.textContent).toContain('not an authenticated revision ledger'); expect(document.body.textContent).toContain('Author action: Studio native confirmation');
     expect(document.querySelector('.proposal-receipt script')).toBeNull(); findButton('Review revert').click(); await settle();
     const modal = document.querySelector('[aria-label="Review guarded revert"]')!;
-    expect([...modal.querySelectorAll('pre')].map(n => n.textContent)).toEqual([view.replacementText, view.baseText]);
+    expect([...modal.querySelectorAll('.proposal-full-source pre')].map(n => n.textContent)).toEqual([view.replacementText, view.baseText]);
     expect(core.reviewProposalRevert).toHaveBeenCalledWith(session.id, receipt.id); findButton('Cancel').click(); await settle();
   });
   it('never offers revert for an uncertain receipt', async () => {
     const {core} = await setup(); core.listProposals = vi.fn(async () => ({pending: [], receipts: [{...receipt, status: 'uncertain' as const, revertAvailable: false, message: 'Inspect current source'}]}));
-    findButton('Proposed revisions').click(); await settle(); expect(document.body.textContent).toContain('uncertain');
+    findButton('Revisions').click(); await settle(); expect(document.body.textContent).toContain('uncertain');
     expect([...document.querySelectorAll('button')].some(n => n.textContent === 'Review revert')).toBe(false);
   });
   it('drops old list responses on repository switch', async () => {
     const {core, app} = await setup(); let finish!: (value: Awaited<ReturnType<NonNullable<LocalCore['listProposals']>>>) => void;
     core.listProposals = vi.fn(() => new Promise<Awaited<ReturnType<NonNullable<LocalCore['listProposals']>>>>(resolve => { finish = resolve; }));
-    findButton('Proposed revisions').click(); await settle(); await app.selectRepository(async () => ({...session, id: 'new-session', manifests: []}));
+    findButton('Revisions').click(); await settle(); await app.selectRepository(async () => ({...session, id: 'new-session', manifests: []}));
     finish({pending: [{...view, id: view.proposalId, createdAtMs: 1}], receipts: []}); await settle();
     expect(document.querySelector('.proposal-dialog')).toBeNull();
   });

@@ -66,24 +66,28 @@ impl Rejection {
             message: None,
             created_at_ms: self.created_at_ms,
             revert_available: false,
+            base_text: self.proposal.base_text.clone(),
+            replacement_text: self.proposal.replacement_text.clone(),
+            author_action: "studioExplicitRejection".into(),
         }
     }
 }
 impl Intent {
     pub fn new(repo: &Repository, review: Review) -> Self {
+        let confirmed_by = if review.kind == "apply" { "studioAuthorAccept" } else { "studioNativeAuthor" }.into();
         Self {
             schema_version: 1,
             id: id(),
             project_key: repo.project_key(),
             review,
-            confirmed_by: "studioNativeAuthor".into(),
+            confirmed_by,
             created_at_ms: now(),
         }
     }
     fn validate(&self) -> Result<()> {
         if self.schema_version != 1
             || !valid_id(&self.id)
-            || self.confirmed_by != "studioNativeAuthor"
+            || !(self.confirmed_by == "studioNativeAuthor" || (self.confirmed_by == "studioAuthorAccept" && self.review.kind == "apply"))
             || self.created_at_ms == 0
         {
             return Err("Invalid local operation intent".into());
@@ -105,6 +109,9 @@ impl Intent {
             message,
             created_at_ms: self.created_at_ms,
             revert_available: false,
+            base_text: self.review.base_text.clone(),
+            replacement_text: self.review.replacement_text.clone(),
+            author_action: self.confirmed_by.clone(),
         }
     }
 }

@@ -184,7 +184,7 @@ describe('Studio attributed revision workflow', () => {
     const dialog = document.querySelector('[aria-label="Review whole-scene revision"]')!;
     expect(dialog.textContent).toContain('Native OpenAI suggestion'); expect(dialog.textContent).not.toContain('Unverified local MCP client'); expect(dialog.textContent).toContain('not authenticated authorship');
     expect([...dialog.querySelectorAll('pre')].map(node => node.textContent)).toEqual([original, original.replace('🐺 passage.', 'new passage.')]); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
-    button('Continue to native confirmation').click(); await vi.waitFor(() => expect(bridge.applyProposalReview).toHaveBeenCalledTimes(1));
+    button('Accept revision').click(); await vi.waitFor(() => expect(bridge.applyProposalReview).toHaveBeenCalledTimes(1));
     expect(bridge.applyProposalReview).toHaveBeenCalledWith(session.id, {reviewId: 'review', proposalId: 'proposal', baseHash: args[2] && (await bridge.readDocument('', '')).contentHash, replacementHash: 'replacement', diffHash: 'diff'});
     expect(bridge.saveDocument).not.toHaveBeenCalled(); expect(view().state.doc.toString()).toBe(original.replace(/\r\n/g, '\n'));
   });
@@ -195,7 +195,7 @@ describe('Studio attributed revision workflow', () => {
     expect(bridge.saveDocument).toHaveBeenCalledTimes(1); const request = bridge.suggestQuestionRevision.mock.calls[0][0];
     result.resolve({requestId: request.requestId, text: 'Stale explanation remains readable', model: 'mock-model', incomplete: false, proposalId: 'proposal', replacementText: 'new passage.'});
     await vi.waitFor(() => expect(panel().textContent).toContain('Stale explanation')); expect(button('Review changes…').disabled).toBe(true); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
-    button('Dismiss').click(); await vi.waitFor(() => expect(bridge.rejectProposal).toHaveBeenCalledWith(session.id, 'proposal'));
+    button('Keep mine').click(); await vi.waitFor(() => expect(bridge.rejectProposal).toHaveBeenCalledWith(session.id, 'proposal'));
   });
   it('blocks dirty targets without saving and allows switching back to ordinary advice', async () => {
     const bridge = await revisionCore(); await beginRevision(bridge); view().dispatch({changes: {from: view().state.doc.length, insert: '!'}});
@@ -227,14 +227,14 @@ describe('Studio attributed revision workflow', () => {
   it('retains the captured passage when the caret moves before native confirmation', async () => {
     const bridge = await revisionCore(); await beginRevision(bridge); await suggested(); button('Review changes…').click();
     await vi.waitFor(() => expect(document.querySelector<HTMLElement>('[aria-label="Review whole-scene revision"]')?.hidden).toBe(false));
-    view().dispatch({selection: {anchor: 0, head: 3}}); button('Continue to native confirmation').click();
+    view().dispatch({selection: {anchor: 0, head: 3}}); button('Accept revision').click();
     await vi.waitFor(() => expect(bridge.cancelProposalReview).toHaveBeenCalledWith(session.id, 'review')); expect(bridge.applyProposalReview).toHaveBeenCalledTimes(1); expect(bridge.saveDocument).not.toHaveBeenCalled();
   });
   it('shows native-origin proposal rejection and immutable decision receipts without changing the manuscript', async () => {
-    const bridge = await revisionCore(); await start(bridge); button('Proposed revisions').click(); await vi.waitFor(() => expect(document.querySelector('[aria-label="Proposed revisions and receipts"]')).not.toBeNull());
-    expect(document.body.textContent).toContain('Native OpenAI suggestion'); button('Reject proposal').click(); await vi.waitFor(() => expect(document.body.textContent).toContain('Immutable local rejection receipt: receipt'));
+    const bridge = await revisionCore(); await start(bridge); button('Revisions').click(); await vi.waitFor(() => expect(document.querySelector('[aria-label="Revisions"]')).not.toBeNull());
+    expect(document.body.textContent).toContain('Native OpenAI suggestion'); button('Keep mine').click(); await vi.waitFor(() => expect(document.body.textContent).toContain('Receipt: receipt'));
     expect(bridge.rejectProposal).toHaveBeenCalledWith(session.id, 'proposal'); expect(bridge.saveDocument).not.toHaveBeenCalled(); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
-    [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Proposed revisions and receipts"] button')].find(node=>node.textContent==='Close')!.click(); bridge.listProposals.mockResolvedValue({pending: [], receipts: [await bridge.rejectProposal()] } as never); button('Proposed revisions').click();
+    [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Revisions"] button')].find(node=>node.textContent==='Close')!.click(); bridge.listProposals.mockResolvedValue({pending: [], receipts: [await bridge.rejectProposal()] } as never); button('Revisions').click();
     await vi.waitFor(() => expect(document.querySelector('.proposal-receipt')?.textContent).toContain('Reject · scene.md · rejected'));
     expect(document.body.textContent).toContain('Studio explicit rejection'); expect([...document.querySelectorAll('button')].some(node => node.textContent === 'Review revert')).toBe(false);
   });

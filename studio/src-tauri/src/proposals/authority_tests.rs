@@ -77,6 +77,90 @@ impl Fixture {
     }
 }
 #[test]
+fn proposal_cards_get_exact_preview_without_minting_review_authority() {
+    let f = Fixture::new();
+    let host = Authority::default();
+    let listing = f.records(&host);
+    assert_eq!(listing.pending.len(), 1);
+    assert_eq!(listing.pending[0].base_text, BEFORE);
+    assert_eq!(listing.pending[0].replacement_text, AFTER);
+    assert!(host.plan.is_none());
+    assert_eq!(f.text(), BEFORE);
+    assert!(listing.receipts.is_empty());
+}
+#[test]
+fn old_native_confirmation_receipts_remain_readable() {
+    let f = Fixture::new();
+    let mut host = Authority::default();
+    let review = f.review(&mut host);
+    let mut record = serde_json::to_value(receipts::Intent::new(&f.repo, review)).unwrap();
+    record["confirmedBy"] = serde_json::json!("studioNativeAuthor");
+    let intent: receipts::Intent = serde_json::from_value(record).unwrap();
+    f.receipts.with_lock(&f.repo, || f.receipts.write_intent(&f.repo, &intent)).unwrap();
+    let history = f.records(&host);
+    assert_eq!(history.receipts[0].author_action, "studioNativeAuthor");
+    assert_eq!(f.text(), BEFORE);
+}
+#[test]
+fn independent_proposals_apply_in_either_order_with_fresh_exact_bindings() {
+    for header_first in [false, true] {
+        let f = Fixture::new();
+        let header_text = BEFORE.replace("# Scene", "## Updated — 🦊");
+        let header = f.store.submit(&f.repo, "scene.md", &f.proposal.base_hash, &header_text,
+            ProposalOrigin::local_mcp(id(), "second suggestion".into())).unwrap();
+        let mut host = Authority::default();
+        let (first, second) = if header_first { (&header, &f.proposal) } else { (&f.proposal, &header) };
+        let review = host.review(&f.repo, "session", &f.store, &f.receipts, &f.recovery, &first.id, false).unwrap();
+        f.apply(&mut host, &review).unwrap();
+        let current = f.text();
+        let preview = f.records(&host).pending.into_iter().find(|p| p.summary.id == second.id).unwrap();
+        assert!(preview.refreshed);
+        assert!(preview.unavailable.is_none());
+        assert_eq!(preview.base_text, current);
+        let next = host.review(&f.repo, "session", &f.store, &f.receipts, &f.recovery, &second.id, false).unwrap();
+        assert_eq!(next.base_text, current);
+        assert_eq!(next.replacement_text, preview.replacement_text);
+        assert_eq!(next.base_hash, proposal_store::text_hash(&current));
+        assert_ne!(next.diff_hash, second.diff_hash);
+        assert_eq!(f.store.get(&f.repo, &second.id).unwrap(), *second);
+        let outcome = f.apply(&mut host, &next).unwrap();
+        assert_eq!(outcome.receipt.base_hash, next.base_hash);
+        assert_eq!(f.text(), AFTER.replace("# Scene", "## Updated — 🦊"));
+        assert!(f.records(&host).pending.is_empty());
+        let revert = host.review_revert(&f.repo, "session", &f.recovery, &outcome.receipt.id, false).unwrap();
+        f.apply(&mut host, &revert).unwrap();
+        assert_eq!(f.text(), current); // Revert only the last change, preserving the other.
+    }
+}
+#[test]
+fn unrelated_edit_after_display_still_requires_another_review() {
+    let f = Fixture::new();
+    let mut host = Authority::default();
+    let review = f.review(&mut host);
+    let current = BEFORE.replace("# Scene", "# A newer title");
+    fs::write(f.repo.root().join("scene.md"), &current).unwrap();
+    assert!(f.apply(&mut host, &review).unwrap_err().contains("changed"));
+    assert_eq!(f.text(), current);
+    let fresh = f.review(&mut host);
+    assert_eq!(fresh.base_text, current);
+    assert_ne!(fresh.diff_hash, review.diff_hash);
+    assert!(host.confirmation(&f.repo, "session", &review.binding(), false).is_err());
+    assert_eq!(f.text(), current);
+}
+#[test]
+fn overlapping_pending_preview_explains_conflict_without_issuing_authority() {
+    let f = Fixture::new();
+    let current = BEFORE.replace("Keep", "New author wording");
+    fs::write(f.repo.root().join("scene.md"), &current).unwrap();
+    let mut host = Authority::default();
+    let preview = f.records(&host).pending.remove(0);
+    assert!(preview.unavailable.unwrap().contains("overlapping"));
+    assert!(host.plan.is_none());
+    assert!(host.review(&f.repo, "session", &f.store, &f.receipts, &f.recovery, &f.proposal.id, false).is_err());
+    assert!(host.plan.is_none());
+    assert_eq!(f.text(), current);
+}
+#[test]
 fn exact_displayed_text_is_applied_with_separate_author_and_unverified_origin() {
     let f = Fixture::new();
     let mut host = Authority::default();
@@ -88,6 +172,11 @@ fn exact_displayed_text_is_applied_with_separate_author_and_unverified_origin() 
     let result = f.apply(&mut host, &review).unwrap();
     assert_eq!(f.text(), AFTER);
     assert_eq!(result.receipt.status, "completed");
+    assert_eq!(result.receipt.base_text, BEFORE);
+    assert_eq!(result.receipt.replacement_text, AFTER);
+    let history = f.records(&host);
+    assert_eq!(history.receipts[0].base_text, BEFORE);
+    assert_eq!(history.receipts[0].replacement_text, AFTER);
     assert!(result.receipt.revert_available);
     assert_eq!(result.receipt.origin, f.proposal.origin);
     assert!(f.records(&host).pending.is_empty());
@@ -97,7 +186,7 @@ fn exact_displayed_text_is_applied_with_separate_author_and_unverified_origin() 
         result.receipt.id
     )))
     .unwrap();
-    assert!(content.contains("studioNativeAuthor"));
+    assert!(content.contains("studioAuthorAccept"));
     assert!(content.contains("unverifiedLocalProcess"));
 }
 #[test]
