@@ -26,7 +26,11 @@ test('a status message neither moves the writing nor blocks a control', async ({
     }, error);
     await expect(page.locator('.status')).toBeVisible();
     expect(await prose()).toBe(before);
+    // It is inert to the pointer, so it can never block a control it floats over.
     expect(await page.locator('.status').evaluate(el => getComputedStyle(el).pointerEvents)).toBe('none');
+    // It sits at the bottom, clear of the tab and toolbar rows above the writing.
+    const box = (await page.locator('.status').boundingBox())!;
+    expect(box.y).toBeGreaterThan(page.viewportSize()!.height / 2);
     const tab = page.getByRole('tab').first();
     const point = await tab.evaluate(el => {const r = el.getBoundingClientRect();return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === el;});
     expect(point).toBe(true);
