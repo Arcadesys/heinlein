@@ -75,11 +75,13 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         await request({ action: 'cancel', previewId: p.id });
         throw new Error('Writing or project changed. Prepare a new preview.');
     } cancelPlan(); plan = p.id; return p; }
-    async function load() {
+    async function load(chooseRepository = false) {
         const view=generation;
+        const revision=source;
         const selected=options.session();
-        const value=await request<GitHubStatus>({action:'status'});
-        if(view!==generation||!element.open)return;
+        if(chooseRepository){await options.settle();const problem=options.problem();if(problem)throw new Error(problem);if(!valid(view,revision))return;}
+        const value=await request<GitHubStatus>({action:chooseRepository?'chooserStatus':'status'});
+        if(!valid(view,revision)){if(value.repositories)await request({action:'cancel',previewId:value.repositories.id});return;}
         let selectedProject:GitHubProject|null=null;
         let selectedError:string|null=null;
         if(selected?.githubWorkspaceId){
@@ -88,7 +90,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         }
         // An unavailable selected copy must not hide status/recovery controls.
         // Keep awaited results local until their original view is still current.
-        if(view!==generation||!element.open)return;
+        if(!valid(view,revision)){if(value.repositories)await request({action:'cancel',previewId:value.repositories.id});return;}
         snapshot=value;project=selectedProject;
         renderHome();options.changed?.();
         if(selectedError)message.textContent=`The selected copy could not reopen. Use the recovery controls below when available. ${selectedError}`;
@@ -121,26 +123,31 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
     function repositoryChooser() {
         body.append(node('h4','Open a GitHub project'),node('p','Sign-in and repository access are separate. Choose only the repositories you want Heinlein to access on GitHub, then load the list here. Only repositories you can write to are offered.'));
         const result=node('section');result.setAttribute('aria-label','Available GitHub repositories');
+        function showRepositories(p:GitHubRepositories){
+            if(p.account.id!==snapshot?.auth?.account?.id||!snapshot.auth.confirmed){cancelPlan();throw new Error('GitHub account changed. Confirm the account and refresh the list.');}
+            result.replaceChildren();
+            if(!p.repositories.length)result.append(node('p','No available repositories yet. Choose repositories for Heinlein on GitHub, select only the ones you want, and then refresh this list. Organization approval or SSO may also be required.'));
+            else {
+                result.append(node('p',`Choose a repository for ${p.account.login}. Nothing is opened until you review and confirm.`));
+                const list=node('ul');
+                for(const repo of p.repositories){const item=node('li');item.append(node('p',`${repo.owner}/${repo.name} · ${repo.private?'Private':'Public'}`),button(`Preview ${repo.owner}/${repo.name}…`,()=>previewRepository({action:'previewListedRepository',listId:p.id,repositoryId:repo.id})));list.append(item);}
+                result.append(list);
+            }
+            if(p.unavailable)result.append(node('p','Some repositories or installations are unavailable because access is limited, the repository is archived, or it has no default branch. Check access on GitHub or use another repository.'));
+        }
         const refresh=button('Load repositories',async()=>{
             result.replaceChildren(node('p','Loading repositories granted to Heinlein…'));
             refresh.textContent='Refresh repository list';
             try {
                 const p=await prepare<GitHubRepositories>({action:'repositories'});
-                if(p.account.id!==snapshot?.auth?.account?.id||!snapshot.auth.confirmed){cancelPlan();throw new Error('GitHub account changed. Confirm the account and refresh the list.');}
-                result.replaceChildren();
-                if(!p.repositories.length)result.append(node('p','No available repositories yet. Choose repositories for Heinlein on GitHub, select only the ones you want, and then refresh this list. Organization approval or SSO may also be required.'));
-                else {
-                    result.append(node('p',`Choose a repository for ${p.account.login}. Nothing is opened until you review and confirm.`));
-                    const list=node('ul');
-                    for(const repo of p.repositories){const item=node('li');item.append(node('p',`${repo.owner}/${repo.name} · ${repo.private?'Private':'Public'}`),button(`Preview ${repo.owner}/${repo.name}…`,()=>previewRepository({action:'previewListedRepository',listId:p.id,repositoryId:repo.id})));list.append(item);}
-                    result.append(list);
-                }
-                if(p.unavailable)result.append(node('p','Some repositories or installations are unavailable because access is limited, the repository is archived, or it has no default branch. Check access on GitHub or use another repository.'));
+                showRepositories(p);
             }catch(error){
                 if(element.open&&result.isConnected){result.replaceChildren(node('p',String(error)),node('p','Check repository access on GitHub, then refresh this list. You can also paste a repository URL below.'));}
             }
         });
         body.append(refresh,result);
+        if(snapshot?.repositories){plan=snapshot.repositories.id;refresh.textContent='Refresh repository list';showRepositories(snapshot.repositories);snapshot.repositories=null;}
+        else if(snapshot?.repositoriesError){result.append(node('p',snapshot.repositoriesError));}
     }
     function renderHome() {
         cancelPlan();
@@ -371,7 +378,7 @@ export function createGitHubPanel(core: LocalCore, options: Options) {
         generation++; cancelPlan();
     });
     function shell() { element.replaceChildren(); const title = node('h2', 'GitHub projects'); title.id = 'github-panel-title'; title.tabIndex = -1; const exit = button('Close', async () => close()); exit.setAttribute('aria-label', 'Close GitHub projects'); element.append(title, message, exit, body); }
-    return { element, async openSend(){opener=document.activeElement as HTMLElement;generation++;shell();element.showModal();await act(async()=>{await load();await renderSend();});}, async open(chooseRepository = false) { opener = document.activeElement as HTMLElement; generation++; shell(); element.showModal(); await act(load); if(chooseRepository&&snapshot?.auth?.confirmed){body.querySelectorAll<HTMLButtonElement>('button').forEach(b=>{if(b.textContent==='Load repositories')b.click();});} element.querySelector<HTMLElement>('h2')?.focus(); }, clear() { generation++; source++; cancelPlan(); project = null; snapshot = null; if (element.open)
+    return { element, async openSend(){opener=document.activeElement as HTMLElement;generation++;shell();element.showModal();await act(async()=>{await load();await renderSend();});}, async open(chooseRepository = false) { opener = document.activeElement as HTMLElement; generation++; shell(); element.showModal(); await act(()=>load(chooseRepository)); element.querySelector<HTMLElement>('h2')?.focus(); }, clear() { generation++; source++; cancelPlan(); project = null; snapshot = null; if (element.open)
             element.close(); }, sourceChanged() { source++; cancelPlan(); if (element.open) {
             if (body.dataset.githubIncoming !== undefined) {
                 heading('Writing changed');

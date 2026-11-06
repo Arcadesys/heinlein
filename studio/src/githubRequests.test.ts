@@ -9,3 +9,18 @@ it('holds both local metadata reads and foreground requests behind the same nati
 });
 it('a refused operation does not poison or automatically retry the queue',async()=>{const raw=vi.fn().mockRejectedValueOnce(Error('Other window is busy')).mockResolvedValueOnce(null),core={githubRequest:raw} as unknown as LocalCore;const a=requestGitHub(core,{action:'localProjects'}),b=requestGitHub(core,{action:'localProjects'});await expect(a).rejects.toThrow('Other window is busy');await expect(b).resolves.toBeNull();expect(raw).toHaveBeenCalledTimes(2);});
 it('queues are scoped to the same native bridge, not unrelated windows',async()=>{let release!:()=>void;const a={githubRequest:()=>new Promise<void>(r=>release=r)} as unknown as LocalCore,b={githubRequest:vi.fn(async()=>null)} as unknown as LocalCore;const pending=requestGitHub(a,{action:'localProjects'});await requestGitHub(b,{action:'localProjects'});expect(b.githubRequest).toHaveBeenCalledOnce();release();await pending;});
+it('shares overlapping status reads, including cancellation, without retrying',async()=>{
+ let reject!:(error:Error)=>void;const raw=vi.fn(()=>new Promise((_resolve,r)=>reject=r));const core={githubRequest:raw} as unknown as LocalCore;
+ const a=requestGitHub(core,{action:'status'}),b=requestGitHub(core,{action:'status'});await Promise.resolve();expect(raw).toHaveBeenCalledTimes(1);
+ reject(Error('Secure credential access was cancelled'));await expect(a).rejects.toThrow('cancelled');await expect(b).rejects.toThrow('cancelled');expect(raw).toHaveBeenCalledTimes(1);
+});
+it('does not share status across sign-out or after completion',async()=>{
+ const calls:string[]=[];const raw=vi.fn(async(r:GitHubRequest)=>{calls.push(r.action);return null;});const core={githubRequest:raw} as unknown as LocalCore;
+ const a=requestGitHub(core,{action:'status'}),b=requestGitHub(core,{action:'signOut'}),c=requestGitHub(core,{action:'status'});await Promise.all([a,b,c]);
+ expect(calls).toEqual(['status','signOut','status']);await requestGitHub(core,{action:'status'});expect(calls).toEqual(['status','signOut','status','status']);
+});
+it('gives simultaneous status consumers independent snapshots',async()=>{
+ const raw=vi.fn(async()=>({auth:{confirmed:true}}));const core={githubRequest:raw} as unknown as LocalCore;
+ const [a,b]=await Promise.all([requestGitHub<{auth:{confirmed:boolean}}>(core,{action:'status'}),requestGitHub<{auth:{confirmed:boolean}}>(core,{action:'status'})]);
+ a.auth.confirmed=false;expect(b.auth.confirmed).toBe(true);expect(raw).toHaveBeenCalledTimes(1);
+});
