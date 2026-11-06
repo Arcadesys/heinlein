@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import stat
 import re
+import plistlib
 
 MODE='picker-manual-preview'
 BIND_KEYS=('runId','receiptNonce','binary','signedSha256','root')
@@ -30,6 +31,55 @@ def host_digest(path):
         h=hashlib.sha256()
         while data:=f.read(65536):h.update(data)
         return h.hexdigest()
+
+
+def python_identity(launch_path):
+    """Static framework layout only; never learn an expected image from a PID."""
+    launch = Path(launch_path).resolve(strict=True)
+    version = launch.parent.parent
+    if (launch.parent.name != 'bin' or version.parent.name != 'Versions'
+            or version.parent.parent.name != 'Python.framework'
+            or not re.fullmatch(r'[0-9]+\.[0-9]+', version.name)
+            or launch.name != 'python' + version.name):
+        raise ValueError('Unsupported non-framework Python layout; no runtime-image fallback')
+    info = version / 'Resources/Python.app/Contents/Info.plist'
+    if info.resolve(strict=True) != info:
+        raise ValueError('Python framework plist must be canonical')
+    fd = os.open(info, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd, 'rb') as f:
+        m = os.fstat(f.fileno())
+        if (not stat.S_ISREG(m.st_mode) or m.st_uid not in (0, os.getuid())
+                or m.st_nlink != 1 or m.st_mode & 0o022 or m.st_size > 65536):
+            raise ValueError('Unsafe bounded Python framework plist')
+        data = f.read(65537)
+        if len(data) > 65536:
+            raise ValueError('Python framework plist exceeds bound')
+    metadata = plistlib.loads(data)
+    if not isinstance(metadata, dict):
+        raise ValueError('Python framework plist must contain a dictionary')
+    bundle_version = metadata.get('CFBundleShortVersionString')
+    if (metadata.get('CFBundleExecutable') != 'Python'
+            or not isinstance(bundle_version, str)
+            or not re.fullmatch(re.escape(version.name) + r'\.[0-9]+', bundle_version)):
+        raise ValueError('Unsupported Python framework executable/version relationship')
+    runtime = info.parent / 'MacOS/Python'
+    if runtime.resolve(strict=True) != runtime:
+        raise ValueError('Python runtime image must be canonical within its framework')
+    return {'kind': 'macos-framework-v1', 'launchPath': str(launch),
+            'launchSha256': host_digest(launch), 'runtimeImagePath': str(runtime),
+            'runtimeImageSha256': host_digest(runtime), 'infoPlistPath': str(info),
+            'infoPlistSha256': hashlib.sha256(data).hexdigest(),
+            'frameworkVersion': version.name, 'bundleVersion': bundle_version}
+
+
+def validate_python_identity(value):
+    if (not isinstance(value, dict) or value.get('kind') != 'macos-framework-v1'
+            or not isinstance(value.get('launchPath'), str)):
+        raise ValueError('Explicit prepared Python launch/runtime/framework pins required')
+    expected = python_identity(value['launchPath'])
+    if any(value.get(key) != item for key, item in expected.items()):
+        raise ValueError('Prepared Python launch/runtime/framework pin or relationship changed')
+    # Additional metadata is not authority; there is no legacy path/same-image fallback.
 
 
 def sanitized_environment(root, parent):
@@ -79,8 +129,7 @@ def validate_preflight(path, expected_hash, before_launch):
         if item.get('sha256') and (str(Path(item['loadPath']).resolve())!=item['resolved'] or host_digest(Path(item['resolved']))!=item['sha256']):
             raise ValueError('Host dylib pin changed')
     if host_digest(Path(p['systemVersionPin']['path']))!=p['systemVersionPin']['sha256']:raise ValueError('Host OS pin changed')
-    if host_digest(Path(p['python']['path']))!=p['python']['sha256']:
-        raise ValueError('Pinned Python changed')
+    validate_python_identity(p['python'])
     if before_launch and (any(root.iterdir()) or any((control/name).exists() for name in ('receipt.json','receipt.pending','receipt.attempt'))):
         raise ValueError('Fresh empty root and no previous collector receipt required')
     p['_preflightHash']=expected_hash

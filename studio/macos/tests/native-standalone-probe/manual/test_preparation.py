@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import shutil
 import sys
+import plistlib
 import unittest
 from unittest import mock
 
@@ -210,6 +211,143 @@ class Controls(unittest.TestCase):
         self.assertEqual(env['CARGO_NET_OFFLINE'], 'true')
 
 
+class PythonIdentity(unittest.TestCase):
+    def framework(self, base):
+        version = base / 'Python.framework/Versions/3.14'
+        launch = version / 'bin/python3.14'
+        runtime = version / 'Resources/Python.app/Contents/MacOS/Python'
+        info = runtime.parent.parent / 'Info.plist'
+        for path, data in [(launch, b'SIMULATED launch stub'), (runtime, b'SIMULATED runtime image'),
+                           (info, plistlib.dumps({'CFBundleExecutable': 'Python', 'CFBundleShortVersionString': '3.14.8'}))]:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            path.chmod(0o600)
+        return {'kind': 'macos-framework-v1', 'launchPath': str(launch), 'launchSha256': prep.sha(launch),
+                'runtimeImagePath': str(runtime), 'runtimeImageSha256': prep.sha(runtime),
+                'infoPlistPath': str(info), 'infoPlistSha256': prep.sha(info),
+                'frameworkVersion': '3.14', 'bundleVersion': '3.14.8'}
+
+    def test_distinct_prepared_runtime_image_is_observed_not_launch_stub(self):
+        # All identities/process calls are simulated. No Python/framework/native probe.
+        with tempfile.TemporaryDirectory() as folder:
+            control = Path(folder).resolve()
+            p = Controls().prepared(control)
+            p['python'] = self.framework(control / 'SIMULATED-host')
+            # Poisoned legacy field exposes the old same-path assumption; never a fallback.
+            p['python']['path'] = p['python']['launchPath']
+            startup = {**p['binding'], 'pid': 100001, 'collectorPID': 100002,
+                       'childStart': 'SIMULATED-start', 'collectorStart': 'SIMULATED-start',
+                       'startupNonce': 'SIMULATED-startup', 'phase': 'picker-manual-preview', 'acceptance': False}
+            claim = {'binding': p['binding'], 'preflightSha256': p['_preflightHash'],
+                     'operatorOwner': 'explicit-user-owned-terminal', 'collectorPID': 100002}
+            reviewed = mock.Mock()
+            with mock.patch('sys.argv', ['observe', '--preflight', 'SIMULATED', '--preflight-sha256', p['_preflightHash'], '--independent-context-confirmed']), \
+                    mock.patch.object(observer, 'validate_preflight', side_effect=lambda *args: support.validate_python_identity(p['python']) or p), \
+                    mock.patch.object(observer, 'read_json', side_effect=[claim, startup]), \
+                    mock.patch.object(observer.subprocess, 'check_output', return_value='SIMULATED-start') as query, \
+                    mock.patch.object(observer, 'process_path', side_effect=lambda pid: p['binary'] if pid == 100001 else p['python']['runtimeImagePath']) as process, \
+                    mock.patch.object(observer, 'load_reviewed', return_value=reviewed), contextlib.redirect_stdout(io.StringIO()):
+                observer.main()
+            self.assertEqual([call.args[0][1:3] for call in query.call_args_list], [['-p', '100001'], ['-p', '100002']])
+            self.assertEqual(process.call_args_list, [mock.call(100001), mock.call(100002)])
+            reviewed.atomic_receipt.assert_called_once()
+            self.assertTrue(reviewed.atomic_receipt.call_args.args[1]['observerConfirmedLive'])
+
+
+    def reject_before_proof(self, p):
+        with mock.patch('sys.argv', ['observe', '--preflight', 'SIMULATED', '--preflight-sha256', p['_preflightHash'], '--independent-context-confirmed']), \
+                mock.patch.object(observer, 'validate_preflight', side_effect=lambda *args: support.validate_python_identity(p['python']) or p), \
+                mock.patch.object(observer, 'read_json') as read, \
+                mock.patch.object(observer.subprocess, 'check_output') as query, \
+                mock.patch.object(observer, 'process_path') as process, \
+                mock.patch.object(observer, 'load_reviewed') as load:
+            with self.assertRaises((ValueError, OSError)):
+                observer.main()
+            read.assert_not_called();query.assert_not_called();process.assert_not_called();load.assert_not_called()
+
+    def test_static_framework_pins_both_distinct_regular_images_and_plist(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pins = self.framework(Path(folder).resolve())
+            self.assertEqual(support.python_identity(pins['launchPath']), pins)
+            self.assertNotEqual(pins['launchSha256'], pins['runtimeImageSha256'])
+            self.assertNotEqual(Path(pins['launchPath']).stat().st_ino, Path(pins['runtimeImagePath']).stat().st_ino)
+            support.validate_python_identity(pins)
+            source = (HERE / 'future_support.py').read_text()
+            self.assertIn("validate_python_identity(p['python'])", source)
+
+    def test_wrong_prepared_runtime_hash_plist_or_relationship_rejects_before_proof(self):
+        for key, bad in [('runtimeImagePath', '/SIMULATED/wrong-image'), ('runtimeImageSha256', 'wrong'),
+                         ('launchSha256', 'wrong'), ('infoPlistPath', '/SIMULATED/wrong-plist'),
+                         ('infoPlistSha256', 'wrong'), ('frameworkVersion', '3.15'),
+                         ('bundleVersion', '3.15.8'), ('kind', 'unknown')]:
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as folder:
+                control = Path(folder).resolve();p = Controls().prepared(control)
+                p['python'] = {**self.framework(control / 'SIMULATED-host'), key: bad}
+                self.reject_before_proof(p)
+
+    def test_host_image_or_plist_tamper_and_unsafe_metadata_reject_before_proof(self):
+        for issue in ['launch', 'runtime', 'plist-hash', 'executable', 'version', 'malformed', 'shape', 'writable', 'oversize']:
+            with self.subTest(issue=issue), tempfile.TemporaryDirectory() as folder:
+                control = Path(folder).resolve();p = Controls().prepared(control)
+                pins = self.framework(control / 'SIMULATED-host');p['python'] = pins
+                info = Path(pins['infoPlistPath'])
+                if issue == 'launch':Path(pins['launchPath']).write_bytes(b'CHANGED LAUNCH')
+                elif issue == 'runtime':Path(pins['runtimeImagePath']).write_bytes(b'CHANGED RUNTIME')
+                elif issue == 'writable':info.chmod(0o666)
+                elif issue == 'oversize':info.write_bytes(b'x' * 65537)
+                elif issue == 'malformed':info.write_bytes(b'NOT A PLIST')
+                elif issue == 'shape':info.write_bytes(plistlib.dumps(['wrong shape']))
+                else:
+                    value = plistlib.loads(info.read_bytes())
+                    if issue == 'executable':value['CFBundleExecutable'] = '../outside'
+                    elif issue == 'version':value['CFBundleShortVersionString'] = '3.15.8'
+                    else:value['Extra'] = 'CHANGED PLIST'
+                    info.write_bytes(plistlib.dumps(value))
+                self.reject_before_proof(p)
+
+    def test_framework_paths_cannot_escape_by_runtime_or_plist_symlink(self):
+        for key in ('runtimeImagePath', 'infoPlistPath'):
+            with self.subTest(key=key), tempfile.TemporaryDirectory() as folder:
+                control = Path(folder).resolve();p = Controls().prepared(control)
+                pins = self.framework(control / 'SIMULATED-host');p['python'] = pins
+                other = self.framework(control / 'SIMULATED-other')
+                path = Path(pins[key]);path.unlink();path.symlink_to(other[key])
+                with mock.patch.object(support, 'host_digest', wraps=support.host_digest) as digest:
+                    self.reject_before_proof(p)
+                    digest.assert_not_called()  # No hash/read of the external image or aliased plist.
+
+    def test_legacy_same_path_metadata_is_not_a_fallback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            control = Path(folder).resolve();p = Controls().prepared(control)
+            pins = self.framework(control / 'SIMULATED-host')
+            p['python'] = {'path': pins['launchPath'], 'sha256': pins['launchSha256']}
+            self.reject_before_proof(p)
+
+    def test_nonframework_rule_is_explicit_rejection_before_any_output_or_build(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder).resolve();launch = base / 'bin/python3.14'
+            launch.parent.mkdir();launch.write_bytes(b'SIMULATED nonframework')
+            with self.assertRaisesRegex(ValueError, 'Unsupported non-framework'):
+                support.python_identity(launch)
+            with mock.patch.object(prep.sys, 'platform', 'darwin'), \
+                    mock.patch.object(prep, 'python_identity', side_effect=ValueError('Unsupported non-framework Python layout')), \
+                    mock.patch.object(prep.tempfile, 'mkdtemp') as output, \
+                    mock.patch.object(prep.subprocess, 'run') as command:
+                with self.assertRaisesRegex(ValueError, 'Unsupported non-framework'):
+                    prep.prepare(base, 'SIMULATED', base, base, base)
+                output.assert_not_called();command.assert_not_called()
+
+    def test_process_path_is_exact_no_alias_normalization_or_real_probe(self):
+        library = mock.Mock()
+        def query(pid, buffer, size):
+            buffer.value = b'/SIMULATED/alias/../Python'
+            return len(buffer.value)
+        library.proc_pidpath.side_effect = query
+        with mock.patch.object(observer.ctypes, 'CDLL', return_value=library):
+            self.assertEqual(observer.process_path(100002), '/SIMULATED/alias/../Python')
+        library.proc_pidpath.assert_called_once()
+
+
 class Recipe(unittest.TestCase):
     def test_locked_offline_feature_only(self):
         command = prep.release_command('PINNED-CARGO')
@@ -273,6 +411,7 @@ class Recipe(unittest.TestCase):
             runtime.mkdir()
             calls = []
             snapshots = []
+            python_pins = PythonIdentity().framework(base / 'SIMULATED-host')
 
             def archive(repo, revision, work):
                 source = work / 'source'
@@ -327,6 +466,7 @@ class Recipe(unittest.TestCase):
                 return mock.Mock(stdout=output.encode(), stderr=b'')
 
             with mock.patch.object(prep.sys, 'platform', 'darwin'), \
+                    mock.patch.object(prep, 'python_identity', return_value=python_pins) as interpreter, \
                     mock.patch.object(prep, 'RUNTIME_PARENT', runtime), \
                     mock.patch.object(prep, 'archive_source', side_effect=archive), \
                     mock.patch.object(prep, 'source_guards', return_value={'version': '0.0.0'}), \
@@ -337,6 +477,10 @@ class Recipe(unittest.TestCase):
             control = Path(result['control'])
             pf = json.loads((control / 'preflight.json').read_text())
             self.assertTrue(pf['signedPrepared'])
+            self.assertEqual(pf['python'], python_pins)
+            interpreter.assert_called_once_with(sys.executable)
+            self.assertIn(python_pins['launchPath'], (control / 'HANDOFF.md').read_text())
+            self.assertIn(python_pins['runtimeImagePath'], (control / 'HANDOFF.md').read_text())
             for flag in ('launchAuthorized', 'launchReady', 'nativeExecuted', 'acceptance'):
                 self.assertIs(pf[flag], False)
             self.assertNotEqual(pf['rawSha256'], pf['binding']['signedSha256'])

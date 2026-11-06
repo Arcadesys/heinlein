@@ -18,6 +18,7 @@ import sys
 import tarfile
 import tempfile
 import uuid
+from future_support import python_identity
 
 MANUAL = Path('studio/macos/tests/native-standalone-probe/manual')
 FEATURES = 'standalone-native-acceptance,tauri/custom-protocol'
@@ -185,6 +186,7 @@ def host_pins(binary, run):
 def prepare(repo, revision, output_parent, work_parent, node_cache):
     if sys.platform != 'darwin':
         raise ValueError('Preparation requires macOS; tests must mock subprocesses')
+    python = python_identity(sys.executable)  # Static pins before any build/output attempt.
     run_id = str(uuid.uuid4())
     # No existing output is reused. Failures preserve working evidence, never clean old items.
     control = Path(tempfile.mkdtemp(prefix='manual47-', dir=output_parent)).resolve()
@@ -272,13 +274,12 @@ def prepare(repo, revision, output_parent, work_parent, node_cache):
     if any(root.iterdir()):
         raise ValueError('Runtime root must remain empty')
     files = {str(p.relative_to(control)): sha(p) for p in control.rglob('*') if p.is_file()}
-    python = Path(sys.executable).resolve(strict=True)
     os_version = Path('/System/Library/CoreServices/SystemVersion.plist').resolve(strict=True)
     preflight = {'schema': 'manual47-signed-prepared-v1', 'phase': 'picker-manual-preview',
                  **evidence, 'runId': run_id, 'control': identity(control), 'root': identity(root),
                  'binary': str(binary), 'rawSha256': raw_hash, 'files': files, 'hostDylibs': dylibs,
                  'systemVersionPin': {'path': str(os_version), 'sha256': sha(os_version)},
-                 'python': {'path': str(python), 'sha256': sha(python)}, 'buildCommand': command,
+                 'python': python, 'buildCommand': command,
                  'signedPrepared': True, 'launchAuthorized': False, 'launchReady': False,
                  'nativeExecuted': False, 'acceptance': False, 'startupSurvivalObserved': False,
                  'profile': {'path': str(root / 'app-data'), 'reservedOnly': True, 'exists': False},
@@ -304,6 +305,9 @@ observer or rejected-flag probe was executed by preparation.
 - Independent preflight SHA-256: `{pin}`
 - Raw before signing: `{raw_hash}`
 - Final signed after outer sealing: `{preflight['binding']['signedSha256']}`
+- Pinned Python launch file: `{python['launchPath']}`
+- Expected collector runtime image: `{python['runtimeImagePath']}`
+- Trusted framework plist: `{python['infoPlistPath']}` (pins and relationship in preflight)
 
 All original source bytes and modes matched before/after. Actual private embedded
 assets and overlay are hash-pinned; strict deep ad-hoc signature, ARM64 and symbol
@@ -311,7 +315,9 @@ exclusions were checked statically. Host dylib/OS/Python pins are in preflight.
 These checks prove no runtime namespace, startup survival or native acceptance.
 
 Future helpers require separate explicit launch authorization. Keep this preflight
-pin independently; never take expected binding from a candidate receipt. Use a
+pin independently; never take expected binding from a candidate receipt. Launch
+uses the exact pinned Python launch file above; observation requires the separately
+pinned runtime image. Neither expected path comes from a PID or candidate receipt. Use a
 user-owned Terminal and the pinned script file, never a heredoc, redirected stdin,
 background service or automatically opened Terminal. launch_future.py requires
 --authorize-native-launch and --operator-owned-terminal and a retained live FD.
