@@ -598,7 +598,7 @@ remaining batches continue to completion. Cancelled reviews and invalid output
 wait for an explicit action. Auth, quota, identity, and invalid saved-context errors
 remain blocked. A failed batch or one making no progress stops
 recovery rather than retrying indefinitely. A notification reports completion or
-reviews needing attention, without opening Chats, changing focus or reflowing text.
+reviews needing attention, without opening Editors, changing focus or reflowing text.
 
 Recovery does not switch accounts/models or sign in. It pauses when the connection
 is unavailable, writing/recovery needs attention, or the captured source/context or

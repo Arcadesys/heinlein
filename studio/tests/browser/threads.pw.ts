@@ -2,14 +2,14 @@ import {test,expect,type Page} from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 const shape=(page:Page)=>page.locator('.cm-content').evaluate(node=>({width:node.getBoundingClientRect().width,lines:[...node.children].map(line=>({width:line.getBoundingClientRect().width,height:line.getBoundingClientRect().height}))}));
 const showNav=async(page:Page)=>{const toggle=page.locator('.navigation-toggle');if(await toggle.getAttribute('aria-expanded')==='false')await toggle.click();};
-const showChats=async(page:Page)=>{const nav=page.locator('.navigation-modal[open]');if(await nav.count())await nav.getByRole('button',{name:'Return to writing'}).click();await page.getByRole('button',{name:'Chats',exact:true}).click();};
+const showChats=async(page:Page)=>{const nav=page.locator('.navigation-modal[open]');if(await nav.count())await nav.getByRole('button',{name:'Return to writing'}).click();await page.getByRole('button',{name:'Editors',exact:true}).click();};
 for(const zoom of [100,200])test(`right rail aggregates chapter threads and keeps scene navigation separate at ${zoom}%`,async({page},info)=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
  await page.goto('/tests/browser/threads.html');await expect(page).toHaveTitle('Section threads fixture');await expect(page).toHaveURL(/threads\.html$/);
  await page.evaluate(async zoom=>{await (window as any).threadsFixture.ready;document.documentElement.dataset.zoom=String(zoom);await document.fonts.ready;},zoom);
  await showNav(page);expect(await page.locator('.nav-panel .thread-sidebar').count()).toBe(0);await showChats(page);const sidebar=page.getByRole('region',{name:'Section threads'});
  await expect(sidebar.getByRole('button',{name:/^Rain motivation/})).toBeVisible();await expect(sidebar.getByRole('button',{name:/^Harbor pacing/})).toHaveCount(0);
- await page.getByRole('button',{name:'Close chats',exact:true}).click();await showNav(page);await page.getByRole('button',{name:'Chapter 9',exact:true}).click();await expect(page.locator('.assembled-editor .cm-content')).toBeVisible();const before=await shape(page);
+ await page.getByRole('button',{name:'Close editors',exact:true}).click();await showNav(page);await page.getByRole('button',{name:'Chapter 9',exact:true}).click();await expect(page.locator('.assembled-editor .cm-content')).toBeVisible();const before=await shape(page);
  await showChats(page);await expect(sidebar).toContainText('Chapter 9');await expect(sidebar.getByRole('button',{name:/^Rain motivation/})).toBeVisible();await expect(sidebar.getByRole('button',{name:/^Harbor pacing/})).toBeVisible();await expect(sidebar.getByRole('button',{name:/^Chapter transition review/})).toBeVisible();await expect(sidebar).not.toContainText('Other chapter topic');
  const resolve=sidebar.getByRole('button',{name:'Resolve thread: Rain motivation',exact:true});await resolve.focus();await page.keyboard.press('Enter');await expect(sidebar.getByRole('button',{name:/^Rain motivation/})).toHaveCount(0);
  await sidebar.getByRole('checkbox',{name:'Show resolved threads'}).check();await expect(sidebar.getByRole('button',{name:'Reopen thread: Rain motivation'})).toBeVisible();await sidebar.getByRole('button',{name:'Reopen thread: Rain motivation'}).click();await sidebar.getByRole('checkbox',{name:'Show resolved threads'}).uncheck();
@@ -38,14 +38,14 @@ test('a sheet recovery draft prevents chapter editing until the writer resolves 
  await page.goto('/tests/browser/threads.html?recovery=1');await page.evaluate(()=>(window as any).threadsFixture.ready);await showNav(page);await page.getByRole('button',{name:'Chapter 9',exact:true}).click();await expect(page.locator('.assembled-editor .cm-content')).toHaveAttribute('contenteditable','false');await expect(page.getByRole('button',{name:/A saved recovery draft needs your decision/})).toBeVisible();expect((await page.evaluate(()=>(window as any).threadsFixture.source())).saves).toBe(0);
 });
 
-test('wide screens dock chats on the right without moving or rewrapping the manuscript',async({page},info)=>{
+test('wide screens dock editors on the right without moving or rewrapping the manuscript',async({page},info)=>{
  test.skip(info.project.name!=='desktop');await page.setViewportSize({width:1024,height:1000});await page.goto('/tests/browser/threads.html');await page.evaluate(async()=>{await (window as any).threadsFixture.ready;await document.fonts.ready;});
  const dock=page.locator('.conversation-rail-dock');await expect(dock).toBeHidden();
  // Reproduce a first measurement without room, then the final wide layout.
  // No explicit user choice was made, so initial automatic placement must adapt.
  await page.setViewportSize({width:2048,height:1000});await expect(dock).toBeVisible();await expect(page.locator('.navigation-drawer')).toBeVisible();await page.getByRole('button',{name:'Chapter 9',exact:true}).click();await expect(page.locator('.assembled-editor .cm-content')).toBeVisible();await expect(page.getByRole('region',{name:'Section threads'})).toContainText('Chapter 9');
  const before=await shape(page);const rectangle=await page.locator('.cm-content').boundingBox();const rail=await dock.boundingBox();expect(rectangle!.x+rectangle!.width).toBeLessThanOrEqual(rail!.x);
- await page.getByRole('button',{name:'Close chats',exact:true}).click();expect(await shape(page)).toEqual(before);await page.getByRole('button',{name:'Chats',exact:true}).click();expect(await shape(page)).toEqual(before);
+ await page.getByRole('button',{name:'Close editors',exact:true}).click();expect(await shape(page)).toEqual(before);await page.getByRole('button',{name:'Editors',exact:true}).click();expect(await shape(page)).toEqual(before);
  expect((await new AxeBuilder({page}).include('.conversation-rail').analyze()).violations).toEqual([]);await page.screenshot({path:'/tmp/heinlein-separated-rails-wide.png'});
 });
 
@@ -61,7 +61,7 @@ for(const zoom of [100,200])for(const custom of [false,true])test(`one Review ch
  await page.keyboard.press('Enter');
  await expect.poll(()=>page.evaluate(()=>(window as any).automaticChapterFixture.continuations.length)).toBe(1);
  await expect(page.locator('.heinlein-review-panel')).toBeHidden();
- await expect(page.getByRole('button',{name:'Chats',exact:true})).toHaveAttribute('aria-expanded','false');
+ await expect(page.getByRole('button',{name:'Editors',exact:true})).toHaveAttribute('aria-expanded','false');
  await expect(page.locator('.assembled-editor .cm-content')).toBeFocused();
  expect(await shape(page)).toEqual(before);
  await showChats(page);

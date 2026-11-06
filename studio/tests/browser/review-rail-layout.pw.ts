@@ -9,7 +9,7 @@ for(const zoom of [100,150,200])test(`review rail gives feedback a continuous re
   await page.goto('/tests/browser/threads.html?automaticReview');
   await expect(page).toHaveTitle('Section threads fixture');
   await page.evaluate(async zoom=>{await (window as any).threadsFixture.ready;document.documentElement.dataset.zoom=String(zoom);await document.fonts.ready;},zoom);
-  if(await page.locator('.conversation-rail-dialog[open]').count())await page.getByRole('button',{name:'Close chats',exact:true}).click();
+  if(await page.locator('.conversation-rail-dialog[open]').count())await page.getByRole('button',{name:'Close editors',exact:true}).click();
   const nav=page.locator('.navigation-toggle');
   if(await nav.getAttribute('aria-expanded')==='false')await nav.click();
   await page.getByRole('button',{name:'Chapter 9',exact:true}).click();
@@ -19,8 +19,8 @@ for(const zoom of [100,150,200])test(`review rail gives feedback a continuous re
   await review.focus();await page.keyboard.press('Enter');
   const panel=page.locator('.heinlein-review-panel');
   await expect(panel).toContainText('Combined chapter feedback from all reviewer passes.');
-  await expect(page.getByRole('button',{name:'Chats',exact:true})).toHaveAttribute('aria-expanded','false');
-  await page.getByRole('button',{name:'Chats',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Editors',exact:true})).toHaveAttribute('aria-expanded','false');
+  await page.getByRole('button',{name:'Editors',exact:true}).click();
   await page.getByRole('region',{name:'Section threads'}).getByRole('button',{name:/^Chapter 9 · Review/}).click();
   await expect(panel.locator('.review-reading-feedback')).toBeVisible();
   const rail=page.locator('.conversation-rail');
@@ -43,7 +43,7 @@ for(const zoom of [100,150,200])test(`review rail gives feedback a continuous re
   const end=panel.getByRole('button',{name:'End of synthetic assessment'});
   await end.focus();await expect(end).toBeInViewport();
   expect(await page.locator('.conversation-rail-body').evaluate(node=>node.scrollTop)).toBeGreaterThan(0);
-  await expect(page.getByRole('button',{name:'Close chats',exact:true})).toBeInViewport();
+  await expect(page.getByRole('button',{name:'Close editors',exact:true})).toBeInViewport();
   expect((await new AxeBuilder({page}).include('.conversation-rail').analyze()).violations).toEqual([]);
   await panel.getByRole('combobox',{name:'Review assessment'}).scrollIntoViewIfNeeded();
   await page.screenshot({path:`/tmp/heinlein-readable-review-${info.project.name}-${zoom}.png`});

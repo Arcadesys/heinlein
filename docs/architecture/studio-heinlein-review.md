@@ -293,7 +293,7 @@ name opens its descendant source sheets in library order; its separate expansion
 button changes only the scene tree. Legacy chapter entries use their explicit
 source mapping. Reference-sheet exclusions remain in force.
 
-Chats live in a separate right rail. A scene shows its own conversations and
+Editors live in a separate right rail. A scene shows its own conversations and
 reviews. A chapter aggregates its own threads and those of descendant scenes and
 nested sections. Opening a scene thread from a chapter keeps the chapter selected;
 that chat uses its own sheet as context. Back to threads restores the chapter list.
