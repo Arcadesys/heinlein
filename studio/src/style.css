@@ -980,6 +980,12 @@ dialog { color: var(--fg); }
 .workspace-actions-dialog :is(p,h2,button,summary) { word-break:normal; overflow-wrap:normal; }
 .workspace-action-controls { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
 .workspace-action-controls.document-reading .source-only { display:none; }
+/* Header pieces that only make sense in the floating pill get plain labels in this list. */
+.workspace-action-controls :is(.pill-muted,.pill-rule) { display:none; }
+.workspace-action-controls .pill-words { font:400 1rem var(--font-ui, var(--ui-fallback)); color:var(--fg); padding-block:4px; }
+.workspace-action-controls .pill-words::before { content:'Current scene: '; color:var(--fg-muted); }
+.workspace-action-controls .pill-key { font:inherit; text-align:start; }
+.workspace-action-controls .pill-key::before { content:'Jump to scene, file or command: '; }
 .workspace-actions-dialog .menu { position:static; min-width:0; max-width:100%; max-height:none; box-sizing:border-box; }
 .document-full-path { overflow-wrap:anywhere !important; user-select:text; }
 @media(max-width:760px) {

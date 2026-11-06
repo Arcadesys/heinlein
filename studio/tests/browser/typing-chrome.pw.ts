@@ -10,7 +10,7 @@ async function open(page:Page) {
 const sample = (page:Page) => page.evaluate(() => {
   const view=(window as any).documentFixture.view(),pane=document.querySelector('.active-document-pane')!,content=view.contentDOM;
   const caret=view.coordsAtPos(view.state.selection.main.head);
-  return {width:content.getBoundingClientRect().width,height:pane.clientHeight,top:pane.getBoundingClientRect().top,caret:caret?.top,head:view.state.selection.main.head,text:view.state.doc.toString()};
+  return {prose:view.coordsAtPos(0)?.top,width:content.getBoundingClientRect().width,height:pane.clientHeight,top:pane.getBoundingClientRect().top,caret:caret?.top,head:view.state.selection.main.head,text:view.state.doc.toString()};
 });
 async function type(page:Page,text='x') {await writer(page).focus();await page.keyboard.type(text);await expect(chrome(page)).toHaveClass(/is-typing/);await page.waitForTimeout(220);}
 
@@ -21,6 +21,8 @@ test('@smoke typing reclaims vertical space without reflow, losing prose or stea
   await type(page,'Written — ');
   const after=await sample(page);
   expect(after.height).toBeGreaterThan(initial.height+25);expect(after.width).toBe(initial.width);
+  // The first line of prose stays where the writer last saw it, even at the top of a document.
+  expect(Math.abs(after.prose!-initial.prose!)).toBeLessThanOrEqual(1);
   await expect(writer(page)).toBeFocused();await expect(page.locator('.typing-chrome-content')).toHaveAttribute('inert','');
   await expect(page.getByRole('tablist',{name:'Open documents'})).toHaveCount(0);
   await expect(page.locator('.notice-slot .pill-save')).toBeVisible();await expect(page.locator('.status-pill')).toBeVisible();
