@@ -975,6 +975,8 @@ dialog { color: var(--fg); }
 .document-workspace .editor-toolbar { margin:0 0 6px; gap:4px; align-items:center; }
 .document-workspace .editor-toolbar > button,.document-workspace .editor-toolbar .md-view-toggle button { min-block-size:48px; font-size:1rem; padding:4px 10px; }
 .document-workspace .editor-toolbar .md-view-toggle { flex-basis:auto; margin:0; gap:4px; }
+/* Menu buttons in the toolbar keep a visible edge, like Details, Close and Read beside, so they read as controls. */
+.document-workspace .editor-toolbar > button:not([aria-controls="drafting-questions"]) { border-color:var(--border-strong); }
 .document-workspace .reference-source { max-block-size:none; overflow:visible; }
 .workspace-actions-dialog { box-sizing:border-box; width:min(42rem,calc(100vw - 16px)); max-width:calc(100vw - 16px); max-height:calc(100dvh - 16px); padding:clamp(12px,2vw,24px); }
 .workspace-actions-dialog :is(button,summary,input,select) { min-block-size:48px; font-size:1rem; }
