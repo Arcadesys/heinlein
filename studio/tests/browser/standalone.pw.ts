@@ -162,7 +162,7 @@ test('immediate Escape then Cmd+N retains kept writing and new editor focus',asy
   expect(await page.evaluate(()=>(window as any).draftFixture.externalCalls)).toEqual([]);
 });
 
-test('wide standalone chats use the existing gutter without changing source or reading layout',async({page})=>{
+test('wide standalone editors use the existing gutter without changing source or reading layout',async({page})=>{
   await page.setViewportSize({width:3200,height:1000});
   await page.goto('/tests/browser/standalone.html');await expect(writing(page)).toBeFocused();
   await page.keyboard.insertText('A standalone draft — with agents beside it.\n\nThe writing width stays unchanged.');
@@ -172,7 +172,7 @@ test('wide standalone chats use the existing gutter without changing source or r
   await expect(page.locator('.conversation-rail-dock')).toBeVisible();
   await expect(page.locator('.conversation-rail-dialog')).not.toBeVisible();
   expect(await writing(page).boundingBox()).toEqual(sourceBox);expect(await writing(page).textContent()).toBe(source);
-  await activate(page.getByRole('button',{name:'Close chats',exact:true}));
+  await activate(page.getByRole('button',{name:'Close editors',exact:true}));
   await activate(page.getByRole('button',{name:'Reading',exact:true}));
   const reader=page.getByRole('region',{name:'Draft reading view'}),readingBox=await reader.boundingBox();
   await activate(page.getByRole('button',{name:'Heinlein',exact:true}));
