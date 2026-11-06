@@ -5,7 +5,7 @@
 .heinlein-review-panel { position: fixed; z-index: 12; inset: 5rem 1rem 1rem auto; width: var(--review-width); display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box; background: var(--surface); color: var(--fg); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow); font-size: 1rem; line-height: 1.55; }
 .heinlein-review-panel[hidden], .heinlein-review-panel.review-tucked { display: none; }
 .heinlein-review-panel [hidden] { display: none !important; }
-.heinlein-review-panel.heinlein-integrated { position: fixed; inset: 0; z-index: 20; width: auto; max-height: none; background: var(--bg); border: 0; border-radius: 0; box-shadow: none; }
+.heinlein-review-panel.heinlein-integrated { position: fixed; inset: 0; z-index: 20; width: auto; max-height: none; background: var(--surface); border: 0; border-radius: 0; box-shadow: none; }
 @media (min-width: 1400px) { .heinlein-review-panel.heinlein-integrated { inset: 3.5rem 0 0 auto; width: min(42vw, 34rem); border-left: 1px solid var(--border); } }
 :root:is([data-zoom="150"],[data-zoom="175"],[data-zoom="200"],[data-zoom="250"],[data-zoom="300"]) .heinlein-review-panel.heinlein-integrated { inset: 0; width: auto; }
 /* Beside the editor when there is room, so the panel never sits on top of the text being reviewed. */

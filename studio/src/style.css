@@ -271,6 +271,18 @@ dialog { color: var(--fg); }
 .appearance-dialog > p { margin-block: .6rem; }
 .appearance-dialog > button { margin: .75rem .5rem 0 0; }
 .appearance-dialog .primary { margin-top: 1rem; }
+/* One checkbox and select look for the Word counts dialog and the Chats / Heinlein review drawer.
+   Sizes, labels and behaviour stay with the component rules; only paint changes. The :root prefix
+   keeps these above the per-component defaults whatever order the files load in. */
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"] { appearance: none; -webkit-appearance: none; display: inline-grid; place-content: center; box-sizing: border-box; border: 2px solid var(--fg); border-radius: 4px; background: var(--surface); color: var(--surface); cursor: pointer; }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"]::before { content: ""; width: 70%; height: 70%; background: currentColor; clip-path: polygon(14% 52%, 0 66%, 38% 100%, 100% 22%, 86% 8%, 38% 72%); transform: scale(0); }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"]:checked { background: var(--fg); }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"]:checked::before { transform: scale(1); }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"]:hover { border-color: var(--accent); }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"]:disabled { cursor: default; opacity: .5; }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) select:not([multiple]) { appearance: none; -webkit-appearance: none; color: var(--fg); background-color: var(--surface); background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: calc(100% - 1.15rem) 50%, calc(100% - .8rem) 50%; background-size: .35rem .35rem; background-repeat: no-repeat; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding-block: .5rem; padding-inline: .7rem 2rem; text-overflow: ellipsis; cursor: pointer; }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) select:not([multiple]):hover { border-color: var(--accent); }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) select:not([multiple]):disabled { cursor: default; opacity: .5; }
 
 /* Appearance: a full settings window with live preview (from the Rail direction). */
 .settings-window { width: min(58.75rem, calc(100vw - 2rem)); height: min(38.75rem, calc(100vh - 2rem)); max-height: none; padding: 0; overflow: hidden; }
