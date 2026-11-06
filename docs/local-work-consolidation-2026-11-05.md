@@ -82,6 +82,15 @@ were left in place; this branch does not stash, reset, clean, or switch them.
 
 ## Validation
 
+PR review found that importing the new PDF normalization dependency at module
+startup broke ordinary Studio exports in an existing CLI environment. The
+dependency is now loaded only for explicitly reproducible PDFs. Reproducibility
+settings and dependencies are checked before rendering, so invalid configuration
+cannot replace a previous export before failing. Four regression cases reproduce
+these failures and pass after the fix. The complete publishing suite passes
+147 tests, and the native converter smoke verifies all five export formats with
+the existing CLI runtime, without upgrading or modifying that environment.
+
 The repository requires `python3 tools/validate.py full` before a push touching
 both Studio and publishing. Consolidation acceptance is recorded in the PR after
 that complete run; older feature-validation documents describe their original

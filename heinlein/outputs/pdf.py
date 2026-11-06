@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-import pikepdf
 
 from heinlein.outputs import dests as dests_mod
 
@@ -178,6 +177,19 @@ def _normalized_dates(value: Any) -> tuple[str, str]:
     )
 
 
+def _reproducible_pdf_engine() -> Any:
+    # Studio can use an existing CLI environment for ordinary exports. Do not
+    # require its newer normalization dependency unless the author opts in.
+    try:
+        import pikepdf
+    except ImportError as error:
+        raise RuntimeError(
+            "Reproducible PDF output requires pikepdf. Update the Heinlein "
+            "Python CLI's publishing dependencies."
+        ) from error
+    return pikepdf
+
+
 def _normalize_reproducible_pdf(
     output: Path,
     *,
@@ -192,6 +204,7 @@ def _normalize_reproducible_pdf(
     timestamp, Heinlein provenance, synchronized XMP/docinfo, and a stable ID.
     """
     pdf_date, xmp_date = _normalized_dates(metadata_date)
+    pikepdf = _reproducible_pdf_engine()
     creator = f"Heinlein {version('heinlein')}"
     with pikepdf.open(output, allow_overwriting_input=True) as pdf:
         with pdf.open_metadata(set_pikepdf_as_editor=False, update_docinfo=False) as meta:
@@ -233,6 +246,10 @@ def build(
     planted, and the page numbers that come out of the throwaway copy are
     written into the real one. See heinlein.outputs.dests.
     """
+    if reproducible:
+        # Refuse unsupported settings before Chrome can replace an old export.
+        _normalized_dates(metadata_date)
+        _reproducible_pdf_engine()
     html = _render_html(**ctx)
     marked_html, marked = dests_mod.plant_markers(html)
 

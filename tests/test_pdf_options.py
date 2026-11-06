@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from hashlib import sha256
 from pathlib import Path
+import builtins
 
 import pikepdf
 import pytest
@@ -143,3 +144,42 @@ def test_reproducible_pdf_requires_a_fixed_date(tmp_path: Path) -> None:
             author="Author",
             metadata_date=None,
         )
+
+
+@pytest.mark.parametrize("metadata_date", [None, "not-a-date"])
+def test_invalid_reproducible_date_preserves_existing_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata_date
+) -> None:
+    output = tmp_path / "book.pdf"
+    previous = b"Previously approved export"
+    output.write_bytes(previous)
+    rendered = []
+    monkeypatch.setattr(out_pdf, "_render_html", lambda **ctx: rendered.append(ctx) or "<p>New</p>")
+    monkeypatch.setattr(out_pdf, "_print_to_pdf", lambda html, target, **kw: target.write_bytes(b"Replacement"))
+    with pytest.raises(ValueError, match="metadata.date"):
+        out_pdf.build(ctx={"title": "Book", "author": "Writer"}, output=output,
+                      reproducible=True, metadata_date=metadata_date)
+    assert output.read_bytes() == previous
+    assert rendered == []
+
+
+def test_missing_normalizer_preserves_existing_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_import = builtins.__import__
+    def without_normalizer(name, *args, **kwargs):
+        if name.split(".")[0] == "pikepdf":
+            raise ModuleNotFoundError("Synthetic missing pikepdf", name="pikepdf")
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", without_normalizer)
+    output = tmp_path / "book.pdf"
+    previous = b"Previously approved export"
+    output.write_bytes(previous)
+    rendered = []
+    monkeypatch.setattr(out_pdf, "_render_html", lambda **ctx: rendered.append(ctx) or "<p>New</p>")
+    monkeypatch.setattr(out_pdf, "_print_to_pdf", lambda html, target, **kw: target.write_bytes(b"Replacement"))
+    with pytest.raises(RuntimeError, match="pikepdf"):
+        out_pdf.build(ctx={"title": "Book", "author": "Writer"}, output=output,
+                      reproducible=True, metadata_date="2026-11-05")
+    assert output.read_bytes() == previous
+    assert rendered == []
