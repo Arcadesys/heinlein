@@ -24,6 +24,8 @@ changed by preparing this PR.
   deterministic PDF metadata, per-project print/EPUB/HTML styles, plus scene-break
   preview consistency and supported Twine guidance. Defaults remain opt-in; no
   source manuscript is rewritten and Studio text wrapping is not changed.
+- **Accessible connection dialog:** keep enlarged status labels intact at 320px
+  by limiting nested padding; text size and control targets are unchanged.
 - **Native fixture preparation:** pin Python's framework launcher and runtime
   image separately. Synthetic preparation tests cover malformed and changed
   pins. No human-only probe is launched. A pure signing-policy helper is retained
@@ -52,7 +54,9 @@ captured separately. The recovery archive is local and is not part of this PR.
 ## Dirty-source accounting
 
 The capture covered **92 checkouts**, **nine Git repositories**, and **25 dirty
-checkouts**. Every changed-path observation has a local manifest entry. Sources
+checkouts**. One orphaned registered worktree also had 13 remaining source
+files; all matched known committed or captured dirty source, and a separate
+recovery copy was retained. Every changed-path observation has a local manifest entry. Sources
 were left in place; this branch does not stash, reset, clean, or switch them.
 
 - The GitHub/keychain investigation's chooser changes and pure signing helper are

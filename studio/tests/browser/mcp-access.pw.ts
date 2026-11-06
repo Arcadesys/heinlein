@@ -17,6 +17,11 @@ for(const high of [false,true])test(`one connection grants projects with easy se
   await dialog.getByRole('button',{name:'Connect Codex',exact:true}).click();await expect(dialog).toContainText('Codex configured.');
   await dialog.getByRole('button',{name:'Allow this project',exact:true}).focus();await page.keyboard.press('Enter');await expect(dialog).toContainText('Project access is enabled');
   await expect(dialog.getByRole('heading',{name:'Codex connection',exact:true})).toBeFocused();
+  const statusLines=await dialog.getByText('Codex configured.',{exact:true}).evaluate(el=>{
+    const text=el.firstChild!,word='configured.',from=text.textContent!.indexOf(word),range=document.createRange();
+    range.setStart(text,from);range.setEnd(text,from+word.length);return range.getClientRects().length;
+  });
+  expect(statusLines,'The connection status word must remain intact at narrow widths and enlarged text').toBe(1);
   expect((await new AxeBuilder({page}).include('.mcp-access-panel').analyze()).violations).toEqual([]);
   await page.screenshot({path:info.outputPath('mcp-project-connection.png'),fullPage:true});
   await dialog.getByText('Manual setup command',{exact:true}).click();

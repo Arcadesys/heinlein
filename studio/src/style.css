@@ -1217,3 +1217,8 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 .mcp-connection-step h3 { margin-top:0; }
 .mcp-connection-step textarea { box-sizing:border-box; width:100%; resize:vertical; font-family:var(--font-mono); font-size:.85rem; overflow-wrap:anywhere; }
 .mcp-connection-step details { margin-top:.8rem; }
+
+@media (max-width: 40rem) {
+  /* Keep enlarged labels readable without shrinking the author's text size. */
+  .mcp-access-panel, .mcp-access-panel .mcp-connection-step { padding: 12px; }
+}
