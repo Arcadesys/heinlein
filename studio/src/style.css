@@ -271,7 +271,7 @@ dialog { color: var(--fg); }
 .appearance-dialog > p { margin-block: .6rem; }
 .appearance-dialog > button { margin: .75rem .5rem 0 0; }
 .appearance-dialog .primary { margin-top: 1rem; }
-/* One checkbox and select look for the Word counts dialog and the Chats / Heinlein review drawer.
+/* One checkbox and select look for the Word counts dialog and the Editors / Heinlein review drawer.
    Sizes, labels and behaviour stay with the component rules; only paint changes. The :root prefix
    keeps these above the per-component defaults whatever order the files load in. */
 :root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"] { appearance: none; -webkit-appearance: none; display: inline-grid; place-content: center; box-sizing: border-box; border: 2px solid var(--fg); border-radius: 4px; background: var(--surface); color: var(--surface); cursor: pointer; }
