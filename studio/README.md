@@ -14,6 +14,12 @@ rendered with your writing appearance settings. Link destinations appear as text
 embedded images are not loaded, and raw HTML stays literal. Frontmatter remains
 available in Source. Resolve any pending recovery in Source first.
 
+Reading is not a line-for-line copy of Source. Source keeps a gutter on its right
+edge for passage-ask markers, so Reading's column is wider (about 64px at 100%
+text size), and Reading spaces paragraphs more tightly than Source's blank
+lines. The same words therefore wrap at different points in the two views. The
+text itself is identical, and both views use the same font size and line height.
+
 ## Word counts
 
 Choose **Word counts** in the writing header, or search for it in the command
@@ -616,7 +622,7 @@ remaining batches continue to completion. Cancelled reviews and invalid output
 wait for an explicit action. Auth, quota, identity, and invalid saved-context errors
 remain blocked. A failed batch or one making no progress stops
 recovery rather than retrying indefinitely. A notification reports completion or
-reviews needing attention, without opening Chats, changing focus or reflowing text.
+reviews needing attention, without opening Editors, changing focus or reflowing text.
 
 Recovery does not switch accounts/models or sign in. It pauses when the connection
 is unavailable, writing/recovery needs attention, or the captured source/context or

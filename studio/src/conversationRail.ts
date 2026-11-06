@@ -1,17 +1,17 @@
 import './conversationRail.css';
 export function createConversationRail(list:HTMLElement,measure:()=>HTMLElement|null,returnToWriter?:()=>void,modalChanged?:(modal:boolean)=>void) {
   const root=document.createElement('div');root.className='conversation-rail-root';
-  const toggle=document.createElement('button');toggle.type='button';toggle.className='conversation-rail-toggle';toggle.setAttribute('aria-label','Chats');toggle.title='Open chats';toggle.setAttribute('aria-controls','conversation-rail');
-  const toggleLabel=document.createElement('span');toggleLabel.className='chat-launcher-label';toggleLabel.textContent='Chats';
+  const toggle=document.createElement('button');toggle.type='button';toggle.className='conversation-rail-toggle';toggle.setAttribute('aria-label','Editors');toggle.title='Open editors';toggle.setAttribute('aria-controls','conversation-rail');
+  const toggleLabel=document.createElement('span');toggleLabel.className='chat-launcher-label';toggleLabel.textContent='Editors';
   const ns='http://www.w3.org/2000/svg',chatIcon=document.createElementNS(ns,'svg'),chatPath=document.createElementNS(ns,'path');
   chatIcon.setAttribute('viewBox','0 0 24 24');chatIcon.setAttribute('aria-hidden','true');chatIcon.setAttribute('focusable','false');chatPath.setAttribute('d','M4 4h16v12H9l-5 4V4Z');chatPath.setAttribute('fill','none');chatPath.setAttribute('stroke','currentColor');chatPath.setAttribute('stroke-width','2');chatPath.setAttribute('stroke-linejoin','round');chatIcon.append(chatPath);toggle.append(toggleLabel,chatIcon);
-  const dock=document.createElement('aside');dock.className='conversation-rail-dock';dock.setAttribute('aria-label','Scene and chapter chats');
-  const modal=document.createElement('dialog');modal.className='conversation-rail-dialog';modal.setAttribute('aria-label','Scene and chapter chats');
-  const panel=document.createElement('section');panel.id='conversation-rail';panel.className='conversation-rail';panel.setAttribute('aria-label','Chats');
-  const header=document.createElement('header');const heading=document.createElement('h2');heading.textContent='Chats';heading.tabIndex=-1;
+  const dock=document.createElement('aside');dock.className='conversation-rail-dock';dock.setAttribute('aria-label','Scene and chapter editors');
+  const modal=document.createElement('dialog');modal.className='conversation-rail-dialog';modal.setAttribute('aria-label','Scene and chapter editors');
+  const panel=document.createElement('section');panel.id='conversation-rail';panel.className='conversation-rail';panel.setAttribute('aria-label','Editors');
+  const header=document.createElement('header');const heading=document.createElement('h2');heading.textContent='Editors';heading.tabIndex=-1;
   const back=document.createElement('button');back.type='button';back.textContent='Back to threads';
-  const close=document.createElement('button');close.type='button';close.textContent='Close chats';
-  const body=document.createElement('div');body.className='conversation-rail-body';const listHost=document.createElement('div');listHost.className='conversation-rail-list';const empty=document.createElement('p');empty.textContent='Open a project, then choose a scene or chapter for its chats.';empty.className='thread-sidebar';listHost.append(list,empty);body.append(listHost);header.append(heading,back,close);panel.append(header,body);dock.append(panel);root.append(toggle,dock,modal);
+  const close=document.createElement('button');close.type='button';close.textContent='Close editors';
+  const body=document.createElement('div');body.className='conversation-rail-body';const listHost=document.createElement('div');listHost.className='conversation-rail-list';const empty=document.createElement('p');empty.textContent='Open a project, then choose a scene or chapter for its editors.';empty.className='thread-sidebar';listHost.append(list,empty);body.append(listHost);header.append(heading,back,close);panel.append(header,body);dock.append(panel);root.append(toggle,dock,modal);
   let open=false,detail:HTMLElement|null=null;let disposed=false;let closing=false,returning=false,initialized=false,modalState=false;
   function render(){
     if(disposed)return;

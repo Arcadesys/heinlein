@@ -271,6 +271,18 @@ dialog { color: var(--fg); }
 .appearance-dialog > p { margin-block: .6rem; }
 .appearance-dialog > button { margin: .75rem .5rem 0 0; }
 .appearance-dialog .primary { margin-top: 1rem; }
+/* One checkbox and select look for the Word counts dialog and the Chats / Heinlein review drawer.
+   Sizes, labels and behaviour stay with the component rules; only paint changes. The :root prefix
+   keeps these above the per-component defaults whatever order the files load in. */
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"] { appearance: none; -webkit-appearance: none; display: inline-grid; place-content: center; box-sizing: border-box; border: 2px solid var(--fg); border-radius: 4px; background: var(--surface); color: var(--surface); cursor: pointer; }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"]::before { content: ""; width: 70%; height: 70%; background: currentColor; clip-path: polygon(14% 52%, 0 66%, 38% 100%, 100% 22%, 86% 8%, 38% 72%); transform: scale(0); }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"]:checked { background: var(--fg); }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"]:checked::before { transform: scale(1); }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"]:hover { border-color: var(--accent); }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) input[type="checkbox"]:disabled { cursor: default; opacity: .5; }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) select:not([multiple]) { appearance: none; -webkit-appearance: none; color: var(--fg); background-color: var(--surface); background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: calc(100% - 1.15rem) 50%, calc(100% - .8rem) 50%; background-size: .35rem .35rem; background-repeat: no-repeat; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding-block: .5rem; padding-inline: .7rem 2rem; text-overflow: ellipsis; cursor: pointer; }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) select:not([multiple]):hover { border-color: var(--accent); }
+:root :is(.word-count-dialog, .conversation-rail, .heinlein-review-panel, .review-agents-dialog) select:not([multiple]):disabled { cursor: default; opacity: .5; }
 
 /* Appearance: a full settings window with live preview (from the Rail direction). */
 .settings-window { width: min(58.75rem, calc(100vw - 2rem)); height: min(38.75rem, calc(100vh - 2rem)); max-height: none; padding: 0; overflow: hidden; }
@@ -360,7 +372,8 @@ dialog { color: var(--fg); }
 /* A dotted grip says the row can be picked up; it brightens on hover and focus. */
 .scene-open::before { content: ''; position: absolute; left: .45rem; top: 50%; width: .5rem; height: .85rem; transform: translateY(-50%); background: radial-gradient(circle, currentColor 1.1px, transparent 1.4px) 0 0 / .5rem .285rem; opacity: .3; }
 .tree-row:hover .scene-open::before, .scene-open:focus::before { opacity: .75; }
-.scene-excerpt { flex: 1 1 100%; order: 3; margin: 0; padding: 0 .5rem .5rem 1.5rem; height: 4.2em; box-sizing: content-box; color: var(--fg-muted); font-size: 1rem; line-height: 1.4; cursor: grab; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+/* Bottom space is a margin: Chromium paints line-clamped overflow inside bottom padding. */
+.scene-excerpt { flex: 1 1 100%; order: 3; margin: 0 0 .5rem; padding: 0 .5rem 0 1.5rem; height: 4.2em; box-sizing: content-box; color: var(--fg-muted); font-size: 1rem; line-height: 1.4; cursor: grab; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .scene-excerpt.is-empty { font-style: italic; opacity: .7; }
 .scene-excerpt.is-pending { color: transparent; }
 .tree-scene:not(:last-child) > .tree-row { border-bottom: 1px solid var(--border); border-radius: 0; }
@@ -974,12 +987,22 @@ dialog { color: var(--fg); }
 .document-workspace .editor-toolbar { margin:0 0 6px; gap:4px; align-items:center; }
 .document-workspace .editor-toolbar > button,.document-workspace .editor-toolbar .md-view-toggle button { min-block-size:48px; font-size:1rem; padding:4px 10px; }
 .document-workspace .editor-toolbar .md-view-toggle { flex-basis:auto; margin:0; gap:4px; }
+/* Menu buttons in the toolbar keep a visible edge, like Details, Close and Read beside, so they read as controls. */
+.document-workspace .editor-toolbar > button:not([aria-controls="drafting-questions"]) { border-color:var(--border-strong); }
 .document-workspace .reference-source { max-block-size:none; overflow:visible; }
 .workspace-actions-dialog { box-sizing:border-box; width:min(42rem,calc(100vw - 16px)); max-width:calc(100vw - 16px); max-height:calc(100dvh - 16px); padding:clamp(12px,2vw,24px); }
 .workspace-actions-dialog :is(button,summary,input,select) { min-block-size:48px; font-size:1rem; }
 .workspace-actions-dialog :is(p,h2,button,summary) { word-break:normal; overflow-wrap:normal; }
 .workspace-action-controls { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
 .workspace-action-controls.document-reading .source-only { display:none; }
+/* Header pieces that only make sense in the floating pill get plain labels in this list. */
+.workspace-action-controls :is(.pill-muted,.pill-rule) { display:none; }
+.workspace-action-controls .pill-words { font:400 1rem var(--font-ui, var(--ui-fallback)); color:var(--fg); padding-block:4px; }
+.workspace-action-controls .pill-words::before { content:'Current scene: '; color:var(--fg-muted); }
+.workspace-action-controls button.pill-key { font:400 1rem var(--font-ui, var(--ui-fallback)); font-family:var(--font-ui, var(--ui-fallback)) !important; text-align:start; }
+.workspace-action-controls kbd { margin-inline:.4rem; font-size:.875rem; }
+.workspace-action-controls button.ghost { border-color:var(--border); color:var(--fg); }
+.workspace-action-controls .pill-key::before { content:'Jump to scene, file or command: '; }
 .workspace-actions-dialog .menu { position:static; min-width:0; max-width:100%; max-height:none; box-sizing:border-box; }
 .document-full-path { overflow-wrap:anywhere !important; user-select:text; }
 @media(max-width:760px) {
@@ -1028,11 +1051,21 @@ dialog { color: var(--fg); }
 .notice-slot > .status { position:relative; inset:auto; transform:none; width:100%; max-width:none; height:100%; margin:0; padding:4px 8px; overflow:auto; border-radius:0; text-align:start; font-size:1rem; }
 .studio:not(.standalone-writing):has(.document-workspace) > .notice-slot { grid-row:2; position:relative; inset:auto; transform:none; width:100%; max-width:none; height:100%; }
 .standalone-writing > .notice-slot { display:contents; }
+/* Document mode: "Saved" lives in the top bar and the transient message is a toast at the bottom
+   instead of a reserved row, so a message appearing or fading never moves the writing. It is inert to
+   the pointer so it can never block a control it floats over; focusing it (Tab) makes it scrollable. */
+.studio:not(.standalone-writing):has(.document-workspace) { grid-template-rows:auto 0 minmax(0,1fr); }
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill > .pill-save { padding:4px 8px; font-size:1rem; font-weight:600; overflow-wrap:normal; }
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill > .pill-save:not([data-state="error"]) { color:var(--fg); }
+.studio:not(.standalone-writing):has(.document-workspace) > .notice-slot { display:block; position:static; height:0; overflow:visible; }
+.studio:not(.standalone-writing):has(.document-workspace) > .notice-slot > .status { position:fixed; inset:auto auto 1rem 50%; transform:translateX(-50%); z-index:7; width:max-content; max-width:min(46rem,calc(100vw - 2rem)); height:auto; max-height:6rem; padding:.5rem .9rem; border:1px solid var(--border-strong); border-radius:var(--radius); background:var(--chrome-bg); pointer-events:none; }
+.studio:not(.standalone-writing):has(.document-workspace) > .notice-slot > .status:focus { pointer-events:auto; }
+@media(max-width:760px) { .studio:not(.standalone-writing):has(.document-workspace) > .notice-slot > .status { inset-block-end:4.5rem; } }
 .standalone-writing > .notice-slot > .status { position:relative; inset:auto; transform:none; width:auto; max-width:calc(100% - 1rem); margin:.5rem; height:4rem; }
 .standalone-writing > .status-pill > .navigation-toggle { display:none; }
 @media(max-width:480px) { .notice-slot { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); gap:0; } .notice-slot > .pill-save { padding-block:0; } }
 /* The live save model remains visible even where legacy compact chrome hid it. */
-.studio .notice-slot > .pill-save,.studio.standalone-writing > .status-pill > .pill-save { display:inline-flex; }
+.studio .notice-slot > .pill-save,.studio.standalone-writing > .status-pill > .pill-save,.studio > .status-pill > .pill-save { display:inline-flex; }
 
 /* Keep routine save notices stable without reserving a paragraph of empty chrome.
    Long messages scroll inside the same row, so autosave cannot move the caret. */

@@ -32,8 +32,8 @@ for (const zoom of [100, 200]) {
     };
     await page.keyboard.press('Control+j');
     await expect(page.locator('.question-panel')).toBeVisible();
-    await expect(page.getByRole('dialog', {name: 'Scene and chapter chats', exact: true})).toBeVisible();
-    await expect(page.getByRole('dialog', {name: 'Scene and chapter chats', exact: true})).toHaveJSProperty('open', true);
+    await expect(page.getByRole('dialog', {name: 'Scene and chapter editors', exact: true})).toBeVisible();
+    await expect(page.getByRole('dialog', {name: 'Scene and chapter editors', exact: true})).toHaveJSProperty('open', true);
     await expect(anchored).toPass();
     await page.keyboard.press('Escape');
     await expect(page.locator('.question-panel')).toBeHidden();
@@ -155,7 +155,8 @@ for (const zoom of [100, 200]) {
     expect(box!.x).toBeGreaterThanOrEqual(0);
     expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
     expect(await status.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true);
-    expect(await status.evaluate(el=>{const rect=el.getBoundingClientRect();return el.contains(document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2));})).toBe(true);
+    // The message floats over the page, so it must stay inert to the pointer and never block a control; focus makes it interactive below.
+    expect(await status.evaluate(el=>getComputedStyle(el).pointerEvents)).toBe('none');
     await status.focus();
     await expect(status).toBeFocused();
     await page.keyboard.press('End');

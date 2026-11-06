@@ -1094,7 +1094,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (!hooks.rail || !hooks.closePane || element.hidden) return;
         hide();
         hooks.closePane();
-        hooks.announce?.(`Review complete. Chats closed. ${plural(result?.edits.filter(waiting).length ?? 0, 'suggestion')} ready in the manuscript. Reopen Chats for the review assessment.`);
+        hooks.announce?.(`Review complete. Editors closed. ${plural(result?.edits.filter(waiting).length ?? 0, 'suggestion')} ready in the manuscript. Reopen Editors for the review assessment.`);
     }
     async function submit(continuing = false) {
         if (pending || busy || (!continuing && scopeProblem()) || !ready() || !scope || !core.requestReview)
@@ -1788,7 +1788,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (disposed || pending || busy || automaticRunning || !workflowMode || !core.listReviews || !core.continueReview) return;
         const token = generation;
         // Startup has no visible pane yet. Keep the existing hidden-review lifetime
-        // guard active without opening Chats or moving the author's focus.
+        // guard active without opening Editors or moving the author's focus.
         suspended = true;
         recoveringStartup = true;
         const liveHere = () => live(token);

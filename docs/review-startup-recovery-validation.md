@@ -15,7 +15,7 @@ before admission or while credentials are loading. Recovery stops after a failed
 batch or one making no progress, and does not retry a job repeatedly in the same
 renderer session.
 
-The editor remains usable. Startup recovery does not open Chats, move focus or
+The editor remains usable. Startup recovery does not open Editors, move focus or
 change manuscript geometry. Completion reports results; when any job needs
 attention, the notification opens the first such job. Native continuation and
 read-only saved-review viewing cannot replace another active batch's cache.

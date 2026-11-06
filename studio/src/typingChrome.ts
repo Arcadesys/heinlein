@@ -51,17 +51,29 @@ export function createTypingChrome(options: {
   let anchorTop = 0;
   let anchorScroll = 0;
   let preserveScroll = false;
+  let extra = 0;
+  let anchorExtra = 0;
+  let basePadding = 0;
   let settle: ReturnType<typeof setTimeout> | null = null;
   let compositionView: EditorView | null = null;
   let compositionStartText: Text | null = null;
   let activeWriter: EditorView | null = null;
 
-  // Recover vertical space without moving a scrolled passage on screen. At the
-  // beginning of a document the page may slide upward, but never changes width.
+  // Recover vertical space without moving the passage on screen. A pane cannot
+  // scroll to a negative offset, so near the top of a document the shortfall is
+  // covered by temporary top padding. The prose keeps its exact screen position
+  // while the controls hide, and the padding is released when they return.
+  const setExtra = (value: number) => {
+    if (value === extra) return;
+    extra = value;
+    writerPane.style.paddingTop = value > 0 ? `${basePadding + value}px` : '';
+  };
   const compensateScroll = (keepCaretVisible = true) => {
     if (!preserveScroll) return;
     const bounds = writerPane.getBoundingClientRect();
-    writerPane.scrollTop = anchorScroll + bounds.top - anchorTop;
+    const target = anchorScroll - anchorExtra + bounds.top - anchorTop;
+    setExtra(Math.max(0, -target));
+    writerPane.scrollTop = Math.max(0, target);
     if (!keepCaretVisible || !activeWriter?.hasFocus || !writerPane.contains(activeWriter.dom)) return;
     // A stacked reference changes the writer's lower boundary too. Preserve
     // the passage when it fits, but never anchor the caret outside its pane.
@@ -77,7 +89,9 @@ export function createTypingChrome(options: {
     if (disposed || hidden === value) return;
     anchorTop = writerPane.getBoundingClientRect().top;
     anchorScroll = writerPane.scrollTop;
-    preserveScroll = writerPane.scrollTop > content.getBoundingClientRect().height;
+    anchorExtra = extra;
+    if (extra === 0) basePadding = parseFloat(getComputedStyle(writerPane).paddingTop) || 0;
+    preserveScroll = true;
     hidden = value;
     element.classList.toggle('is-typing', value);
     content.inert = value;
@@ -102,6 +116,7 @@ export function createTypingChrome(options: {
     reveal();
     preserveScroll = false;activeWriter = null;
     if (settle) {clearTimeout(settle);settle = null;}
+    setExtra(0);
   }
   const extension = EditorView.updateListener.of((update: ViewUpdate) => {
     if (!update.view.hasFocus || update.state.readOnly || !writerPane.contains(update.view.dom) || !isWritingInput(update.transactions)) return;
