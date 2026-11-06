@@ -12,6 +12,8 @@ for (const scale of [100, 200]) test(`unopened sheets show accessible cached pre
   const preview=page.locator('.scene-excerpt[data-path="ms/second.md"]');
   await expect(preview).toHaveText('Synthetic opening.');
   await expect(preview).toBeVisible();
+  // Clamped overflow paints inside bottom padding, so spacing must not be padding.
+  expect(await preview.evaluate(node=>getComputedStyle(node).paddingBottom)).toBe('0px');
   await expect(second).toHaveAccessibleDescription('Synthetic opening.');
   await expect(page.locator('.document-tabs [role="tab"]')).toHaveCount(0);
   // Collapsing and expanding uses the same excerpts, without selecting a sheet.

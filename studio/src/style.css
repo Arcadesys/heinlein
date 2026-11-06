@@ -360,7 +360,8 @@ dialog { color: var(--fg); }
 /* A dotted grip says the row can be picked up; it brightens on hover and focus. */
 .scene-open::before { content: ''; position: absolute; left: .45rem; top: 50%; width: .5rem; height: .85rem; transform: translateY(-50%); background: radial-gradient(circle, currentColor 1.1px, transparent 1.4px) 0 0 / .5rem .285rem; opacity: .3; }
 .tree-row:hover .scene-open::before, .scene-open:focus::before { opacity: .75; }
-.scene-excerpt { flex: 1 1 100%; order: 3; margin: 0; padding: 0 .5rem .5rem 1.5rem; height: 4.2em; box-sizing: content-box; color: var(--fg-muted); font-size: 1rem; line-height: 1.4; cursor: grab; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+/* Bottom space is a margin: Chromium paints line-clamped overflow inside bottom padding. */
+.scene-excerpt { flex: 1 1 100%; order: 3; margin: 0 0 .5rem; padding: 0 .5rem 0 1.5rem; height: 4.2em; box-sizing: content-box; color: var(--fg-muted); font-size: 1rem; line-height: 1.4; cursor: grab; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .scene-excerpt.is-empty { font-style: italic; opacity: .7; }
 .scene-excerpt.is-pending { color: transparent; }
 .tree-scene:not(:last-child) > .tree-row { border-bottom: 1px solid var(--border); border-radius: 0; }
@@ -984,7 +985,9 @@ dialog { color: var(--fg); }
 .workspace-action-controls :is(.pill-muted,.pill-rule) { display:none; }
 .workspace-action-controls .pill-words { font:400 1rem var(--font-ui, var(--ui-fallback)); color:var(--fg); padding-block:4px; }
 .workspace-action-controls .pill-words::before { content:'Current scene: '; color:var(--fg-muted); }
-.workspace-action-controls .pill-key { font:inherit; text-align:start; }
+.workspace-action-controls button.pill-key { font:400 1rem var(--font-ui, var(--ui-fallback)); font-family:var(--font-ui, var(--ui-fallback)) !important; text-align:start; }
+.workspace-action-controls kbd { margin-inline:.4rem; font-size:.875rem; }
+.workspace-action-controls button.ghost { border-color:var(--border); color:var(--fg); }
 .workspace-action-controls .pill-key::before { content:'Jump to scene, file or command: '; }
 .workspace-actions-dialog .menu { position:static; min-width:0; max-width:100%; max-height:none; box-sizing:border-box; }
 .document-full-path { overflow-wrap:anywhere !important; user-select:text; }
