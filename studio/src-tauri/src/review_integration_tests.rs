@@ -882,3 +882,80 @@ fn consolidated_assessment_and_individual_passes_survive_disk_reopen_without_sou
     assert_eq!(f.repo.read("scene.md").unwrap().text, BEFORE);
     assert!(f.ids().is_empty());
 }
+
+#[test]
+fn standalone_review_workflow_persists_across_writer_sessions_without_project() {
+    use repository_core::standalone::DraftStore;
+    use std::sync::Arc;
+    let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let drafts = Arc::new(DraftStore::open(temp.path().join("drafts")).unwrap());
+    let (lease, draft) = drafts.create(BEFORE).unwrap();
+    let lease = Arc::new(lease);
+    let identity = temp.path().join("identities").join(&draft.id);
+    let repo = Repository::standalone_review(&identity, Arc::clone(&drafts), &lease).unwrap();
+    let request = ReviewRequest {
+        request_id: "standalone-synthetic-review".into(),
+        repository_id: "standalone-old-writer".into(),
+        scope: ReviewScope::Scene,
+        snapshots: vec![ReviewSnapshot {
+            path: "draft.md".into(),
+            source: BEFORE.into(),
+            source_hash: draft.text_hash.clone(),
+            scene_id: Some(draft.id.clone()),
+        }],
+        workflow: Some(Options {
+            consolidate: false,
+            reviewers: vec!["contextual".into()],
+            context: vec![],
+            context_note: String::new(),
+            full_context_order: None,
+            ranges: vec![],
+            review_id: None,
+        }),
+    };
+    let mut session = ReviewSession::workflow(
+        request,
+        repo.project_key(),
+        "fixture-model".into(),
+        "fixture-account".into(),
+        1,
+    )
+    .unwrap();
+    let records = ReviewStore::open(temp.path().join("reviews")).unwrap();
+    session.persist(&records, &repo).unwrap();
+    let review_id = session.id().to_owned();
+    drop(lease);
+    assert!(repo.read("draft.md").is_err());
+    let lease = Arc::new(drafts.acquire(&draft.id).unwrap());
+    let reopened = Repository::standalone_review(&identity, Arc::clone(&drafts), &lease).unwrap();
+    let mut cached = None;
+    assert!(ReviewSession::refresh_cached(
+        &mut cached,
+        &records,
+        &reopened,
+        "standalone-new-writer",
+        &review_id,
+        |_| false
+    )
+    .unwrap());
+    let restored = cached.unwrap();
+    assert!(restored.matches("standalone-new-writer", &review_id));
+    assert!(!restored.matches("standalone-old-writer", &review_id));
+    assert_eq!(
+        restored.request.snapshots[0].scene_id.as_deref(),
+        Some(draft.id.as_str())
+    );
+    let other = drafts.create("Other draft").unwrap();
+    let other_lease = Arc::new(other.0);
+    let other_repo = Repository::standalone_review(
+        &temp.path().join("identities").join(&other.1.id),
+        Arc::clone(&drafts),
+        &other_lease,
+    )
+    .unwrap();
+    assert!(records
+        .load::<ReviewSession>(&other_repo, &review_id)
+        .is_err());
+    assert!(!identity.join("draft.md").exists());
+    assert_eq!(drafts.read(&draft.id).unwrap().draft.text, BEFORE);
+}

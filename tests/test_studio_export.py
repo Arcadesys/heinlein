@@ -1,9 +1,43 @@
 from pathlib import Path
+import os
+import subprocess
+import sys
 
 import pytest
 
 from heinlein import studio_export
 from heinlein.outputs import pdf
+
+
+def test_studio_export_works_without_optional_pdf_normalizer(tmp_path):
+    script = r'''
+import builtins
+from pathlib import Path
+import sys
+original_import = builtins.__import__
+def without_normalizer(name, *args, **kwargs):
+    if name.split(".")[0] == "pikepdf":
+        raise ModuleNotFoundError("Synthetic missing pikepdf", name="pikepdf")
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = without_normalizer
+from heinlein import studio_export
+studio_export.pandoc.md_to_html = lambda text: "<p>Exact — body.</p>"
+root = Path(sys.argv[1])
+source = root / "source.md"
+source.write_text("# Original\n\nExact — body.\n")
+before = source.read_bytes()
+output = studio_export.export(manuscript=source, output_dir=root / "output",
+    format="html", title="Synthetic review", author="Writer")
+assert "Exact — body." in output.read_text()
+assert source.read_bytes() == before
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])},
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_html_is_a_plain_manuscript_with_escaped_title(tmp_path, monkeypatch):

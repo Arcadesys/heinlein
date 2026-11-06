@@ -75,6 +75,7 @@ enum Plan {
 )]
 pub(crate) enum Request {
     Status,
+    ChooserStatus,
     LocalProjects,
     LocalProject {
         repository_id: String,
@@ -374,6 +375,13 @@ fn listed_repository<'a>(
         .find(|r| r.id == id)
         .ok_or_else(|| "Choose a repository from a fresh list.".into())
 }
+fn repository_list_error(e: gh::Error) -> String {
+    match e {
+        gh::Error::Limit => "The repository list is too large to load safely. You can still paste a repository URL below.".into(),
+        gh::Error::Permission => "GitHub denied repository access. Check the selected repositories, organization approval or SSO on GitHub, then refresh the list.".into(),
+        other => other.to_string(),
+    }
+}
 fn open(app: &tauri::AppHandle, s: &Services, w: &Workspace) -> Result<Session> {
     s.registry.reopen(&w.id).map_err(|e| e.to_string())?;
     super::select(app, s.registry.checkout(&w.id).map_err(|e| e.to_string())?)
@@ -522,16 +530,39 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
         state.mutation_gate.invalidate();
         return Ok(Value::Null);
     }
-    if let Request::Status = request {
+    if matches!(request, Request::Status | Request::ChooserStatus) {
         let r = registry(app)?;
         let workspaces=r.list().map_err(|e|e.to_string())?.into_iter().map(|w|{let error=r.reopen(&w.id).err().map(|e|e.to_string());let receipts=r.directory(&w.id).and_then(|d|journal::receipts(&d)).map_err(|e|e.to_string())?;Ok(json!({"workspace":w,"error":error,"incomingRecovery":incoming::pending(&r,&w.id).map_err(|e|e.to_string())?,"branchRecovery":(operations::branch_pending(&r,&w.id).map_err(|e|e.to_string())? || gh::branches::pending(&r,&w.id).map_err(|e|e.to_string())? || r.metadata_pending(&w.id).map_err(|e|e.to_string())?),"receipts":receipts}))}).collect::<Result<Vec<_>>>()?;
-        let (auth, error) =
-            match services(app).and_then(|s| s.auth.view().map_err(|e| e.to_string())) {
-                Ok(a) => (Some(a), None),
-                Err(e) => (None, Some(e)),
-            };
+        let mut repositories = None;
+        let mut repositories_error = None;
+        let (auth, error) = match services(app).and_then(|s| {
+            if matches!(request, Request::ChooserStatus) {
+                let (view, credential) = s.auth.chooser(&s.api, gh::auth::now()).map_err(|e| e.to_string())?;
+                let credential = match credential {
+                    Ok(c) => c,
+                    Err(e @ gh::Error::RotationNotSaved(_)) => return Err(e.to_string()),
+                    Err(e) => { repositories_error = Some(e.to_string()); None }
+                };
+                if let Some(c) = credential {
+                    match s.api.repositories(&c) {
+                        Ok(list) => {
+                            let result = (|| -> Result<Value> {
+                                current(&state, started)?;
+                                let id = super::id();
+                                let value = json!({"id":id,"account":c.account,"repositories":list.repositories,"unavailable":list.unavailable});
+                                put(app, id, None, started, Plan::Repositories(list, c.account.id, c.binding.clone()))?;
+                                Ok(value)
+                            })();
+                            match result { Ok(value) => repositories = Some(value), Err(e) => repositories_error = Some(e) }
+                        }
+                        Err(e) => repositories_error = Some(repository_list_error(e)),
+                    }
+                }
+                Ok(view)
+            } else { s.auth.view().map_err(|e| e.to_string()) }
+        }) { Ok(a) => (Some(a), None), Err(e) => (None, Some(e)) };
         return Ok(
-            json!({"auth":auth,"error":error,"workspaces":workspaces,"app":{"id":5412628,"clientId":CLIENT_ID,"slug":"heinlein-studio","owner":"Arcadesys","installUrl":INSTALL}}),
+            json!({"auth":auth,"error":error,"workspaces":workspaces,"repositories":repositories,"repositoriesError":repositories_error,"app":{"id":5412628,"clientId":CLIENT_ID,"slug":"heinlein-studio","owner":"Arcadesys","installUrl":INSTALL}}),
         );
     }
     let s = services(app)?;
@@ -541,11 +572,7 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<Value> {
                 .auth
                 .credential(&s.api, gh::auth::now())
                 .map_err(|e| e.to_string())?;
-            let list = s.api.repositories(&c).map_err(|e| match e {
-                gh::Error::Limit => "The repository list is too large to load safely. You can still paste a repository URL below.".into(),
-                gh::Error::Permission => "GitHub denied repository access. Check the selected repositories, organization approval or SSO on GitHub, then refresh the list.".into(),
-                other => other.to_string(),
-            })?;
+            let list = s.api.repositories(&c).map_err(repository_list_error)?;
             current(&state, started)?;
             let id = super::id();
             let view = json!({"id":id,"account":c.account,"repositories":list.repositories,"unavailable":list.unavailable});

@@ -17,7 +17,7 @@ def process_path(pid):
     fn.argtypes=[ctypes.c_int,ctypes.c_void_p,ctypes.c_uint32];fn.restype=ctypes.c_int
     buffer=ctypes.create_string_buffer(4096)
     if fn(pid,buffer,len(buffer))<=0:raise ValueError('Owned process identity unavailable')
-    return str(Path(os.fsdecode(buffer.value)).resolve())
+    return os.fsdecode(buffer.value)
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
@@ -32,11 +32,11 @@ def main():
     if any(startup.get(k)!=v for k,v in binding.items()):raise ValueError('Startup binding changed')
     if startup.get('collectorPID')!=claim.get('collectorPID'):raise ValueError('Collector does not match one-shot launch owner')
     if startup.get('phase')!='picker-manual-preview' or startup.get('acceptance') is not False:raise ValueError('Unknown startup state')
-    for pid_key,start_key,executable in [('pid','childStart',p['binary']),('collectorPID','collectorStart',p['python']['path'])]:
+    for pid_key,start_key,executable in [('pid','childStart',p['binary']),('collectorPID','collectorStart',p['python']['runtimeImagePath'])]:
         pid=startup[pid_key]
         if type(pid) is not int or pid<=0 or pid==os.getpid():raise ValueError('Distinct current owned PID required')
         current=subprocess.check_output(['/bin/ps','-p',str(pid),'-o','lstart='],text=True,env=sanitized_environment(p['root']['path'],os.environ)).strip()
-        if current!=startup[start_key] or process_path(pid)!=str(Path(executable).resolve()):raise ValueError('PID/start/executable changed; do not widen or retry')
+        if current!=startup[start_key] or process_path(pid)!=executable:raise ValueError('PID/start/executable changed; do not widen or retry')
     proof={k:startup[k] for k in ('pid','collectorPID','childStart','collectorStart','startupNonce','signedSha256','root')}
     proof.update(observerPID=os.getpid(),observerConfirmedLive=True,observedAt=time.time())
     reviewed=load_reviewed(p);reviewed.atomic_receipt(Path(p['control']['path'])/'startup-observed.json',proof)

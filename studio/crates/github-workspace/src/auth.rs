@@ -266,6 +266,9 @@ impl Auth {
         let _lock = self.private.lock("auth.lock")?;
         self.ready_to_quit()?;
         let r = self.load()?;
+        self.view_record(&r)
+    }
+    fn view_record(&self, r: &Option<Record>) -> Result<AuthView> {
         let pending = self
             .pending
             .lock()
@@ -386,7 +389,35 @@ impl Auth {
         }
         let _lock = self.private.lock("auth.lock")?;
         self.ready_to_quit()?;
-        let mut r = self.load()?.ok_or(Error::Reconnect)?;
+        let r = self.load()?.ok_or(Error::Reconnect)?;
+        self.credential_record(api, time, r)
+    }
+    /// A chooser opening owns one store read for both its account and list.
+    /// The record and lease are scoped to this operation, never cached.
+    pub fn chooser(
+        &self,
+        api: &dyn crate::api::Provider,
+        time: u64,
+    ) -> Result<(AuthView, Result<Option<Credential>>)> {
+        if self.client_id.is_empty() {
+            return Ok((self.view()?, Ok(None)));
+        }
+        let _lock = self.private.lock("auth.lock")?;
+        self.ready_to_quit()?;
+        let r = self.load()?;
+        let view = self.view_record(&r)?;
+        let credential = match r {
+            Some(record) if record.confirmed => self.credential_record(api, time, record).map(Some),
+            _ => Ok(None),
+        };
+        Ok((view, credential))
+    }
+    fn credential_record(
+        &self,
+        api: &dyn crate::api::Provider,
+        time: u64,
+        mut r: Record,
+    ) -> Result<Credential> {
         if !r.confirmed {
             return Err(Error::Account);
         }

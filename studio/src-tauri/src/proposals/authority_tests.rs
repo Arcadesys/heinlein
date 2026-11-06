@@ -1085,3 +1085,98 @@ fn seeded_review_authority_state_machine_never_writes_without_matching_confirmat
         }
     }
 }
+
+#[test]
+fn standalone_review_proposal_apply_revert_and_release_use_only_draft_store() {
+    use repository_core::standalone::DraftStore;
+    let t = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let drafts = Arc::new(DraftStore::open(t.path().join("drafts")).unwrap());
+    let (lease, draft) = drafts.create(BEFORE).unwrap();
+    let lease = Arc::new(lease);
+    let identity = t.path().join("identities").join(&draft.id);
+    let repo = Repository::standalone_review(&identity, Arc::clone(&drafts), &lease).unwrap();
+    let store = ProposalStore::open(t.path().join("proposals")).unwrap();
+    let receipts = ReceiptStore::open(t.path().join("receipts")).unwrap();
+    let recovery = RecoveryStore::open(t.path().join("recovery")).unwrap();
+    let proposal = store
+        .submit(
+            &repo,
+            "draft.md",
+            &draft.text_hash,
+            AFTER,
+            ProposalOrigin::native_openai("fixture".into(), id()),
+        )
+        .unwrap();
+    let mut authority = Authority::default();
+    let review = authority
+        .review(
+            &repo,
+            "standalone-session",
+            &store,
+            &receipts,
+            &recovery,
+            &proposal.id,
+            false,
+        )
+        .unwrap();
+    assert!(authority
+        .confirmation(&repo, "different-session", &review.binding(), false)
+        .is_err());
+    let review = authority
+        .review(
+            &repo,
+            "standalone-session",
+            &store,
+            &receipts,
+            &recovery,
+            &proposal.id,
+            false,
+        )
+        .unwrap();
+    let outcome = authority
+        .apply_confirmed(
+            &repo,
+            "standalone-session",
+            &receipts,
+            &recovery,
+            &review.binding(),
+            || false,
+        )
+        .unwrap();
+    assert_eq!(outcome.receipt.status, "completed");
+    assert_eq!(drafts.read(&draft.id).unwrap().draft.text, AFTER);
+    assert!(!identity.join("draft.md").exists());
+    let revert = authority
+        .review_revert(
+            &repo,
+            "standalone-session",
+            &recovery,
+            &outcome.receipt.id,
+            false,
+        )
+        .unwrap();
+    let undone = authority
+        .apply_confirmed(
+            &repo,
+            "standalone-session",
+            &receipts,
+            &recovery,
+            &revert.binding(),
+            || false,
+        )
+        .unwrap();
+    assert_eq!(undone.receipt.status, "completed");
+    assert_eq!(drafts.read(&draft.id).unwrap().draft.text, BEFORE);
+    drop(lease);
+    assert!(authority
+        .review(
+            &repo,
+            "standalone-session",
+            &store,
+            &receipts,
+            &recovery,
+            &proposal.id,
+            false
+        )
+        .is_err());
+}

@@ -157,6 +157,9 @@ fn same_revision_source(snapshot: &RevisionSnapshot, current: &repository_core::
 }
 
 fn selected_revision_session(state: &super::BrowserState, repository_id: &str) -> bool {
+    if repository_id.starts_with("standalone-") {
+        return super::standalone::review_session_active(state, repository_id);
+    }
     state.selected.lock().is_ok_and(|selected| {
         selected
             .as_ref()
@@ -183,7 +186,7 @@ fn capture_revision(
         return Err(QuestionError::stale_revision().into());
     }
     let recovery = super::recovery_store(app).map_err(NativeError::revision)?;
-    let source = super::with_repository(app, &target.repository_id, |repo| {
+    let source = super::standalone::with_review_repository(app, &target.repository_id, |repo| {
         recovery
             .with_clean_paths(repo, std::slice::from_ref(&target.path), || {
                 repo.read(&target.path)
@@ -243,7 +246,7 @@ fn persist_revision(
     }
     let (store, _) = super::proposals::stores(app).map_err(NativeError::revision)?;
     let recovery = super::recovery_store(app).map_err(NativeError::revision)?;
-    super::with_repository(app, &target.repository_id, |repo| {
+    super::standalone::with_review_repository(app, &target.repository_id, |repo| {
         recovery
             .with_clean_paths(repo, std::slice::from_ref(&target.path), || {
                 let current = repo.read(&target.path)?;
@@ -506,7 +509,7 @@ pub(crate) fn cancel_question(
     let mut slot = host.review.lock().map_err(|_| NativeError::unavailable())?;
     if let Some(session) = slot.as_mut().filter(|s| s.request.request_id == request_id) {
         let repository_id = session.request.repository_id.clone();
-        super::with_repository(&app, &repository_id, |repo| {
+        super::standalone::with_review_repository(&app, &repository_id, |repo| {
             if session.cancel_remaining() {
                 session.persist(&review_records(&app)?, repo)?;
             }
@@ -581,7 +584,7 @@ pub(crate) async fn reauthenticate_review(
     }
     let _active = Active(&host.review_active);
     let auth = host.auth(&app)?;
-    let (account, model, revision) = super::with_repository(&app, &repository_id, |repo| {
+    let (account, model, revision) = super::standalone::with_review_repository(&app, &repository_id, |repo| {
         let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
         ensure_review(&app, &mut slot, repo, &repository_id, &review_id)?;
         let session = review_session(&mut slot, &repository_id, &review_id)?;
@@ -628,7 +631,7 @@ pub(crate) async fn reauthenticate_review(
     if !matches_connection(&auth.status()?, &connection) {
         return Err(QuestionError::stale_connection().into());
     }
-    let review = super::with_repository(&app, &repository_id, |repo| {
+    let review = super::standalone::with_review_repository(&app, &repository_id, |repo| {
         let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
         ensure_review(&app, &mut slot, repo, &repository_id, &review_id)?;
         let session = review_session(&mut slot, &repository_id, &review_id)?;
@@ -1050,7 +1053,7 @@ pub(crate) async fn request_review(
             .selection_gate
             .try_lock()
             .map_err(|_| NativeError::revision("Repository operation in progress"))?;
-        super::with_repository(&capture_app, &capture.repository_id, |repo| {
+        super::standalone::with_review_repository(&capture_app, &capture.repository_id, |repo| {
             for snapshot in &capture.snapshots {
                 let current = repo.read(&snapshot.path).map_err(|e| e.to_string())?;
                 if current.generated_compatibility
@@ -1139,7 +1142,7 @@ pub(crate) fn get_review(
     } else {
         &mut local
     };
-    super::with_repository(&app, &repository_id, |repo| {
+    super::standalone::with_review_repository(&app, &repository_id, |repo| {
         ensure_review(&app, slot, repo, &repository_id, &review_id)?;
         Ok(review_session(slot, &repository_id, &review_id)?.view())
     })
@@ -1169,11 +1172,11 @@ pub(crate) async fn prepare_review_edit(
         let host = app.state::<QuestionHost>();
         let mut slot = host.review.lock().map_err(|_|"Review unavailable")?;
         if host.review_active.load(Ordering::SeqCst){return Err("Wait for the active reviewer batch to settle before approval".into())}
-        super::with_repository(&app,&repository_id,|repo|ensure_review(&app,&mut slot,repo,&repository_id,&review_id))?;
+        super::standalone::with_review_repository(&app,&repository_id,|repo|ensure_review(&app,&mut slot,repo,&repository_id,&review_id))?;
         let session = review_session(&mut slot,&repository_id,&review_id)?;
         let (store,_) = super::proposals::stores(&app)?;
         let recovery = super::recovery_store(&app)?;
-        super::with_repository(&app,&repository_id,|repo| {
+        super::standalone::with_review_repository(&app,&repository_id,|repo| {
             let candidate = session.candidate(&edit_id,&repo.project_key())?;
             let was_prepared = session.is_prepared(&edit_id);
             let path = candidate.path.clone();
@@ -1222,12 +1225,12 @@ pub(crate) async fn reject_review_edit(
         if host.review_active.load(Ordering::SeqCst) {
             return Err("Wait for the active reviewer batch before rejecting edits".into());
         }
-        super::with_repository(&app, &repository_id, |repo| {
+        super::standalone::with_review_repository(&app, &repository_id, |repo| {
             ensure_review(&app, &mut slot, repo, &repository_id, &review_id)
         })?;
         let session = review_session(&mut slot, &repository_id, &review_id)?;
         let (_, receipts) = super::proposals::stores(&app)?;
-        super::with_repository(&app, &repository_id, |repo| {
+        super::standalone::with_review_repository(&app, &repository_id, |repo| {
             let proposal = session.rejection_candidate(&edit_id, &repo.project_key())?;
             let receipt = state
                 .proposals
@@ -1262,7 +1265,7 @@ pub(crate) fn record_review_apply(
                 &receipt.replacement_hash,
                 &receipt.diff_hash,
             );
-            let _ = super::with_repository(app, repository_id, |repo| {
+            let _ = super::standalone::with_review_repository(app, repository_id, |repo| {
                 session.persist(&review_records(app)?, repo)
             });
         }
@@ -1281,7 +1284,7 @@ pub(crate) fn record_review_rejection(
     if let Ok(mut slot) = host.review.lock() {
         if let Some(session) = slot.as_mut() {
             session.rejected_proposal(repository_id, &receipt.proposal_id);
-            let _ = super::with_repository(app, repository_id, |repo| {
+            let _ = super::standalone::with_review_repository(app, repository_id, |repo| {
                 session.persist(&review_records(app)?, repo)
             });
         }
@@ -1385,12 +1388,12 @@ fn persist_review_cancellation(
         {
             return Ok(());
         }
-        super::with_repository(app, &request.repository_id, |repo| {
+        super::standalone::with_review_repository(app, &request.repository_id, |repo| {
             ensure_review(app, &mut local, repo, &request.repository_id, id)
         })?;
         &mut local
     };
-    super::with_repository(app, &request.repository_id, |repo| {
+    super::standalone::with_review_repository(app, &request.repository_id, |repo| {
         if let Some(session) = slot.as_mut() {
             if session.cancel_remaining() {
                 session.persist(&review_records(app)?, repo)?;
@@ -1449,7 +1452,7 @@ async fn request_review_workflow_inner(
     }
     let _active = Active(&host.review_active);
     let capture_repository = request.repository_id.clone();
-    let(defs,coverage,remaining,reports)=super::with_repository(&app,&capture_repository,|repo|{
+    let(defs,coverage,remaining,reports)=super::standalone::with_review_repository(&app,&capture_repository,|repo|{
   let mut slot=host.review.lock().map_err(|_|"Review unavailable")?;
   if let Some(id)=request.workflow.as_ref().and_then(|o|o.review_id.as_ref()){
    ensure_review(&app,&mut slot,repo,&request.repository_id,id)?;
@@ -1504,7 +1507,7 @@ async fn request_review_workflow_inner(
                 return Err(QuestionError::stale_connection());
             }
             let (coverage, suggestions) =
-                super::with_repository(&app, &request.repository_id, |repo| {
+                super::standalone::with_review_repository(&app, &request.repository_id, |repo| {
                     let store = review_records(&app)?;
                     let saved: Vec<crate::review_state::ReviewSession> =
                         store.list(repo).map_err(|e| e.to_string())?;
@@ -1563,7 +1566,7 @@ async fn request_review_workflow_inner(
     {
         return Err(QuestionError::stale_connection().into());
     }
-    super::with_repository(&app, &request.repository_id, |repo| {
+    super::standalone::with_review_repository(&app, &request.repository_id, |repo| {
         let store = review_records(&app)?;
         let saved: Vec<crate::review_state::ReviewSession> =
             store.list(repo).map_err(|e| e.to_string())?;
@@ -1597,7 +1600,7 @@ pub(crate) fn list_reviews(
 ) -> Result<Vec<crate::review_state::ReviewResult>, String> {
     super::check_window(&window)?;
     let host = app.state::<QuestionHost>();
-    super::with_repository(&app, &repository_id, |repo| {
+    super::standalone::with_review_repository(&app, &repository_id, |repo| {
         let saved: Vec<crate::review_state::ReviewSession> = review_records(&app)?
             .list(repo)
             .map_err(|e| e.to_string())?;
@@ -1628,7 +1631,7 @@ pub(crate) fn choose_review_edit(
     if host.review_active.load(Ordering::SeqCst) {
         return Err("Wait for the active reviewer batch before choosing alternatives".into());
     }
-    super::with_repository(&app, &repository_id, |repo| {
+    super::standalone::with_review_repository(&app, &repository_id, |repo| {
         ensure_review(&app, &mut slot, repo, &repository_id, &review_id)?;
         let r = review_session(&mut slot, &repository_id, &review_id)?;
         r.choose(&edit_id)?;
@@ -1681,7 +1684,7 @@ pub(crate) fn guard_review_proposal(
     if host.review_active.load(Ordering::SeqCst) {
         return Err("Wait for the active reviewer batch to settle".into());
     }
-    super::with_repository(app, repository_id, |repo| {
+    super::standalone::with_review_repository(app, repository_id, |repo| {
         ensure_review(app, &mut slot, repo, repository_id, &a.review_id)?;
         let r = review_session(&mut slot, repository_id, &a.review_id)?;
         let saved: crate::review_state::ReviewSession = review_records(app)?
@@ -1712,7 +1715,7 @@ pub(crate) fn preview_review(
 ) -> Result<Vec<drafting_questions::review_workflow::Coverage>, String> {
     super::check_window(&window)?;
     request.validate().map_err(|e| e.to_string())?;
-    super::with_repository(&app, &request.repository_id, |repo| {
+    super::standalone::with_review_repository(&app, &request.repository_id, |repo| {
         for s in request.snapshots.iter().chain(
             request
                 .workflow
@@ -1744,7 +1747,7 @@ pub(crate) async fn continue_review(
     on_progress: tauri::ipc::Channel<ReviewProgress>,
 ) -> Result<crate::review_state::ReviewResult, NativeError> {
     main_window(&window)?;
-    let request = super::with_repository(&app, &repository_id, |repo| {
+    let request = super::standalone::with_review_repository(&app, &repository_id, |repo| {
         // Admission happens in request_review_workflow. Do not replace the active
         // batch's cache while merely preparing a continuation request.
         let mut slot = None;

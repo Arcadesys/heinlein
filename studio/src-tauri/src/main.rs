@@ -44,10 +44,13 @@ mod github;
 mod manuscript_export;
 mod markdown_export;
 mod mcp_access;
+mod mcp_cli;
+mod mcp_setup;
 #[cfg(all(test, unix))]
 mod persistence_tests;
 mod preferences;
 mod preferences_store;
+mod project_creation;
 mod projects;
 mod proposals;
 mod questions;
@@ -253,10 +256,14 @@ fn select_repository_with_origin(
         return Err("Heinlein is quitting".into());
     }
     state.mutation_gate.note_activity();
-    let repo = Repository::open(&path).map_err(|e| e.to_string())?;
+    let repo = Repository::open(&path).map_err(project_creation::open_error)?;
     guard_auth_repository_separation(repo.root(), private_storage)?;
     if let Some(parent) = private_storage.parent() {
         guard_auth_repository_separation(repo.root(), &parent.join("standalone-drafts-v1"))?;
+        guard_auth_repository_separation(
+            repo.root(),
+            &parent.join("standalone-review-identities-v1"),
+        )?;
         guard_auth_repository_separation(repo.root(), &parent.join("projects-v1"))?;
     }
     let (manifests, warning) = match repo.discover() {
@@ -699,6 +706,9 @@ async fn list_system_fonts(window: tauri::WebviewWindow) -> Result<Vec<String>, 
     .map_err(|e| e.to_string())
 }
 fn main() {
+    if mcp_cli::run_if_requested() {
+        return;
+    }
     if std::env::args_os().any(|arg| arg == "--scene-native-acceptance") {
         #[cfg(all(feature = "scene-native-acceptance", target_os = "macos"))]
         {

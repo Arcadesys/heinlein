@@ -73,3 +73,17 @@ for(const high of [false,true])test(`recent project history stays explicit and r
  expect(await page.evaluate(()=>(window as any).projectFixture.requests.filter((r:any)=>r.action==='activate').length)).toBe(1);
  expect(await page.evaluate(()=>(window as any).projectFixture.externalCalls)).toEqual([]);expect(errors).toEqual([]);
 });
+
+test('new project is distinct from open-existing, cancel and errors retain writing, and successful create initializes one scene',async({page})=>{
+ await page.goto('/tests/browser/projects.html');await open(page,'Novel A');await scene(page);
+ const before=await page.evaluate(()=>(window as any).projectFixture.documents['local-a']['scene.md']);
+ await library(page);await activate(page,page.getByRole('button',{name:'New project…',exact:true}));
+ const dialog=page.getByRole('dialog',{name:'New project',exact:true});const name=dialog.getByRole('textbox',{name:'Project name',exact:true});
+ await expect(name).toBeFocused();await name.fill('Novel A');await name.press('Enter');await expect(dialog).toContainText('already exists');await expect(page.locator('.pill-project')).toHaveText('Novel A');
+ await name.fill('New story');await page.evaluate(()=>(window as any).projectFixture.setCancelCreate(true));await name.press('Enter');await expect(dialog).toContainText('creation canceled');await expect(name).toHaveValue('New story');await expect(name).toBeFocused();await expect(page.locator('.pill-project')).toHaveText('Novel A');
+ expect(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);expect((await new AxeBuilder({page}).include('.project-library').analyze()).violations).toEqual([]);
+ await page.evaluate(()=>(window as any).projectFixture.setCancelCreate(false));await name.press('Enter');await expect(dialog).not.toBeVisible();await expect(page.locator('.pill-project')).toHaveText('New story');
+ expect(await page.evaluate(()=>(window as any).projectFixture.documents['local-a']['scene.md'])).toBe(before);
+ const result=await page.evaluate(()=>{const f=(window as any).projectFixture,p=f.projects.find((p:any)=>p.name==='New story');return{documents:f.documents[p.id],scenes:f.manuscripts[p.id].scenes,external:f.externalCalls,created:f.projects.filter((p:any)=>p.name==='New story').length};});
+ expect(result.documents).toEqual({'ms/first-scene.md':''});expect(result.scenes).toHaveLength(1);expect(result.created).toBe(1);expect(result.external).toEqual([]);
+});

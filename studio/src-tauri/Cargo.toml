@@ -34,6 +34,7 @@ fontdb = "0.24"
 github-workspace = { path = "../crates/github-workspace" }
 repository-core = { path = "../crates/repository-core" }
 proposal-store = { path = "../crates/proposal-store" }
+heinlein-local-mcp = { path = "../crates/local-mcp" }
 drafting-questions = { path = "../crates/drafting-questions" }
 heinlein-chatgpt-auth = { path = "../crates/chatgpt-auth" }
 

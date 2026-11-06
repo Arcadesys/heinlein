@@ -164,8 +164,15 @@ manuscript: manuscript.md
 cover: cover.jpg
 imprint: free-play
 page:
-  size: digest             # digest=5.5x8.5, trade=6x9, mass=4.25x6.87
+  size: digest             # digest=5.5x8.5, trade=6x9, mass=4.25x6.87, letter=8.5x11
   margins: { top: 0.85in, side: 0.7in }
+  large_print: false       # opt-in PDF prose: 15pt, 1.65 line height
+pdf:
+  reproducible: false      # fixed metadata/ID; requires metadata.date
+styles:
+  print: styles/interior-print.css  # appended after built-in print rules
+  epub: styles/interior-epub.css    # appended after built-in EPUB rules
+  html: styles/interior-web.css     # appended in the HTML head
 metadata:
   rights: "© 2026 Austen Tucker. All rights reserved."
   publisher: "FREE PLAY Publishing (a fiction imprint of The Arcades)"
@@ -175,6 +182,23 @@ chapters: false           # true for book-length works — see below
 formats: [pdf, epub, docx, html, text]
 output: dist/
 ```
+
+`page.large_print` changes only PDF body prose to 15pt with 1.65 line height;
+the cover, title page, colophon, headings, margins, and end page keep the
+standard FREE PLAY treatment. `page.size: letter` is available for 8.5 × 11in
+editions.
+
+`pdf.reproducible: true` makes PDF output hermetic and repeatable. It uses the
+bundled Inter, Lora, and JetBrains Mono fonts, requires `metadata.date`, and
+normalizes the PDF's title, author, timestamps, Creator (`Heinlein 0.1.0`),
+and deterministic document ID after Chrome renders it. Existing projects keep
+their legacy Google Fonts and output behavior until they opt in.
+
+The optional `styles` paths are resolved relative to `heinlein.yaml`. Keep
+format-specific rules separate: paged-media geometry belongs in `print`, while
+reflow and reader overrides belong in `epub`. Project styles are appended after
+Heinlein's built-in rules so a release can make small, reviewable interior
+changes without forking the templates.
 
 ### Chapters
 
@@ -210,6 +234,23 @@ Then:
 ```sh
 cd path/to/project && heinlein build
 ```
+
+### Interactive Twine 1 stories
+
+Heinlein can turn a finite compiled Twine 1 HTML story into an accessible PDF
+and EPUB gamebook. Every choice is an internal link, each passage includes a
+restart link, and the source outline/system tiddlers stay out of the edition.
+
+```sh
+heinlein build Butterfly.html --source-format twine1 \
+  --author "Austen Tucker" --twine-exclude OUTLINE \
+  --output ./dist --formats pdf,epub
+```
+
+For project mode, set `source_format: twine1` and add a `twine:` mapping with
+optional `start`, `exclude`, and `restart_label` values. Heinlein rejects
+broken links, unreachable passages, duplicate passage names, and Twine macros
+that require runtime state rather than flattening them into a misleading book.
 
 ### Flags
 

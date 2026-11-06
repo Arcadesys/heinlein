@@ -1210,3 +1210,15 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 @media(prefers-reduced-motion:reduce) {
  .typing-chrome,.typing-chrome-content,.typing-chrome.is-typing .typing-chrome-content { transition:none; }
 }
+
+.mcp-access-panel { width:min(38rem,calc(100vw - 24px)); }
+.mcp-access-panel button, .project-connection-entry { min-height:max(48px,3rem); }
+.mcp-connection-step { margin-block:1rem; padding:1rem; border:1px solid var(--border); border-radius:var(--radius-sm); }
+.mcp-connection-step h3 { margin-top:0; }
+.mcp-connection-step textarea { box-sizing:border-box; width:100%; resize:vertical; font-family:var(--font-mono); font-size:.85rem; overflow-wrap:anywhere; }
+.mcp-connection-step details { margin-top:.8rem; }
+
+@media (max-width: 40rem) {
+  /* Keep enlarged labels readable without shrinking the author's text size. */
+  .mcp-access-panel, .mcp-access-panel .mcp-connection-step { padding: 12px; }
+}

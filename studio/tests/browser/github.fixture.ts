@@ -38,13 +38,19 @@ const change = () => ({ path: 'story.md', kind: 'edit', beforeHash: 'versioned',
 const sendVersions=[{head:'local',files:[{...change(),path:'earlier-scene.md'}]}];
 let incoming: GitHubIncoming = { id: 'synthetic-incoming', workspaceId: workspace.id, branch: workspace.branch, localHead: 'local', githubHead: 'incoming', files: [change()], ready: false, treatment: 'Synthetic candidate. No real files or remote repositories exist.', documents: [{ path: 'story.md', original: text, result: 'Author-approved candidate' }], conflicts: [{ id: 'synthetic-conflict', label: 'Opening scene', kind: 'prose', original: 'Original synthetic story.', yours: text, github: 'GitHub synthetic revision.', resolution: null }] };
 const unavailable = async (): Promise<never> => { throw new Error('Synthetic browser host has no native filesystem or OS account authority.'); };
+function repositoryList() {const mode=new URLSearchParams(location.search).get('repository-list');if(mode==='error'&&repositoryLoads++===0)throw new Error('GitHub could not be reached. Local writing remains available.');return {id:'synthetic-list',account:auth.account!,repositories:mode==='empty'?[]:[repo],unavailable:0};}
 async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
     calls.push(structuredClone(r));
-    if(r.action==='status'&&rotationPending)return{auth:null,error:rotationMessage('The secure credential store is locked. Unlock it and allow its access prompt.'),workspaces:[]};
+    if((r.action==='status'||r.action==='chooserStatus')&&rotationPending)return{auth:null,error:rotationMessage('The secure credential store is locked. Unlock it and allow its access prompt.'),workspaces:[]};
     switch (r.action) {
         case 'localProject': return {workspaceId:workspace.id,branch:workspace.branch,uncommitted:text!==versioned,unsentVersion:workspace.headOid!==workspace.baseOid&&workspace.remoteOid!==workspace.headOid,lastSendRecorded:receipts.some(r=>r.kind==='push'&&r.status==='succeeded')};
         case 'localProjects': return opened ? [{workspaceId:workspace.id,name:`${repo.owner}/${repo.name}`,branch:workspace.branch,unavailable:pendingWorkspaceRecovery?'Recovery required':null}]:[];
-        case 'status': return { auth, error: null, workspaces: opened ? [{ workspace, error: pendingWorkspaceRecovery?'Synthetic interrupted operation needs recovery.':null, incomingRecovery: pendingWorkspaceRecovery==='incoming', branchRecovery:pendingWorkspaceRecovery==='metadata', receipts:pendingWorkspaceRecovery==='version'?[{id:'synthetic-prepared-version',workspaceId:workspace.id,kind:'version',status:'prepared',head:workspace.headOid,message:'Synthetic local version needs recovery.',url:null}]:receipts }] : [], app: { id: 5412628, clientId: 'synthetic-public', owner: 'Arcadesys', slug: 'heinlein-studio', installUrl: 'https://github.com/apps/heinlein-studio' } };
+        case 'status':
+        case 'chooserStatus': {
+            let repositories, repositoriesError;
+            if(r.action==='chooserStatus'&&auth.confirmed){try{repositories=repositoryList();}catch(error){repositoriesError=String(error);}}
+            return { auth, error: null, workspaces: opened ? [{ workspace, error: pendingWorkspaceRecovery?'Synthetic interrupted operation needs recovery.':null, incomingRecovery: pendingWorkspaceRecovery==='incoming', branchRecovery:pendingWorkspaceRecovery==='metadata', receipts:pendingWorkspaceRecovery==='version'?[{id:'synthetic-prepared-version',workspaceId:workspace.id,kind:'version',status:'prepared',head:workspace.headOid,message:'Synthetic local version needs recovery.',url:null}]:receipts }] : [], app: { id: 5412628, clientId: 'synthetic-public', owner: 'Arcadesys', slug: 'heinlein-studio', installUrl: 'https://github.com/apps/heinlein-studio' }, repositories, repositoriesError };
+        }
         case 'retrySaved':
             if(++rotationRetries===1)throw new Error(rotationMessage('Secure credential access was cancelled. Retry when you are ready to allow access.'));
             rotationPending=false;auth={...auth,confirmed:true,account:{id:9,login:'synthetic-writer'}};return auth;
@@ -60,7 +66,7 @@ async function githubRequest(r: GitHubRequest): Promise<GitHubResponse> {
         case 'signOut':
             auth = { ...auth, account: null, confirmed: false, pending: null };
             return auth;
-        case 'repositories': {const mode=new URLSearchParams(location.search).get('repository-list');if(mode==='error'&&repositoryLoads++===0)throw new Error('GitHub could not be reached. Local writing remains available.');return {id:'synthetic-list',account:auth.account!,repositories:mode==='empty'?[]:[repo],unavailable:0};}
+        case 'repositories': return repositoryList();
         case 'previewListedRepository':
         case 'previewOpen': return { id: 'synthetic-open', repository: repo, account: auth.account!, treatment: 'Separate synthetic copy. No filesystem access.' };
         case 'confirmOpen':

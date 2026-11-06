@@ -109,6 +109,19 @@ and package metadata; they exclude manuscripts, examples, credentials, and app
 profiles. Release notes and the release manifest identify source provenance,
 checks, and remaining runtime limits.
 
+## New local projects
+
+Open **Projects → New project…**, enter a project name, and choose the parent
+folder. Confirm the displayed destination. Heinlein creates a new folder containing
+an empty **First scene** and a manuscript index, then switches to that project.
+Existing folders and files are never overwritten. Cancel keeps the current writing
+and leaves the project name available for another attempt.
+
+Use **Open an existing folder…** for writing that already has a folder. Creating a
+project does not send anything to GitHub or copy writing out of the current project.
+If an error says creation may have finished, check the displayed location and open
+that existing folder before trying to create another copy.
+
 ## GitHub projects
 
 Choose **GitHub projects…** to open an existing github.com repository as a separate
@@ -252,6 +265,17 @@ folder to locate their new location. The renderer cannot submit an arbitrary roo
 No Git commit, pull, checkout or push is performed.
 
 ## Layout and keyboard
+
+**Cmd/Ctrl+N** always starts a standalone draft, even while a project is open.
+The current writing must pass its existing save/recovery checks before switching.
+Use the Library’s **New scene** action to add writing to a project instead.
+
+Standalone drafts have **Heinlein**, **Review draft**, and **Revisions**. Opening
+these keeps the draft locally and prepares its own review identity, without
+creating a project or sending text. Choose **Ask**, **Suggest edits**, or
+**Run review** to send the displayed text through your connected account.
+Accepted revisions update only that draft, with source and writer-lease checks;
+its independent copies are unchanged. Saved review history stays with the draft.
 
 The page fills the window. Everything else floats: a status pill at the top
 (project, scene, word count, save state, daily goal, proposals), the file browser,

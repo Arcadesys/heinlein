@@ -431,6 +431,9 @@ pub(crate) struct Host {
 )]
 pub(crate) enum Request {
     List,
+    Create {
+        name: String,
+    },
     LastOpened,
     ClearLastOpened,
     Settings {
@@ -464,9 +467,14 @@ pub(crate) async fn project_request(
     request: Request,
 ) -> Result<serde_json::Value> {
     crate::check_window(&window)?;
-    tauri::async_runtime::spawn_blocking(move || dispatch(&app, request))
-        .await
-        .map_err(|_| "Project operation unavailable")?
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Request::Create { name } = request {
+            return crate::project_creation::create(&app, &window, &name);
+        }
+        dispatch(&app, request)
+    })
+    .await
+    .map_err(|_| "Project operation unavailable")?
 }
 fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<serde_json::Value> {
     let state = app.state::<crate::BrowserState>();
@@ -475,6 +483,7 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<serde_json::Valu
     }
     let (s, r) = inventory(app)?;
     match request {
+        Request::Create { .. } => Err("Project creation requires its native window".into()),
         Request::ClearLastOpened => {
             s.clear_last_opened()?;
             Ok(serde_json::Value::Null)

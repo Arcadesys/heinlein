@@ -52,6 +52,35 @@ def _templates_dir() -> Path:
     return Path(str(files("heinlein").joinpath("templates")))
 
 
+def _local_font_css(templates: Path) -> str:
+    """Return @font-face rules for the bundled PDF fonts.
+
+    Reproducible PDFs deliberately use file URLs rather than the legacy Google
+    Fonts stylesheet. That keeps the Chrome input hermetic without changing
+    projects that have not opted into reproducible output.
+    """
+    fonts = templates.parent / "fonts"
+    faces = (
+        ("Inter", "normal", 300, "Inter-Light.ttf"),
+        ("Inter", "normal", 400, "Inter-Regular.ttf"),
+        ("Inter", "normal", 500, "Inter-Medium.ttf"),
+        ("Inter", "normal", 600, "Inter-SemiBold.ttf"),
+        ("JetBrains Mono", "normal", 400, "JetBrainsMono-Regular.ttf"),
+        ("JetBrains Mono", "normal", 500, "JetBrainsMono-Medium.ttf"),
+        ("Lora", "normal", 400, "Lora-Regular.ttf"),
+        ("Lora", "normal", 500, "Lora-Medium.ttf"),
+        ("Lora", "italic", 400, "Lora-Italic.ttf"),
+        ("Lora", "italic", 500, "Lora-MediumItalic.ttf"),
+    )
+    return "\n".join(
+        "@font-face { "
+        f"font-family: '{family}'; font-style: {style}; font-weight: {weight}; "
+        f"src: url('{(fonts / filename).as_uri()}') format('truetype'); "
+        "font-display: block; }"
+        for family, style, weight, filename in faces
+    )
+
+
 def _slug(s: str) -> str:
     s = s.lower().strip()
     s = re.sub(r"[^a-z0-9]+", "-", s)
@@ -170,6 +199,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
     accents_override = _accents_override_css(cfg.accents)
     if accents_override:
         tokens_css = tokens_css + "\n" + accents_override
+    project_print_css = _project_style_css(cfg.styles.get("print"))
 
     dedication_lines = _dedication_lines(front, cfg.metadata)
 
@@ -193,6 +223,12 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         "sheet_h": cfg.page.height_in + 2 * cfg.page.bleed_in,
         "margin_top": cfg.page.margin_top,
         "margin_side": cfg.page.margin_side,
+        "body_font_size": 15 if cfg.page.large_print else 11,
+        "body_line_height": 1.65 if cfg.page.large_print else 1.55,
+        "prose_font_size": 15 if cfg.page.large_print else 11,
+        "prose_line_height": 1.65 if cfg.page.large_print else 1.6,
+        "local_fonts": cfg.pdf.reproducible,
+        "font_css": _local_font_css(templates) if cfg.pdf.reproducible else "",
         "cover_eyebrow": _cover_eyebrow(cfg.metadata, imprint["imprint_name"]),
         "cover_uri": cover.as_uri() if cover else None,
         "imprint_name": imprint["imprint_name"],
@@ -207,18 +243,27 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         "dedication_lines": dedication_lines,
         "body_html": body_html,
         "tokens_css": tokens_css,
+        "project_print_css": project_print_css,
     }
 
     results: dict[str, Path] = {}
 
     if "pdf" in cfg.formats:
         out = cfg.output / f"{slug}.pdf"
-        out_pdf.build(ctx=pdf_ctx, output=out, debug_dir=debug_dir)
+        out_pdf.build(
+            ctx=pdf_ctx,
+            output=out,
+            debug_dir=debug_dir,
+            reproducible=cfg.pdf.reproducible,
+            metadata_date=cfg.metadata.get("date"),
+        )
         results["pdf"] = out
 
     if "epub" in cfg.formats:
         out = cfg.output / f"{slug}.epub"
-        epub_css = _epub_css_for(templates, cfg.accents)
+        epub_css = _epub_css_for(
+            templates, cfg.accents, cfg.styles.get("epub")
+        )
         try:
             out_epub.build(
                 body_md=_epub_body(body_md, title, author, dedication_lines),
@@ -249,7 +294,9 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
 
     if "html" in cfg.formats:
         out = cfg.output / f"{slug}.html"
-        include_header = _html_include_header(cfg.accents)
+        include_header = _html_include_header(
+            cfg.accents, cfg.styles.get("html")
+        )
         try:
             out_html.build(
                 body_md=_html_body(body_md, title, author, cover, dedication_lines),
@@ -328,7 +375,32 @@ def _accents_override_css(accents: dict[str, str]) -> str:
     return "/* per-project accent overrides */\n:root {\n" + "\n".join(lines) + "\n}\n"
 
 
-def _epub_css_for(templates: Path, accents: dict[str, str]) -> Path:
+def _append_project_style(css: str, stylesheet: Path | None) -> str:
+    """Append a project-owned stylesheet after Heinlein's built-in rules."""
+    if stylesheet is None:
+        return css
+    return (
+        css
+        + f"\n\n/* project stylesheet: {stylesheet.name} */\n"
+        + stylesheet.read_text(encoding="utf-8")
+        + "\n"
+    )
+
+
+def _project_style_css(stylesheet: Path | None) -> str:
+    if stylesheet is None:
+        return ""
+    return (
+        f"/* project stylesheet: {stylesheet.name} */\n"
+        + stylesheet.read_text(encoding="utf-8")
+    )
+
+
+def _epub_css_for(
+    templates: Path,
+    accents: dict[str, str],
+    stylesheet: Path | None = None,
+) -> Path:
     """Return a CSS path for the EPUB build, with accent overrides applied.
 
     If there are no overrides, returns the bundled epub.css path directly.
@@ -336,9 +408,11 @@ def _epub_css_for(templates: Path, accents: dict[str, str]) -> Path:
     and returns its path — the caller is responsible for deleting it.
     """
     base = templates / "epub.css"
-    if not accents:
+    if not accents and stylesheet is None:
         return base
-    css = base.read_text(encoding="utf-8") + "\n" + _accents_override_css(accents)
+    css = base.read_text(encoding="utf-8")
+    css = css + "\n" + _accents_override_css(accents)
+    css = _append_project_style(css, stylesheet)
     tmp = tempfile.NamedTemporaryFile(
         mode="w", suffix=".css", delete=False, encoding="utf-8"
     )
@@ -347,14 +421,19 @@ def _epub_css_for(templates: Path, accents: dict[str, str]) -> Path:
     return Path(tmp.name)
 
 
-def _html_include_header(accents: dict[str, str]) -> Path | None:
+def _html_include_header(
+    accents: dict[str, str],
+    stylesheet: Path | None = None,
+) -> Path | None:
     """Write a temp HTML fragment with an accents override <style> block.
 
     Returns None when there are no overrides. The caller deletes the file.
     """
-    if not accents:
+    if not accents and stylesheet is None:
         return None
-    block = "<style>\n" + _accents_override_css(accents) + "</style>\n"
+    css = _accents_override_css(accents)
+    css = _append_project_style(css, stylesheet)
+    block = "<style>\n" + css + "</style>\n"
     tmp = tempfile.NamedTemporaryFile(
         mode="w", suffix=".html", delete=False, encoding="utf-8"
     )

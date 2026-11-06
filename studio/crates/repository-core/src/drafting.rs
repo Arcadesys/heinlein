@@ -1029,6 +1029,9 @@ impl Repository {
         Ok(paths)
     }
     pub fn load_drafting(&self) -> Result<DraftingState> {
+        if let Some(draft) = &self.standalone_review {
+            return draft.mapping();
+        }
         let (manifest, text) = self.drafting_manifest()?;
         let members = self.drafting_members()?;
         let scenes = manifest
