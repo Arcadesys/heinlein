@@ -25,7 +25,7 @@ test('@smoke typing reclaims vertical space without reflow, losing prose or stea
   expect(Math.abs(after.prose!-initial.prose!)).toBeLessThanOrEqual(1);
   await expect(writer(page)).toBeFocused();await expect(page.locator('.typing-chrome-content')).toHaveAttribute('inert','');
   await expect(page.getByRole('tablist',{name:'Open documents'})).toHaveCount(0);
-  await expect(page.locator('.notice-slot .pill-save')).toBeVisible();await expect(page.locator('.status-pill')).toBeVisible();
+  await expect(page.locator('.status-pill .pill-save')).toBeVisible();await expect(page.locator('.status-pill')).toBeVisible();
   const restore=page.getByRole('button',{name:'Show tabs and tools'});await expect(restore).toBeVisible();expect((await restore.boundingBox())!.height).toBeGreaterThanOrEqual(48);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:info.outputPath('typing-chrome-collapsed.png')});
@@ -46,7 +46,7 @@ test('keyboard restores controls, Source/Reading and tab navigation never remain
   await page.getByRole('button',{name:'Reading',exact:true}).first().click();await expect(page.locator('.active-document-pane .markdown-reader')).toBeVisible();
   await page.keyboard.press('ArrowDown');await expect(chrome(page)).not.toHaveClass(/is-typing/);
   await page.getByRole('button',{name:'Source',exact:true}).first().click();await type(page);
-  await page.keyboard.press('Escape');await page.keyboard.press('ControlOrMeta+s');await expect(page.locator('.notice-slot .pill-save')).toHaveText('Saved');
+  await page.keyboard.press('Escape');await page.keyboard.press('ControlOrMeta+s');await expect(page.locator('.status-pill .pill-save')).toHaveText('Saved');
   const tab=page.getByRole('tab',{name:'Meeting',exact:true});await tab.focus();await page.keyboard.press('Enter');await expect(tab).toHaveAttribute('aria-selected','true');await expect(chrome(page)).not.toHaveClass(/is-typing/);
   await type(page);await page.keyboard.press('Escape');
   await page.getByRole('button',{name:/^Editing actions$/}).click();const dialog=page.getByRole('dialog',{name:'Editor actions',exact:true});await expect(dialog).toBeVisible();
@@ -116,7 +116,7 @@ test('saved split actions restore intact and retain the narrow reference focus r
   await page.getByRole('dialog',{name:'Review manuscript change',exact:true}).getByRole('button',{name:'Apply change',exact:true}).click();
   const offer=page.locator('.split-reading-offer');await expect(offer).toBeVisible();
   await type(page);await expect(offer).toBeHidden();await page.keyboard.press('Escape');await expect(offer).toBeVisible();
-  await page.keyboard.press('ControlOrMeta+s');await expect(page.locator('.notice-slot .pill-save')).toHaveText('Saved');
+  await page.keyboard.press('ControlOrMeta+s');await expect(page.locator('.status-pill .pill-save')).toHaveText('Saved');
   await page.getByRole('button',{name:'Read both sections',exact:true}).click();await page.locator('.reference-source').focus();
   if(page.viewportSize()!.width<=600) await expect(offer).toBeHidden();else await expect(offer).toBeVisible();
   await page.getByRole('button',{name:'Source',exact:true}).first().focus();await expect(offer).toBeVisible();
@@ -127,7 +127,7 @@ test('saved split actions restore intact and retain the narrow reference focus r
 test('switching a scrolled hidden writer does not apply its scroll compensation to the next document', async ({page}) => {
   await open(page);
   await page.evaluate(()=>{const v=(window as any).documentFixture.view();v.dispatch({selection:{anchor:v.state.doc.line(24).from+5},scrollIntoView:true});v.focus();});await page.waitForTimeout(200);
-  await type(page);await page.keyboard.press('ControlOrMeta+s');await expect(page.locator('.notice-slot .pill-save')).toHaveText('Saved');
+  await type(page);await page.keyboard.press('ControlOrMeta+s');await expect(page.locator('.status-pill .pill-save')).toHaveText('Saved');
   expect(await page.locator('.active-document-pane').evaluate(el=>el.scrollTop)).toBeGreaterThan(100);
   await page.evaluate(async()=>{const f=(window as any).documentFixture;await f.app.showDocument(f.paths[1]);});
   await expect(chrome(page)).not.toHaveClass(/is-typing/);await page.waitForTimeout(220);

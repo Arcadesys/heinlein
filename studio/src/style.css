@@ -1051,11 +1051,20 @@ dialog { color: var(--fg); }
 .notice-slot > .status { position:relative; inset:auto; transform:none; width:100%; max-width:none; height:100%; margin:0; padding:4px 8px; overflow:auto; border-radius:0; text-align:start; font-size:1rem; }
 .studio:not(.standalone-writing):has(.document-workspace) > .notice-slot { grid-row:2; position:relative; inset:auto; transform:none; width:100%; max-width:none; height:100%; }
 .standalone-writing > .notice-slot { display:contents; }
+/* Document mode: "Saved" lives in the top bar and the transient message is a toast at the bottom
+   instead of a reserved row, so a message appearing or fading never moves the writing. It never
+   intercepts pointer events, so it cannot block a control. */
+.studio:not(.standalone-writing):has(.document-workspace) { grid-template-rows:auto 0 minmax(0,1fr); }
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill > .pill-save { padding:4px 8px; font-size:1rem; font-weight:600; overflow-wrap:normal; }
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill > .pill-save:not([data-state="error"]) { color:var(--fg); }
+.studio:not(.standalone-writing):has(.document-workspace) > .notice-slot { display:block; position:static; height:0; overflow:visible; }
+.studio:not(.standalone-writing):has(.document-workspace) > .notice-slot > .status { position:fixed; inset:auto auto 1rem 50%; transform:translateX(-50%); z-index:7; width:max-content; max-width:min(46rem,calc(100vw - 2rem)); height:auto; max-height:6rem; padding:.5rem .9rem; border:1px solid var(--border-strong); border-radius:var(--radius); background:var(--chrome-bg); pointer-events:none; }
+@media(max-width:760px) { .studio:not(.standalone-writing):has(.document-workspace) > .notice-slot > .status { inset-block-end:4.5rem; } }
 .standalone-writing > .notice-slot > .status { position:relative; inset:auto; transform:none; width:auto; max-width:calc(100% - 1rem); margin:.5rem; height:4rem; }
 .standalone-writing > .status-pill > .navigation-toggle { display:none; }
 @media(max-width:480px) { .notice-slot { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); gap:0; } .notice-slot > .pill-save { padding-block:0; } }
 /* The live save model remains visible even where legacy compact chrome hid it. */
-.studio .notice-slot > .pill-save,.studio.standalone-writing > .status-pill > .pill-save { display:inline-flex; }
+.studio .notice-slot > .pill-save,.studio.standalone-writing > .status-pill > .pill-save,.studio > .status-pill > .pill-save { display:inline-flex; }
 
 /* Keep routine save notices stable without reserving a paragraph of empty chrome.
    Long messages scroll inside the same row, so autosave cannot move the caret. */

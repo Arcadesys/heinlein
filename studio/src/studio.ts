@@ -879,7 +879,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   headerMedia=window.matchMedia?.('(max-width:760px)');headerMedia?.addEventListener?.('change',refreshHeaderLayout);
   function refreshHeaderLayout(){
     if(!appCommands)return;
-    if(standalone?.active)pill.insertBefore(pillSave,appCommands.button);else noticeSlot.prepend(pillSave);
+    pill.insertBefore(pillSave,appCommands.button);
     // Project switching stays a direct action at every window size.
     if(!appCommands.isOpen())pill.insertBefore(pillProject,proposalsEntry);
     const compact=!!headerMedia?.matches&&preview.contains(documentWorkspace)&&!standalone?.active;
@@ -2209,7 +2209,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if(!recoveryError&&!recoveryPending)scheduleProjectPosition();
       if (recoveryError) showRecoveryReadFailure(doc, recoveryError.error);
       else if (!recoveryPending) {
-        status.textContent = assembled?`${assembled.chapter.title} · ${assembled.parts.length} source sheets`:`Read ${doc.path} · ${doc.sizeBytes.toLocaleString()} bytes`;
+        // The path and size are in Document details; a writer does not need them announced on every open.
+        status.textContent = assembled?`${assembled.chapter.title} · ${assembled.parts.length} source sheets`:'';
         if (draft) await clearRecovery(draft, repositoryId, documentEpoch);
       }
       if(!recoveryError&&!recoveryPending)void refreshSharing();
