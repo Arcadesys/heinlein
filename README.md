@@ -235,6 +235,23 @@ Then:
 cd path/to/project && heinlein build
 ```
 
+### Interactive Twine 1 stories
+
+Heinlein can turn a finite compiled Twine 1 HTML story into an accessible PDF
+and EPUB gamebook. Every choice is an internal link, each passage includes a
+restart link, and the source outline/system tiddlers stay out of the edition.
+
+```sh
+heinlein build Butterfly.html --source-format twine1 \
+  --author "Austen Tucker" --twine-exclude OUTLINE \
+  --output ./dist --formats pdf,epub
+```
+
+For project mode, set `source_format: twine1` and add a `twine:` mapping with
+optional `start`, `exclude`, and `restart_label` values. Heinlein rejects
+broken links, unreachable passages, duplicate passage names, and Twine macros
+that require runtime state rather than flattening them into a misleading book.
+
 ### Flags
 
 | flag                | default     | meaning                                            |
