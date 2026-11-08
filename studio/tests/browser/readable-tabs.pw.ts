@@ -8,7 +8,7 @@ for(const high of [false,true])test(`sheet X buttons preserve writing and guard 
  await page.evaluate(async high=>{document.documentElement.dataset.zoom=high?'200':'100';(window as any).documentFixture.theme(high);await document.fonts.ready;},high);
  const initial=await page.evaluate(()=>JSON.stringify((window as any).documentFixture.fixture.documents));
  const close=page.getByRole('button',{name:'Close sheet Harvest Moon',exact:true}),inactive=page.getByRole('button',{name:'Close sheet The morning after',exact:true});
- await expect(close).toHaveText('×');await expect(inactive).toBeVisible();
+ await expect(close).toHaveText('Close');await expect(inactive).toBeVisible();
  // Keep this close-guard scenario genuinely unsaved even when CI layout/axe
  // work outlasts the real autosave debounce. Exercise the actual save-failure UI.
  await page.evaluate(()=>{const f=(window as any).documentFixture;f.fixture.setFailSave(true);const v=f.view();v.dispatch({changes:{from:0,insert:'Unsaved words. '},selection:{anchor:4}});});
@@ -54,10 +54,10 @@ test('UUID sheet files have readable tabs, keyboard names and full paths in Deta
  await page.keyboard.press('Enter');await expect(second).toHaveAttribute('aria-selected','true');
  await second.focus();await page.keyboard.press('End');await expect(first).toBeFocused();
  await page.keyboard.press('Enter');await expect(first).toHaveAttribute('aria-selected','true');
- await first.focus();const focus=await first.evaluate(node=>{const style=getComputedStyle(node);return {outline:style.outlineStyle,shadow:style.boxShadow,height:node.getBoundingClientRect().height};});
+ await first.focus();await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');const focus=await first.evaluate(node=>{const style=getComputedStyle(node);return {outline:style.outlineStyle,shadow:style.boxShadow,height:node.getBoundingClientRect().height};});
  expect(focus.outline!=='none'||focus.shadow!=='none').toBe(true);expect(focus.height).toBeGreaterThanOrEqual(48);
  const details=page.getByRole('button',{name:'Document details',exact:true});
- if(!await details.isVisible())await page.getByRole('button',{name:'Documents',exact:true}).click();
+ if(!await details.isVisible())await page.getByRole('button',{name:'Document actions',exact:true}).click();
  await details.click();
  const dialog=page.getByRole('dialog',{name:'Document details',exact:true});
  const summary=dialog.locator('summary').filter({hasText:'Harvest Moon'});await summary.focus();await page.keyboard.press('Enter');

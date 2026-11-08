@@ -65,7 +65,8 @@ for (const zoom of [1, 2]) for (const theme of ['default', 'contrast']) {
       scroller.scrollTop += (at.top - innerHeight / 2);
     });
     await page.waitForTimeout(200);
-    const sample = () => page.evaluate(() => (window as any).shiftFixture.sample());
+    // Read after CodeMirror's next measurement, including the last typed character.
+    const sample = () => page.evaluate(async () => {await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);return (window as any).shiftFixture.sample();});
     const before = await sample();
     expect(before.at.top).toBeGreaterThan(0);
     expect(before.at.bottom).toBeLessThan((await page.viewportSize())!.height);

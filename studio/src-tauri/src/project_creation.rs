@@ -1,5 +1,5 @@
 //! Explicit local project creation. Parent paths come only from the native picker.
-use repository_core::{standalone_placement::DraftDestination, RecoveryStore};
+use repository_core::{standalone_placement::DraftDestination, RecoveryStore, Repository};
 use std::{path::Path, sync::atomic::Ordering};
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
@@ -133,8 +133,38 @@ pub(crate) fn create(
         .map_err(|error| creation_error(&root, &error))?;
     // A post-write activation error must say that creation already succeeded;
     // never encourage repeating the create operation or silently remove files.
-    let session = guard().and_then(|()| crate::select(app, root.clone())).map_err(|error| format!("The project was created at {}, but could not be opened: {error} Use Open an existing folder to open it; do not create another copy.", root.display()))?;
+    let mut session = guard().and_then(|()| crate::select(app, root.clone())).map_err(|error| format!("The project was created at {}, but could not be opened: {error} Use Open an existing folder to open it; do not create another copy.", root.display()))?;
+    let repo =
+        Repository::open(&root).map_err(|error| creation_error(&root, &error.to_string()))?;
+    let resume = first_scene_resume(&repo).map_err(|error| creation_error(&root, &error))?;
+    let library = crate::projects::Store::open(&private.join("projects-v1"))
+        .map_err(|error| creation_error(&root, &error))?;
+    let project = library
+        .update(
+            &session.project_id,
+            session.project_revision,
+            None,
+            Some(resume.clone()),
+        )
+        .map_err(|error| creation_error(&root, &error))?;
+    session.project_revision = project.revision;
+    session.resume = Some(resume);
     serde_json::to_value(session).map_err(|_| "The project was created, but its session could not be returned. Open its existing folder instead of creating another copy.".into())
+}
+
+fn first_scene_resume(repo: &Repository) -> Result<crate::projects::Resume> {
+    let state = repo.load_drafting().map_err(|e| e.to_string())?;
+    let scene = state.scenes.first().ok_or("The first scene is missing")?;
+    let doc = repo.read(&scene.path).map_err(|e| e.to_string())?;
+    Ok(crate::projects::Resume {
+        path: scene.path.clone(),
+        source_hash: doc.content_hash,
+        scene_id: Some(scene.id.clone()),
+        anchor: 0,
+        head: 0,
+        scroll_top: 0,
+        reading_scroll_top: None,
+    })
 }
 
 #[cfg(test)]
@@ -179,6 +209,18 @@ mod tests {
         assert_eq!(state.scenes.len(), 1);
         assert_eq!(state.scenes[0].path, "ms/first-scene.md");
         assert_eq!(repo.read("ms/first-scene.md").unwrap().text, "");
+        let resume = first_scene_resume(&repo).unwrap();
+        assert_eq!(resume.path, "ms/first-scene.md");
+        assert!(crate::projects::validate_resume(&repo, &resume).is_ok());
+        let library = crate::projects::Store::open(&parent.join("private-library")).unwrap();
+        let project = library.register(repo.root(), None).unwrap();
+        library
+            .update(&project.id, project.revision, None, Some(resume.clone()))
+            .unwrap();
+        drop(library);
+        let reopened = crate::projects::Store::open(&parent.join("private-library")).unwrap();
+        assert_eq!(reopened.get(&project.id).unwrap().resume, Some(resume));
+
         let manifest = std::fs::read(target.path().join("ms/manuscript.json")).unwrap();
         assert!(write_new_project(&target, "New story", &recovery, || Ok(())).is_err());
         assert_eq!(

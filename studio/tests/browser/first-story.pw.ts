@@ -83,7 +83,7 @@ test('proof goes stale after saved edits; preview cancel and synthetic native co
   await openGuide(page);await page.getByRole('button',{name:'Start my story guide'}).click();await stage(page,5);
   await page.getByRole('button',{name:'Mark this saved revision proofread'}).click();await stage(page,5);await expect(page.getByText('Proof applies to the saved revision.',{exact:false})).toBeVisible();
   await page.getByRole('button',{name:'Close guide',exact:true}).click();
-  await page.locator('.cm-content').fill('Changed synthetic story.\n\nTHE END.');await page.getByRole('button',{name:'Editing actions'}).click();await page.getByRole('button',{name:'Save',exact:true}).click();
+  await page.locator('.cm-content').fill('Changed synthetic story.\n\nTHE END.');if(!await page.getByRole('button',{name:'Editing actions'}).isVisible())await page.getByRole('button',{name:'Document actions',exact:true}).click();await page.getByRole('button',{name:'Editing actions'}).click();await page.getByRole('button',{name:'Save',exact:true}).click();
   await expect(page.getByRole('status',{name:'Saved on this Mac'})).toBeVisible();
   await openGuide(page);await stage(page,5);await expect(page.getByText('No current proof recorded.',{exact:false})).toBeVisible();
   await stage(page,6);

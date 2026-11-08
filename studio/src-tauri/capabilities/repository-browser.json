@@ -24,6 +24,8 @@
     "allow-set-unsaved-changes",
     "allow-request-close",
     "allow-quit-request-finished",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-set-fullscreen",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-load-drafting",

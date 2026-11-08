@@ -347,7 +347,7 @@ test('demo marks: closing the review removes every mark and they never changed t
 test('demo marks: a saved reference copy stays plain text with no marks', async ({ page }) => {
     const panel = await openDemo(page);
     await closeHeinlein(panel);
-    const documents=page.getByRole('button',{name:'Documents',exact:true});if(await documents.isVisible())await documents.click();await page.getByRole('button',{name:'Read beside…'}).click();await page.getByRole('button', { name: 'Read beside active document: lantern-street.md', exact: true }).click();
+    const documents=page.getByRole('button',{name:'Document actions',exact:true});if(await documents.isVisible())await documents.click();await page.getByRole('button',{name:'Read beside…'}).click();await page.getByRole('button', { name: 'Read beside active document: lantern-street.md', exact: true }).click();
     const reference = page.getByRole('region', { name: 'Saved source reference', exact: true });
     await expect(reference.locator('.reference-source')).toContainText('The manifest were wrong');
     await expect(reference.locator('[data-review-id], .cm-review-mark')).toHaveCount(0);

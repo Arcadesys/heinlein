@@ -49,7 +49,7 @@ test('keyboard restores controls, Source/Reading and tab navigation never remain
   await page.keyboard.press('Escape');await page.keyboard.press('ControlOrMeta+s');await expect(page.locator('.status-pill .pill-save')).toHaveText('Saved');
   const tab=page.getByRole('tab',{name:'Meeting',exact:true});await tab.focus();await page.keyboard.press('Enter');await expect(tab).toHaveAttribute('aria-selected','true');await expect(chrome(page)).not.toHaveClass(/is-typing/);
   await type(page);await page.keyboard.press('Escape');
-  await page.getByRole('button',{name:/^Editing actions$/}).click();const dialog=page.getByRole('dialog',{name:'Editor actions',exact:true});await expect(dialog).toBeVisible();
+  await page.getByRole('button',{name:'Document actions',exact:true}).click();await page.getByRole('button',{name:/^Editing actions$/}).click();const dialog=page.getByRole('dialog',{name:'Editor actions',exact:true});await expect(dialog).toBeVisible();
   await page.keyboard.press('Escape');await expect(dialog).not.toBeVisible();await expect(chrome(page)).not.toHaveClass(/is-typing/);
   await type(page);await page.evaluate(()=>{(window as any).documentFixture.app.destroy();});expect(await page.locator('.typing-chrome [inert]').count()).toBe(0);
 });
@@ -98,10 +98,10 @@ test('scrolled passage and reference width remain steady, including reduced moti
 
 test('wrapped tools remain reachable after restore and typing in Questions leaves them visible', async ({page},info) => {
   await open(page);await type(page);await page.keyboard.press('Escape');
-  const actions=page.getByRole('button',{name:'Editing actions',exact:true});await actions.focus();
+  const actions=page.getByRole('button',{name:'Document actions',exact:true});await actions.focus();
   await expect.poll(()=>actions.evaluate(el=>{const r=el.getBoundingClientRect();return r.height>=48 && el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));})).toBe(true);
   await page.screenshot({path:info.outputPath('restored-editing-actions-focus.png')});
-  await page.keyboard.press('Enter');const dialog=page.getByRole('dialog',{name:'Editor actions',exact:true});await expect(dialog).toBeVisible();await page.keyboard.press('Escape');await expect(actions).toBeFocused();
+  await page.keyboard.press('Enter');const dialog=page.getByRole('dialog',{name:'Document actions',exact:true});await expect(dialog).toBeVisible();await page.keyboard.press('Escape');await expect(actions).toBeFocused();
   const text=(await sample(page)).text;
   await page.getByRole('button',{name:/^Heinlein(?: ·.*)?$/}).click();
   const question=page.locator('.question-panel textarea').first();await expect(question).toBeVisible();await question.fill('Only a synthetic question, not sent.');

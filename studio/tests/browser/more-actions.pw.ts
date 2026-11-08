@@ -19,7 +19,7 @@ test('@smoke More actions lists labelled commands without header fragments', asy
 test('toolbar menu buttons keep a visible edge so they read as controls', async ({page}) => {
   await page.goto('/tests/browser/document-tabs.html');
   await page.waitForFunction(() => document.documentElement.dataset.tabsReady === 'true');
-  const toolbar = page.getByRole('button', {name: 'Editing actions', exact: true});
+  const toolbar = page.getByRole('button', {name: 'Document actions', exact: true});
   await expect(toolbar).toBeVisible();
   const [color, width] = await toolbar.evaluate(el => [getComputedStyle(el).borderTopColor, getComputedStyle(el).borderTopWidth]);
   expect(color).not.toBe('rgba(0, 0, 0, 0)');

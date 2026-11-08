@@ -32,5 +32,8 @@ test('standalone releases announce updates without focus or manuscript reflow',a
  await expect(dialog.getByRole('button',{name:'Update on next launch',exact:true})).not.toBeVisible();
  await dialog.getByRole('button',{name:'Open release download page',exact:true}).click();
  expect(await page.evaluate(()=>((window as any).updateFixture.calls))).toContain('openRelease');
- expect((await new AxeBuilder({page}).include('.update-panel').analyze()).violations).toEqual([]);await page.keyboard.press('Escape');await expect(notice).toBeFocused();expect(errors).toEqual([]);
+ await dialog.getByRole('button',{name:'Download and build release',exact:true}).click();
+ await expect(dialog).toContainText('revealed in Finder');expect(await page.evaluate(()=>((window as any).updateFixture.calls))).toContain('buildRelease');
+ await page.screenshot({path:testInfo.outputPath('release-build-ready.png')});
+ expect((await new AxeBuilder({page}).include('.update-panel').analyze()).violations).toEqual([]);await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Update ready…',exact:true})).toBeFocused();expect(errors).toEqual([]);
 });

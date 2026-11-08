@@ -86,4 +86,32 @@ test('new project is distinct from open-existing, cancel and errors retain writi
  expect(await page.evaluate(()=>(window as any).projectFixture.documents['local-a']['scene.md'])).toBe(before);
  const result=await page.evaluate(()=>{const f=(window as any).projectFixture,p=f.projects.find((p:any)=>p.name==='New story');return{documents:f.documents[p.id],scenes:f.manuscripts[p.id].scenes,external:f.externalCalls,created:f.projects.filter((p:any)=>p.name==='New story').length};});
  expect(result.documents).toEqual({'ms/first-scene.md':''});expect(result.scenes).toHaveLength(1);expect(result.created).toBe(1);expect(result.external).toEqual([]);
+
+});
+
+test('new project is keyboard reachable, accessible and retained after reload',async({page},info)=>{
+ const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('/tests/browser/projects.html?library');
+ await activate(page,page.getByRole('button',{name:'New project…',exact:true}));
+ const dialog=page.getByRole('dialog',{name:'New project',exact:true}),name=dialog.getByRole('textbox',{name:'Project name',exact:true});
+ await expect(name).toBeFocused();await expect(dialog).toContainText('Heinlein creates a new folder');
+ if(page.viewportSize()!.width===320){for(let i=0;i<8&&await page.locator('html').getAttribute('data-zoom')!=='200';i++)await page.keyboard.press('Control+=');}
+ await name.fill('A new writing project');
+ expect(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
+ for(const target of await dialog.locator('button,input').all())expect((await target.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+ expect((await new AxeBuilder({page}).include('.project-library').analyze()).violations).toEqual([]);
+ await page.screenshot({path:info.outputPath('new-project-form.png'),fullPage:true});
+ await activate(page,dialog.getByRole('button',{name:'Choose location and create project…',exact:true}));
+ await expect(dialog).not.toBeVisible();await expect(page.locator('.pill-project')).toContainText('A new writing project');
+ await expect(page.locator('.cm-content')).toBeVisible();await expect(page.locator('.cm-content')).toBeFocused();await expect(page.locator('.cm-content')).toHaveText('');await page.keyboard.insertText('My first line — 🦊');await page.keyboard.press('ControlOrMeta+s');await expect.poll(()=>page.evaluate(()=>(window as any).projectFixture.documents[(window as any).projectFixture.projects[0].id]['ms/first-scene.md'])).toBe('My first line — 🦊');
+ await page.reload();await expect(page.locator('.project-library')).toBeVisible();
+ await expect(page.locator('.project-name').first()).toHaveText('A new writing project');
+ expect(await page.evaluate(()=>(window as any).projectFixture.externalCalls)).toEqual([]);expect(errors).toEqual([]);
+});
+
+test('an existing empty project exposes writing setup from the visible file browser',async({page})=>{
+ await page.goto('/tests/browser/projects.html');await page.evaluate(()=>{(window as any).projectFixture.documents['local-a']={};});await open(page,'Novel A');
+ const start=page.getByRole('button',{name:'Start writing…',exact:true});await expect(start).toBeVisible();await activate(page,start);
+ const setup=page.getByRole('dialog',{name:'Set up library',exact:true});await expect(setup).toBeVisible();await expect(setup.getByRole('textbox',{name:'Manuscript title',exact:true})).toBeFocused();
+ expect(await page.evaluate(()=>(window as any).projectFixture.documents['local-a'])).toEqual({});expect(await page.evaluate(()=>(window as any).projectFixture.draftingCalls)).toEqual([]);
 });

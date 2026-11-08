@@ -172,7 +172,7 @@ test('wide standalone chats use the existing gutter without changing source or r
   await expect(page.locator('.conversation-rail-dock')).toBeVisible();
   await expect(page.locator('.conversation-rail-dialog')).not.toBeVisible();
   expect(await writing(page).boundingBox()).toEqual(sourceBox);expect(await writing(page).textContent()).toBe(source);
-  await activate(page.getByRole('button',{name:'Close chats',exact:true}));
+  await activate(page.getByRole('button',{name:'Close editors',exact:true}));
   await activate(page.getByRole('button',{name:'Reading',exact:true}));
   const reader=page.getByRole('region',{name:'Draft reading view'}),readingBox=await reader.boundingBox();
   await activate(page.getByRole('button',{name:'Heinlein',exact:true}));

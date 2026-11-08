@@ -27,7 +27,7 @@ it('reloads native order when returning to Projects and keeps every existing ide
  const f=setup([local,managed]);await library!.open();
  button('Open Lantern chapters').click();await tick();expect(f.hooks.switchProject).toHaveBeenCalledWith('managed-stable');
  f.request.mockResolvedValueOnce([managed,local]);await library!.open();expect(names()).toEqual(['Lantern chapters','River notebook']);
- expect(library!.element.querySelectorAll('.project-row')).toHaveLength(2);expect(button('Manage River notebook')).toBeTruthy();expect(button('Open an existing folder…')).toBeTruthy();
+ expect(library!.element.querySelectorAll('.project-row')).toHaveLength(2);expect(button('Manage River notebook')).toBeTruthy();expect(button('Open existing project…')).toBeTruthy();
  expect(f.request).toHaveBeenCalledTimes(2);
 });
 it('refreshes the native history without optimistic sorting after a refused open',async()=>{
@@ -52,18 +52,15 @@ it('distinguishes independent local and managed projects with the same name befo
  expect(f.request.mock.calls).toEqual([[{action:'list'}],[{action:'list'}]]);
 });
 
-it('new project has a separate named create flow, preserves input on cancel, and never invokes open-existing',async()=>{
+it('creates a named local project only after an explicit location action and keeps canceled input',async()=>{
  const f=setup([]);await library!.open();button('New project…').click();await tick();
- const input=library!.element.querySelector('input')!;input.value='New story';
- button('Choose location…').click();button('Choose location…').click();await tick();
- expect(f.hooks.createLocal).toHaveBeenCalledTimes(1);expect(f.hooks.createLocal).toHaveBeenCalledWith('New story');expect(f.hooks.openLocal).not.toHaveBeenCalled();
- expect(library!.element.open).toBe(true);expect(input.value).toBe('New story');expect(library!.element.textContent).toContain('creation canceled');
- f.hooks.createLocal.mockResolvedValueOnce(true);button('Choose location…').click();await tick();expect(library!.element.open).toBe(false);expect(f.hooks.focusWriting).toHaveBeenCalled();
+ const input=library!.element.querySelector<HTMLInputElement>('#new-project-name')!;
+ expect(document.activeElement).toBe(input);expect(f.hooks.createLocal).not.toHaveBeenCalled();
+ button('Choose location and create project…').click();await tick();expect(f.hooks.createLocal).not.toHaveBeenCalled();
+ input.value='../Existing';button('Choose location and create project…').click();await tick();expect(f.hooks.createLocal).not.toHaveBeenCalled();
+ input.value='My new novel';button('Choose location and create project…').click();await tick();expect(f.hooks.createLocal).toHaveBeenCalledWith('My new novel');expect(library!.element.open).toBe(true);expect(input.value).toBe('My new novel');
+ f.hooks.createLocal.mockResolvedValue(true);button('Choose location and create project…').click();await tick();expect(library!.element.open).toBe(false);expect(f.hooks.focusWriting).toHaveBeenCalled();expect(f.hooks.openLocal).not.toHaveBeenCalled();
 });
-it('new project validates names and keeps the form visible on native failure',async()=>{
- const f=setup([]);await library!.open();button('New project…').click();await tick();const input=library!.element.querySelector('input')!;
- for(const name of ['', '../escape', 'a/b', 'a:b', '🦊'.repeat(61)]){input.value=name;button('Choose location…').click();await tick();}expect(f.hooks.createLocal).not.toHaveBeenCalled();
- input.value='New story';f.hooks.createLocal.mockRejectedValueOnce(Error('Folder already exists; nothing overwritten'));button('Choose location…').click();await tick();
- expect(library!.element.open).toBe(true);expect(input.value).toBe('New story');expect(library!.element.textContent).toContain('Folder already exists');
- button('Cancel').click();await tick();expect(library!.element.querySelector('h2')?.textContent).toBe('Projects');expect(f.hooks.openLocal).not.toHaveBeenCalled();
+it('keeps the creation form open with an actionable host error',async()=>{
+ const f=setup([]);f.hooks.createLocal.mockRejectedValue(Error('A folder with this name already exists.'));await library!.open();button('New project…').click();await tick();library!.element.querySelector<HTMLInputElement>('input')!.value='Existing';button('Choose location and create project…').click();await tick();expect(library!.element.open).toBe(true);expect(library!.element.textContent).toContain('already exists');expect(button('Choose location and create project…').disabled).toBe(false);
 });

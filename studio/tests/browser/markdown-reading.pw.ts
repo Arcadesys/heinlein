@@ -213,7 +213,7 @@ test('Approving from Reading stays in Reading and removes only resolved marks, w
 test('A saved reference reads as formatted text with no marks, and stays exact in Source', async ({ page }) => {
   await start(page);
   await closeReview(page);
-  const documents=page.getByRole('button',{name:'Documents',exact:true});if(await documents.isVisible())await documents.click();
+  const documents=page.getByRole('button',{name:'Document actions',exact:true});if(await documents.isVisible())await documents.click();
   await page.getByRole('button',{name:'Read beside…',exact:true}).click();await page.getByRole('button', { name: 'Read beside active document: opening.md', exact: true }).click();
   const pane = page.getByRole('region', { name: 'Saved source reference', exact: true });
   const raw = await baseline(page);
@@ -247,11 +247,11 @@ test('An assembled chapter reads part by part, and each mark opens the card for 
   await closeReview(page);
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Source', exact: true }).click();
   await expect(hint).toContainText('Edit this chapter as one manuscript.');
-  await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).click(); await expect(revise).toBeVisible();
+  if(!await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).isVisible())await page.getByRole('button',{name:'Document actions',exact:true}).click();await page.getByRole('button',{name:/^(Editing|Reading|Assembled).* actions$/}).click(); await expect(revise).toBeVisible();
 });
 test('The role label follows the view, and the preview entry opens ready in Reading', async ({ page }) => {
   await start(page, `${url}?view=reading`);
-  const role = page.locator('.document-command-bar .document-role');
+  const role = page.locator('.document-role');
   await expect(role).toHaveText('Reading');
   await expect(reader(page)).not.toHaveAttribute('hidden', '');
   await closeReview(page);

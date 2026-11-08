@@ -12,7 +12,7 @@ export function createConversationRail(list:HTMLElement,measure:()=>HTMLElement|
   const back=document.createElement('button');back.type='button';back.textContent='Back to threads';
   const close=document.createElement('button');close.type='button';close.textContent='Close editors';
   const body=document.createElement('div');body.className='conversation-rail-body';const listHost=document.createElement('div');listHost.className='conversation-rail-list';const empty=document.createElement('p');empty.textContent='Open a project, then choose a scene or chapter for its editors.';empty.className='thread-sidebar';listHost.append(list,empty);body.append(listHost);header.append(heading,back,close);panel.append(header,body);dock.append(panel);root.append(toggle,dock,modal);
-  let open=false,detail:HTMLElement|null=null;let disposed=false;let closing=false,returning=false,initialized=false,modalState=false;
+  let focusHidden=false;let open=false,detail:HTMLElement|null=null;let disposed=false;let closing=false,returning=false,initialized=false,modalState=false;
   function render(){
     if(disposed)return;
     const focused=document.activeElement instanceof HTMLElement?document.activeElement:null;
@@ -23,12 +23,13 @@ export function createConversationRail(list:HTMLElement,measure:()=>HTMLElement|
     const railWidth=Math.min(48*rem,Math.max(0,gap-16));dock.style.width=`${railWidth}px`;
     const wide=innerWidth>=1100&&!!bounds&&gap>=36*rem+16;
     if(bounds&&!initialized)open=wide;
-    const isModal=open&&!wide;if(isModal!==modalState){modalState=isModal;modalChanged?.(isModal);}
-    toggle.setAttribute('aria-expanded',String(open));back.hidden=!detail;listHost.hidden=!!detail;empty.hidden=!list.hidden;
-    dock.hidden=!open||!wide;
-    if(open&&!wide){if(panel.parentElement!==modal)modal.append(panel);if(!modal.open){if(modal.showModal)modal.showModal();else modal.setAttribute('open','');}}
+    const showing=open&&!focusHidden;root.hidden=focusHidden;
+    const isModal=showing&&!wide;if(isModal!==modalState){modalState=isModal;modalChanged?.(isModal);}
+    toggle.setAttribute('aria-expanded',String(showing));back.hidden=!detail;listHost.hidden=!!detail;empty.hidden=!list.hidden;
+    dock.hidden=!showing||!wide;
+    if(showing&&!wide){if(panel.parentElement!==modal)modal.append(panel);if(!modal.open){if(modal.showModal)modal.showModal();else modal.setAttribute('open','');}}
     else {if(modal.open){if(modal.close)modal.close();else modal.removeAttribute('open');}if(panel.parentElement!==dock)dock.append(panel);}
-    if(open&&focused&&panel.contains(focused)&&!focused.closest('[hidden]')&&document.activeElement!==focused)focused.focus({preventScroll:true});
+    if(showing&&focused&&panel.contains(focused)&&!focused.closest('[hidden]')&&document.activeElement!==focused)focused.focus({preventScroll:true});
   }
   function show(){initialized=true;open=true;render();heading.focus({preventScroll:true});}
   function hide(){if(closing||returning)return;initialized=true;closing=true;detail?.querySelector<HTMLButtonElement>('.heinlein-close')?.click();open=false;render();closing=false;toggle.focus({preventScroll:true});returnToWriter?.();}
@@ -44,5 +45,5 @@ export function createConversationRail(list:HTMLElement,measure:()=>HTMLElement|
   });
   function showList(){detail=null;render();}
   const resize=()=>render();window.addEventListener('resize',resize);const appearance=new MutationObserver(resize);appearance.observe(document.documentElement,{attributes:true,attributeFilter:['style','data-zoom','data-theme']});void document.fonts?.ready.then(()=>render());
-  return {element:root,body,show,hide,showList,refresh:render,showDetail(node:HTMLElement){detail=node;if(node.parentElement!==body)body.append(node);show();},destroy(){disposed=true;appearance.disconnect();window.removeEventListener('resize',resize);if(modal.open&&modal.close)modal.close();root.remove();}};
+  return {element:root,body,focus(value:boolean){focusHidden=value;render();},show,hide,showList,refresh:render,showDetail(node:HTMLElement){detail=node;if(node.parentElement!==body)body.append(node);show();},destroy(){disposed=true;appearance.disconnect();window.removeEventListener('resize',resize);if(modal.open&&modal.close)modal.close();root.remove();}};
 }

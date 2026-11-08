@@ -33,10 +33,12 @@ export function syntheticProjects(seed?:ProjectSeed,persist?:(state:ProjectSeed)
  const hash=(text:string)=>{let h=2166136261;for(const c of text)h=Math.imul(h^c.codePointAt(0)!,16777619);return `synthetic-hash-${(h>>>0).toString(16)}-${text.length}`;};
  function doc(p:Project,path:string):Document{const text=documents[p.id]?.[path];if(text===undefined)throw Error('Synthetic document missing');return{path,text,contentHash:hash(text),sizeBytes:new TextEncoder().encode(text).length,frontmatter:null,generatedCompatibility:false};}
  function session(p:Project):RepositorySession{const id=`project-session-${++serial}`;sessions.set(id,p.id);active=id;const h=p.resume;const resume=h&&documents[p.id]?.[h.path]!==undefined&&hash(documents[p.id][h.path])===h.sourceHash?h:null;return{id,name:p.name,projectKey:`source-key-${p.id}`,projectId:p.id,projectRevision:p.revision,githubWorkspaceId:p.workspaceId,manifests:[],resume:copy(resume),warning:h&&!resume?'The last document changed. Open it from Writing.':null};}
- const core:LocalCore={...draft.core,
+ let fullscreen=false;const fullscreenListeners=new Set<()=>void>();
+ const fullscreenHost={isFullscreen:async()=>fullscreen,setFullscreen:async(value:boolean)=>{fullscreen=value;for(const listener of fullscreenListeners)listener();},onChanged:async(callback:()=>void)=>{fullscreenListeners.add(callback);return()=>{fullscreenListeners.delete(callback);};}};
+ const core:LocalCore={...draft.core,fullscreen:fullscreenHost,
   async projectRequest(r:ProjectRequest):Promise<ProjectResponse>{requests.push(copy(r));switch(r.action){
    case'list':return copy(projects);
-   case'create':{if(cancelCreate)return null;if(dirty)throw Error('Keep current writing first');if(projects.some(p=>p.name===r.name))throw Error('A folder with that name already exists; nothing overwritten');const p:Project={id:`created-${++serial}`,name:r.name,revision:1,kind:'local',workspaceId:null,resume:null,unavailable:null,github:null};projects.unshift(p);documents[p.id]={'ms/first-scene.md':''};manuscripts[p.id]={...emptyManuscript(p),revision:`manifest-${serial}`,untrackedPaths:[],scenes:[{id:`first-${serial}`,title:'First scene',path:'ms/first-scene.md',groupId:null,reference:false}]};lastOpenedProjectId=p.id;save();return session(p);}
+   case'create':{if(cancelCreate)return null;if(dirty)throw Error('Keep current writing first');if(projects.some(p=>p.name===r.name))throw Error('A folder with that name already exists; nothing overwritten');const p:Project={id:`created-${++serial}`,name:r.name,revision:1,kind:'local',workspaceId:null,resume:null,unavailable:null,github:null};projects.unshift(p);documents[p.id]={'ms/first-scene.md':''};manuscripts[p.id]={...emptyManuscript(p),revision:`manifest-${serial}`,untrackedPaths:[],scenes:[{id:`first-${serial}`,title:'First scene',path:'ms/first-scene.md',groupId:null,reference:false}]};p.resume={path:'ms/first-scene.md',sceneId:manuscripts[p.id].scenes[0].id,sourceHash:hash(''),anchor:0,head:0,scrollTop:0};lastOpenedProjectId=p.id;save();return session(p);}
    case'lastOpened':return lastOpenedProjectId?{id:lastOpenedProjectId}:null;
    case'clearLastOpened':lastOpenedProjectId=null;save();return null;
    case'settings':return{...copy(project(r.id)),writingLocation:`/Synthetic/${project(r.id).kind==='local'?'Writing':'Managed copies'}/${r.id}`};
@@ -46,6 +48,7 @@ export function syntheticProjects(seed?:ProjectSeed,persist?:(state:ProjectSeed)
    case'cancel':plans.delete(r.previewId);return null;
    case'activate':{const p=plans.get(r.previewId);plans.delete(r.previewId);if(!p||p.origin!==active||p.epoch!==epoch||dirty||p.project.revision!==project(p.project.id).revision)throw Error('Project switch became stale');lastOpenedProjectId=p.project.id;save();return session(project(p.project.id));}
   }},
+  createLocalProject:async name=>await core.projectRequest!({action:'create',name}) as RepositorySession|null,
   pickRepository:async()=>session(project('local-a')),
   recentRepositories:async()=>[],openRecentRepository:async()=>{throw Error('Use the project library');},
   listDirectory:async(id,path)=>{const p=selected(id);if(path)return[];return Object.entries(documents[p.id]).map(([path,text])=>({path,name:path,kind:'file' as const,sizeBytes:new TextEncoder().encode(text).length}));},

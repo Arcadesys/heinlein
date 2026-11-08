@@ -1,3 +1,4 @@
+import {TYPEWRITER_VOICES, isTypewriterVoice, type TypewriterVoice} from './typewriterVoices';
 import {preferenceStorage} from './preferences';
 /** Local-only writing feedback. No manuscript text is stored by this module. */
 export const DEFAULT_DAILY_GOAL = 1000;
@@ -167,7 +168,8 @@ export function createDailyGoalTracker(options: DailyGoalOptions = {}) {
 }
 
 export type TypewriterKey = 'key' | 'delete' | 'return';
-export interface TypewriterSoundOptions { createContext?: () => AudioContext; storage?: StorageLike | null }
+export const TYPEWRITER_MAX_VOLUME = 5;
+export interface TypewriterSoundOptions { createContext?: () => AudioContext; storage?: StorageLike | null; loadSample?: (url: string, context: AudioContext) => Promise<AudioBuffer> }
 /** Off by default. Call setEnabled(true) directly from a user click/tap gesture. */
 export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
   let context: AudioContext | undefined;
@@ -175,14 +177,21 @@ export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
   let generation = 0;
   let lastClick = -Infinity;
   let volume = 0.5;
+  let voice: TypewriterVoice = 'classic';
+  const samples = new Map<TypewriterVoice, AudioBuffer>();
+  const loadSample = options.loadSample ?? (async (url: string, audio: AudioContext) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Sound unavailable');
+    return audio.decodeAudioData(await response.arrayBuffer());
+  });
   let requested=false;
   let soundStorage:StorageLike|null=null;
   try {
     soundStorage=options.storage===undefined?preferenceStorage():options.storage;
     const saved=JSON.parse(soundStorage?.getItem('heinlein-studio-sound-v1')??'null');
-    if(saved?.version===1){requested=saved.enabled===true;if(typeof saved.volume==='number'&&Number.isFinite(saved.volume))volume=Math.max(0,Math.min(1,saved.volume));}
+    if(saved?.version===1){if(isTypewriterVoice(saved.voice))voice=saved.voice;requested=saved.enabled===true;if(typeof saved.volume==='number'&&Number.isFinite(saved.volume))volume=Math.max(0,Math.min(TYPEWRITER_MAX_VOLUME,saved.volume));}
   }catch{/* Audio is optional; never prevent writing. */}
-  const persist=()=>{try{soundStorage?.setItem('heinlein-studio-sound-v1',JSON.stringify({version:1,enabled:requested,volume}));}catch{/* Native persistence reports failures independently. */}};
+  const persist=()=>{try{soundStorage?.setItem('heinlein-studio-sound-v1',JSON.stringify({version:1,enabled:requested,volume,voice}));}catch{/* Native persistence reports failures independently. */}};
   const buffers = new Map<TypewriterKey, AudioBuffer>();
   const makeContext = options.createContext ?? (() => {
     const Audio = globalThis.AudioContext ?? (globalThis as typeof globalThis & {webkitAudioContext?: typeof AudioContext}).webkitAudioContext;
@@ -192,27 +201,47 @@ export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
   return {
     enabled: () => enabled,
     requested: () => requested,
-    async setEnabled(value: boolean): Promise<boolean> {
-      requested=value;persist();
+    async setEnabled(value: boolean, remember = true): Promise<boolean> {
+      if (remember) { requested=value;persist(); }
       const request = ++generation;
       enabled = false;
       if (!value) return false;
       try {
-        if (!context || context.state === 'closed') { context = makeContext(); lastClick = -Infinity; buffers.clear(); }
+        if (!context || context.state === 'closed') { context = makeContext(); lastClick = -Infinity; buffers.clear(); samples.clear(); }
         if (context.state === 'suspended') await context.resume();
         if (request !== generation) return enabled;
+        const selected = voice;
+        const file = TYPEWRITER_VOICES.find(item => item.id === selected)?.file;
+        if (file && !samples.has(selected)) {
+          const buffer = await loadSample(`${import.meta.env.BASE_URL}sounds/sound-sketchbook/${file}`, context);
+          if (request !== generation) return enabled;
+          samples.set(selected, buffer);
+        }
         enabled = context.state === 'running';
       } catch { if (request === generation) enabled = false; }
       return enabled;
     },
+    async preview(): Promise<boolean> {
+      const active = await this.setEnabled(true, false);
+      if (active) this.play();
+      if (!requested) await this.setEnabled(false, false);
+      return active;
+    },
+    voice: () => voice,
+    async setVoice(value: string): Promise<boolean> {
+      if (!isTypewriterVoice(value)) return false;
+      voice = value; persist();
+      return requested ? this.setEnabled(true) : true;
+    },
     volume: () => volume,
-    setVolume(value: number): void { if (Number.isFinite(value)) {volume = Math.max(0, Math.min(1, value));persist();} },
+    setVolume(value: number): void { if (Number.isFinite(value)) {volume = Math.max(0, Math.min(TYPEWRITER_MAX_VOLUME, value));persist();} },
     play(kind: TypewriterKey = 'key'): void {
       if (!enabled || volume === 0 || !context || context.state !== 'running' || context.currentTime - lastClick < 0.025) return;
       try {
         lastClick = context.currentTime;
         // Reuse each mechanical strike and release after its first playback.
-        let buffer = buffers.get(kind);
+        let buffer = voice === 'classic' ? buffers.get(kind) : samples.get(voice);
+        if (!buffer && voice !== 'classic') return;
         if (!buffer) {
           const duration = kind === 'return' ? 0.16 : kind === 'delete' ? 0.045 : 0.035;
           buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
@@ -229,7 +258,7 @@ export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
         }
         const source = context.createBufferSource();
         const gain = context.createGain();
-        gain.gain.value = 0.05 * volume;
+        gain.gain.value = (voice === 'classic' ? 0.05 : 0.2) * volume;
         source.buffer = buffer;
         source.connect(gain);
         gain.connect(context.destination);
@@ -243,6 +272,7 @@ export function createTypewriterSound(options: TypewriterSoundOptions = {}) {
       try { if (context && context.state !== 'closed') void context.close().catch(() => {}); } catch { /* optional audio must not block teardown */ }
       context = undefined;
       buffers.clear();
+      samples.clear();
     },
   };
 }

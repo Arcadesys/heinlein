@@ -1,5 +1,6 @@
 import {createManuscriptWordCounts, formatWordTotal, wordTotal, type WordCountSnapshot} from './manuscriptWordCounts';
-import {createDailyGoalTracker, createTypewriterSound, wordCount, type TypewriterKey} from './writingFeedback';
+import {createDailyGoalTracker, createTypewriterSound, TYPEWRITER_MAX_VOLUME, wordCount, type TypewriterKey} from './writingFeedback';
+import {TYPEWRITER_VOICES} from './typewriterVoices';
 
 export interface WritingSummary { sceneWords: number | null; credited: number; goal: number; counts: WordCountSnapshot }
 export function createWritingPanel(rendered?: (summary: WritingSummary) => void) {
@@ -29,12 +30,13 @@ export function createWritingPanel(rendered?: (summary: WritingSummary) => void)
     rendered?.({sceneWords: active ? active.count : null, credited: state.words, goal: state.goal, counts});
   }
   goalInput.addEventListener('change',()=>{const value=Number(goalInput.value); if(Number.isInteger(value)&&value>=1&&value<=1000000)tracker.setGoal(value); render();});
-  const soundControls: {button: HTMLButtonElement; slider?: HTMLInputElement}[] = [{button: soundButton}];
+  const soundControls: {button: HTMLButtonElement; slider?: HTMLInputElement; readout?: HTMLOutputElement; select?: HTMLSelectElement}[] = [{button: soundButton}];
   function syncSound() {
-    for (const {button, slider} of soundControls) {
+    for (const {button, slider, readout, select} of soundControls) {
       button.textContent = `Typewriter sound: ${sound.requested() ? 'on' : 'off'}`;
       button.setAttribute('aria-pressed', String(sound.requested()));
-      if (slider) { slider.value = String(Math.round(sound.volume() * 100)); slider.setAttribute('aria-valuetext', `${slider.value}%`); }
+      if (select) select.value = sound.voice();
+      if (slider) { slider.value = String(Math.round(sound.volume() * 100)); slider.setAttribute('aria-valuetext', `${slider.value}%${Number(slider.value)>100?' boosted':''}`);if(readout)readout.textContent=`${slider.value}%`; }
     }
   }
   function toggleSound() {
@@ -56,14 +58,21 @@ export function createWritingPanel(rendered?: (summary: WritingSummary) => void)
       const toggle = document.createElement('button'); toggle.type = 'button';
       toggle.addEventListener('click', toggleSound);
       const label = document.createElement('label'); label.textContent = 'Typewriter volume ';
-      const slider = document.createElement('input'); slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.step = '1';
+      const slider = document.createElement('input'); slider.type = 'range'; slider.min = '0'; slider.max = String(TYPEWRITER_MAX_VOLUME * 100); slider.step = '1';
       slider.setAttribute('aria-label', 'Typewriter volume');
       slider.addEventListener('input', () => { sound.setVolume(Number(slider.value) / 100); syncSound(); });
       slider.addEventListener('change', () => sound.play());
-      label.append(slider);
+      const readout=document.createElement('output');readout.setAttribute('aria-hidden','true');readout.className='typewriter-volume-value';label.append(slider,readout);
+      const voiceLabel = document.createElement('label'); voiceLabel.textContent = 'Typewriter sound';
+      const select = document.createElement('select'); select.setAttribute('aria-label', 'Typewriter sound');
+      for (const voice of TYPEWRITER_VOICES) { const option = document.createElement('option'); option.value = voice.id; option.textContent = voice.name; select.append(option); }
+      select.addEventListener('change', () => { void sound.setVoice(select.value).then(ok => { if (destroyed) return; syncSound(); error.textContent = ok ? '' : 'Audio unavailable; writing still works.'; }); });
+      voiceLabel.append(select);
+      const preview = document.createElement('button'); preview.type = 'button'; preview.textContent = 'Preview typewriter sound';
+      preview.addEventListener('click', () => { void sound.preview().then(enabled => { if (destroyed) return; syncSound(); error.textContent = enabled ? '' : 'Audio unavailable; writing still works.'; }); });
       const note = document.createElement('p'); note.className = 'settings-hint';
-      note.textContent = 'Mechanical clicks, backspace and carriage return. Choice and volume are remembered. Sound resumes on a keypress. Paste, undo and loading stay silent.';
-      controls.append(toggle, label, note); soundControls.push({button: toggle, slider}); syncSound();
+      note.textContent = 'Four kept sounds from Sound Sketchbook, bundled for offline use, plus Classic mechanical. Classic has distinct backspace and carriage return sounds; kept sounds use the selected clip for each key. Volume above 100% boosts the sound, up to 500%. Choice and volume are remembered. Sound resumes on a keypress. Paste, undo and loading stay silent.';
+      controls.append(toggle, voiceLabel, preview, label, note); soundControls.push({button: toggle, slider, readout, select}); syncSound();
       return controls;
     },
     typed(kind: TypewriterKey) {
