@@ -1288,7 +1288,7 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 .focus-word-goal { position:absolute; top:8px; right:12px; max-inline-size:calc(100vw - 24px); margin:0; padding:.25rem .5rem; font-size:1rem; font-variant-numeric:tabular-nums; color:var(--fg); background:var(--bg); }
 .writing-chrome-controls [hidden] { display:none; }
 .studio > .status-pill,.document-tabs,.document-command-bar { transition:transform .18s ease,opacity .18s ease,visibility 0s; }
-.studio.writing-controls-hidden:not(.standalone-writing):has(.document-workspace) { grid-template-rows:0 minmax(0,1fr); }
+.studio.writing-controls-hidden:not(.standalone-writing):has(.document-workspace) { grid-template-columns:minmax(0,1fr); grid-template-rows:0 minmax(0,1fr); }
 .studio.writing-controls-hidden > .status-pill { position:absolute; opacity:0; transform:translateY(-120%); pointer-events:none; visibility:hidden; transition:transform .18s ease,opacity .18s ease,visibility 0s .18s; }
 .studio.writing-controls-hidden .document-workspace > :is(.typing-chrome,.document-tabs,.document-command-bar,.split-reading-offer) { block-size:0; min-block-size:0; max-block-size:0; padding-block:0; margin-block:0; border-block-width:0; overflow:hidden; opacity:0; transform:translateY(-120%); visibility:hidden; }
 .studio.writing-controls-hidden :is(.reference-pane,.cm-gutters,.selection-ask-action,.selection-ask-extras) { visibility:hidden; pointer-events:none; }
@@ -1297,7 +1297,7 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 .studio.writing-controls-hidden .goal-card,.studio.writing-controls-hidden .glow { visibility:hidden; }
 @media (prefers-reduced-motion:reduce) { .show-writing-controls,.studio > .status-pill,.studio > .notice-slot,.document-tabs,.document-command-bar { transition:none !important; } }
 
-.studio.writing-controls-hidden:not(.standalone-writing):has(.document-workspace) > .workspace { grid-row:2; }
+.studio.writing-controls-hidden:not(.standalone-writing):has(.document-workspace) > .workspace { grid-row:2; grid-column:1; }
 /* Direct focus controls must not push the word goal off the header at enlarged sizes. */
 .studio:not(.standalone-writing):has(.document-workspace) > .status-pill:has(.revisions-entry:not([hidden])) { flex-wrap:wrap; overflow-x:visible; }
 /* Saving changes the badge text, never the header's footprint or prose position. */

@@ -5,7 +5,7 @@ const entry=(page:Page)=>page.getByRole('button',{name:'Word counts',exact:true}
 async function revealEntry(page:Page){if(!await entry(page).isVisible())await page.getByRole('button',{name:'More actions'}).click();await entry(page).scrollIntoViewIfNeeded();}
 async function openCounts(page:Page){await revealEntry(page);await entry(page).click();}
 const writer=(page:Page)=>page.locator('.active-document-pane .cm-content');
-async function returnToWriter(page:Page){await expect(page.viewportSize()!.width<=760?page.getByRole('button',{name:'More actions'}):writer(page)).toBeFocused();await writer(page).focus();}
+async function expectCountReturn(page:Page){await expect(page.viewportSize()!.width<=760?page.getByRole('button',{name:'More actions'}):writer(page)).toBeFocused();}
 async function start(page:Page){await page.goto('/tests/browser/word-counts.html');await page.waitForFunction(()=>document.documentElement.dataset.wordCountsReady==='true');await page.evaluate(async()=>{await document.fonts.ready;});}
 const sample=(page:Page)=>page.evaluate(()=>{const f=(window as any).wordCountFixture,v=f.view();return{text:v.state.doc.toString(),selection:v.state.selection.toJSON(),width:v.contentDOM.getBoundingClientRect().width,save:f.calls.save};});
 
@@ -16,15 +16,15 @@ test('@smoke scene, nested group and manuscript counts are readable without savi
  await panel(page).getByRole('combobox').selectOption('empty');await expect(panel(page).locator('.word-count-group-total')).toContainText('0 words');await expect(panel(page)).toContainText('No manuscript scenes in this group.');
  await panel(page).getByRole('combobox').selectOption('');await expect(panel(page).locator('.word-count-group-total')).toHaveText('All manuscript scenes · 9 words');await panel(page).getByRole('button',{name:'Recount saved scenes'}).click();await expect(panel(page).locator('dd').nth(1)).toHaveText('9 words');
  const axe=await new AxeBuilder({page}).include('.word-count-dialog').analyze();expect(axe.violations).toEqual([]);await page.screenshot({path:info.outputPath('word-counts.png')});
- await panel(page).getByRole('button',{name:'Close word counts'}).click();await returnToWriter(page);expect(await sample(page)).toEqual(before);
+ await panel(page).getByRole('button',{name:'Close word counts'}).click();await expectCountReturn(page);expect(await sample(page)).toEqual(before);
  await revealEntry(page);await entry(page).focus();await page.keyboard.press('Enter');await expect(panel(page)).toBeVisible();await page.keyboard.press('Escape');await expect(await entry(page).isVisible()?entry(page):page.getByRole('button',{name:'More actions'})).toBeFocused();expect(await sample(page)).toEqual(before);
 });
 
 test('the word-count entry stays available while typing tools collapse and returns to the same caret',async({page})=>{
  await start(page);await writer(page).focus();await page.keyboard.press('ControlOrMeta+End');await page.keyboard.type(' more words');await expect(page.locator('.typing-chrome')).toHaveClass(/is-typing/);await page.waitForTimeout(220);
  await revealEntry(page);await expect(entry(page)).toBeVisible();const entryGeometry=await entry(page).evaluate(node=>{const r=node.getBoundingClientRect();return {height:r.height,left:r.left,right:r.right,width:innerWidth,opacity:getComputedStyle(node).opacity,hit:node.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))};});expect(entryGeometry).toMatchObject({opacity:'1',hit:true});expect(entryGeometry.height).toBeGreaterThanOrEqual(48);expect(entryGeometry.left).toBeGreaterThanOrEqual(0);expect(entryGeometry.right).toBeLessThanOrEqual(entryGeometry.width);
- const before=await sample(page);const expected=await page.evaluate(()=>{const f=(window as any).wordCountFixture;return f.wordCount(f.view().state.doc.toString())+f.wordCount(f.files.get('ms/second.md'));});await openCounts(page);await expect(panel(page).locator('dd').nth(1)).toHaveText(`${expected} words`);await expect(panel(page)).toContainText('unsaved text');await page.keyboard.press('Escape');await returnToWriter(page);const after=await sample(page);expect(after.text).toBe(before.text);expect(after.selection).toEqual(before.selection);expect(after.width).toBe(before.width);
- await page.keyboard.type(' another');await expect(page.locator('.typing-chrome')).toHaveClass(/is-typing/);
+ const before=await sample(page);const expected=await page.evaluate(()=>{const f=(window as any).wordCountFixture;return f.wordCount(f.view().state.doc.toString())+f.wordCount(f.files.get('ms/second.md'));});await openCounts(page);await expect(panel(page).locator('dd').nth(1)).toHaveText(`${expected} words`);await expect(panel(page)).toContainText('unsaved text');await page.keyboard.press('Escape');await expectCountReturn(page);const after=await sample(page);expect(after.text).toBe(before.text);expect(after.selection).toEqual(before.selection);expect(after.width).toBe(before.width);
+ await writer(page).focus();await page.keyboard.type(' another');await expect(page.locator('.typing-chrome')).toHaveClass(/is-typing/);
 });
 
 for(const zoom of [100,200,300])test(`high contrast word counts work at ${zoom}% without horizontal overflow`,async({page},info)=>{
@@ -40,9 +40,9 @@ test('a delayed recount survives repeated close/reopen without losing scrolled e
  const geometry=()=>page.evaluate(()=>{const f=(window as any).wordCountFixture,v=f.view(),pane=document.querySelector('.active-document-pane')!;return{text:v.state.doc.toString(),selection:v.state.selection.toJSON(),width:v.contentDOM.getBoundingClientRect().width,scroll:pane.scrollTop,same:v===(window as any).countOriginalView};});const before=await geometry();expect(before.scroll).toBeGreaterThan(500);
  await page.evaluate(()=>{const f=(window as any).wordCountFixture,read=f.core.readDocument;let held=false;f.core.readDocument=async(...args:any[])=>{if(!held&&args[1]==='ms/second.md'){held=true;return new Promise(resolve=>{f.releaseCount=async()=>resolve(await read(...args));});}return read(...args);};});
  await openCounts(page);await panel(page).getByRole('button',{name:'Recount saved scenes'}).click();await page.waitForFunction(()=>!!(window as any).wordCountFixture.releaseCount);
- for(let i=0;i<4;i++){await panel(page).getByRole('button',{name:'Close word counts'}).click();await returnToWriter(page);await openCounts(page);await expect(panel(page)).toHaveCount(1);}
+ for(let i=0;i<4;i++){await panel(page).getByRole('button',{name:'Close word counts'}).click();await expectCountReturn(page);await openCounts(page);await expect(panel(page)).toHaveCount(1);}
  const select=panel(page).getByRole('combobox');await select.selectOption('nested');await select.focus();await page.evaluate(()=>(window as any).wordCountFixture.releaseCount());await expect(panel(page).locator('.word-count-group-total')).toContainText('4 words');await expect(select).toBeFocused();await expect(select).toHaveValue('nested');await page.screenshot({path:info.outputPath('delayed-recount-focus.png')});
- await page.keyboard.press('Escape');await returnToWriter(page);expect(await geometry()).toEqual(before);expect(await page.evaluate(()=>(window as any).wordCountFixture.calls.save)).toBe(0);
+ await page.keyboard.press('Escape');await expectCountReturn(page);expect(await geometry()).toEqual(before);expect(await page.evaluate(()=>(window as any).wordCountFixture.calls.save)).toBe(0);
 });
 
 test('a source file without an initialized manuscript has no misleading group selector',async({page})=>{
