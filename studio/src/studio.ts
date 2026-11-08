@@ -919,6 +919,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     // Project switching stays a direct action at every window size.
     if(!appCommands.isOpen())pill.insertBefore(pillProject,proposalsEntry);
     const compact=!!headerMedia?.matches&&preview.contains(documentWorkspace)&&!standalone?.active;
+    if(writingChrome&&!appCommands.isOpen()){if(compact)appCommands.storage.append(countButton,writingChrome.hideButton);else{pill.insertBefore(writingChrome.hideButton,appCommands.button);pill.insertBefore(countButton,goalButton);}}
     appCommands.button.textContent=compact?'More':'More actions';
     appCommands.button.setAttribute('aria-label','More actions');
   }

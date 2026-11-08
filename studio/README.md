@@ -7,7 +7,7 @@ The existing Python publisher and its CLI remain unchanged.
 ## Text-only writing and sound
 
 **Full screen** opens to the manuscript with the application bars and editor panels
-hidden. **Hide controls** also works in a window. Press Command/Ctrl+Shift+H to
+hidden. **Hide controls** also works in a window (under **More** on narrow screens). Press Command/Ctrl+Shift+H to
 hide or restore the controls, move to the top edge to reveal **Show controls**,
 or Tab to that button. Escape exits full screen. Save failures and recovery
 dialogs bring the controls back; hiding them never changes manuscript text.
@@ -40,7 +40,7 @@ text itself is identical, and both views use the same font size and line height.
 
 ## Word counts
 
-Choose **Word counts** in the writing header, or search for it in the command
+Choose **Word counts** in the writing header (**More → Word counts** on narrow screens), or search for it in the command
 palette. The button stays visible when tabs and tools slide away during typing.
 The read-only dialog shows the current scene, the whole manuscript, and a group
 picker with scene-by-scene totals. A group includes its nested groups; duplicate
