@@ -13,7 +13,7 @@ export function createNavigationDrawer(panel: HTMLElement, changed: (open: boole
     }
   } catch { /* Invalid or unavailable storage must not prevent navigation. */ }
   const small=window.matchMedia?.('(max-width:760px)');
-  let suspended = false; let narrowSuppressed = false;
+  let suspended = false; let focusHidden = false; let narrowSuppressed = false;
   let scrollTop = 0; let scrollLeft = 0; let wasShowing = false;
   const element = document.createElement('nav');
   element.className = 'navigator'; element.setAttribute('aria-label', 'Project navigator');
@@ -36,7 +36,7 @@ export function createNavigationDrawer(panel: HTMLElement, changed: (open: boole
     event.preventDefault(); setOpen(false, true);
   };
   document.addEventListener('keydown', closeFromPage);
-  function isVisible(){return open && !suspended && !(narrowSuppressed && small?.matches);}
+  function isVisible(){return open && !suspended && !focusHidden && !(narrowSuppressed && small?.matches);}
   function render() {
     // Read only while laid out: a hidden drawer reports zero. Keep the author's
     // position across narrow-screen modal moves and suspension for Questions.
@@ -47,10 +47,11 @@ export function createNavigationDrawer(panel: HTMLElement, changed: (open: boole
     const showing = isVisible();
     // Suspend interaction and narrow-screen dialogs without taking space away
     // from the desktop navigator while Questions overlays the manuscript.
-    const occupying = showing || (suspended && open && !small?.matches);
+    const occupying = showing || ((suspended || focusHidden) && open && !small?.matches);
     if(small?.matches&&showing){if(drawer.parentElement!==modal)modal.append(drawer);drawer.hidden=false;if(modal.isConnected&&!modal.open&&modal.showModal)modal.showModal();}
     else{if(modal.open&&modal.close)modal.close();if(drawer.parentElement!==element)element.append(drawer);drawer.hidden=!occupying;}
     element.classList.toggle('navigation-closed', !occupying);
+    drawer.style.visibility=focusHidden?'hidden':'';toggle.hidden=focusHidden;
     drawer.inert = !showing; drawer.setAttribute('aria-hidden', String(!showing));
     toggle.textContent = occupying ? 'Close navigation' : 'Navigation';
     toggle.setAttribute('aria-expanded', String(showing));
@@ -79,5 +80,5 @@ export function createNavigationDrawer(panel: HTMLElement, changed: (open: boole
     render();
   };small?.addEventListener?.('change',resize);
   render();queueMicrotask(()=>{if(element.isConnected)render();});
-  return {element, suspend(value: boolean) {if (suspended && !value && small?.matches) narrowSuppressed = true; suspended = value; render();}, close:()=>setOpen(false), destroy:()=>{document.removeEventListener('keydown', closeFromPage);small?.removeEventListener?.('change',resize);if(modal.open&&modal.close)modal.close();modal.remove();}, select: (focus = true) => setOpen(true, focus), toggle: () => setOpen(!isVisible(), true), visible: isVisible};
+  return {element, focus(value:boolean){focusHidden=value;render();}, suspend(value: boolean) {if (suspended && !value && small?.matches) narrowSuppressed = true; suspended = value; render();}, close:()=>setOpen(false), destroy:()=>{document.removeEventListener('keydown', closeFromPage);small?.removeEventListener?.('change',resize);if(modal.open&&modal.close)modal.close();modal.remove();}, select: (focus = true) => setOpen(true, focus), toggle: () => setOpen(!isVisible(), true), visible: isVisible};
 }

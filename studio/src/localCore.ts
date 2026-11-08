@@ -1,3 +1,5 @@
+import type {FullScreenHost} from './fullScreenControl';
+import {windowFullscreen} from './windowFullscreen';
 import type {ManuscriptExportSpec} from './markdownExport';
 import type {PreferenceRequest,PreferenceSnapshot} from './preferences';
 import type {ProjectRequest,ProjectResponse,ProjectResume} from './projects';
@@ -90,6 +92,7 @@ export interface ReadingFeedback { assessment?: { strengths: string; improvement
 export interface ReadingFeedbackView { coverageId?: string | null; path: string; reviewer: string; feedback: ReadingFeedback }
 export interface ReviewResult { readingFeedback?: ReadingFeedbackView[]; reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
 export interface LocalCore {
+  fullscreen?:FullScreenHost;
   exportManuscript?(repositoryId:string,filename:string,spec:ManuscriptExportSpec):Promise<boolean>;
   preferencesRequest?(request:PreferenceRequest):Promise<PreferenceSnapshot>;
   saveMarkdownExport?(repositoryId: string, filename: string, text: string): Promise<boolean>;
@@ -97,7 +100,7 @@ export interface LocalCore {
   mcpRequest?(request:McpAccessRequest):Promise<McpAccessView>;
   standalone?(request:DraftRequest):Promise<DraftResponse>;
   available(): boolean;
-  updateRequest?(action: 'status'|'check'|'schedule'|'openRelease'):Promise<UpdateStatus>;
+  updateRequest?(action: 'status'|'check'|'schedule'|'openRelease'|'buildRelease'):Promise<UpdateStatus>;
   githubRequest?(request: GitHubRequest): Promise<GitHubResponse>;
   loadFirstStory?(repositoryId: string): Promise<FirstStoryState>;
   saveFirstStory?(repositoryId: string, guide: FirstStoryState, markProof: boolean): Promise<FirstStoryState>;
@@ -144,6 +147,7 @@ export interface LocalCore {
   pickDraftingImport?(repositoryId: string): Promise<DraftingSelection | null>;
   onDraftingImportError?(callback: (message: string) => void): Promise<() => void>;
   onDraftingFilesDropped?(callback: (selection: DraftingSelection) => void): Promise<() => void>;
+  createLocalProject?(name: string): Promise<RepositorySession | null>;
   pickRepository(): Promise<RepositorySession | null>;
   recentRepositories(): Promise<RecentRepository[]>;
   openRecentRepository(id: string): Promise<RepositorySession>;
@@ -165,6 +169,7 @@ export interface LocalCore {
 // Root selection and guarded file writes belong to the native host;
 // no credentials, filesystem handles, or absolute root paths enter the renderer.
 export const localCore: LocalCore = {
+  fullscreen:isTauri()?windowFullscreen:undefined,
   available: isTauri,
   exportManuscript:(repositoryId,filename,spec)=>invoke('export_manuscript',{repositoryId,filename,spec}),
   preferencesRequest:request=>invoke('preferences_request',{request}),
@@ -241,6 +246,7 @@ export const localCore: LocalCore = {
   onCheckForUpdates:callback=>listen('check-for-updates',callback),
   projectRequest:request=>invoke('project_request',{request}),
   mcpRequest:request=>invoke('mcp_access_request',{request}),
+  createLocalProject: name => invoke('project_request', {request:{action:'create',name}}),
   pickRepository: () => invoke('pick_repository'),
   recentRepositories: () => invoke('recent_repositories'),
   openRecentRepository: id => invoke('open_recent_repository', { id }),

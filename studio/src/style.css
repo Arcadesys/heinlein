@@ -1255,3 +1255,53 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
   /* Keep enlarged labels readable without shrinking the author's text size. */
   .mcp-access-panel, .mcp-access-panel .mcp-connection-step { padding: 12px; }
 }
+
+.project-library .project-create-form label { display:grid; gap:.5rem; font-weight:700; }
+.project-library .project-create-form input { width:100%; min-width:0; box-sizing:border-box; min-height:48px; font:inherit; }
+
+.studio > .status-pill .fullscreen-toggle { min-height:48px; font-size:1rem; font-weight:700; white-space:normal; }
+:root[data-fade-chrome] .studio.typing > .status-pill.chrome > .fullscreen-toggle { opacity:1; }
+
+/* Document chrome: quiet defaults, large controls, and a distinct keyboard ring. */
+.document-workspace .document-tabs { column-gap:.5rem; row-gap:4px; border-block-end:1px solid var(--fg-muted); }
+.document-workspace .document-tab-strip { grid-template-columns:repeat(var(--tab-count),max-content max-content); }
+.document-workspace .document-tabs [role="tab"] { border:1px solid transparent; border-radius:.35rem; background:transparent; outline:none; font-weight:500; }
+.document-workspace .document-tabs [role="tab"][aria-selected="true"] { outline:none; background:var(--hover); font-weight:700; text-decoration:underline; text-decoration-thickness:3px; text-underline-offset:.35em; }
+.document-workspace .document-tab-close { min-inline-size:5.5ch; padding:4px 10px; font-size:1rem; font-weight:500; border:1px solid transparent; border-radius:.35rem; background:transparent; }
+.document-workspace .document-tab-actions > button { border:1px solid var(--fg-muted); border-radius:.35rem; background:transparent; font-weight:500; }
+.document-workspace .editor-toolbar { gap:.75rem; }
+.document-workspace .editor-toolbar .md-view-toggle { gap:0; border:1px solid var(--fg-muted); border-radius:.35rem; padding:2px; }
+.document-workspace .editor-toolbar .md-view-toggle button { border:1px solid transparent; border-radius:.2rem; background:transparent; font-weight:500; }
+.document-workspace .editor-toolbar .md-view-toggle button[aria-pressed="true"] { background:var(--hover); font-weight:700; text-decoration:underline; text-decoration-thickness:3px; text-underline-offset:.35em; }
+.document-workspace .editor-toolbar button[aria-controls="drafting-questions"] { border:1px solid var(--fg-muted); border-radius:.35rem; background:transparent; min-block-size:48px; flex:0 0 10ch; inline-size:10ch; max-inline-size:10ch; font-weight:600; }
+.document-workspace :is(.document-tabs button,.editor-toolbar button):hover { background:var(--hover); }
+.document-workspace :is(.document-tabs button,.editor-toolbar button):focus-visible { outline:3px solid var(--fg); outline-offset:2px; }
+
+.document-workspace .document-tabs [role="tab"]:focus-visible { outline:3px solid var(--fg); outline-offset:-3px; }
+
+/* Text-only writing: chrome leaves vertically; manuscript columns stay unchanged. */
+.studio .hide-writing-controls,.studio .show-writing-controls { min-block-size:48px; font-size:1rem; }
+.writing-chrome-controls { position:fixed; inset:0; z-index:40; pointer-events:none; }
+.show-writing-controls { position:absolute; top:8px; left:8px; padding:.5rem 1rem; color:var(--fg); background:var(--bg); border:2px solid var(--fg); transform:translateY(calc(-100% - 16px)); opacity:0; pointer-events:none; transition:transform .18s ease,opacity .18s ease; }
+.show-writing-controls:focus-visible,.writing-controls-peek .show-writing-controls { transform:none; opacity:1; pointer-events:auto; }
+.show-writing-controls:focus-visible { outline:3px solid var(--fg); outline-offset:3px; }
+.focus-word-goal { position:absolute; top:8px; right:12px; max-inline-size:calc(100vw - 24px); margin:0; padding:.25rem .5rem; font-size:1rem; font-variant-numeric:tabular-nums; color:var(--fg); background:var(--bg); }
+.writing-chrome-controls [hidden] { display:none; }
+.studio > .status-pill,.document-tabs,.document-command-bar { transition:transform .18s ease,opacity .18s ease,visibility 0s; }
+.studio.writing-controls-hidden:not(.standalone-writing):has(.document-workspace) { grid-template-rows:0 minmax(0,1fr); }
+.studio.writing-controls-hidden > .status-pill { position:absolute; opacity:0; transform:translateY(-120%); pointer-events:none; visibility:hidden; transition:transform .18s ease,opacity .18s ease,visibility 0s .18s; }
+.studio.writing-controls-hidden .document-workspace > :is(.typing-chrome,.document-tabs,.document-command-bar,.split-reading-offer) { block-size:0; min-block-size:0; max-block-size:0; padding-block:0; margin-block:0; border-block-width:0; overflow:hidden; opacity:0; transform:translateY(-120%); visibility:hidden; }
+.studio.writing-controls-hidden :is(.reference-pane,.cm-gutters,.selection-ask-action,.selection-ask-extras) { visibility:hidden; pointer-events:none; }
+.studio.writing-controls-hidden .standalone-page > :is(h2,p,.standalone-toolbar) { display:none; }
+.studio.writing-controls-hidden.standalone-writing > .workspace { height:100dvh; max-height:none; }
+.studio.writing-controls-hidden .goal-card,.studio.writing-controls-hidden .glow { visibility:hidden; }
+@media (prefers-reduced-motion:reduce) { .show-writing-controls,.studio > .status-pill,.studio > .notice-slot,.document-tabs,.document-command-bar { transition:none !important; } }
+
+.studio.writing-controls-hidden:not(.standalone-writing):has(.document-workspace) > .workspace { grid-row:2; }
+/* Direct focus controls must not push the word goal off the header at enlarged sizes. */
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill:has(.revisions-entry:not([hidden])) { flex-wrap:wrap; overflow-x:visible; }
+/* Saving changes the badge text, never the header's footprint or prose position. */
+.studio:not(.standalone-writing):has(.document-workspace) > .status-pill > .pill-save { inline-size:calc(10ch + 16px); flex:0 0 auto; white-space:nowrap; }
+
+/* The floating save/error toast must always use the viewport, never an animated parent. */
+.studio.writing-controls-hidden > .notice-slot { display:none; }

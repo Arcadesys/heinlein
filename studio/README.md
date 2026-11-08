@@ -4,6 +4,24 @@ An additive native desktop editor with local autosave and explicit recovery deci
 folder, browse its files, and use a scene manifest to navigate the manuscript.
 The existing Python publisher and its CLI remain unchanged.
 
+## Text-only writing and sound
+
+**Full screen** opens to the manuscript with the application bars and editor panels
+hidden. **Hide controls** also works in a window. Press Command/Ctrl+Shift+H to
+hide or restore the controls, move to the top edge to reveal **Show controls**,
+or Tab to that button. Escape exits full screen. Save failures and recovery
+dialogs bring the controls back; hiding them never changes manuscript text.
+
+Under **Appearance → Editor**, **Show word goal while controls are hidden** keeps
+a read-only daily counter visible. It is off by default. Typewriter volume ranges
+from 0% to 500%; values above 100% boost playback while the saved volume remains
+unchanged until the author adjusts it. Sound choices and volume are remembered.
+
+The document toolbar groups secondary tools under **Document actions** (**Actions**
+in compact layouts). Each tab has one labeled **Close** control. Source, Reading
+and Heinlein remain direct writing actions, with large targets and a distinct
+keyboard focus ring.
+
 ## Markdown Reading
 
 Use **Reading** beside **Source** to read formatted Markdown in project documents
@@ -71,9 +89,9 @@ Manuscripts, project stores, recovery, credentials, conversations and review age
 retain their existing separate stores. Preferences do not provide cross-device sync.
 Native builds require Rust 1.89 or newer for OS-backed file locking.
 
-## 1.8 release packaging
+## 1.10 release packaging
 
-Heinlein Studio is version **1.8.0**. The independent Python
+Heinlein Studio is version **1.10.0**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:
@@ -98,8 +116,11 @@ release app does not include that source-update launcher.
 Standalone apps check published GitHub releases shortly after launch and hourly
 while visible. **Update available…** or **Update needs attention…** appears without
 changing the manuscript layout or keyboard focus. **Heinlein Studio → Check for
-Updates…** also checks explicitly. Release downloads are installed manually after
-saving and quitting; unpublished source changes are not release updates. Managed
+Updates…** also checks explicitly. **Download and build release** explicitly downloads the published tag and builds a
+separate app using Python, Git, Node/npm, Rust and Apple build tools. The result
+is revealed in Finder; save and quit before copying it to Applications. Failed
+builds leave the running app untouched. Release downloads are installed manually
+after saving and quitting; unpublished source changes are not release updates. Managed
 source installations retain their separate source check and next-launch updater.
 
 The build is ARM64 for Apple Silicon, ad-hoc signed, and not notarized or signed

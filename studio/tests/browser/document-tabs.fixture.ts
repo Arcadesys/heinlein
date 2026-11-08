@@ -21,6 +21,7 @@ void(async()=>{
  [...document.querySelectorAll<HTMLButtonElement>('.project-library button')].find(b=>b.textContent==='Open Novel A')!.click();
  for(let i=0;i<10;i++)await tick();
  await app.showDocument(paths[1]);await app.showDocument(paths[0]);
+ document.querySelector<HTMLButtonElement>('[data-tab-focus="documents"]')!.click();
  document.querySelector<HTMLButtonElement>('[aria-label="Read beside…"]')!.click();
  document.querySelector<HTMLButtonElement>(`[aria-label="Read beside active document: ${titled?'The morning after':generic?paths[1]:'Meeting'}"]`)!.click();
  for(let i=0;i<10;i++)await tick();

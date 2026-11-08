@@ -142,3 +142,19 @@ it('keeps the project picker in the header in compact writing mode',async()=>{
   expect(picker.closest('[hidden]')).toBeNull();picker.click();await tick();expect(document.querySelector<HTMLDialogElement>('.project-library')!.open).toBe(true);
  }finally{window.matchMedia=original;}
 });
+
+it('refuses project creation when current writing cannot be saved',async()=>{
+ const f=syntheticProjects(),create=vi.fn(f.core.createLocalProject!);f.core.createLocalProject=create;const {app}=start(f);await tick();await open('Novel A');await app.showDocument('scene.md');const before=f.documents['local-a']['scene.md'];view().dispatch({changes:{from:0,insert:'Unsaved — '}});f.setFailSave(true);
+ await library();button('New project…',document.querySelector('.project-library')!).click();await tick();document.querySelector<HTMLInputElement>('#new-project-name')!.value='New novel';button('Choose location and create project…').click();await tick();expect(create).not.toHaveBeenCalled();expect(view().state.doc.toString()).toContain('Unsaved — ');expect(f.documents['local-a']['scene.md']).toBe(before);
+});
+it('shows native creation errors inside the project form and preserves the entered name',async()=>{
+ const f=syntheticProjects();f.core.createLocalProject=vi.fn(async()=>{throw Error('A folder with this name already exists.');});start(f);await tick();await library();button('New project…',document.querySelector('.project-library')!).click();await tick();document.querySelector<HTMLInputElement>('#new-project-name')!.value='Existing novel';button('Choose location and create project…').click();await tick();expect(document.querySelector('.project-status')?.textContent).toContain('already exists');expect(document.querySelector<HTMLInputElement>('#new-project-name')!.value).toBe('Existing novel');expect(document.querySelector<HTMLDialogElement>('.project-library')!.open).toBe(true);
+});
+
+it('opens a created project directly into its empty first scene and saves typed writing there',async()=>{
+ const {f}=start();await tick();await library();button('New project…',document.querySelector('.project-library')!).click();await tick();document.querySelector<HTMLInputElement>('#new-project-name')!.value='Ready project';button('Choose location and create project…').click();await tick();
+ const p=f.projects.find(p=>p.name==='Ready project')!;expect(p).toBeTruthy();expect(document.querySelector<HTMLDialogElement>('.project-library')!.open).toBe(false);expect(view().state.doc.toString()).toBe('');expect(view().hasFocus).toBe(true);view().dispatch({changes:{from:0,insert:'Ready to write — 🦊'}});await open('Novel A');expect(f.documents[p.id]['ms/first-scene.md']).toBe('Ready to write — 🦊');await open('Ready project');expect(view().state.doc.toString()).toBe('Ready to write — 🦊');expect(f.externalCalls).toEqual([]);
+});
+it('offers a visible writing setup action when reopening an empty folder',async()=>{
+ const f=syntheticProjects();f.documents['local-a']={};start(f);await tick();await open('Novel A');const before=structuredClone(f.documents);const startWriting=button('Start writing…',sourceView());expect(startWriting.hidden).toBe(false);startWriting.click();await tick();expect(document.querySelector('dialog[open]')?.textContent).toContain('Manuscript title');expect(f.documents).toEqual(before);expect(f.draftingCalls).toEqual([]);
+});

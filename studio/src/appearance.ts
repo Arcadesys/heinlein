@@ -20,9 +20,9 @@ export type ThemeId = typeof THEMES[number]['id'];
 export type AccentId = typeof ACCENTS[number]['id'];
 export type WidthId = typeof WIDTHS[number]['id'];
 export type LeadingId = typeof LEADINGS[number]['id'];
-export interface Appearance { theme: ThemeId; accent: AccentId; width: WidthId; leading: LeadingId; fade: boolean; focus: boolean }
+export interface Appearance { theme: ThemeId; accent: AccentId; width: WidthId; leading: LeadingId; fade: boolean; focus: boolean; focusGoal?: boolean }
 
-export const DEFAULT_APPEARANCE: Appearance = { theme: 'arcades', accent: 'pink', width: 'medium', leading: 'airy', fade: true, focus: false };
+export const DEFAULT_APPEARANCE: Appearance = { theme: 'arcades', accent: 'pink', width: 'medium', leading: 'airy', fade: true, focus: false, focusGoal: false };
 const STORAGE_KEY = 'heinlein-studio-appearance-v1';
 
 const pick = <T extends { id: string }>(list: readonly T[], value: unknown, fallback: T['id']): T['id'] =>
@@ -39,6 +39,7 @@ export function parseAppearance(raw: unknown): Appearance {
     leading: pick(LEADINGS, source.leading, DEFAULT_APPEARANCE.leading),
     fade: typeof source.fade === 'boolean' ? source.fade : DEFAULT_APPEARANCE.fade,
     focus: typeof source.focus === 'boolean' ? source.focus : DEFAULT_APPEARANCE.focus,
+    focusGoal: typeof source.focusGoal === 'boolean' ? source.focusGoal : false,
   };
 }
 export function loadAppearance(): Appearance {

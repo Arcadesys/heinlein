@@ -25,7 +25,7 @@ test('chapter revision reveals a scene left in Reading and keeps its exact selec
     if (from < 0) throw Error('Synthetic chapter target missing');
     view.dispatch({selection: {anchor: from, head: from + 5}, scrollIntoView: true});view.focus();
   });
-  await page.getByRole('button', {name: 'Editing chapter actions', exact: true}).click();
+  if(!await page.getByRole('button',{name: 'Editing chapter actions', exact: true}).isVisible())await page.getByRole('button',{name:'Document actions',exact:true}).click();await page.getByRole('button',{name: 'Editing chapter actions', exact: true}).click();
   const revise = page.getByRole('button', {name: 'Revise source passage', exact: true});
   await revise.focus();await revise.scrollIntoViewIfNeeded();
   const trigger = await revise.boundingBox();expect(trigger!.height).toBeGreaterThanOrEqual(48);expect(trigger!.width).toBeGreaterThanOrEqual(48);

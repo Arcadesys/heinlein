@@ -44,3 +44,10 @@ it('automatic checks start once and stop when the studio is destroyed',async()=>
  const f=fixture();f.panel.startChecking();f.panel.startChecking();await vi.advanceTimersByTimeAsync(5000);expect(f.request.mock.calls).toEqual([['status'],['check']]);f.panel.destroy();await vi.advanceTimersByTimeAsync(60*60*1000);expect(f.request).toHaveBeenCalledTimes(2);
  }finally{vi.useRealTimers();}
 });
+it('offers a release build only after discovery and keeps installation explicit',async()=>{
+ const f=fixture();f.request.mockResolvedValue({state:'release-available',channel:'release',availableVersion:'2.0.0'});
+ await f.panel.poll();expect(f.request.mock.calls).toEqual([['status'],['check']]);
+ await f.panel.open();const build=[...f.panel.element.querySelectorAll('button')].find(b=>b.textContent==='Download and build release')!;expect(build.hidden).toBe(false);
+ f.request.mockResolvedValueOnce({state:'release-build-ready',channel:'release',availableVersion:'2.0.0'});
+ await f.click('Download and build release');expect(f.request).toHaveBeenLastCalledWith('buildRelease');expect(f.panel.element.textContent).toContain('revealed in Finder');expect(build.hidden).toBe(true);expect(f.quit).not.toHaveBeenCalled();f.panel.destroy();
+});
