@@ -162,7 +162,7 @@ test('immediate Escape then Cmd+N retains kept writing and new editor focus',asy
   expect(await page.evaluate(()=>(window as any).draftFixture.externalCalls)).toEqual([]);
 });
 
-test('wide standalone chats use the existing gutter without changing source or reading layout',async({page})=>{
+test('wide standalone editors use the existing gutter without changing source or reading layout',async({page})=>{
   await page.setViewportSize({width:3200,height:1000});
   await page.goto('/tests/browser/standalone.html');await expect(writing(page)).toBeFocused();
   await page.keyboard.insertText('A standalone draft — with agents beside it.\n\nThe writing width stays unchanged.');

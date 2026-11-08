@@ -15,7 +15,7 @@
 - Existing native confirmation, source-hash, recovery and commit-boundary checks
   remain enforced. External MCP, project filesystem and sharing commands do not
   gain access to private standalone storage.
-- Chats use the existing gutter when space permits. Save completion refreshes
+- Editors use the existing gutter when space permits. Save completion refreshes
   review availability. Source and Reading layouts do not reflow when chats open.
 
 ## Passed checks
