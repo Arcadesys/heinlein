@@ -51,3 +51,40 @@ it('offers a release build only after discovery and keeps installation explicit'
  f.request.mockResolvedValueOnce({state:'release-build-ready',channel:'release',availableVersion:'2.0.0'});
  await f.click('Download and build release');expect(f.request).toHaveBeenLastCalledWith('buildRelease');expect(f.panel.element.textContent).toContain('revealed in Finder');expect(build.hidden).toBe(true);expect(f.quit).not.toHaveBeenCalled();f.panel.destroy();
 });
+
+it.each(['direct-download','direct-download-invalid'])('direct channel %s stops polling and never offers public checks or builds',async state=>{
+ const f=fixture();f.request.mockResolvedValue({state,channel:'direct-download',currentVersion:'1.10.0'});
+ await f.panel.poll();await f.panel.poll();expect(f.request.mock.calls).toEqual([['status']]);
+ await f.panel.open();const byName=(name:string)=>[...f.panel.element.querySelectorAll('button')].find(b=>b.textContent===name)!;
+ expect(byName('Check for updates').hidden).toBe(true);expect(byName('Download and build release').hidden).toBe(true);expect(byName('Update on next launch').hidden).toBe(true);
+ expect(byName('Open purchase and download page').hidden).toBe(state!=='direct-download');expect(f.panel.element.querySelectorAll('p')[1].textContent).toContain('Direct download');
+ if(state==='direct-download'){await f.click('Open purchase and download page');expect(f.request).toHaveBeenLastCalledWith('openRelease');}
+ expect(f.request.mock.calls.flat()).not.toContain('check');expect(f.request.mock.calls.flat()).not.toContain('buildRelease');f.panel.destroy();
+});
+it('a direct page opening failure stays in the direct channel',async()=>{
+ const f=fixture();f.request.mockResolvedValueOnce({state:'direct-download',channel:'direct-download'});await f.panel.open();
+ f.request.mockRejectedValueOnce(new Error('private URL'));await f.click('Open purchase and download page');
+ expect(f.panel.element.textContent).toContain('purchase and download page could not be opened');expect(f.panel.element.textContent).not.toContain('private URL');
+ await f.panel.poll();expect(f.request.mock.calls).toEqual([['status'],['openRelease']]);f.panel.destroy();
+});
+
+it('exposes build progress while controls are busy and keeps the finished result between polls',async()=>{
+ const f=fixture();
+ f.request.mockResolvedValue({state:'release-available',channel:'release',availableVersion:'2.0.0'});
+ await f.panel.open();
+ let finish!:(value:UpdateStatus)=>void;
+ f.request.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve}));
+ await f.click('Download and build release');
+ const status=f.panel.element.querySelector('[role="status"]')!;
+ expect(status.textContent).toContain('Downloading and building');
+ expect(status.closest('[aria-busy="true"]')).toBeNull();
+ await f.panel.poll();
+ expect(f.request.mock.calls).toEqual([['status'],['buildRelease']]);
+ finish({state:'release-build-ready',channel:'release',availableVersion:'2.0.0'});
+ await tick();
+ await f.click('Close updates');
+ await f.panel.poll();
+ expect(f.request.mock.calls).toEqual([['status'],['buildRelease']]);
+ expect(f.panel.notice.textContent).toContain('Update ready');
+ f.panel.destroy();
+});

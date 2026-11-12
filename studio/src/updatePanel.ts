@@ -1,6 +1,8 @@
 import type {LocalCore} from './localCore';
 export interface UpdateStatus {state:string;commit?:string|null;tree?:string|null;availableCommit?:string|null;availableTree?:string|null;generation?:number|null;step?:string|null;channel?:string|null;currentVersion?:string|null;availableVersion?:string|null}
 const messages:Record<string,string>={
+  'direct-download':'This app uses direct downloads. Open the purchase and download page to see available versions and download an update. Heinlein does not check this page automatically.',
+  'direct-download-invalid':'The purchase and download page configuration is invalid. Contact the app distributor for a corrected download.',
   'release-not-checked':'No release check yet. Checks contact the public Heinlein release page without using your GitHub account.',
   'release-current':'No newer published Heinlein Studio release is available. Local builds can be newer than published downloads.',
   'release-available':'A newer Heinlein Studio release is available. Download and build it on this Mac, or open the release download page.',
@@ -26,13 +28,15 @@ export function createUpdatePanel(core:LocalCore,options:{quit:()=>Promise<void>
   const element=document.createElement('dialog');element.className='update-panel';element.setAttribute('aria-labelledby','update-panel-title');
   const heading=document.createElement('h2');heading.id='update-panel-title';heading.textContent='Heinlein updates';heading.tabIndex=-1;
   const status=document.createElement('p');status.setAttribute('role','status');
+  status.setAttribute('aria-atomic','true');
+  const controls=document.createElement('div');
   const notice=document.createElement('div');notice.className='update-notice';notice.hidden=true;notice.setAttribute('role','status');notice.setAttribute('aria-atomic','true');
   const announcement=document.createElement('span');
   const noticeButton=document.createElement('button');noticeButton.type='button';noticeButton.append(announcement);notice.append(noticeButton);
   let latest:UpdateStatus|null=null,destroyed=false,timer:ReturnType<typeof setTimeout>|undefined,interval:ReturnType<typeof setInterval>|undefined;
   function announce(value:UpdateStatus){
     if(destroyed)return;latest=value;
-    const label=value.state==='release-build-ready'?'Update ready…':value.state==='available'||value.state==='release-available'?'Update available…':value.state==='scheduled'?'Update scheduled…':/failed|rolled-back|recovery-required/.test(value.state)?'Update needs attention…':'';
+    const label=value.state==='release-build-ready'?'Update ready…':value.state==='available'||value.state==='release-available'?'Update available…':value.state==='scheduled'?'Update scheduled…':/failed|invalid|rolled-back|recovery-required/.test(value.state)?'Update needs attention…':'';
     notice.hidden=!label;announcement.textContent=label;
   }
   noticeButton.onclick=()=>{void open()};
@@ -47,33 +51,37 @@ export function createUpdatePanel(core:LocalCore,options:{quit:()=>Promise<void>
   const quit=button('Save and quit when ready',async()=>{try{await options.quit()}catch{status.textContent='Heinlein could not quit safely. Keep the app open and finish any save or GitHub operation. If a renewed connection was not saved, close Updates, open GitHub projects and choose Retry saved GitHub connection before quitting again.'}});
   function render(value:UpdateStatus){
     status.textContent=messages[value.state]??'The update could not finish safely. Keep writing with the previous app, then explicitly check again.';
-    details.textContent=value.channel==='release'?`Release channel · Installed ${value.currentVersion??'unknown'}${value.availableVersion?` · Latest published ${value.availableVersion}`:''}. Checks contact only the public Heinlein release service. Your writing and GitHub account are not sent. Building downloads the published release source into a separate temporary folder and requires Python, Git, Node/npm, Rust and Apple build tools. Builds may take several minutes. Save and quit before installing the result; the running app stays in place.`:`Main-source channel${value.commit?` · Installed ${value.commit.slice(0,12)}`:''}${value.availableCommit?` · Available ${value.availableCommit.slice(0,12)}`:''}${value.generation!=null?` · Install ${value.generation}`:''}. Saved GitHub credentials stay in the same OS store. macOS may ask you to allow access after an ad-hoc signed update; this is not a sign-out.`;
+    const direct=value.channel==='direct-download';
+    details.textContent=direct?`Direct download · Installed ${value.currentVersion??'unknown'}. The purchase and download page opens in your browser only when you choose it. Save and quit before installing a downloaded update.`:value.channel==='release'?`Release channel · Installed ${value.currentVersion??'unknown'}${value.availableVersion?` · Latest published ${value.availableVersion}`:''}. Checks contact only the public Heinlein release service. Your writing and GitHub account are not sent. Building downloads the published release source into a separate temporary folder and requires Python, Git, Node/npm, Rust and Apple build tools. Builds may take several minutes. Save and quit before installing the result; the running app stays in place.`:`Main-source channel${value.commit?` · Installed ${value.commit.slice(0,12)}`:''}${value.availableCommit?` · Available ${value.availableCommit.slice(0,12)}`:''}${value.generation!=null?` · Install ${value.generation}`:''}. Saved GitHub credentials stay in the same OS store. macOS may ask you to allow access after an ad-hoc signed update; this is not a sign-out.`;
     build.hidden=value.channel!=='release'||!['release-available','release-build-failed'].includes(value.state);
     if(build.hidden&&document.activeElement===build)heading.focus();
-    download.hidden=value.channel!=='release';explanation.hidden=value.channel==='release';
+    download.textContent=direct?'Open purchase and download page':'Open release download page';
+    download.hidden=direct?value.state!=='direct-download':value.channel!=='release';explanation.hidden=direct||value.channel==='release';check.hidden=direct;
     unavailable=value.state==='unavailable';schedule.hidden=value.state!=='available';quit.hidden=value.state!=='scheduled';check.disabled=unavailable;
   }
   async function load(action:'status'|'check'|'schedule'|'openRelease'|'buildRelease'){
     const current=generation;
     if(!core.updateRequest){render({state:'unavailable'});return;}
-    status.textContent=action==='check'?'Checking for Heinlein updates…':action==='buildRelease'?'Downloading and building the release… This may take several minutes. Keep Heinlein open until the build finishes.':'Reading update status…';
+    status.textContent=action==='openRelease'?(latest?.channel==='direct-download'?'Opening the purchase and download page…':'Opening the release download page…'):action==='check'?'Checking for Heinlein updates…':action==='buildRelease'?'Downloading and building the release… This may take several minutes. Keep Heinlein open until the build finishes.':'Reading update status…';
     const value=await core.updateRequest(action);
-    announce(value);if(element.open&&current===generation)render(value);
+    announce(value);if(element.open&&current===generation){render(value);if(action==='openRelease')status.textContent=value.channel==='direct-download'?'The purchase and download page opened in your browser.':'The release download page opened in your browser.';}
   }
   function act(run:()=>Promise<void>){
     if(busy)return pending;
-    const view=generation;busy=true;[check,schedule,quit,download,build].forEach(b=>b.disabled=true);element.setAttribute('aria-busy','true');
-    pending=run().catch(()=>{announce({state:'release-check-failed'});if(element.open&&view===generation)status.textContent='The update check is unavailable. Your running app, writing and saved accounts are unchanged. Try again later.'}).finally(()=>{busy=false;[check,schedule,quit,download,build].forEach(b=>b.disabled=false);check.disabled=unavailable;element.removeAttribute('aria-busy')});return pending;
+    const view=generation;busy=true;[check,schedule,quit,download,build].forEach(b=>b.disabled=true);controls.setAttribute('aria-busy','true');
+    pending=run().catch(()=>{if(latest?.channel==='direct-download'){if(element.open&&view===generation)status.textContent='The purchase and download page could not be opened. Contact the app distributor if the problem continues.';}else{announce({state:'release-check-failed'});if(element.open&&view===generation)status.textContent='The update check is unavailable. Your running app, writing and saved accounts are unchanged. Try again later.';}}).finally(()=>{busy=false;[check,schedule,quit,download,build].forEach(b=>b.disabled=false);check.disabled=unavailable;controls.removeAttribute('aria-busy')});return pending;
   }
   exit.onclick=close;
   const explanation=document.createElement('p');explanation.textContent='Updates build the trusted Heinlein main source locally. Nothing replaces the app while it is running. You can defer an update and keep writing; quitting uses the normal save and recovery checks. Python, Node/npm, Rust and Apple build tools are required.';
-  element.append(heading,exit,status,details,explanation,check,schedule,download,build,quit);build.hidden=true;schedule.hidden=true;quit.hidden=true;download.hidden=true;
+  controls.append(check,schedule,download,build,quit);element.append(heading,exit,status,details,explanation,controls);build.hidden=true;schedule.hidden=true;quit.hidden=true;download.hidden=true;
   element.addEventListener('cancel',event=>{event.preventDefault();close()});
   async function open(action:'status'|'check'='status'){if(element.open){if(action==='check')await act(()=>load('check'));return;}openedFrom=document.activeElement as HTMLElement;const view=++generation;element.showModal();heading.focus();await pending;if(element.open&&view===generation)await act(()=>load(action))}
   async function poll(){
-    if(destroyed||busy||!core.updateRequest||latest?.state==='scheduled')return;
+    if(destroyed||busy||element.open||!core.updateRequest||latest?.state==='scheduled'||latest?.state==='release-build-ready'||latest?.channel==='direct-download')return;
     await act(async()=>{
+      status.textContent='Checking for Heinlein updates…';
       const value=await core.updateRequest!('status');announce(value);
+      if(value.channel==='direct-download'){clearTimeout(timer);clearInterval(interval);if(element.open)render(value);return;}
       if(value.state!=='scheduled'&&value.state!=='unavailable'){
         const checked=await core.updateRequest!('check');announce(checked);if(element.open)render(checked);
       }

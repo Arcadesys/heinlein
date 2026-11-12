@@ -13,7 +13,12 @@
       "signingIdentity": "-"
     },
     "resources": {
-      "../../heinlein/": "publishing/heinlein/"
+      "../../heinlein/": "publishing/heinlein/",
+      "../node_modules/@fontsource/atkinson-hyperlegible/LICENSE": "licenses/fonts/Atkinson-Hyperlegible-LICENSE.txt",
+      "../node_modules/@fontsource/inter/LICENSE": "licenses/fonts/Inter-LICENSE.txt",
+      "../node_modules/@fontsource/jetbrains-mono/LICENSE": "licenses/fonts/JetBrains-Mono-LICENSE.txt",
+      "../node_modules/@fontsource/lora/LICENSE": "licenses/fonts/Lora-LICENSE.txt",
+      "../node_modules/@fontsource/opendyslexic/LICENSE": "licenses/fonts/OpenDyslexic-LICENSE.txt"
     }
   }
 }

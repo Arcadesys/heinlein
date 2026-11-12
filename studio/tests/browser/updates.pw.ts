@@ -30,10 +30,32 @@ test('standalone releases announce updates without focus or manuscript reflow',a
  await page.screenshot({path:testInfo.outputPath('release-update-notice.png')});
  await notice.focus();await page.keyboard.press('Enter');const dialog=page.getByRole('dialog',{name:'Heinlein updates',exact:true});await expect(dialog).toBeVisible();await expect(dialog).toContainText('Installed 1.7.0');await expect(dialog).toContainText('Latest published 1.8.0');
  await expect(dialog.getByRole('button',{name:'Update on next launch',exact:true})).not.toBeVisible();
- await dialog.getByRole('button',{name:'Open release download page',exact:true}).click();
+ await dialog.getByRole('button',{name:'Open release download page',exact:true}).click();await expect(dialog.getByRole('status')).toHaveText('The release download page opened in your browser.');
  expect(await page.evaluate(()=>((window as any).updateFixture.calls))).toContain('openRelease');
  await dialog.getByRole('button',{name:'Download and build release',exact:true}).click();
  await expect(dialog).toContainText('revealed in Finder');expect(await page.evaluate(()=>((window as any).updateFixture.calls))).toContain('buildRelease');
  await page.screenshot({path:testInfo.outputPath('release-build-ready.png')});
  expect((await new AxeBuilder({page}).include('.update-panel').analyze()).violations).toEqual([]);await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Update ready…',exact:true})).toBeFocused();expect(errors).toEqual([]);
+});
+
+test('direct downloads have an explicit accessible page action and preserve the writer at 200 percent',async({page},testInfo)=>{
+ const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('/tests/browser/github.html?repo-first&writing&direct-updates');await expect(page).toHaveTitle('Heinlein GitHub synthetic browser acceptance');
+ const editor=page.locator('.cm-content');await expect(editor).toBeVisible();await editor.click();
+ const before=await editor.evaluate(el=>({text:el.textContent,width:el.getBoundingClientRect().width,height:el.getBoundingClientRect().height}));
+ await page.waitForTimeout(5500);expect(await page.evaluate(()=>((window as any).updateFixture.calls))).toEqual(['status']);
+ expect(await editor.evaluate(el=>({text:el.textContent,width:el.getBoundingClientRect().width,height:el.getBoundingClientRect().height}))).toEqual(before);await expect(editor).toBeFocused();
+ await page.getByRole('button',{name:'More actions',exact:true}).click();await page.getByRole('button',{name:'Updates…',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Heinlein updates',exact:true});await expect(dialog).toBeVisible();
+ for(let i=0;i<5;i++)await page.keyboard.press(process.platform==='darwin'?'Meta+=':'Control+=');await expect(page.locator('html')).toHaveAttribute('data-zoom','200');
+ const download=dialog.getByRole('button',{name:'Open purchase and download page',exact:true});await expect(download).toBeVisible();
+ await expect(dialog.getByRole('button',{name:'Check for updates',exact:true})).not.toBeVisible();await expect(dialog.getByRole('button',{name:'Download and build release',exact:true})).not.toBeVisible();
+ for(let i=0;i<15&&!await download.evaluate(el=>el===document.activeElement);i++)await page.keyboard.press('Tab');await expect(download).toBeFocused();await page.keyboard.press('Enter');await expect(dialog.getByRole('status')).toHaveText('The purchase and download page opened in your browser.');
+ expect(await page.evaluate(()=>((window as any).updateFixture.calls))).toEqual(['status','status','openRelease']);
+ const bounds=await dialog.evaluate(el=>({left:el.getBoundingClientRect().left,right:el.getBoundingClientRect().right,width:innerWidth,scroll:el.scrollWidth,client:el.clientWidth}));expect(bounds.left).toBeGreaterThanOrEqual(0);expect(bounds.right).toBeLessThanOrEqual(bounds.width);expect(bounds.scroll).toBeLessThanOrEqual(bounds.client+1);expect((await download.boundingBox())!.height).toBeGreaterThanOrEqual(48);
+ expect((await new AxeBuilder({page}).include('.update-panel').analyze()).violations).toEqual([]);await page.screenshot({path:testInfo.outputPath('direct-updates.png')});await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'More actions',exact:true})).toBeFocused();expect(errors).toEqual([]);
+});
+test('invalid direct marker shows a clear error without public fallback',async({page})=>{
+ await page.goto('/tests/browser/github.html?updates&direct-updates&invalid-direct');const dialog=page.getByRole('dialog',{name:'Heinlein updates',exact:true});await expect(dialog).toContainText('configuration is invalid');
+ await expect(dialog.getByRole('button',{name:'Open purchase and download page',exact:true})).not.toBeVisible();await expect(dialog.getByRole('button',{name:'Check for updates',exact:true})).not.toBeVisible();await expect(dialog.getByRole('button',{name:'Download and build release',exact:true})).not.toBeVisible();
+ expect((await new AxeBuilder({page}).include('.update-panel').analyze()).violations).toEqual([]);expect(await page.evaluate(()=>((window as any).updateFixture.calls))).toEqual(['status']);
 });

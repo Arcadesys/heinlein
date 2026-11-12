@@ -16,6 +16,8 @@ pub(crate) struct Runtime {
     operation: Mutex<()>,
     release_enabled: bool,
     release_status: Mutex<Option<Status>>,
+    direct_bundle: Option<PathBuf>,
+    direct_download: Option<Result<String, ()>>,
     #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
     synthetic: Option<std::sync::Arc<super::update_native_script::Script>>,
     exiting: std::sync::atomic::AtomicBool,
@@ -115,6 +117,15 @@ impl Runtime {
             let Some(bundle) = exe.parent().and_then(Path::parent).and_then(Path::parent) else {
                 return Ok(Some(Self::default()));
             };
+            if bundle.extension().is_some_and(|ext| ext == "app") {
+                if let Some(direct_download) = direct_download(bundle, verify_bundle) {
+                    return Ok(Some(Self {
+                        direct_bundle: Some(bundle.to_owned()),
+                        direct_download: Some(direct_download),
+                        ..Self::default()
+                    }));
+                }
+            }
             let manifest = bundle.join("Contents/Resources/source-update.json");
             if !manifest.is_file() {
                 return Ok(Some(Self {
@@ -200,6 +211,8 @@ impl Runtime {
                 operation: Mutex::new(()),
                 release_enabled: false,
                 release_status: Mutex::new(None),
+                direct_bundle: None,
+                direct_download: None,
                 exiting: std::sync::atomic::AtomicBool::new(false),
             }))
         }
@@ -259,7 +272,7 @@ impl Runtime {
         }
     }
     fn execute(&self, action: Action) -> Result<Status, String> {
-        if self.bundle.is_none() && !self.release_enabled {
+        if self.bundle.is_none() && !self.release_enabled && self.direct_download.is_none() {
             #[cfg(all(feature = "update-native-acceptance", target_os = "macos"))]
             let synthetic = self.synthetic.is_some();
             #[cfg(not(all(feature = "update-native-acceptance", target_os = "macos")))]
@@ -280,6 +293,12 @@ impl Runtime {
             // Synthetic bytes travel through the real operation/exiting gates and parser.
             // Never fall through to codesign, Python or a real updater path.
             return parse_status(&script.respond(action)?);
+        }
+        if let Some(download) = &self.direct_download {
+            return match action {
+                Action::Status | Action::Check => Ok(direct_status(download.is_ok())),
+                _ => Err("Use the purchase and download page for this app".into()),
+            };
         }
         if self.release_enabled {
             return match action {
@@ -349,6 +368,83 @@ impl Runtime {
             .output()
             .map_err(|_| "Update check unavailable")?;
         parse_status(&output.stdout)
+    }
+}
+fn verify_bundle(bundle: &Path) -> bool {
+    std::process::Command::new("/usr/bin/codesign")
+        .args(["--verify", "--deep", "--strict"])
+        .arg(bundle)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+fn parse_direct_download(bytes: &[u8]) -> Result<String, ()> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Marker {
+        url: String,
+    }
+    if bytes.len() > 4096 {
+        return Err(());
+    }
+    let marker: Marker = serde_json::from_slice(bytes).map_err(|_| ())?;
+    if marker.url.trim() != marker.url || marker.url.chars().any(char::is_control) {
+        return Err(());
+    }
+    let url = url::Url::parse(&marker.url).map_err(|_| ())?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || marker
+            .url
+            .split('/')
+            .nth(2)
+            .is_some_and(|host| host.contains('@'))
+    {
+        return Err(());
+    }
+    Ok(url.to_string())
+}
+/// Missing opts out; present but untrusted must never enable a public fallback.
+fn direct_download(
+    bundle: &Path,
+    verify: impl FnOnce(&Path) -> bool,
+) -> Option<Result<String, ()>> {
+    use std::io::Read;
+    let path = bundle.join("Contents/Resources/direct-download.json");
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(_) => return Some(Err(())),
+        Ok(metadata) => metadata,
+    };
+    Some((|| {
+        if !metadata.is_file() || metadata.len() > 4096 || !verify(bundle) {
+            return Err(());
+        }
+        let mut bytes = Vec::new();
+        File::open(path)
+            .map_err(|_| ())?
+            .take(4097)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ())?;
+        parse_direct_download(&bytes)
+    })())
+}
+fn direct_status(valid: bool) -> Status {
+    Status {
+        state: if valid {
+            "direct-download"
+        } else {
+            "direct-download-invalid"
+        }
+        .into(),
+        channel: Some("direct-download".into()),
+        current_version: Some(env!("CARGO_PKG_VERSION").into()),
+        ..unavailable()
     }
 }
 const RELEASE_PAGE: &str = "https://github.com/Arcadesys/heinlein/releases/latest";
@@ -575,6 +671,17 @@ pub(crate) async fn update_request(
         if matches!(action, Action::OpenRelease) {
             let runtime = app.state::<Runtime>();
             let _gate = runtime.idle()?;
+            if runtime.exiting.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("Heinlein is quitting".into());
+            }
+            if runtime.direct_download.is_some() {
+                let bundle = runtime.direct_bundle.as_ref().ok_or("Download configuration unavailable")?;
+                let url = direct_download(bundle, verify_bundle)
+                    .and_then(Result::ok).ok_or("The purchase and download page configuration is invalid. Contact the app distributor.")?;
+                use tauri_plugin_opener::OpenerExt;
+                app.opener().open_url(url, None::<&str>).map_err(|_| "Purchase and download page unavailable")?;
+                return Ok(direct_status(true));
+            }
             if !runtime.release_enabled || runtime.exiting.load(std::sync::atomic::Ordering::SeqCst)
             {
                 return Err("Release downloads unavailable".into());
@@ -598,6 +705,79 @@ pub(crate) async fn update_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn direct_download_urls_are_public_https_without_credentials_or_tokens() {
+        assert_eq!(
+            parse_direct_download(br#"{"url":"https://store.example/buy"}"#).unwrap(),
+            "https://store.example/buy"
+        );
+        for value in [
+            "http://store.example/buy",
+            "file:///tmp/buy",
+            "https://user:secret@store.example/buy",
+            "https://@store.example/buy",
+            "https://store.example/buy?token=secret",
+            "https://store.example/buy#secret",
+            " https://store.example/buy",
+            "https://store.example/buy\n",
+        ] {
+            assert!(parse_direct_download(
+                &serde_json::to_vec(&serde_json::json!({"url":value})).unwrap()
+            )
+            .is_err());
+        }
+        assert!(parse_direct_download(br#"{"url":"https://store.example","extra":true}"#).is_err());
+        assert!(parse_direct_download(&vec![b' '; 4097]).is_err());
+    }
+    #[test]
+    fn direct_marker_absent_valid_invalid_and_unsigned_are_distinct() {
+        let temp = tempfile::tempdir().unwrap();
+        let resources = temp.path().join("Contents/Resources");
+        std::fs::create_dir_all(&resources).unwrap();
+        assert!(
+            direct_download(temp.path(), |_| panic!("absent marker does not verify")).is_none()
+        );
+        let marker = resources.join("direct-download.json");
+        std::fs::write(&marker, br#"{"url":"https://store.example/download"}"#).unwrap();
+        assert_eq!(
+            direct_download(temp.path(), |_| true).unwrap().unwrap(),
+            "https://store.example/download"
+        );
+        assert!(direct_download(temp.path(), |_| false).unwrap().is_err());
+        std::fs::write(&marker, b"invalid").unwrap();
+        assert!(direct_download(temp.path(), |_| true).unwrap().is_err());
+        #[cfg(unix)]
+        {
+            std::fs::remove_file(&marker).unwrap();
+            std::os::unix::fs::symlink("missing", &marker).unwrap();
+            assert!(direct_download(temp.path(), |_| true).unwrap().is_err());
+        }
+    }
+    #[test]
+    fn direct_channel_never_checks_github_schedules_or_builds() {
+        for download in [Ok("https://store.example/download".into()), Err(())] {
+            let valid = download.is_ok();
+            let runtime = Runtime {
+                direct_download: Some(download),
+                ..Runtime::default()
+            };
+            assert_eq!(
+                runtime.execute(Action::Status).unwrap().state,
+                if valid {
+                    "direct-download"
+                } else {
+                    "direct-download-invalid"
+                }
+            );
+            assert_eq!(
+                runtime.execute(Action::Check).unwrap().channel.as_deref(),
+                Some("direct-download")
+            );
+            assert!(runtime.execute(Action::Schedule).is_err());
+            assert!(runtime.execute(Action::BuildRelease).is_err());
+            assert!(runtime.execute(Action::OpenRelease).is_err());
+        }
+    }
     fn release(version: &str) -> Release {
         Release {
             tag_name: format!("v{version}"),
