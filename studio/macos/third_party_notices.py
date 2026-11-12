@@ -6,6 +6,7 @@ clearance or proof that every resolved build dependency is linked into the app.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -17,7 +18,7 @@ _LEGAL = re.compile(r"^(licen[cs]e|copying|copyright|notice|authors)(?:[._-].*)?
 _SKIP = {"node_modules", ".git", "target"}
 
 
-def _texts(root: Path, review: list[str], label: str, declared: str | None = None):
+def _texts(root: Path, review: list[str], label: str, declared: str | None = None, *, missing=True):
     """Return complete UTF-8 upstream texts; report omissions explicitly."""
     if not root.is_dir():
         review.append(f"{label}: installed package directory unavailable; upstream texts missing.")
@@ -49,9 +50,52 @@ def _texts(root: Path, review: list[str], label: str, declared: str | None = Non
             result.append((name, text))
         except (OSError, UnicodeError, ValueError):
             review.append(f"{label}: upstream text {name} could not be included; review required.")
-    if not result:
+    if not result and missing:
         review.append(f"{label}: no readable upstream license/copyright/NOTICE text found.")
     return result
+
+
+def _supplement(studio: Path, package: dict, review: list[str], label: str):
+    """Use bundled originals only for byte/version/commit-matched crate releases."""
+    directory = studio / "macos/upstream_notices"
+    try:
+        manifest = json.loads((directory / "manifest.json").read_text())
+        record = next(r for r in manifest["packages"]
+                      if (r["name"], r["version"]) == (package["name"], package["version"]))
+    except (OSError, ValueError, KeyError, StopIteration):
+        return [], False
+    try:
+        root = Path(package["manifest_path"]).parent
+        vcs = json.loads((root / ".cargo_vcs_info.json").read_text())
+        if (package.get("license") != record["license"]
+                or package.get("repository", "").rstrip("/") != record["repository"]
+                or vcs["git"]["sha1"] != record["commit"] or vcs["path_in_vcs"] != record["path"]
+                or hashlib.sha256((root / "Cargo.toml.orig").read_bytes()).hexdigest() != record["manifest_sha256"]):
+            raise ValueError("crate provenance mismatch")
+        evidence = record.get("license_evidence")
+        if evidence:
+            path = root / evidence["package_file"]
+            if (not path.resolve().is_relative_to(root.resolve())
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != evidence["sha256"]):
+                raise ValueError("license declaration mismatch")
+        texts = []
+        for original in record["texts"]:
+            path = directory / original["file"]
+            if not path.resolve().is_relative_to(directory.resolve()) or path.is_symlink():
+                raise ValueError("supplement path mismatch")
+            data = path.read_bytes()
+            if hashlib.sha256(data).hexdigest() != original["sha256"]:
+                raise ValueError("supplement content mismatch")
+            texts.append((f"Supplemental original: {original['url']} (SHA256 {original['sha256']})", data.decode("utf-8")))
+        texts.insert(0, ("Supplement provenance", f"Exact upstream crate manifest: {record['cargo_toml_url']}\n"
+                        f"Original manifest SHA256: {record['manifest_sha256']}\n"
+                        f"Crate release VCS commit: {record['commit']}\n"))
+        if evidence:
+            texts.append((f"Release license declaration: {evidence['url']}", evidence["header"]))
+        return texts, record["complete_terms"]
+    except (OSError, ValueError, KeyError, TypeError):
+        review.append(f"{label}: supplemental provenance/content did not match this crate release; review required.")
+        return [], False
 
 
 def _npm(studio: Path, review: list[str]):
@@ -143,7 +187,13 @@ def _cargo(studio: Path, review: list[str]):
             review.append(f"{label}: non-crates.io source; exact source access needs review.")
         if "MPL" in license_value:
             review.append(f"{label}: MPL covered-source availability/recipient notice obligations need review; exact crate source links included.")
-        result.append((label, license_value, links, _texts(Path(package["manifest_path"]).parent, review, label, package.get("license_file"))))
+        texts = _texts(Path(package["manifest_path"]).parent, review, label, package.get("license_file"), missing=False)
+        if not texts:
+            texts, complete = _supplement(studio, package, review, label)
+            if not complete:
+                suffix = " Verified upstream licensing explanation is included." if texts else ""
+                review.append(f"{label}: full upstream license/copyright/NOTICE text missing or unverified.{suffix}")
+        result.append((label, license_value, links, texts))
     return result, target
 
 

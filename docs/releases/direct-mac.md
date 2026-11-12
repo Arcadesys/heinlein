@@ -8,6 +8,22 @@ A Mac app for writing and organizing a book in local Markdown files. A writer ca
 
 Optional editorial tools can send manuscript material to OpenAI after the author chooses to send it. Proposed changes require the author's decision. Optional GitHub features use a separately connected GitHub account. A purchase should describe any separately required AI access.
 
+## Installation text for a buyer's receipt
+
+Download the Heinlein Studio disk image from your purchase page. Open it in Finder and select **Heinlein Studio**. Press Command+C, open the **Applications** shortcut in the same window, then press Command+V. Open Heinlein Studio from Applications. When updating an existing copy, save your work and quit Heinlein before copying the new app.
+
+Open **Projects**, choose **New project…**, name it and select a folder for your writing. Studio opens **First scene**. To get another copy or look for an update later, open **Updates** and choose **Open purchase and download page**.
+
+## Desktop privacy text for review
+
+Your manuscript is saved as Markdown files in the project folder you choose. Heinlein also keeps working data on your Mac, including recovery copies, editorial proposals, question history and unsent question drafts. Signing out of a connected account leaves those local records on your Mac.
+
+If you connect ChatGPT, Studio shows the question and manuscript context for your review. Using **Send to OpenAI** sends the question, the displayed context and included conversation history to OpenAI. An editorial review can also send the writing you choose for that review. You decide whether to apply a suggested change.
+
+If you connect GitHub and share writing, copies go to the repository you select, under that repository's access settings. Account credentials use the operating system's credential store. If you grant a separate AI client access to a project through MCP, that client can use its own cloud services. In the paid build, the purchase-page button opens your browser so you can retrieve downloads from the seller.
+
+Before publishing this text, add the seller's contact, the storefront's handling of purchase records, and verified instructions for deleting stored data.
+
 ## Build the installer
 
 Use an Apple Silicon build Mac with Python 3.12+, Node/npm, Rust, Apple command line tools and a working `xcrun notarytool` and `stapler`. The packaging script exports the current commit into a fresh directory and installs the locked dependencies. Commit the chosen candidate first, including any new source files it requires. Allow room for a Rust release build. The output argument is a new directory inside an existing parent.
@@ -47,3 +63,9 @@ The customer path signs the app with hardened runtime and a timestamp, signs the
 The public ZIP and DMG matched their published SHA-256 hashes. The DMG mounted read-only and its app matched the ZIP copy. Both contain arm64 version 1.10.0 with identifier `me.thearcades.heinlein.studio`. Deep signature integrity verification passed. Gatekeeper rejected the ad-hoc public app. The build Mac reported zero usable Developer ID Application identities.
 
 On the 1.10.0 source, 63 renderer, 28 browser, 5 export adapter and 24 native persistence/project checks passed. Tests covered keyboard project creation, save/reload, narrow reflow, and native disk restart. Actual HTML, EPUB, DOCX and PDF exports preserved the synthetic source on a configured Mac. These checks did not exercise a quarantined paid installation, spoken VoiceOver, the oldest supported macOS, a storefront transaction, or live provider access.
+
+On the release-preparation branch, 1,303 renderer tests and 26 browser smoke tests passed. The paid Updates dialog also passed focused desktop and narrow-window checks at 200% zoom, including keyboard activation, return focus, accessible status announcements and stable manuscript dimensions. The first local rehearsal produced a DMG that mounted read-only and matched its SHA-256 checksum. Each subsequent build records its own commit and checksum in build.json.
+
+The generated inventory covers 37 npm and 368 Rust packages for the Apple Silicon build. Eleven objc2-family packages have an upstream licensing explanation and need further notice review. Five MPL entries include exact covered-source links for the distributor to check.
+
+The remaining distribution tests take a real Developer ID identity and Keychain notary profile, the chosen storefront, and an independent Mac or VM. Use the signed customer artifact for those tests.

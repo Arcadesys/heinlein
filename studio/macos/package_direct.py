@@ -48,7 +48,8 @@ def build_app(work, commit):
         tracked.extractall(source, filter="data")
     studio = source / "studio"
     target = work / "target"
-    env = {**os.environ, "CARGO_TARGET_DIR": str(target), "PYTHONDONTWRITEBYTECODE": "1"}
+    env = {**os.environ, "CARGO_TARGET_DIR": str(target), "PYTHONDONTWRITEBYTECODE": "1",
+           "OPENSSL_STATIC": "1"}
     # Keep Tauri's intermediate build ad-hoc. Only the final staged bundle goes to Apple.
     for key in list(env):
         if key.startswith("APPLE_") or key == "TAURI_SIGNING_PRIVATE_KEY":
@@ -65,8 +66,13 @@ def inspect_app(app):
     version = info["CFBundleShortVersionString"]
     if info["CFBundleIdentifier"] != BUNDLE_ID or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise ValueError("Unexpected app identity or version.")
-    if output("lipo", "-archs", contents / "MacOS" / info["CFBundleExecutable"]) != "arm64":
+    binary = contents / "MacOS" / info["CFBundleExecutable"]
+    if output("lipo", "-archs", binary) != "arm64":
         raise ValueError("Expected an Apple Silicon (arm64) build.")
+    for line in output("otool", "-L", binary).splitlines()[1:]:
+        library = line.strip().partition(" (compatibility version")[0]
+        if library.startswith("/") and not library.startswith(("/System/Library/", "/usr/lib/")):
+            raise ValueError(f"The app links to a library on the build machine: {library}")
     return version
 
 

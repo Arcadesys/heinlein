@@ -91,6 +91,8 @@ Native builds require Rust 1.89 or newer for OS-backed file locking.
 
 ## 1.10 release packaging
 
+For a paid Apple Silicon download, follow the [direct Mac release guide](../docs/releases/direct-mac.md). It covers the customer update page, a local installer rehearsal, Developer ID signing and Apple notarization.
+
 Heinlein Studio is version **1.10.0**. The independent Python
 publisher remains at **0.1.0**.
 

@@ -1,6 +1,7 @@
 """Focused artifact checks; no network, installed app or author data."""
 import importlib.util
 import json
+import hashlib
 from pathlib import Path
 import subprocess
 from unittest.mock import patch
@@ -124,3 +125,59 @@ def test_installed_version_drift_and_missing_lock_are_explicit(tmp_path):
         (tmp_path / "package-lock.json").unlink()
         result = notices.write_notices(tmp_path, destination)
     assert any("production notices incomplete" in item for item in result["review_items"])
+
+
+def supplemental_fixture(studio, *, complete=True):
+    metadata = cargo(studio, [("covered", None, "MPL-2.0")])
+    package = metadata["packages"][1]
+    package["repository"] = "https://github.com/example/upstream"
+    root = Path(package["manifest_path"]).parent
+    (root / "LICENSE").unlink()
+    (root / "Cargo.toml.orig").write_bytes(b"original upstream crate manifest\n")
+    (root / ".cargo_vcs_info.json").write_text(json.dumps({"git": {"sha1": "a" * 40}, "path_in_vcs": "crate"}))
+    directory = studio / "macos/upstream_notices"
+    directory.mkdir(parents=True)
+    data = b"Original verified upstream text\n"
+    (directory / "original.txt").write_bytes(data)
+    record = {"name": "covered", "version": "2.0.0", "license": "MPL-2.0", "repository": package["repository"],
+              "commit": "a" * 40, "path": "crate", "manifest_sha256": hashlib.sha256((root / "Cargo.toml.orig").read_bytes()).hexdigest(),
+              "cargo_toml_url": "https://example.invalid/immutable-commit/crate/Cargo.toml", "complete_terms": complete,
+              "texts": [{"file": "original.txt", "url": "https://example.invalid/immutable-commit/LICENSE", "sha256": hashlib.sha256(data).hexdigest()}]}
+    (directory / "manifest.json").write_text(json.dumps({"schema_version": 1, "packages": [record]}))
+    return metadata, package, directory
+
+
+def test_supplement_uses_supplied_studio_and_rejects_drift_or_tampering(tmp_path):
+    metadata, package, directory = supplemental_fixture(tmp_path)
+    review = []
+    texts, complete = notices._supplement(tmp_path, package, review, "covered")
+    assert complete and any("Original verified upstream text" in text for _, text in texts)
+    assert notices._supplement(tmp_path / "other-export", package, [], "covered") == ([], False)
+    original_manifest = Path(package["manifest_path"]).parent / "Cargo.toml.orig"
+    original_manifest.write_text("different release")
+    assert notices._supplement(tmp_path, package, review, "covered") == ([], False)
+    original_manifest.write_bytes(b"original upstream crate manifest\n")
+    (directory / "original.txt").write_text("tampered terms")
+    assert notices._supplement(tmp_path, package, review, "covered") == ([], False)
+    assert any("did not match" in item for item in review)
+
+
+def test_upstream_explanation_does_not_clear_missing_full_terms(tmp_path):
+    npm(tmp_path, {})
+    metadata, _, _ = supplemental_fixture(tmp_path, complete=False)
+    destination = tmp_path / "notices.txt"
+    with patch.object(notices, "_command", side_effect=command_for(metadata)):
+        result = notices.write_notices(tmp_path, destination)
+    text = destination.read_text()
+    assert "Original verified upstream text" in text
+    assert any("full upstream license/copyright/NOTICE text missing or unverified" in item for item in result["review_items"])
+    assert "Verified upstream licensing explanation is included" in text
+
+
+def test_complete_verified_supplement_closes_missing_text_but_keeps_mpl_review(tmp_path):
+    npm(tmp_path, {})
+    metadata, _, _ = supplemental_fixture(tmp_path)
+    with patch.object(notices, "_command", side_effect=command_for(metadata)):
+        result = notices.write_notices(tmp_path, tmp_path / "notices.txt")
+    assert len(result["review_items"]) == 1
+    assert "MPL covered-source" in result["review_items"][0]
