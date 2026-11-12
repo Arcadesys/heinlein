@@ -91,6 +91,8 @@ Native builds require Rust 1.89 or newer for OS-backed file locking.
 
 ## 1.10 release packaging
 
+The direct Mac edition runs on Apple Silicon with macOS 15 or newer. In that edition DOCX and EPUB use the converter bundled in the app and work offline. Choose **Scene history** to review an earlier version, select a passage and confirm its restoration. The source build and public 1.10.0 export instructions below describe those distributions.
+
 For a paid Apple Silicon download, follow the [direct Mac release guide](../docs/releases/direct-mac.md). It covers the customer update page, a local installer rehearsal, Developer ID signing and Apple notarization.
 
 Heinlein Studio is version **1.10.0**. The independent Python

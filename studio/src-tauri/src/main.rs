@@ -39,6 +39,7 @@ compile_error!("Select exactly one native acceptance fixture");
 mod custom_reviewers;
 mod drafting;
 mod export_pipeline;
+mod document_export;
 mod first_story;
 mod github;
 mod manuscript_export;
@@ -508,6 +509,42 @@ async fn read_document(
     .map_err(|e| e.to_string())?
 }
 #[tauri::command]
+async fn scene_versions(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    relative_path: String,
+) -> Result<Vec<repository_core::SceneVersion>, String> {
+    check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        with_repository(&app, &repository_id, |repo| {
+            with_recovery(&app, |store| store.scene_versions(repo, &relative_path))
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn read_scene_version(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    relative_path: String,
+    saved_at: u64,
+    hash: String,
+) -> Result<String, String> {
+    check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        with_repository(&app, &repository_id, |repo| {
+            with_recovery(&app, |store| {
+                store.scene_version(repo, &relative_path, saved_at, &hash)
+            })
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
 async fn save_document(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
@@ -914,6 +951,8 @@ fn production_main() {
             open_recent_repository,
             list_directory,
             read_document,
+            scene_versions,
+            read_scene_version,
             save_document,
             read_recovery,
             stage_recovery,

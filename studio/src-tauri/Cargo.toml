@@ -31,6 +31,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 semver = "1"
 uuid = { version = "1", features = ["v4"] }
 fontdb = "0.24"
+zip = { version = "=9.5.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 github-workspace = { path = "../crates/github-workspace" }
 repository-core = { path = "../crates/repository-core" }
 proposal-store = { path = "../crates/proposal-store" }

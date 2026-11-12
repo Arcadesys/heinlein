@@ -2,7 +2,7 @@ import {createQuestionComparison, questionDiff} from './questionDiff';
 
 type Line = {kind: 'equal' | 'remove' | 'add'; text: string};
 /** Presentation only. Keep line endings and whitespace; never reconstruct apply text from this view. */
-function linesDiff(before: string, after: string): Line[] {
+export function linesDiff(before: string, after: string): Line[] {
   const split = (s: string) => s.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   const a = split(before), b = split(after), result: Line[] = [];
   let start = 0, endA = a.length, endB = b.length;

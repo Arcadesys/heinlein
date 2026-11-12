@@ -18,6 +18,8 @@
     "allow-load-manuscript",
     "allow-list-system-fonts",
     "allow-save-document",
+    "allow-scene-versions",
+    "allow-read-scene-version",
     "allow-read-recovery",
     "allow-stage-recovery",
     "allow-discard-recovery",

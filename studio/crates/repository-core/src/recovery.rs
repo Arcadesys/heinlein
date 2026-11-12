@@ -1,4 +1,5 @@
 //! Host-private crash-recovery snapshots. This is not a manuscript revision ledger.
+pub mod history;
 #[cfg(unix)]
 use crate::{content_hash, MAX_FILE_BYTES};
 use crate::{Error, Repository, Result};
@@ -235,11 +236,19 @@ impl RecoveryStore {
         repo: &Repository,
         hash: &str,
     ) -> Result<()> {
-        self.check_directory()?;
         let name = format!(".heinlein-structure-{}.json", repo.project_key());
+        self.write_private_record(&name, hash.as_bytes())
+    }
+    #[cfg(unix)]
+    fn write_private_record(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        self.check_directory()?;
+        Self::write_private_at(&self.directory, name, bytes)
+    }
+    #[cfg(unix)]
+    fn write_private_at(directory: &File, name: &str, bytes: &[u8]) -> Result<()> {
         let temporary = format!(".heinlein-recovery-{}.tmp", uuid::Uuid::new_v4());
         let fd = openat(
-            &self.directory,
+            directory,
             temporary.as_str(),
             OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::from_bits_truncate(0o600),
@@ -247,21 +256,13 @@ impl RecoveryStore {
         .map_err(|_| Error::RecoveryIo)?;
         let mut file = File::from(fd);
         let result = (|| {
-            file.write_all(hash.as_bytes())
-                .map_err(|_| Error::RecoveryIo)?;
+            file.write_all(bytes).map_err(|_| Error::RecoveryIo)?;
             file.sync_all().map_err(|_| Error::RecoveryIo)?;
-            renameat(
-                &self.directory,
-                temporary.as_str(),
-                &self.directory,
-                name.as_str(),
-            )
-            .map_err(|_| Error::RecoveryIo)?;
-            self.directory
-                .sync_all()
-                .map_err(|_| Error::RecoveryUncertain)
+            renameat(directory, temporary.as_str(), directory, name)
+                .map_err(|_| Error::RecoveryIo)?;
+            directory.sync_all().map_err(|_| Error::RecoveryUncertain)
         })();
-        let _ = unlinkat(&self.directory, temporary.as_str(), AtFlags::empty());
+        let _ = unlinkat(directory, temporary.as_str(), AtFlags::empty());
         result
     }
     #[cfg(unix)]

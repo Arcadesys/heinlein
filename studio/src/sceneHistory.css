@@ -1,0 +1,6 @@
+dialog.scene-history { box-sizing: border-box; width: min(48rem, 96vw); max-height: 90vh; overflow: auto; overflow-wrap: anywhere; }
+.scene-history label { display: grid; gap: .35em; margin-block: .8em; font-weight: 650; }
+.scene-history :is(select,textarea,button) { box-sizing: border-box; font: inherit; min-height: 48px; max-width: 100%; }
+.scene-history :is(textarea,select) { width: 100%; color: var(--text); background: var(--panel); }
+.scene-history textarea { min-height: 6em; padding: .5em; }
+.scene-history :focus-visible { outline: 3px solid currentColor; outline-offset: 2px; }

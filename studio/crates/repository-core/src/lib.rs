@@ -20,6 +20,7 @@ pub use drafting::{
 pub use publishing_copy::{
     PublishingMetadata, PublishingPlan, PublishingPreview, PublishingSource,
 };
+pub use recovery::history::SceneVersion;
 pub use recovery::{RecoveryDraft, RecoveryStore};
 #[cfg(unix)]
 use rustix::{
@@ -585,7 +586,7 @@ impl Repository {
     /// The native host serializes access; the mutex additionally serializes callers of this core.
     pub fn save(&self, path: &str, expected_hash: &str, text: &str) -> Result<Document> {
         let _save = self.save_gate.lock().map_err(|_| Error::Io)?;
-        self.save_inner(path, expected_hash, text, || Ok(()))
+        self.save_inner(path, expected_hash, text, |_| Ok(()))
     }
     /// Author-confirmed whole-scene operations must reject all pending recovery.
     /// Keep the normal lock order: repository save gate, then recovery gate. Never
@@ -612,7 +613,12 @@ impl Repository {
     ) -> Result<Document> {
         let _save = self.save_gate.lock().map_err(|_| Error::Io)?;
         recovery.with_clean_paths(self, &[path.to_owned()], || {
-            self.save_inner(path, expected_hash, text, before_commit)
+            self.save_inner(path, expected_hash, text, |previous| {
+                if self.standalone_review.is_none() {
+                    recovery.remember_scene(self, previous)?;
+                }
+                before_commit()
+            })
         })
     }
     /// Native save route also observes process-lifetime scene ownership.
@@ -635,7 +641,12 @@ impl Repository {
     ) -> Result<Document> {
         let _save = self.save_gate.lock().map_err(|_| Error::Io)?;
         recovery.with_owned_scene(self, path, || {
-            self.save_inner(path, expected_hash, text, before_commit)
+            self.save_inner(path, expected_hash, text, |previous| {
+                if self.standalone_review.is_none() {
+                    recovery.remember_scene(self, previous)?;
+                }
+                before_commit()
+            })
         })
     }
     fn save_inner(
@@ -643,10 +654,11 @@ impl Repository {
         path: &str,
         expected_hash: &str,
         text: &str,
-        before_commit: impl FnOnce() -> Result<()>,
+        before_commit: impl FnOnce(&Document) -> Result<()>,
     ) -> Result<Document> {
         if let Some(draft) = &self.standalone_review {
-            return draft.save(path, expected_hash, text, before_commit);
+            let previous = draft.read(path)?;
+            return draft.save(path, expected_hash, text, || before_commit(&previous));
         }
         self.require_clean_structure()?;
         self.allowed(path, false)?;
@@ -681,7 +693,7 @@ impl Repository {
         if current.text == text {
             return Ok(current);
         }
-        self.replace(path, expected_hash, text, before_commit)?;
+        self.replace(path, expected_hash, text, || before_commit(&current))?;
         Ok(Document {
             path: path.into(),
             text: text.into(),
@@ -1024,7 +1036,7 @@ mod save_failure_tests {
         let repo = Repository::open(dir.path()).unwrap();
         let doc = repo.read("scene.md").unwrap();
         assert_eq!(
-            repo.save_inner("scene.md", &doc.content_hash, "Edited", || Err(Error::Io))
+            repo.save_inner("scene.md", &doc.content_hash, "Edited", |_| Err(Error::Io))
                 .unwrap_err(),
             Error::Io
         );
@@ -1063,7 +1075,7 @@ mod save_failure_tests {
         std::fs::write(&path, "Original").unwrap();
         let repo = Repository::open(dir.path()).unwrap();
         let doc = repo.read("scene.md").unwrap();
-        let result = repo.save_inner("scene.md", &doc.content_hash, "Edited", || {
+        let result = repo.save_inner("scene.md", &doc.content_hash, "Edited", |_| {
             std::fs::write(&path, "External").unwrap();
             Ok(())
         });

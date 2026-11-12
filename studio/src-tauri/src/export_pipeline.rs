@@ -87,6 +87,11 @@ pub fn convert(root: &Path, python: &Path, spec: &Spec) -> Result<Vec<u8>, Strin
         let (title, body) = spec.text.split_once('\n').unwrap_or((&spec.text, ""));
         return Ok(format!("{title}\n\n*by {author}*\n{body}").into_bytes());
     }
+    if matches!(spec.format, Format::Docx | Format::Epub)
+        && super::document_export::uses_bundle(root)
+    {
+        return super::document_export::convert(root, spec);
+    }
     if !root.join("heinlein/studio_export.py").is_file() {
         return Err("The bundled publishing pipeline is missing. Rebuild this app with its publishing resources.".into());
     }

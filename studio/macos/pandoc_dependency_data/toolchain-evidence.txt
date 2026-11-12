@@ -1,0 +1,9 @@
+Stable build log record: https://circleci.com/gh/jgm/pandoc/6162
+Relevant original output from Install GHC + cabal:
+✔︎ Bottle Manifest cabal-install (3.18.2.0)
+✔︎ Bottle Manifest ghc@9.10 (9.10.3)
+✔︎ Bottle Manifest gmp (6.3.0)
+✔︎ Bottle cabal-install (3.18.2.0)
+==> Pouring ghc@9.10--9.10.3.arm64_sequoia.bottle.3.tar.gz
+🍺  /opt/homebrew/Cellar/ghc@9.10/9.10.3: 6,626 files, 1.5GB
+==> Pouring gmp--6.3.0.arm64_sequoia.bottle.1.tar.gz

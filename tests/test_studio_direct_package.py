@@ -39,7 +39,7 @@ class DirectPackageTests(unittest.TestCase):
             destination = Path(tmp) / "deliver"
             identity = "Developer ID Application: Test"
             args = SimpleNamespace(identity=identity, notary_profile="test", rehearsal=False,
-                                   downloads_page="https://example.org/purchases", output=destination)
+                                   downloads_page="https://example.org/purchases", output=destination, pandoc_source_cache=None)
 
             def intermediate_app(work, _commit):
                 bundle = work / "Heinlein Studio.app"
@@ -50,6 +50,8 @@ class DirectPackageTests(unittest.TestCase):
             with patch.object(builder, "output", side_effect=responses), \
                     patch.object(builder, "build_app", side_effect=intermediate_app), \
                     patch.object(builder, "inspect_app", return_value="1.2.3"), \
+                    patch.object(builder.pandoc_dependency_sources, "prepare_companion"), \
+                    patch.object(builder.bundled_pandoc, "stage_converter"), patch.object(builder, "check_converter"), \
                     patch.object(builder, "write_notices"), patch.object(builder, "run") as command, \
                     patch.object(builder.subprocess, "run", return_value=SimpleNamespace(returncode=0)), \
                     self.assertRaisesRegex(ValueError, "Invalid.*test-case"):

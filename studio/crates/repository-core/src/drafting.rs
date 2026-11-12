@@ -306,6 +306,8 @@ pub struct DraftingPlan {
     read_guards: Vec<(String, String)>,
     recovery_paths: Vec<String>,
     recovery_journal_hash: Option<String>,
+    history_moves: Vec<(String, String)>,
+    history_restore: HashMap<String, Option<String>>,
     external_guards: Vec<DraftingExternalFile>,
 }
 #[derive(Debug, Clone)]
@@ -384,7 +386,7 @@ fn destination(path: &str) -> Result<String> {
 }
 /// Conservative syntax guard, not a complete Markdown/Pandoc asset resolver.
 /// Reject ambiguous link-capable syntax instead of rewriting source or breaking assets.
-fn reference_bearing(text: &str) -> bool {
+pub(crate) fn reference_bearing(text: &str) -> bool {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let compact: String = text
         .chars()
@@ -1203,6 +1205,8 @@ impl Repository {
             recovery_paths: vec![],
             recovery_journal_hash: None,
             external_guards: vec![],
+            history_moves: vec![],
+            history_restore: HashMap::new(),
         };
         let mut adjacent_creation = None;
         let reordered = match &change {
@@ -2288,6 +2292,7 @@ impl Repository {
             if before.mode & 0o222 == 0 {
                 return Err(Error::Denied);
             }
+            plan.history_moves.push((source.into(), target.into()));
             if let Some(view) = plan.preview.changes.last_mut() {
                 view.kind = "move".into();
             }
@@ -2508,6 +2513,7 @@ impl Repository {
                 Err(error) => return Err(error),
             }
         }
+        let mut history_inverse = HashMap::new();
         if let Some(hash) = &plan.recovery_journal_hash {
             recovery.verify_structure_receipt_locked(self, hash)?;
             if content_hash(&self.raw(JOURNAL, MAX_JOURNAL_BYTES, true)?) != *hash {
@@ -2516,6 +2522,7 @@ impl Repository {
             for edit in &plan.edits {
                 self.write_transition(edit)?;
             }
+            recovery.rollback_history_moves(self, hash)?;
             self.remove_journal()?;
             recovery.clear_structure_receipt_locked(self)?;
         } else {
@@ -2535,7 +2542,7 @@ impl Repository {
                     .cloned()
                     .collect(),
             };
-            self.write_journal(&journal, recovery)?;
+            let journal_hash = self.write_journal(&journal, recovery)?;
             let result = (|| {
                 for (index, edit) in plan.edits.iter().enumerate() {
                     self.write_transition(edit)?;
@@ -2546,6 +2553,12 @@ impl Repository {
                     #[cfg(not(test))]
                     let _ = index;
                 }
+                history_inverse = recovery.apply_history_moves(
+                    self,
+                    &journal_hash,
+                    &plan.history_moves,
+                    &plan.history_restore,
+                )?;
                 Ok(())
             })();
             if let Err(error) = result {
@@ -2568,7 +2581,11 @@ impl Repository {
                         _ => rollback_ok = false,
                     }
                 }
-                if rollback_ok && self.remove_journal().is_ok() {
+                if rollback_ok
+                    && (plan.history_moves.is_empty()
+                        || recovery.rollback_history_moves(self, &journal_hash).is_ok())
+                    && self.remove_journal().is_ok()
+                {
                     recovery.clear_structure_receipt_locked(self)?;
                     return Err(error);
                 }
@@ -2587,6 +2604,7 @@ impl Repository {
         inverse.before_members = self
             .drafting_members()
             .map_err(|_| Error::DraftingUncertain)?;
+        inverse.history_restore = history_inverse;
         inverse.read_guards.clear();
         inverse.external_guards.clear();
         inverse.recovery_journal_hash = None;
@@ -2643,6 +2661,8 @@ impl Repository {
             recovery_paths: vec![],
             recovery_journal_hash: Some(content_hash(&text)),
             external_guards: vec![],
+            history_moves: vec![],
+            history_restore: HashMap::new(),
         };
         let mut seen = HashSet::new();
         for edit in journal.edits.iter().rev() {
@@ -2797,7 +2817,7 @@ impl Repository {
         Ok(())
     }
     #[cfg(unix)]
-    fn write_journal(&self, journal: &Journal, recovery: &RecoveryStore) -> Result<()> {
+    fn write_journal(&self, journal: &Journal, recovery: &RecoveryStore) -> Result<String> {
         validate_journal(journal, &self.project_key())?;
         let root = self.handle("", false)?;
         let temporary = format!(".heinlein-journal-{}.tmp", uuid());
@@ -2810,7 +2830,8 @@ impl Repository {
         .map_err(errno)?;
         let mut file = File::from(fd);
         let bytes = serde_json::to_string(journal).map_err(|_| Error::Io)?;
-        recovery.write_structure_receipt_locked(self, &content_hash(&bytes))?;
+        let hash = content_hash(&bytes);
+        recovery.write_structure_receipt_locked(self, &hash)?;
         let result = (|| {
             file.write_all(bytes.as_bytes()).map_err(|_| Error::Io)?;
             file.sync_all().map_err(|_| Error::Io)?;
@@ -2825,7 +2846,7 @@ impl Repository {
             root.sync_all().map_err(|_| Error::DraftingUncertain)
         })();
         let _ = unlinkat(&root, temporary.as_str(), AtFlags::empty());
-        result
+        result.map(|()| hash)
     }
     #[cfg(unix)]
     fn remove_journal(&self) -> Result<()> {
@@ -3062,6 +3083,174 @@ mod tests {
         );
     }
 
+    #[test]
+    fn scene_history_follows_rename_move_and_reopen_when_old_filename_is_reused() {
+        let f = Fixture::new();
+        let original = "ms/original.md";
+        let renamed = "ms/renamed.md";
+        let moved = "ms/part-two/renamed.md";
+        f.initialize();
+        f.create(original);
+        let id = f.repo.load_drafting().unwrap().scenes[0].id.clone();
+        // Write a pre-upgrade history directory without using the new resolver.
+        let past = "A removed passage — intact.\r\n";
+        let hash = content_hash(past);
+        let key = content_hash(&format!("{}\n{original}", f.repo.project_key()));
+        let dir = f.temp.path().join("private").join(format!("history-{key}"));
+        use std::os::unix::fs::PermissionsExt;
+        fs::create_dir(&dir).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let version = dir.join(format!("123-{hash}"));
+        fs::write(&version, past).unwrap();
+        fs::set_permissions(&version, fs::Permissions::from_mode(0o600)).unwrap();
+        f.put(original, "Later writing.\n");
+        let rename = f.apply(DraftingChange::RenameFile {
+            source_path: original.into(),
+            path: renamed.into(),
+        });
+        let (_, redo) = f.repo.reverse_drafting(&rename, &f.recovery).unwrap();
+        assert_eq!(
+            f.recovery
+                .scene_version(&f.repo, original, 123, &hash)
+                .unwrap(),
+            past
+        );
+        f.repo.reverse_drafting(&redo, &f.recovery).unwrap();
+        assert_eq!(
+            f.recovery
+                .scene_version(&f.repo, renamed, 123, &hash)
+                .unwrap(),
+            past
+        );
+        f.apply(DraftingChange::MoveScene {
+            scene_id: id,
+            path: moved.into(),
+            before_id: None,
+            group_id: None,
+        });
+        f.create(original);
+        let new = f.repo.read(original).unwrap();
+        f.repo
+            .save_with_recovery(original, &new.content_hash, "Different scene", &f.recovery)
+            .unwrap();
+        let current = f.repo.read(moved).unwrap();
+        f.repo
+            .save_with_recovery(
+                moved,
+                &current.content_hash,
+                "Another revision",
+                &f.recovery,
+            )
+            .unwrap();
+        let Fixture {
+            temp,
+            repo,
+            recovery,
+        } = f;
+        drop((repo, recovery));
+        let repo = Repository::open(temp.path().join("repo")).unwrap();
+        let store = RecoveryStore::open(temp.path().join("private")).unwrap();
+        assert_eq!(store.scene_versions(&repo, moved).unwrap().len(), 2);
+        assert_eq!(store.scene_version(&repo, moved, 123, &hash).unwrap(), past);
+        assert_eq!(store.scene_versions(&repo, original).unwrap().len(), 1);
+        assert!(store.scene_version(&repo, original, 123, &hash).is_err());
+        assert_eq!(repo.read(original).unwrap().text, "Different scene");
+        assert_eq!(repo.read(moved).unwrap().text, "Another revision");
+    }
+
+    #[test]
+    fn two_scenes_renamed_into_the_same_path_keep_independent_histories() {
+        let f = Fixture::new();
+        for (path, earlier) in [("first.md", "First draft"), ("second.md", "Second draft")] {
+            f.put(path, earlier);
+            let doc = f.repo.read(path).unwrap();
+            f.repo
+                .save_with_recovery(
+                    path,
+                    &doc.content_hash,
+                    "Identical current text",
+                    &f.recovery,
+                )
+                .unwrap();
+        }
+        let rename = |from: &str, to: &str| DraftingChange::RenameFile {
+            source_path: from.into(),
+            path: to.into(),
+        };
+        let first = f.apply(rename("first.md", "moved.md"));
+        let second = f.apply(rename("second.md", "first.md"));
+        let check = |path: &str, expected: &str| {
+            let versions = f.recovery.scene_versions(&f.repo, path).unwrap();
+            assert_eq!(versions.len(), 1);
+            assert_eq!(
+                f.recovery
+                    .scene_version(&f.repo, path, versions[0].saved_at, &versions[0].hash)
+                    .unwrap(),
+                expected
+            );
+        };
+        check("first.md", "Second draft");
+        check("moved.md", "First draft");
+        let (_, redo_second) = f.repo.reverse_drafting(&second, &f.recovery).unwrap();
+        let (_, redo_first) = f.repo.reverse_drafting(&first, &f.recovery).unwrap();
+        check("first.md", "First draft");
+        check("second.md", "Second draft");
+        f.repo.reverse_drafting(&redo_first, &f.recovery).unwrap();
+        f.repo.reverse_drafting(&redo_second, &f.recovery).unwrap();
+        check("first.md", "Second draft");
+        check("moved.md", "First draft");
+    }
+
+    #[test]
+    fn interrupted_file_rename_restores_previous_history_binding() {
+        let f = Fixture::new();
+        f.put("first.md", "Original");
+        let current = f.repo.read("first.md").unwrap();
+        f.repo
+            .save_with_recovery("first.md", &current.content_hash, "Later", &f.recovery)
+            .unwrap();
+        let plan = f
+            .preview(DraftingChange::RenameFile {
+                source_path: "first.md".into(),
+                path: "second.md".into(),
+            })
+            .unwrap();
+        let journal = Journal {
+            schema_version: 1,
+            repository_key: f.repo.project_key(),
+            id: plan.preview.id.clone(),
+            edits: plan.edits.clone(),
+        };
+        f.recovery
+            .with_clean_paths(&f.repo, &plan.recovery_paths, || {
+                let hash = f.repo.write_journal(&journal, &f.recovery)?;
+                for edit in &plan.edits {
+                    f.repo.write_transition(edit)?;
+                }
+                f.recovery.apply_history_moves(
+                    &f.repo,
+                    &hash,
+                    &plan.history_moves,
+                    &plan.history_restore,
+                )
+            })
+            .unwrap();
+        assert!(f.recovery.scene_versions(&f.repo, "second.md").is_err());
+        f.apply(DraftingChange::RecoverInterrupted {});
+        assert_eq!(
+            f.recovery
+                .scene_versions(&f.repo, "first.md")
+                .unwrap()
+                .len(),
+            1
+        );
+        f.put("second.md", "Independent");
+        assert!(f
+            .recovery
+            .scene_versions(&f.repo, "second.md")
+            .unwrap()
+            .is_empty());
+    }
     #[test]
     fn adjacent_scene_creation_preserves_both_orders_group_sources_and_undo() {
         for anchor_index in 0..3 {

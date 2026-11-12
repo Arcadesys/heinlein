@@ -176,6 +176,7 @@ export function createMarkdownExport(core: LocalCore, hooks: {
     const referencesLabel=document.createElement('label');const references=document.createElement('input');references.type='checkbox';references.setAttribute('aria-label','Include reference sheets');referencesLabel.append(references,document.createTextNode(' Include reference sheets'));
     const description=document.createElement('p');description.textContent='Uses manuscript reading order and current editor text. Reference sheets stay out unless selected. Adds headings and omits per-sheet YAML. Creates a new file outside the project; your writing stays unchanged.';
     const dependency=document.createElement('p');dependency.className='export-dependency-note';
+    dependency.id='export-format-requirements';format.setAttribute('aria-describedby',dependency.id);
     const status=document.createElement('p');status.setAttribute('role','status');
     const save=document.createElement('button');save.type='button';save.textContent='Choose export location…';save.disabled=true;
     const cancel=document.createElement('button');cancel.type='button';cancel.textContent='Cancel';
@@ -188,7 +189,18 @@ export function createMarkdownExport(core: LocalCore, hooks: {
       if(cache.has(path))return Promise.resolve(cache.get(path)!);
       if(!reads.has(path))reads.set(path,core.readDocument(id,path).then(doc=>{cache.set(path,doc);return doc;}));return reads.get(path)!;
     }};
-    function info(){dependency.textContent=format.value==='markdown'?'Markdown needs no converter. Images and attachments are not bundled.':'Uses the Heinlein publishing pipeline and Pandoc. PDF also requires Chrome. Local image attachments are not bundled in this version.';}
+    function info(){
+      const bundled = import.meta.env.VITE_HEINLEIN_DIRECT_MAC === '1';
+      let requirement = 'Markdown export is built in.';
+      if (format.value === 'docx' || format.value === 'epub') {
+        requirement = bundled ? 'The document converter is included and works offline.' :
+          'This format requires the Heinlein Python publishing tools and Pandoc.';
+      } else if (format.value === 'pdf' || format.value === 'html') {
+        requirement = 'This format requires the Heinlein Python publishing tools and Pandoc.';
+        if (format.value === 'pdf') requirement += ' PDF also requires Chrome.';
+      }
+      dependency.textContent = requirement + ' Local image attachments stay in your project.';
+    }
     async function prepare(){const ticket=++generation;prepared=null;save.disabled=true;status.textContent='Preparing export…';
       try{const next=await prepareMarkdownExport(frozenCore,snapshot!.repositoryId,title,scope,snapshot!.state,snapshot!.buffers,{includeReferences:references.checked});if(current!==version||ticket!==generation)return;prepared=next;status.textContent=`${next.count} ${next.count===1?'sheet':'sheets'} ready. Current editor text captured when this dialog opened.`;save.disabled=false;}
       catch(error){if(current===version&&ticket===generation)status.textContent=`Export failed: ${String(error)}`;}}

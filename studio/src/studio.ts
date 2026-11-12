@@ -1,3 +1,4 @@
+import {openSceneHistory} from './sceneHistory';
 import {createWritingChrome} from './writingChrome';
 import {createFullScreenControl} from './fullScreenControl';
 import {bindPreferenceStatus,flushPreferences} from './preferences';
@@ -2428,6 +2429,25 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         const target = editor.view;
         toolbar.append(button('Add note…', () => addNote(), 'source-only'));
         target.dispatch({effects: StateEffect.appendConfig.of(keymap.of([{key: 'Mod-Alt-m', run: () => { addNote(); return true; }}]))});
+        if (core.sceneVersions && core.readSceneVersion && repository && !standalone?.active && !doc.generatedCompatibility) {
+          const session = repository.id, writer = editor;
+          toolbar.append(button('Scene history…', () => {
+            const current = writer.text();
+            openSceneHistory({
+              root, title: doc.path, current,
+              list: () => core.sceneVersions!(session, doc.path),
+              read: version => core.readSceneVersion!(session, doc.path, version),
+              restore: (from, to, passage) => {
+                if (disposed || editor !== writer || repository?.id !== session || repositoryDetached || recoveryPending ||
+                    selecting || guardPending || structuralBusy || proposalBusy || writePaused || writer.view.state.readOnly || writer.text() !== current) return false;
+                showSourceView();
+                writer.restorePassage(from, to, passage);
+                return true;
+              },
+              focus: focusWriterView,
+            });
+          }));
+        }
         const roleInSource = documentRole.textContent;
         mountDocumentView(toolbar, host, target, () => {
           const value = target.state.doc.toString();

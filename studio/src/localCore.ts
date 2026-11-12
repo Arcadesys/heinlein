@@ -171,6 +171,8 @@ export interface LocalCore {
   readDocument(repositoryId: string, relativePath: string): Promise<Document>;
   loadManuscript(repositoryId: string, relativePath: string): Promise<Manuscript>;
   listSystemFonts(): Promise<string[]>;
+  sceneVersions?(repositoryId: string, relativePath: string): Promise<SceneVersion[]>;
+  readSceneVersion?(repositoryId: string, relativePath: string, version: SceneVersion): Promise<string>;
   saveDocument(repositoryId: string, relativePath: string, expectedHash: string, text: string): Promise<Document>;
   readRecovery(repositoryId: string, relativePath: string): Promise<RecoveryDraft | null>;
   stageRecovery(repositoryId: string, relativePath: string, expectedHash: string, text: string): Promise<RecoveryDraft>;
@@ -254,6 +256,8 @@ export const localCore: LocalCore = {
   pickDraftingImport: repositoryId => invoke('pick_drafting_import', {repositoryId}),
   onDraftingImportError: callback => listen<string>('drafting-import-error', event => callback(event.payload)),
   onDraftingFilesDropped: callback => listen<DraftingSelection>('drafting-files-dropped', event => callback(event.payload)),
+  sceneVersions: (repositoryId, relativePath) => invoke('scene_versions', {repositoryId, relativePath}),
+  readSceneVersion: (repositoryId, relativePath, version) => invoke('read_scene_version', {repositoryId, relativePath, savedAt: version.savedAt, hash: version.hash}),
   saveDocument: (repositoryId, relativePath, expectedHash, text) => invoke('save_document', {repositoryId, relativePath, expectedHash, text}),
   readRecovery: (repositoryId, relativePath) => invoke('read_recovery', {repositoryId, relativePath}),
   stageRecovery: (repositoryId, relativePath, expectedHash, text) => invoke('stage_recovery', {repositoryId, relativePath, expectedHash, text}),
@@ -276,3 +280,5 @@ export const localCore: LocalCore = {
   loadManuscript: (repositoryId, relativePath) => invoke('load_manuscript', { repositoryId, relativePath }),
   listSystemFonts: () => invoke('list_system_fonts'),
 };
+
+export interface SceneVersion {sourcePath?: string | null; savedAt: number; hash: string}

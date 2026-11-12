@@ -77,6 +77,8 @@ fn main() {
             "read_document",
             "save_markdown_export",
             "export_manuscript",
+            "scene_versions",
+            "read_scene_version",
             "save_document",
             "read_recovery",
             "stage_recovery",

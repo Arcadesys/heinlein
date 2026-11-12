@@ -14,6 +14,8 @@ import tarfile
 import tempfile
 from urllib.parse import urlsplit
 
+import bundled_pandoc
+import pandoc_dependency_sources
 from third_party_notices import write_notices
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,13 +51,14 @@ def build_app(work, commit):
     studio = source / "studio"
     target = work / "target"
     env = {**os.environ, "CARGO_TARGET_DIR": str(target), "PYTHONDONTWRITEBYTECODE": "1",
-           "OPENSSL_STATIC": "1"}
+           "OPENSSL_STATIC": "1", "MACOSX_DEPLOYMENT_TARGET": "15.0", "VITE_HEINLEIN_DIRECT_MAC": "1"}
     # Keep Tauri's intermediate build ad-hoc. Only the final staged bundle goes to Apple.
     for key in list(env):
         if key.startswith("APPLE_") or key == "TAURI_SIGNING_PRIVATE_KEY":
             del env[key]
     run("npm", "ci", cwd=studio, env=env)
     run("npm", "run", "tauri", "build", "--", "--config", "src-tauri/tauri.release.conf.json",
+        "--config", '{"bundle":{"macOS":{"minimumSystemVersion":"15.0"}}}',
         "--bundles", "app", "--ci", "--", "--locked", cwd=studio, env=env)
     return target / "release/bundle/macos" / f"{NAME}.app"
 
@@ -67,13 +70,30 @@ def inspect_app(app):
     if info["CFBundleIdentifier"] != BUNDLE_ID or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise ValueError("Unexpected app identity or version.")
     binary = contents / "MacOS" / info["CFBundleExecutable"]
+    if info.get("LSMinimumSystemVersion") != "15.0":
+        raise ValueError("The paid app must declare macOS 15.0 as its minimum version.")
+    inspect_binary(binary)
+    return version
+
+
+def inspect_binary(binary):
     if output("lipo", "-archs", binary) != "arm64":
-        raise ValueError("Expected an Apple Silicon (arm64) build.")
+        raise ValueError(f"Expected an Apple Silicon executable: {binary.name}")
     for line in output("otool", "-L", binary).splitlines()[1:]:
         library = line.strip().partition(" (compatibility version")[0]
         if library.startswith("/") and not library.startswith(("/System/Library/", "/usr/lib/")):
             raise ValueError(f"The app links to a library on the build machine: {library}")
-    return version
+    load_commands = output("xcrun", "vtool", "-show-build", binary)
+    minimum = re.search(r"^\s*minos (\d+)\.(\d+)", load_commands, re.MULTILINE)
+    if not minimum or tuple(map(int, minimum.groups())) > (15, 0):
+        raise ValueError(f"{binary.name} cannot run on the advertised macOS 15.0 minimum.")
+
+
+def check_converter(app):
+    helper = app / "Contents/Helpers/pandoc"
+    inspect_binary(helper)
+    if output(helper, "--version").splitlines()[0] != f"pandoc {bundled_pandoc.VERSION}":
+        raise ValueError("Unexpected document converter version.")
 
 
 def verify_image(dmg, work, page, version, commercial):
@@ -91,6 +111,9 @@ def verify_image(dmg, work, page, version, commercial):
         marker = app / "Contents/Resources/direct-download.json"
         if json.loads(marker.read_bytes()) != {"url": page}:
             raise ValueError("The mounted app has the wrong purchased-downloads page.")
+        check_converter(app)
+        bundled_pandoc.check_hash(mount / "Converter source" / bundled_pandoc.SOURCE_FILENAME,
+                                  bundled_pandoc.SOURCE_SHA256)
         run("codesign", "--verify", "--deep", "--strict", app)
         if commercial:
             run("spctl", "--assess", "--type", "execute", app)
@@ -131,16 +154,26 @@ def package(args):
         (resources / "direct-download.json").write_text(json.dumps({"url": args.downloads_page}) + "\n")
         signer = identity or "-"
         stamp = "--timestamp" if identity else "--timestamp=none"
+        helper = bundled_pandoc.stage_converter(work, stage, app)
+        run("codesign", "--force", "--options", "runtime", stamp, "--sign", signer, helper)
+        check_converter(app)
         run("codesign", "--force", "--options", "runtime", stamp, "--sign", signer, app)
         run("codesign", "--verify", "--deep", "--strict", app)
         ready = work / "artifacts"
         ready.mkdir()
+        companion = ready / "pandoc-3.14-dependency-sources.tar.gz"
+        companion_info = pandoc_dependency_sources.prepare_companion(companion, cache=args.pandoc_source_cache)
         suffix = "-rehearsal" if args.rehearsal else ""
         dmg = ready / f"Heinlein-Studio-{version}-macos-arm64{suffix}.dmg"
         run("hdiutil", "create", "-volname", NAME, "-srcfolder", stage, "-fs", "HFS+",
             "-format", "UDZO", dmg)
         receipt = {"commit": commit, "version": version, "architecture": "arm64",
                    "downloadsPage": args.downloads_page, "mode": "rehearsal" if args.rehearsal else "Developer ID"}
+        receipt["minimumMacOS"] = "15.0"
+        receipt["documentConverter"] = {"name": "Pandoc", "version": bundled_pandoc.VERSION,
+                                        "upstreamArchiveSha256": bundled_pandoc.RELEASE_SHA256,
+                                        "upstreamSourceSha256": bundled_pandoc.SOURCE_SHA256,
+                                        "dependencySources": companion_info}
         receipt["thirdPartyNotices"] = {
             "npmPackages": notices["npm_packages"], "cargoPackages": notices["cargo_packages"],
             "review": notices["review_items"],
@@ -158,7 +191,8 @@ def package(args):
         verify_image(dmg, work, args.downloads_page, version, commercial=not args.rehearsal)
         with dmg.open("rb") as image:
             receipt["sha256"] = hashlib.file_digest(image, "sha256").hexdigest()
-        (ready / "SHA256SUMS").write_text(f"{receipt['sha256']}  {dmg.name}\n")
+        (ready / "SHA256SUMS").write_text(f"{receipt['sha256']}  {dmg.name}\n"
+                                         f"{companion_info['sha256']}  {companion.name}\n")
         (ready / "build.json").write_text(json.dumps(receipt, indent=2) + "\n")
         # Same filesystem. A concurrent successful build leaves a nonempty destination
         # that rename cannot replace; buyers never see a partially assembled directory.
@@ -171,6 +205,8 @@ def main():
     parser.add_argument("--downloads-page", type=public_page, required=True,
                         help="Public, shareable HTTPS page where customers can retrieve purchases")
     parser.add_argument("--output", type=Path, required=True, help="New directory for verified artifacts")
+    parser.add_argument("--pandoc-source-cache", type=Path,
+                        help="Optional previously built Pandoc dependency source archive, verified against its pinned digest")
     parser.add_argument("--identity", help="Exact Developer ID Application name in Keychain")
     parser.add_argument("--notary-profile", help="Name of an existing notarytool Keychain profile")
     parser.add_argument("--rehearsal", action="store_true", help="Build a local, ad-hoc test DMG without notarization")

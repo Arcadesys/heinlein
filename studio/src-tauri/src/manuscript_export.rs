@@ -84,7 +84,10 @@ pub async fn export_manuscript(
                 .unwrap()
                 .to_path_buf()
         };
-        let python = if spec.format == Format::Markdown {
+        let python = if spec.format == Format::Markdown
+            || (matches!(spec.format, Format::Docx | Format::Epub)
+                && super::document_export::uses_bundle(&root))
+        {
             std::path::PathBuf::new()
         } else {
             export_pipeline::python_runtime(
