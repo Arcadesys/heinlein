@@ -86,8 +86,8 @@ pub(crate) struct QuestionStatus {
     generation: u64,
     usage_limited: bool,
     /// The provider that answers Ask, Revise and Review. The fields above
-    /// describe that provider's connection; `accounts` and `sign_in_pending`
-    /// always describe ChatGPT.
+    /// describe that provider's connection. With Claude active, `accounts`
+    /// holds one entry for the saved key.
     provider: Provider,
     claude: Option<ClaudeView>,
 }
@@ -474,6 +474,23 @@ impl QuestionHost {
                 .and_then(|slug| models.iter().find(|m| &m.slug == slug))
                 .map(|m| m.display_name.clone())
                 .unwrap_or_default();
+            // The panel binds Send, saved threads and conversation storage to
+            // the active account, so Claude appears as one account: its key.
+            status.accounts = claude
+                .account_id
+                .clone()
+                .map(|id| AccountView {
+                    id,
+                    label: format!(
+                        "Claude · key ending {}",
+                        claude.key_hint.as_deref().unwrap_or("")
+                    ),
+                    signed_in: true,
+                    plan_enabled: true,
+                })
+                .into_iter()
+                .collect();
+            status.sign_in_pending = false;
             status.configured = claude.configured && !usage_limited;
             status.model = claude.selected_model.clone();
             status.active_account_id = claude.account_id.clone();

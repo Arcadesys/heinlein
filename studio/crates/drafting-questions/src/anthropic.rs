@@ -116,9 +116,11 @@ pub(crate) fn error(
         .and_then(serde_json::Value::as_str);
     let mut error = match (kind, status) {
         (Some("authentication_error" | "permission_error"), _) | (None, 401 | 403) => {
+            // Not "authentication": that code starts ChatGPT's browser
+            // re-authentication for saved reviews, which cannot fix a key.
             QuestionError::new(
-                "authentication",
-                "Anthropic did not accept this API key. Check the key in Heinlein's Claude settings.",
+                "keyRejected",
+                "Anthropic did not accept this API key. Replace the key in Heinlein's Claude settings, then start a new request.",
             )
         }
         (Some("billing_error"), _) | (None, 402) => QuestionError::new(
@@ -628,7 +630,7 @@ mod tests {
         assert_eq!(streamed.http_status, Some(200));
         for (status, kind, code) in [
             (529, "overloaded_error", "providerBusy"),
-            (401, "authentication_error", "authentication"),
+            (401, "authentication_error", "keyRejected"),
             (402, "billing_error", "billing"),
             (429, "rate_limit_error", "rateLimited"),
             (404, "not_found_error", "providerRequest"),

@@ -205,6 +205,10 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const authenticationRecovered = () => Boolean(authenticationProof && authenticationProof.reviewId === result?.reviewId && authenticationProof.revision === result?.revision && authenticationProof.generation === config?.generation && config?.activeAccountId === result?.workflow?.accountId && config?.model === result?.model);
     let marksInvalidatedByTyping = false;
     let config: QuestionStatus | null = null;
+    // ChatGPT wording is unchanged; Claude wording appears only while Claude answers.
+    const claudeActive = () => config?.provider === 'anthropic';
+    const who = () => claudeActive() ? 'Claude' : 'ChatGPT';
+    const companyFor = (model: string) => model.startsWith('claude-') ? 'Anthropic (Claude)' : 'OpenAI';
     let generation = 0;
     let pending: string | null = null;
     let busy = false;
@@ -449,14 +453,15 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (!showingResults) toggleMenu(false);
         connection.hidden = showingResults || checking || ready() || !core.requestReview;
         connection.dataset.state = checking ? 'checking' : ready() ? 'ready' : 'problem';
-        connectionText.textContent = config?.message ?? 'ChatGPT connection could not be checked.';
-        if (hooks.headerTabs && authenticationFailed() && !authenticationRecovered()) setHeinleinStatus(chip, 'attention', 'Review needs reconnection');
-        else if (hooks.headerTabs) setHeinleinStatus(chip, checking ? 'checking' : ready() ? 'ready' : 'attention', checking ? 'Checking connection' : ready() ? `Ready · ${config!.model}` : config?.usageLimited ? 'Usage limited' : 'Not connected');
+        connectionText.textContent = config?.message ?? 'The connection could not be checked.';
+        connect.textContent = claudeActive() ? 'Open Claude settings' : 'Connect ChatGPT';
+        if (hooks.headerTabs && authenticationFailed() && !authenticationRecovered()) setHeinleinStatus(chip, 'attention', 'Review needs reconnection', who());
+        else if (hooks.headerTabs) setHeinleinStatus(chip, checking ? 'checking' : ready() ? 'ready' : 'attention', checking ? 'Checking connection' : ready() ? `Ready · ${config!.model}` : config?.usageLimited ? 'Usage limited' : 'Not connected', who());
         run.hidden = showingResults;
         advisory.hidden = showingResults;
         markStatus.hidden = !showingResults || markStatus.dataset.marked === undefined || !result!.edits.some(waiting);
         sendSummary.textContent = sendText();
-        sendNote.textContent = `${ready() ? `To ChatGPT · ${config!.model}. ` : ''}Text captured now. Later typing isn’t added.`;
+        sendNote.textContent = `${ready() ? `To ${who()} · ${config!.model}. ` : ''}Text captured now. Later typing isn’t added.`;
         limit.hidden = !problem || !scope;
         limit.textContent = problem ?? '';
         const previewing = workflowMode && !preparedRequest;
@@ -471,6 +476,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         continueBatch.textContent = authFailed && authRecovered ? 'Retry after reconnecting' : failedChunks ? 'Retry failed chunks' : interruptedChunks ? 'Resume interrupted chunks' : 'Continue next reviewer batch';
         continueBatch.hidden = (authFailed && !authRecovered) || automaticRunning || !core.continueReview || !result?.workflow?.coverage.some(c => (authFailed && authRecovered && c.error === 'authentication') || ((c.status === 'queued' || c.status === 'notRun') && c.error !== 'findingLimit') || c.status === 'running' || c.status === 'cancelled' || (c.status === 'failed' && manuallyRetryableCall(c.error)));
         continueNote.textContent = authFailed ? (authRecovered ? 'Account reconnected. Retry sends only unfinished calls, keeping completed assessments, suggestions and decisions. Additional plan usage may count. Your manuscript stays unchanged.' : core.reauthenticateReview ? 'Reconnect the same ChatGPT account in your browser to authorize a retry. Rechecking setup alone does not recover this failure. Reconnecting sends no review calls; choose Retry afterward. Completed results are kept.' : 'This review needs same-account reauthentication. Update Heinlein Studio to recover it without repeating completed calls.') : failedChunks || interruptedChunks ? 'Retry sends only failed chunks and remaining calls, keeping completed results and decisions. Invalid responses need another explicit retry; only connection failures retry automatically, up to three attempts. Additional plan usage may count. If the source changed, choose Start a new review to capture the current text.' : 'Continue sends the next selected calls to OpenAI through your selected account and model. Plan usage may count. Finish the remaining batches before applying suggestions; changed source needs a fresh review.';
+        if (!authFailed && claudeActive()) continueNote.textContent = 'Continue sends the next selected calls to Claude using your Anthropic API key and selected model. Usage is billed to your Anthropic account. Finish the remaining batches before applying suggestions; changed source needs a fresh review.';
         continueNote.hidden = !authFailed && continueBatch.hidden;
         continueBatch.disabled = Boolean(pending || busy || checking || !ready());
         setupView.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>('input,select,textarea,button').forEach(e => e.disabled = Boolean(pending || busy || automaticRunning) || e.dataset.full === 'true');
@@ -542,7 +548,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     }
     catch {
         if (live(token))
-            say('ChatGPT connection could not be checked. Choose Connect ChatGPT to retry.');
+            say(`${who()} connection could not be checked. Choose ${claudeActive() ? 'Open Claude settings' : 'Connect ChatGPT'} to retry.`);
     }
     finally {
         if (live(token)) {
@@ -1022,7 +1028,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             historyHost.append(history);
         }
         const about = el('details', '', 'review-about');
-        about.append(el('summary', 'About this review'), el('p', `OpenAI · ${result.model} · Request ${result.requestId}. Recorded provider metadata is not authenticated authorship.`));
+        about.append(el('summary', 'About this review'), el('p', `${companyFor(result.model)} · ${result.model} · Request ${result.requestId}. Recorded provider metadata is not authenticated authorship.`));
         if (w) {
             const counts = new Map<string, number>();
             for (const c of w.coverage)
@@ -1436,7 +1442,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         }
         if (workflowMode && (scope.scope === 'chapter' || (chapterLabel && hooks.captureChapter))) {
             const quick = button('Review chapter', () => { void reviewChapter(); }, 'review-scope-card primary');
-            quick.title = 'Runs mechanical, story/clarity, and all saved custom agents, then consolidation. Sends this chapter to your selected ChatGPT account and model.';
+            quick.title = `Runs mechanical, story/clarity, and all saved custom agents, then consolidation. Sends this chapter to ${claudeActive() ? 'Claude with your selected model' : 'your selected ChatGPT account and model'}.`;
             quick.disabled = busy || Boolean(pending) || automaticRunning;
             scopeCards.append(quick);
         }
@@ -1734,7 +1740,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 say('Review chapter is unavailable in this native host. Update Heinlein Studio.', 'warning'); return;
             }
             if (!ready()) {
-                say('Connect ChatGPT with a selected model to run Review chapter.', 'warning');
+                say(`Connect ${who()} with a selected model to run Review chapter.`, 'warning');
                 return;
             }
             const allReviewers = [...new Set(['mechanical', 'contextual', ...customReviewers.map(r => r.id)])];
@@ -1836,8 +1842,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 savedRecords = records;
                 view = 'results';
                 render();
-                const problem = hooks.recoveryUnavailable?.() ?? (!ready() ? 'Reconnect ChatGPT to finish saved reviews.' :
-                    saved.workflow!.accountId !== config!.activeAccountId || saved.model !== config!.model ? 'Select the original ChatGPT account and model to finish this saved review.' : null);
+                const problem = hooks.recoveryUnavailable?.() ?? (!ready() ? `Reconnect ${saved.model.startsWith('claude-') ? 'Claude' : 'ChatGPT'} to finish saved reviews.` :
+                    saved.workflow!.accountId !== config!.activeAccountId || saved.model !== config!.model ? (saved.model.startsWith('claude-') ? 'Choose Claude with the original API key and model to finish this saved review.' : 'Select the original ChatGPT account and model to finish this saved review.') : null);
                 if (problem) {
                     problems.push(problem);
                     firstAttention ??= result;

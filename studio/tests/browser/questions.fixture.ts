@@ -30,6 +30,12 @@ const core = {
   applyProposalReview:async()=>{applied++;source=proposal!.replacementText;return {receipt:{id:'apply-receipt',kind:'apply',status:'completed',proposalId:proposal!.proposalId,path,baseHash:proposal!.baseHash,replacementHash:proposal!.replacementHash,diffHash:proposal!.diffHash,origin,parentReceiptId:null,message:null,createdAtMs:Date.now(),revertAvailable:false},warning:null};},
   rejectProposal:async(_repo:string,proposalId:string)=>{rejected++;return {id:'reject-receipt',kind:'reject',status:'rejected',proposalId,path,origin};},
 } as unknown as LocalCore;
+// ?claude: the same fixture with Claude as the active provider (synthetic key, no network).
+if (new URLSearchParams(location.search).has('claude')) {
+  const models=[{slug:'claude-opus-5-5',displayName:'Claude Opus 5.5'},{slug:'claude-sonnet-5-5',displayName:'Claude Sonnet 5.5'}];
+  const claudeStatus={configured:true,model:'claude-opus-5-5',selectedModel:'claude-opus-5-5',models,accounts:[{id:'anthropic-0123abcd',label:'Claude · key ending 1a2b',signedIn:true,planEnabled:true}],activeAccountId:'anthropic-0123abcd',generation:1,usageLimited:false,signInPending:false,message:'Connected to Claude (Claude Opus 5.5). Requests use your Anthropic API key and are billed to your Anthropic account.',provider:'anthropic' as const,claude:{configured:true,active:true,keyHint:'1a2b',models,selectedModel:'claude-opus-5-5'}};
+  Object.assign(core,{questionStatus:async()=>claudeStatus,connectClaudeKey:async()=>claudeStatus,selectQuestionProvider:async()=>claudeStatus,selectClaudeModel:async()=>claudeStatus,refreshClaudeModels:async()=>claudeStatus,removeClaudeKey:async()=>claudeStatus});
+}
 // Synthetic Appearance preferences match the supplied dark, high-contrast reference.
 localStorage.setItem('heinlein-studio-appearance-v1', JSON.stringify({theme:'contrast',accent:'gold',width:'wide',leading:'airy',fade:false,focus:false}));
 localStorage.setItem('heinlein-studio-fonts-v1', JSON.stringify({text:'JetBrains Mono'}));
