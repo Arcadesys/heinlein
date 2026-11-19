@@ -349,12 +349,14 @@ motion uses an immediate transition.
 
 ## Local MCP proposals
 
-**More actions → MCP connection…** lets you explicitly allow the current saved
-source file for a reusable local MCP connection. Review the full file list in
+**More actions → AI connections…** connects Codex, Claude Code or Claude
+Desktop to Heinlein, then lets you explicitly allow the current project for that
+reusable local MCP connection. Each assistant is set up once; project access is
+shared by all of them (see `crates/local-mcp/README.md`). Review the full file list in
 the native confirmation. Add files individually; allowing a source from another
 project replaces the selection. **Disconnect all project access** stops reads
 and proposals. Project opening alone grants nothing, and unsaved buffers remain
-private. Configure Codex once with the server's `--studio-selection` launch mode;
+private. Configure each assistant once with the server's `--studio-selection` launch mode;
 the same running server follows confirmed project changes and invalidates old
 snapshots. See the launch instructions below for the one-time setup.
 

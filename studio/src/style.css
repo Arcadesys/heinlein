@@ -1250,6 +1250,9 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 .mcp-connection-step h3 { margin-top:0; }
 .mcp-connection-step textarea { box-sizing:border-box; width:100%; resize:vertical; font-family:var(--font-mono); font-size:.85rem; overflow-wrap:anywhere; }
 .mcp-connection-step details { margin-top:.8rem; }
+.mcp-client + .mcp-client { margin-top:1rem; padding-top:1rem; border-top:1px solid var(--border); }
+.mcp-client h4 { margin:0 0 .4rem; font-size:1.05rem; }
+.mcp-client p { margin-block:.4rem; }
 
 @media (max-width: 40rem) {
   /* Keep enlarged labels readable without shrinking the author's text size. */
