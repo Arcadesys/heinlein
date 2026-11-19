@@ -3,9 +3,10 @@
 
 use drafting_questions::{
     splice_revision, validate_revision_request, validate_revision_selection, Configuration,
-    QuestionAnswer, QuestionError, QuestionRequest, QuestionService,
+    Provider, QuestionAnswer, QuestionError, QuestionRequest, QuestionService,
 };
 use heinlein_chatgpt_auth::{AccountView, AuthError, AuthService, AuthStatus, ModelView};
+use heinlein_claude_auth::{ClaudeAuth, ClaudeAuthError};
 use serde::{Deserialize, Serialize};
 use std::sync::{atomic::Ordering, Arc, Mutex};
 use tauri::{Manager, State};
@@ -21,6 +22,7 @@ pub(crate) struct QuestionHost {
     review: Mutex<Option<crate::review_state::ReviewSession>>,
     review_active: std::sync::atomic::AtomicBool,
     auth: Mutex<Option<Arc<AuthService>>>,
+    claude: Mutex<Option<Arc<ClaudeAuth>>>,
 }
 
 #[derive(Serialize)]
@@ -38,6 +40,15 @@ impl From<QuestionError> for NativeError {
 impl From<AuthError> for NativeError {
     fn from(error: AuthError) -> Self {
         // AuthError's Display and code are deliberately static safe categories.
+        Self::Auth {
+            code: error.code(),
+            message: error.to_string(),
+        }
+    }
+}
+impl From<ClaudeAuthError> for NativeError {
+    fn from(error: ClaudeAuthError) -> Self {
+        // Claude errors are fixed plain-language categories; no key or path.
         Self::Auth {
             code: error.code(),
             message: error.to_string(),
@@ -74,6 +85,118 @@ pub(crate) struct QuestionStatus {
     sign_in_pending: bool,
     generation: u64,
     usage_limited: bool,
+    /// The provider that answers Ask, Revise and Review. The fields above
+    /// describe that provider's connection; `accounts` and `sign_in_pending`
+    /// always describe ChatGPT.
+    provider: Provider,
+    claude: Option<ClaudeView>,
+}
+
+/// The Claude card's state. Never contains the API key.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ClaudeView {
+    configured: bool,
+    active: bool,
+    key_hint: Option<String>,
+    models: Vec<ModelView>,
+    selected_model: Option<String>,
+}
+
+/// The connection that answers a request: ChatGPT (OAuth) or Claude (API key).
+#[derive(Clone)]
+enum Link {
+    ChatGpt(Arc<AuthService>),
+    Claude(Arc<ClaudeAuth>),
+}
+
+impl Link {
+    fn provider(&self) -> Provider {
+        match self {
+            Self::ChatGpt(_) => Provider::OpenAi,
+            Self::Claude(_) => Provider::Anthropic,
+        }
+    }
+
+    fn stale(&self) -> QuestionError {
+        QuestionError::stale_connection().for_provider(self.provider())
+    }
+
+    fn matches(&self, connection: &QuestionConnection) -> Result<bool, NativeError> {
+        Ok(match self {
+            Self::ChatGpt(auth) => matches_connection(&auth.status()?, connection),
+            Self::Claude(auth) => {
+                let status = auth.status()?;
+                status.active
+                    && status.configured
+                    && status.generation == connection.generation
+                    && status.account_id.as_deref() == Some(connection.account_id.as_str())
+                    && status.selected_model.as_deref() == Some(connection.model.as_str())
+            }
+        })
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        match self {
+            Self::ChatGpt(auth) => auth.is_current(generation),
+            Self::Claude(auth) => auth.is_current(generation),
+        }
+    }
+
+    /// Build a request configuration from a fresh credential lease that still
+    /// matches the connection the author saw when they pressed Send.
+    async fn configuration(
+        &self,
+        connection: &QuestionConnection,
+        exact_generation: bool,
+    ) -> Result<Configuration, NativeError> {
+        let (key, model, account_id, generation, cancelled, claude) = match self {
+            Self::ChatGpt(auth) => {
+                let c = auth.credentials(connection.generation).await?;
+                (
+                    c.access_token,
+                    c.model,
+                    c.account_id,
+                    c.generation,
+                    c.cancelled,
+                    false,
+                )
+            }
+            Self::Claude(auth) => {
+                let c = auth.credentials(connection.generation)?;
+                (
+                    c.api_key,
+                    c.model,
+                    c.account_id,
+                    c.generation,
+                    c.cancelled,
+                    true,
+                )
+            }
+        };
+        if (exact_generation && generation != connection.generation)
+            || account_id != connection.account_id
+            || model != connection.model
+            || !self.matches(connection)?
+        {
+            return Err(self.stale().into());
+        }
+        let config = if claude {
+            Configuration::anthropic(&key, &model)?
+        } else {
+            Configuration::new(&key, &model)?
+        };
+        Ok(config
+            .with_account(&account_id)?
+            .with_cancellation(cancelled))
+    }
+
+    fn origin(&self, model: String, request_id: String) -> proposal_store::ProposalOrigin {
+        match self {
+            Self::ChatGpt(_) => proposal_store::ProposalOrigin::native_openai(model, request_id),
+            Self::Claude(_) => proposal_store::ProposalOrigin::native_anthropic(model, request_id),
+        }
+    }
 }
 
 /// The visible native connection snapshot at the author's explicit Send.
@@ -215,7 +338,7 @@ fn capture_revision(
 
 fn persist_revision(
     app: &tauri::AppHandle,
-    auth: &AuthService,
+    auth: &Link,
     connection: &QuestionConnection,
     snapshot: &RevisionSnapshot,
     answer: &QuestionAnswer,
@@ -259,10 +382,7 @@ fn persist_revision(
                         &target.path,
                         &target.source_hash,
                         &next,
-                        proposal_store::ProposalOrigin::native_openai(
-                            answer.model.clone(),
-                            answer.request_id.clone(),
-                        ),
+                        auth.origin(answer.model.clone(), answer.request_id.clone()),
                         || {
                             if !clean_generation(&state, snapshot.generation)
                                 || !auth.is_current(connection.generation)
@@ -298,6 +418,86 @@ impl QuestionHost {
         let service = Arc::new(AuthService::open(path)?);
         *slot = Some(service.clone());
         Ok(service)
+    }
+
+    fn claude(&self, app: &tauri::AppHandle) -> Result<Arc<ClaudeAuth>, NativeError> {
+        let mut slot = self.claude.lock().map_err(|_| NativeError::unavailable())?;
+        if let Some(service) = slot.as_ref() {
+            return Ok(service.clone());
+        }
+        // A sibling of ChatGPT's private storage, with the same separation
+        // from every manuscript folder.
+        let path = super::private_question_auth_path(app)
+            .ok()
+            .and_then(|path| path.parent().map(|parent| parent.join("claude-auth-v1")))
+            .ok_or_else(NativeError::unavailable)?;
+        let service = Arc::new(ClaudeAuth::open(path)?);
+        *slot = Some(service.clone());
+        Ok(service)
+    }
+
+    /// The provider that answers requests right now.
+    fn link(&self, app: &tauri::AppHandle) -> Result<Link, NativeError> {
+        let claude = self.claude(app)?;
+        if claude.status()?.active {
+            Ok(Link::Claude(claude))
+        } else {
+            Ok(Link::ChatGpt(self.auth(app)?))
+        }
+    }
+
+    /// The full status the panel shows: the active provider's connection,
+    /// ChatGPT's accounts, and the Claude card.
+    fn view(
+        &self,
+        app: &tauri::AppHandle,
+        auth: AuthStatus,
+    ) -> Result<QuestionStatus, NativeError> {
+        let mut status = self.status(auth)?;
+        let claude = self.claude(app)?.status()?;
+        let models: Vec<ModelView> = claude
+            .models
+            .iter()
+            .map(|model| ModelView {
+                slug: model.slug.clone(),
+                display_name: model.display_name.clone(),
+            })
+            .collect();
+        if claude.active {
+            let usage_limited = match claude.account_id.as_deref() {
+                Some(id) => self.questions.is_usage_limited(id)?,
+                None => false,
+            };
+            let name = claude
+                .selected_model
+                .as_ref()
+                .and_then(|slug| models.iter().find(|m| &m.slug == slug))
+                .map(|m| m.display_name.clone())
+                .unwrap_or_default();
+            status.configured = claude.configured && !usage_limited;
+            status.model = claude.selected_model.clone();
+            status.active_account_id = claude.account_id.clone();
+            status.models = models.clone();
+            status.selected_model = claude.selected_model.clone();
+            status.generation = claude.generation;
+            status.usage_limited = usage_limited;
+            status.provider = Provider::Anthropic;
+            status.message = if usage_limited {
+                "Anthropic's rate or usage limit was reached. Wait a moment, then recheck the Claude connection.".into()
+            } else if claude.configured {
+                format!("Connected to Claude ({name}). Requests use your Anthropic API key and are billed to your Anthropic account.")
+            } else {
+                "Choose an available Claude model before sending.".into()
+            };
+        }
+        status.claude = Some(ClaudeView {
+            configured: claude.configured,
+            active: claude.active,
+            key_hint: claude.key_hint,
+            models,
+            selected_model: claude.selected_model,
+        });
+        Ok(status)
     }
 
     fn status(&self, auth: AuthStatus) -> Result<QuestionStatus, NativeError> {
@@ -343,6 +543,8 @@ impl QuestionHost {
             sign_in_pending: auth.sign_in_pending,
             generation: auth.generation,
             usage_limited,
+            provider: Provider::OpenAi,
+            claude: None,
         })
     }
 }
@@ -381,7 +583,7 @@ pub(crate) fn question_status(
     host: State<'_, QuestionHost>,
 ) -> Result<QuestionStatus, NativeError> {
     main_window(&window)?;
-    host.status(host.auth(&app)?.status()?)
+    host.view(&app, host.auth(&app)?.status()?)
 }
 
 #[tauri::command]
@@ -395,33 +597,27 @@ pub(crate) async fn ask_question(
 ) -> Result<QuestionAnswer, NativeError> {
     main_window(&window)?;
     request.validate()?;
-    let auth = host.auth(&app)?;
-    if !matches_connection(&auth.status()?, &connection) {
-        return Err(QuestionError::stale_connection().into());
+    let auth = host.link(&app)?;
+    if !auth.matches(&connection)? {
+        return Err(auth.stale().into());
     }
     if host.questions.is_usage_limited(&connection.account_id)? {
         return Err(QuestionError::usage_limited().into());
     }
     let permit = host.questions.reserve(&request, &connection.account_id)?;
-    let credentials = auth.credentials(connection.generation).await?;
-    if credentials.generation != connection.generation
-        || credentials.account_id != connection.account_id
-        || credentials.model != connection.model
-        || !matches_connection(&auth.status()?, &connection)
-    {
-        return Err(QuestionError::stale_connection().into());
-    }
-    let mut config = Configuration::new(&credentials.access_token, &credentials.model)?
-        .with_account(&credentials.account_id)?
-        .with_cancellation(credentials.cancelled);
-    config = config.with_progress(move |text| {
+    let config = auth.configuration(&connection, true).await?;
+    let config = config.with_progress(move |text| {
         let _ = on_progress.send(text);
     });
     // Cancel records the ID even while native authentication is still refreshing.
     // The auth lease also invalidates a not-yet-started or active HTTP request.
-    let answer = host.questions.ask_reserved(request, config, permit).await?;
+    let answer = host
+        .questions
+        .ask_reserved(request, config, permit)
+        .await
+        .map_err(|error| error.for_provider(auth.provider()))?;
     if !auth.is_current(connection.generation) {
-        return Err(QuestionError::stale_connection().into());
+        return Err(auth.stale().into());
     }
     Ok(answer)
 }
@@ -438,9 +634,9 @@ pub(crate) async fn suggest_question_revision(
     main_window(&window)?;
     validate_target(&target)?;
     validate_revision_request(&request, &target.selected_text)?;
-    let auth = host.auth(&app)?;
-    if !matches_connection(&auth.status()?, &connection) {
-        return Err(QuestionError::stale_connection().into());
+    let auth = host.link(&app)?;
+    if !auth.matches(&connection)? {
+        return Err(auth.stale().into());
     }
     let permit = host.questions.reserve(&request, &connection.account_id)?;
     let capture_app = app.clone();
@@ -448,14 +644,6 @@ pub(crate) async fn suggest_question_revision(
         tauri::async_runtime::spawn_blocking(move || capture_revision(&capture_app, target))
             .await
             .map_err(|_| NativeError::unavailable())??;
-    let credentials = auth.credentials(connection.generation).await?;
-    if credentials.generation != connection.generation
-        || credentials.account_id != connection.account_id
-        || credentials.model != connection.model
-        || !matches_connection(&auth.status()?, &connection)
-    {
-        return Err(QuestionError::stale_connection().into());
-    }
     if !clean_generation(&app.state::<super::BrowserState>(), snapshot.generation)
         || !selected_revision_session(
             &app.state::<super::BrowserState>(),
@@ -464,9 +652,7 @@ pub(crate) async fn suggest_question_revision(
     {
         return Err(QuestionError::stale_revision().into());
     }
-    let config = Configuration::new(&credentials.access_token, &credentials.model)?
-        .with_account(&credentials.account_id)?
-        .with_cancellation(credentials.cancelled);
+    let config = auth.configuration(&connection, true).await?;
     let prepared = host
         .questions
         .revise_reserved(
@@ -475,7 +661,8 @@ pub(crate) async fn suggest_question_revision(
             config,
             permit,
         )
-        .await?;
+        .await
+        .map_err(|error| error.for_provider(auth.provider()))?;
     // No source/save/recovery locks span inference. The retained request permit
     // serializes cancellation with this final, local pending-proposal operation.
     tauri::async_runtime::spawn_blocking(move || {
@@ -544,7 +731,7 @@ pub(crate) async fn connect_question_account(
                 .map_err(|_| AuthError::Browser)
         })
         .await?;
-    host.status(status)
+    host.view(&app, status)
 }
 
 #[derive(Serialize)]
@@ -649,7 +836,7 @@ pub(crate) async fn reauthenticate_review(
         Ok(session.view())
     }).map_err(NativeError::revision)?;
     Ok(ReauthenticatedReview {
-        status: host.status(connected)?,
+        status: host.view(&app, connected)?,
         review,
     })
 }
@@ -682,7 +869,7 @@ pub(crate) async fn select_question_account(
     main_window(&window)?;
     host.questions.cancel_active()?;
     let auth = host.auth(&app)?;
-    host.status(auth.select_account(&account_id).await?)
+    host.view(&app, auth.select_account(&account_id).await?)
 }
 
 #[tauri::command]
@@ -694,7 +881,7 @@ pub(crate) fn select_question_model(
 ) -> Result<QuestionStatus, NativeError> {
     main_window(&window)?;
     host.questions.cancel_active()?;
-    host.status(host.auth(&app)?.select_model(&slug)?)
+    host.view(&app, host.auth(&app)?.select_model(&slug)?)
 }
 
 #[tauri::command]
@@ -706,7 +893,7 @@ pub(crate) async fn restore_question_connection(
     main_window(&window)?;
     let auth = host.auth(&app)?;
     // Restore does not clear quota state or interrupt an existing question.
-    host.status(auth.restore_saved().await?)
+    host.view(&app, auth.restore_saved().await?)
 }
 
 #[tauri::command]
@@ -722,7 +909,7 @@ pub(crate) async fn refresh_question_connection(
     if let Some(id) = status.active_account_id.as_deref() {
         host.questions.clear_usage_limit(id)?;
     }
-    host.status(status)
+    host.view(&app, status)
 }
 
 #[tauri::command]
@@ -735,7 +922,7 @@ pub(crate) async fn sign_out_question_account(
     main_window(&window)?;
     host.questions.cancel_active()?;
     let auth = host.auth(&app)?;
-    host.status(auth.sign_out(account_id.as_deref()).await?)
+    host.view(&app, auth.sign_out(account_id.as_deref()).await?)
 }
 
 #[tauri::command]
@@ -747,6 +934,81 @@ pub(crate) fn open_question_usage(
     app.opener()
         .open_url(USAGE_URL, None::<&str>)
         .map_err(|_| AuthError::Browser.into())
+}
+
+/// Check a pasted Anthropic API key, save it in the Keychain and make Claude
+/// the provider for Ask, Revise and Review. A rejected key changes nothing.
+#[tauri::command]
+pub(crate) async fn connect_claude_key(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    api_key: String,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    host.questions.cancel_active()?;
+    let claude = host.claude(&app)?;
+    claude.connect(&api_key).await?;
+    host.view(&app, host.auth(&app)?.status()?)
+}
+
+/// Choose which provider answers. Claude requires a saved key.
+#[tauri::command]
+pub(crate) fn select_question_provider(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    provider: Provider,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    host.questions.cancel_active()?;
+    host.claude(&app)?
+        .set_active(provider == Provider::Anthropic)?;
+    host.view(&app, host.auth(&app)?.status()?)
+}
+
+#[tauri::command]
+pub(crate) fn select_claude_model(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+    slug: String,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    host.questions.cancel_active()?;
+    host.claude(&app)?.select_model(&slug)?;
+    host.view(&app, host.auth(&app)?.status()?)
+}
+
+/// Recheck the saved key and reload its models. Also clears a usage pause.
+#[tauri::command]
+pub(crate) async fn refresh_claude_models(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    host.questions.cancel_active()?;
+    let claude = host.claude(&app)?;
+    let status = claude.refresh_models().await?;
+    if let Some(id) = status.account_id.as_deref() {
+        host.questions.clear_usage_limit(id)?;
+    }
+    host.view(&app, host.auth(&app)?.status()?)
+}
+
+/// Delete the key from the Keychain and forget every Claude setting. ChatGPT
+/// becomes the provider again.
+#[tauri::command]
+pub(crate) fn remove_claude_key(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    host: State<'_, QuestionHost>,
+) -> Result<QuestionStatus, NativeError> {
+    main_window(&window)?;
+    host.questions.cancel_active()?;
+    host.claude(&app)?.sign_out()?;
+    host.view(&app, host.auth(&app)?.status()?)
 }
 
 #[cfg(test)]
@@ -908,6 +1170,78 @@ mod tests {
         }
     }
 
+    mod claude_fakes {
+        use heinlein_claude_auth::{Model, ModelsFuture, Result, Transport, Vault};
+        use std::sync::Mutex;
+        #[derive(Default)]
+        pub struct MemoryVault(pub Mutex<Option<String>>);
+        impl Vault for MemoryVault {
+            fn load(&self) -> Result<Option<String>> {
+                Ok(self.0.lock().unwrap().clone())
+            }
+            fn save(&self, key: &str) -> Result<()> {
+                *self.0.lock().unwrap() = Some(key.into());
+                Ok(())
+            }
+            fn delete(&self) -> Result<()> {
+                *self.0.lock().unwrap() = None;
+                Ok(())
+            }
+        }
+        pub struct Catalog;
+        impl Transport for Catalog {
+            fn list_models<'a>(&'a self, _key: &'a str) -> ModelsFuture<'a> {
+                Box::pin(async {
+                    Ok(["claude-opus-5-5", "claude-sonnet-5-5"]
+                        .map(|slug| Model {
+                            slug: slug.into(),
+                            display_name: slug.into(),
+                        })
+                        .to_vec())
+                })
+            }
+        }
+    }
+
+    #[test]
+    fn a_claude_link_binds_to_the_exact_key_model_and_generation_the_author_saw() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude = Arc::new(
+            ClaudeAuth::with_parts(
+                dir.path().join("claude"),
+                Box::new(claude_fakes::MemoryVault::default()),
+                Box::new(claude_fakes::Catalog),
+            )
+            .unwrap(),
+        );
+        let status =
+            tauri::async_runtime::block_on(claude.connect("sk-ant-unit-test-not-a-key")).unwrap();
+        let link = Link::Claude(claude.clone());
+        assert_eq!(link.provider(), Provider::Anthropic);
+        let seen = QuestionConnection {
+            generation: status.generation,
+            account_id: status.account_id.clone().unwrap(),
+            model: "claude-opus-5-5".into(),
+        };
+        assert!(link.matches(&seen).ok().unwrap());
+        let config = tauri::async_runtime::block_on(link.configuration(&seen, true))
+            .ok()
+            .unwrap();
+        assert_eq!(config.provider(), Provider::Anthropic);
+        assert_eq!(config.model(), "claude-opus-5-5");
+        // A ChatGPT snapshot never matches a Claude link.
+        assert!(!link.matches(&connection()).ok().unwrap());
+        // Changing the model ends the binding the author saw.
+        claude.select_model("claude-sonnet-5-5").unwrap();
+        assert!(!link.matches(&seen).ok().unwrap());
+        assert!(!link.is_current(seen.generation));
+        assert!(tauri::async_runtime::block_on(link.configuration(&seen, true)).is_err());
+        let stale = link.stale();
+        assert!(stale.message.contains("Claude"));
+        let origin = link.origin("claude-opus-5-5".into(), "req_1".into());
+        assert_eq!(origin.kind, "nativeAnthropic");
+    }
+
     #[test]
     fn send_binding_requires_exact_generation_account_and_available_model() {
         assert!(matches_connection(&status(), &connection()));
@@ -1038,9 +1372,9 @@ pub(crate) async fn request_review(
     }
 
     request.validate()?;
-    let auth = host.auth(&app)?;
-    if !matches_connection(&auth.status()?, &connection) {
-        return Err(QuestionError::stale_connection().into());
+    let auth = host.link(&app)?;
+    if !auth.matches(&connection)? {
+        return Err(auth.stale().into());
     }
     let permit = host
         .questions
@@ -1069,21 +1403,12 @@ pub(crate) async fn request_review(
     })
     .await
     .map_err(|_| NativeError::unavailable())??;
-    let credentials = auth.credentials(connection.generation).await?;
-    if credentials.generation != connection.generation
-        || credentials.account_id != connection.account_id
-        || credentials.model != connection.model
-        || !matches_connection(&auth.status()?, &connection)
-    {
-        return Err(QuestionError::stale_connection().into());
-    }
-    let config = Configuration::new(&credentials.access_token, &credentials.model)?
-        .with_account(&credentials.account_id)?
-        .with_cancellation(credentials.cancelled);
+    let config = auth.configuration(&connection, true).await?;
     let prepared = host
         .questions
         .review_reserved(request.clone(), config, permit)
-        .await?;
+        .await
+        .map_err(|error| error.for_provider(auth.provider()))?;
     let (_, _, result) = prepared.persist(|answer, json| {
         let state = app.state::<super::BrowserState>();
         let _selection = state
@@ -1093,7 +1418,7 @@ pub(crate) async fn request_review(
         if !selected_revision_session(&state, &request.repository_id)
             || !auth.is_current(connection.generation)
         {
-            return Err(QuestionError::stale_connection().into());
+            return Err(auth.stale().into());
         }
         let output = serde_json::from_str(json)
             .map_err(|_| NativeError::revision("Invalid review output"))?;
@@ -1432,9 +1757,9 @@ async fn request_review_workflow_inner(
     on_progress: tauri::ipc::Channel<ReviewProgress>,
 ) -> Result<crate::review_state::ReviewResult, NativeError> {
     request.validate()?;
-    let auth = host.auth(&app)?;
-    if !matches_connection(&auth.status()?, &connection) {
-        return Err(QuestionError::stale_connection().into());
+    let auth = host.link(&app)?;
+    if !auth.matches(&connection)? {
+        return Err(auth.stale().into());
     }
     let permit = host
         .questions
@@ -1476,21 +1801,14 @@ async fn request_review_workflow_inner(
     if remaining == 0 {
         return Err(NativeError::revision("The retained finding limit is reached. Start a smaller explicit review; no call was sent."));
     }
-    let credentials = auth.credentials(connection.generation).await?;
-    if credentials.account_id != connection.account_id
-        || credentials.model != connection.model
-        || !matches_connection(&auth.status()?, &connection)
-    {
-        return Err(QuestionError::stale_connection().into());
-    }
     let reporter = Arc::new(Mutex::new(Reporter::new(
         request.request_id.clone(),
         Some(on_progress),
     )));
     let stream_reporter = Arc::clone(&reporter);
-    let config = Configuration::new(&credentials.access_token, &credentials.model)?
-        .with_account(&credentials.account_id)?
-        .with_cancellation(credentials.cancelled)
+    let config = auth
+        .configuration(&connection, false)
+        .await?
         .with_progress(move |text| {
             if let Ok(mut reporter) = stream_reporter.lock() {
                 reporter.receiving(text.len());
@@ -1504,7 +1822,7 @@ async fn request_review_workflow_inner(
                     &request.repository_id,
                 )
             {
-                return Err(QuestionError::stale_connection());
+                return Err(auth.stale());
             }
             let (coverage, suggestions) =
                 super::standalone::with_review_repository(&app, &request.repository_id, |repo| {
@@ -1560,11 +1878,12 @@ async fn request_review_workflow_inner(
             reports,
             progress,
         )
-        .await?;
+        .await
+        .map_err(|error| error.for_provider(auth.provider()))?;
     if !auth.is_current(connection.generation)
         || !selected_revision_session(&app.state::<super::BrowserState>(), &request.repository_id)
     {
-        return Err(QuestionError::stale_connection().into());
+        return Err(auth.stale().into());
     }
     super::standalone::with_review_repository(&app, &request.repository_id, |repo| {
         let store = review_records(&app)?;

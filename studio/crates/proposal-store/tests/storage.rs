@@ -345,3 +345,43 @@ fn native_guard_rechecks_before_publication_and_failure_preserves_source() {
     assert_eq!(store.get(&f.repo, &proposal.id).unwrap(), proposal);
     assert_eq!(f.repo.read("scene.md").unwrap().text, source.text);
 }
+
+#[test]
+fn claude_answers_are_recorded_as_anthropic_origin_and_round_trip() {
+    let f = Fixture::new();
+    let store = f.store();
+    let source = f.repo.read("scene.md").unwrap();
+    let origin = ProposalOrigin::native("claude-opus-5-5".into(), "req_claude".into());
+    assert_eq!(origin.kind, "nativeAnthropic");
+    assert_eq!(origin.provider.as_deref(), Some("anthropic"));
+    assert!(origin.is_native());
+    assert_eq!(
+        ProposalOrigin::native("gpt-5".into(), "req_openai".into()).kind,
+        "nativeOpenAi"
+    );
+    let proposal = store
+        .submit_checked(
+            &f.repo,
+            "scene.md",
+            &source.content_hash,
+            "Revision",
+            origin.clone(),
+            || Ok(()),
+        )
+        .unwrap();
+    assert_eq!(store.get(&f.repo, &proposal.id).unwrap().origin, origin);
+    // A provider that does not match its kind is never accepted.
+    let mut mislabelled = origin;
+    mislabelled.provider = Some("openai".into());
+    assert_eq!(
+        store.submit_checked(
+            &f.repo,
+            "scene.md",
+            &source.content_hash,
+            "Revision two",
+            mislabelled,
+            || Ok(()),
+        ),
+        Err(Error::InvalidProposal)
+    );
+}

@@ -37,6 +37,7 @@ proposal-store = { path = "../crates/proposal-store" }
 heinlein-local-mcp = { path = "../crates/local-mcp" }
 drafting-questions = { path = "../crates/drafting-questions" }
 heinlein-chatgpt-auth = { path = "../crates/chatgpt-auth" }
+heinlein-claude-auth = { path = "../crates/claude-auth" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 raw-window-handle = "0.6"
