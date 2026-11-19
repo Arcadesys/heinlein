@@ -8,22 +8,39 @@ setup, approval, publishing or manuscript-save tool.
 
 ## Connect from Studio
 
-1. Open a project. A scene does not need to be open or saved first.
-2. Choose **Codex connection…** in the project navigator, the Project actions
-   menu, or the global More menu.
-3. Choose **Connect Codex** once and confirm the native setup prompt. This uses
-   the installed Studio executable's bounded headless stdio mode; no separate
-   server build is needed. It updates only Codex's `heinlein` MCP entry.
-4. Choose **Allow this project** and confirm the named project. Start a new
-   Codex chat after first-time client setup. Ordinary scene/file changes and
-   later explicit project selections use the same connection without another
-   registration.
+Studio can register this server with **Codex**, **Claude Code** and
+**Claude Desktop**. Each assistant is connected separately; project access is
+shared by all of them.
 
-If the CLI is unavailable, **Manual setup command** contains the exact quoted
-command for this executable and private profile directory. Copy that command
-rather than guessing installation or Application Support paths. Setup status
-verifies configuration, not a live client session or inference request. Client
-configuration is changed only by the explicit native-confirmed setup action.
+1. Open a project. A scene does not need to be open or saved first.
+2. Choose **AI connections…** in the project navigator, the Project actions
+   menu, or the global More menu.
+3. Choose **Connect Codex**, **Connect Claude Code** or **Connect Claude
+   Desktop** and confirm the native setup prompt. This uses the installed Studio
+   executable's bounded headless stdio mode; no separate server build is needed.
+   - **Codex:** runs `codex mcp add heinlein -- …` and verifies it with
+     `codex mcp get heinlein --json`.
+   - **Claude Code:** runs `claude mcp add --scope user heinlein -- …`,
+     replacing any earlier user-scope `heinlein` entry. It is verified by
+     reading the `mcpServers.heinlein` entry in `~/.claude.json`.
+   - **Claude Desktop:** has no CLI, so Studio edits
+     `~/Library/Application Support/Claude/claude_desktop_config.json`
+     directly. Only `mcpServers.heinlein` is added or replaced; every other
+     setting is kept. The previous file is saved beside it as
+     `claude_desktop_config.json.heinlein-backup`, and the new file replaces it
+     atomically. A settings file that is not valid JSON is never rewritten.
+     Claude Desktop must have been opened at least once.
+4. Choose **Allow this project** and confirm the named project. After first-time
+   setup, start a new Codex chat or Claude Code session, or quit and reopen
+   Claude Desktop. Ordinary scene/file changes and later explicit project
+   selections use the same connection without another registration.
+
+If an assistant is not found, its **Manual setup** section contains the exact
+quoted command (or, for Claude Desktop, the JSON entry to paste) for this
+executable and private profile directory. Copy it rather than guessing
+installation or Application Support paths. Setup status verifies configuration,
+not a live client session or inference request. Client configuration is changed
+only by the explicit native-confirmed setup action.
 
 One explicitly selected project is shared at a time. Granting another replaces
 that selection; **Disconnect project access** revokes it. Saved proposals remain
