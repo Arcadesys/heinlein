@@ -9,6 +9,8 @@ interface SelectionAskHooks {
   fallback: HTMLButtonElement;
   /** Optional second action shown beside Ask, with the selection's word count. */
   revise?(snapshot: SelectionQuestionState): void;
+  /** Optional: open Add note for the highlighted passage. */
+  note?(snapshot: SelectionQuestionState): void;
   keys?: string;
 }
 function sameSelection(before: SelectionQuestionState, after: SelectionQuestionState | null) {
@@ -31,7 +33,18 @@ export function createSelectionAskAction(view: EditorView, hooks: SelectionAskHo
     const revise = document.createElement('button'); revise.type = 'button'; revise.textContent = 'Suggest revision';
     revise.title = 'Open Questions in Suggest revision mode for this selection. Nothing is sent until you choose Send.';
     words = document.createElement('span'); words.className = 'selection-words';
-    extras.append(revise, words); element.classList.add('with-extras'); document.body.append(extras);
+    extras.append(revise);
+    if (hooks.note) {
+      const note = document.createElement('button'); note.type = 'button'; note.textContent = 'Add note'; note.className = 'selection-note-action';
+      note.title = 'Write a note for Heinlein about this passage. Notes are left out of exports.';
+      note.addEventListener('click', () => {
+        const snapshot = displayed;
+        if (disposed || !snapshot || !sameSelection(snapshot, hooks.current())) {hide(); if (!disposed) hooks.stale(); return;}
+        hide(); hooks.note!(snapshot);
+      });
+      extras.append(note);
+    }
+    extras.append(words); element.classList.add('with-extras'); document.body.append(extras);
     for (const type of ['pointerdown', 'mousedown'] as const) extras.addEventListener(type, event => { if ((event as MouseEvent).button === 0) event.preventDefault(); });
     revise.addEventListener('click', () => {
       const snapshot = displayed;

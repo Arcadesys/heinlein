@@ -3,6 +3,7 @@
 // Every text node is a verbatim slice of the LF source with a known range, which is what lets review marks land exactly.
 import { markdownLanguage } from '@codemirror/lang-markdown';
 import type { ReviewMark } from './reviewMarks';
+import {findAuthorComments} from './authorComments';
 import { formatKeys, isMac } from './shortcuts';
 
 type MdNode = ReturnType<typeof markdownLanguage.parser.parse>['topNode'];
@@ -29,11 +30,25 @@ export function renderMarkdown(doc: string, ranges: readonly ReaderRange[], mark
   let texts: TextEntry[] = [];
   const tops: {element: HTMLElement; from: number; to: number}[] = [];
   const make = <K extends keyof HTMLElementTagNameMap>(tag: K, parent: HTMLElement, className = '') => { const node = document.createElement(tag); if (className) node.className = className; parent.append(node); return node; };
-  const text = (parent: HTMLElement, from: number, to: number) => {
-    if (to <= from) return;
+  const notes = findAuthorComments(doc);
+  const piece = (parent: HTMLElement, from: number, to: number) => {
     const node = document.createTextNode(doc.slice(from, to));
     parent.append(node);
     texts.push({node, from, to});
+  };
+  // Author notes ({>>…<<}) read as notes, not prose. Split only at their edges so offsets stay exact.
+  const text = (parent: HTMLElement, from: number, to: number) => {
+    if (to <= from) return;
+    let cursor = from;
+    for (const note of notes) {
+      if (note.to <= cursor) continue;
+      if (note.from >= to) break;
+      if (note.from > cursor) piece(parent, cursor, note.from);
+      const end = Math.min(to, note.to);
+      const span = make('span', parent, 'md-author-comment'); span.title = 'Note for Heinlein. Not published.';
+      piece(span, Math.max(cursor, note.from), end); cursor = end;
+    }
+    if (cursor < to) piece(parent, cursor, to);
   };
   const generated = (parent: HTMLElement, value: string) => { make('span', parent, 'md-generated').textContent = value; };
   const children = (node: MdNode) => { const list: MdNode[] = []; for (let child = node.firstChild; child; child = child.nextSibling) list.push(child); return list; };

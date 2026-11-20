@@ -6,14 +6,14 @@ from pathlib import Path
 
 from importlib.resources import files
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from heinlein import frontmatter, pandoc
+from heinlein import comments, frontmatter, pandoc
 from heinlein.outputs import docx, epub, pdf
 
 
 def export(*, manuscript:Path, output_dir:Path, format:str, title:str, author:str) -> Path:
     """A plain review manuscript, without the publisher's edition/colophon pages."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    body=frontmatter.strip_title_block(manuscript.read_text(encoding="utf-8"))
+    body=comments.strip_comments(frontmatter.strip_title_block(manuscript.read_text(encoding="utf-8")))
     heading="# "+title.replace("\n", " ")+"\n\n"
     byline=("*by "+author.replace("*", "\\*")+"*\n\n") if author else ""
     source=heading+byline+body

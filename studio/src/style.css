@@ -1308,3 +1308,11 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 
 /* The floating save/error toast must always use the viewport, never an animated parent. */
 .studio.writing-controls-hidden > .notice-slot { display:none; }
+
+/* Author notes ({>>…<<}): colour and background only, so text never reflows. */
+.cm-author-comment, .md-author-comment { color: var(--fg-muted); background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 3px; }
+.note-dialog { max-width: 34rem; }
+.note-dialog-quote { margin: .75rem 0; padding: .5rem .75rem; border-left: 3px solid var(--accent); background: var(--surface-hover); white-space: pre-wrap; max-height: 10rem; overflow: auto; }
+.note-dialog-label { display: grid; gap: .35rem; font-weight: 600; }
+.note-dialog-input { width: 100%; font: inherit; font-weight: 400; resize: vertical; }
+.note-dialog .dialog-actions { display: flex; gap: .5rem; justify-content: flex-end; margin-top: .75rem; }

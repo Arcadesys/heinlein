@@ -27,6 +27,22 @@ export function exportBody(source: string): string {
   return source.slice(end.index + end[0].length);
 }
 
+// A complete CriticMarkup comment, `{>>note<<}`, that never crosses a blank line.
+const COMMENT = /\{>>(?:(?!<<\}|\r?\n[ \t]*\r?\n|\r[ \t]*\r)[\s\S])*?<<\}/y;
+
+/** Remove private author comments, plus one space directly before each; refuse an unclosed one. */
+export function stripComments(body: string): string {
+  let out = '', cursor = 0;
+  for (let open = body.indexOf('{>>'); open !== -1; open = body.indexOf('{>>', cursor)) {
+    COMMENT.lastIndex = open;
+    const match = COMMENT.exec(body);
+    if (!match) throw new Error('A scene has an unfinished comment. Close or remove it before exporting.');
+    out += body.slice(cursor, open > cursor && body[open - 1] === ' ' ? open - 1 : open);
+    cursor = open + match[0].length;
+  }
+  return out + body.slice(cursor);
+}
+
 /** Read-only snapshot: no save, recovery, organization, or network calls. */
 export async function prepareMarkdownExport(core: LocalCore, repositoryId: string, title: string, scope: ExportScope,
   state: DraftingState | null, buffers: Map<string, Document> = new Map(), options:ExportOptions = {}): Promise<MarkdownExport> {
@@ -80,7 +96,7 @@ export async function prepareMarkdownExport(core: LocalCore, repositoryId: strin
     if (part.path) {
       const doc = await read(part.path);
       if (doc.generatedCompatibility) throw new Error(`Open the original source sheets for ${part.path} before exporting.`);
-      section += exportBody(doc.text) + '\n\n';
+      section += stripComments(exportBody(doc.text)) + '\n\n';
       count++;
     }
     bytes += new TextEncoder().encode(section).length;

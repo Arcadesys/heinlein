@@ -5,6 +5,7 @@ import { search, searchKeymap, openSearchPanel } from '@codemirror/search';
 import { markdown } from '@codemirror/lang-markdown';
 import type { TypewriterKey } from './writingFeedback';
 import { focusMode } from './focusMode';
+import { authorCommentMarks } from './authorComments';
 
 // CodeMirror uses LF positions internally. Preserve every untouched source byte,
 // including mixed newline styles, instead of serializing a parsed manuscript.
@@ -167,7 +168,7 @@ export function createEditor(parent: HTMLElement, source: string, changed: (raw:
           }
         }
       }),
-      focusMode,
+      focusMode, authorCommentMarks,
       // Colors and type come from Appearance tokens on :root, so themes restyle the editor live.
       EditorView.theme({
         '&': {color: 'var(--fg)', backgroundColor: 'transparent', minHeight: '24rem'},

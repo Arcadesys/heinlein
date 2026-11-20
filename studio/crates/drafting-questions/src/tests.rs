@@ -1485,6 +1485,49 @@ fn revision_diffs_bind_to_unique_ordered_originals_and_preserve_surroundings() {
 }
 
 #[test]
+fn revision_diffs_keep_or_delete_author_comments_whole() {
+    let diff = |original: &str, replacement: &str| RevisionDiff {
+        original: original.into(),
+        replacement: replacement.into(),
+    };
+    let source = "The world was new {>>wait, what / something more than this<<} today.";
+    assert_eq!(
+        apply_revision_diffs(
+            source,
+            &[diff("new {>>wait, what / something more than this<<}", "unmade")]
+        )
+        .unwrap(),
+        "The world was unmade today."
+    );
+    assert_eq!(
+        apply_revision_diffs(source, &[diff("world", "earth")]).unwrap(),
+        "The earth was new {>>wait, what / something more than this<<} today."
+    );
+    for edits in [
+        vec![diff("{>>wait, what", "{>>wait, why")],
+        vec![diff("today.", "today. {>>check<<}")],
+        vec![diff("wait, what / ", "wait, what<<} {>>")],
+        vec![diff("new {>>wait, what", "unmade")],
+    ] {
+        assert!(apply_revision_diffs(source, &edits).is_err());
+    }
+}
+
+#[test]
+fn every_model_instruction_treats_comments_as_author_directives() {
+    for instructions in [
+        INSTRUCTIONS,
+        REVISION_INSTRUCTIONS,
+        review::REVIEW_INSTRUCTIONS,
+    ] {
+        assert!(instructions.ends_with(COMMENT_INSTRUCTION));
+    }
+    assert!(COMMENT_INSTRUCTION.starts_with(
+        "Text wrapped in {>> and <<} is a private author comment about the adjacent prose."
+    ));
+}
+
+#[test]
 fn revision_parser_rejects_full_prose_and_invalid_patch_shapes() {
     for text in [
         r#"{"explanation":"Reason","replacement":"Rewritten scene"}"#,
