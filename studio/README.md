@@ -469,7 +469,7 @@ save/recovery path handles an accepted edit.
 See [the selection-question contract](../docs/architecture/studio-selection-question.md)
 for exact anchors, clipboard considerations and integration limits.
 
-## Drafting questions with ChatGPT
+## Drafting questions with ChatGPT or Claude
 
 Highlight a passage and choose the contextual **Ask Heinlein** button to open the
 **Questions** side panel with that exact selection captured. This prepares your
@@ -493,6 +493,33 @@ mocked; complete sign-in and a real question locally to verify your account.
 Protected account storage currently supports macOS and Linux; other platforms
 reject connection until an equivalent secure storage implementation is available.
 See [drafting question boundaries](../docs/architecture/studio-drafting-questions.md).
+
+### Using Claude instead of ChatGPT
+
+Ask, Suggest revision and Review can be answered by **Claude** instead. Open the
+connection settings (**Account & model**), choose **Claude** under **Answer with**,
+paste an Anthropic API key and choose **Save key**.
+
+- **Keys:** create one at console.anthropic.com. Heinlein checks the key with
+  Anthropic before saving it. A rejected key changes nothing.
+- **Storage:** the key is kept only in this Mac's Keychain, never in your project,
+  chat history or browser storage. The panel shows only its last four characters.
+- **Billing:** Claude requests are billed per use to your Anthropic account. The
+  ChatGPT plan allowance is not used, and Heinlein never switches billing routes
+  on its own.
+- **Model:** Claude Opus 5.5 is selected by default when your key offers it.
+  Choose another under **Claude model**. Claude reasons before it answers, which
+  uses more tokens than the visible answer.
+- **Refusals:** if Anthropic's safety checks decline a passage, the request
+  continues on a fallback model inside the same call. If the whole chain declines,
+  you see "Claude declined to answer this request" and nothing changes.
+- **Switching:** choose **ChatGPT** to switch back. **Remove key** deletes the key
+  from the Keychain and returns to ChatGPT. Saved chats stay on this Mac,
+  separately for each provider and model.
+
+The same rules apply to both providers. Answers are advisory, suggestions are
+unapproved until you accept them, and nothing is sent until you choose Send.
+Saved reviews resume only with the provider, key and model they started with.
 
 ## Vibecode your theme
 

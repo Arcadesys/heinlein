@@ -690,6 +690,8 @@ fn transient(error: &QuestionError) -> bool {
     !error.is_usage_limit()
         && error.provider_code.is_none()
         && (matches!(error.code, "network" | "timeout")
+            // Claude's "overloaded" (HTTP 529) is temporary capacity, like a 503.
+            || error.code == "providerBusy"
             || (error.code == "providerUnavailable"
                 && error
                     .http_status
@@ -1053,7 +1055,9 @@ impl QuestionService {
                         edits: vec![],
                         model: config.model.clone(),
                     });
-                    if e.code == "authentication" {
+                    // A rejected Claude key or billing problem fails every
+                    // remaining call the same way; stop instead of repeating it.
+                    if matches!(e.code, "authentication" | "keyRejected" | "billing") {
                         progress(calls.last().unwrap())?;
                         break;
                     }
@@ -1992,6 +1996,16 @@ mod tests {
         assert!(!body.contains("private/notes.md"));
         assert!(!body.contains("private-repo"));
         assert!(body.contains("Read-only context"));
+    }
+    #[test]
+    fn claude_overload_is_transient_but_a_rejected_key_is_not() {
+        let busy = QuestionError::new("providerBusy", "synthetic").with_http(529, None);
+        assert!(super::transient(&busy));
+        for code in ["keyRejected", "billing", "refused"] {
+            assert!(!super::transient(&QuestionError::new(code, "synthetic")));
+            assert!(!super::retryable_coverage_error(code));
+            assert!(!super::manual_retryable_coverage_error(code));
+        }
     }
     #[tokio::test]
     async fn failed_progress_stops_dispatch_and_finding_limit_never_truncates_a_call() {

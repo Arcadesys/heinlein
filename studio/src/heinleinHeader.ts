@@ -30,9 +30,11 @@ export function createHeinleinHeader({tabs, status, close}: HeinleinHeaderParts)
 }
 
 /** Updates the chip's visible label, accessible detail and ready/attention state without replacing its dot. */
-export function setHeinleinStatus(status: HTMLButtonElement, state: 'ready' | 'checking' | 'attention', detail: string) {
+export function setHeinleinStatus(status: HTMLButtonElement, state: 'ready' | 'checking' | 'attention', detail: string, provider: 'ChatGPT' | 'Claude' = 'ChatGPT') {
   status.dataset.state = state;
-  if (!status.querySelector('.heinlein-status-label')) {const label = document.createElement('span'); label.className = 'heinlein-status-label'; label.textContent = 'ChatGPT'; status.append(label);}
+  let label = status.querySelector('.heinlein-status-label');
+  if (!label) {label = document.createElement('span'); label.className = 'heinlein-status-label'; status.append(label);}
+  label.textContent = provider;
   // The name starts with the visible label, then states connection health for assistive tech.
-  const name = `ChatGPT${detail ? ` · ${detail}` : ''}`; status.setAttribute('aria-label', name); status.title = `${name} · Connection settings`;
+  const name = `${provider}${detail ? ` · ${detail}` : ''}`; status.setAttribute('aria-label', name); status.title = `${name} · Connection settings`;
 }

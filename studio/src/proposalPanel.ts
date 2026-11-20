@@ -1,4 +1,5 @@
 import type { LocalCore, ProposalReview, ProposalReceipt, RepositorySession } from './localCore';
+import { isNativeOrigin, originProvider } from './localCore';
 import {createProposalDiff} from './proposalDiff';
 import {collectRevisions, revisionStatus, type Revision} from './revisions';
 
@@ -43,8 +44,8 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
     if (node.showModal) node.showModal(); else node.setAttribute('open', '');
     node.querySelector('button')?.focus();
   }
-  const attribution = (origin: ProposalReview['origin']) => origin.kind === 'nativeOpenAi'
-    ? `Native OpenAI suggestion · Model: ${origin.model} · Request: ${origin.requestId} · Provider metadata, not authenticated authorship`
+  const attribution = (origin: ProposalReview['origin']) => isNativeOrigin(origin)
+    ? `Native ${originProvider(origin)} suggestion · Model: ${origin.model} · Request: ${origin.requestId} · Provider metadata, not authenticated authorship`
     : `Unverified local MCP client: ${origin.clientLabel} · Session: ${origin.sessionId}`;
   function review(view: ProposalReview): Promise<boolean> {
     return new Promise(resolve => {
@@ -253,8 +254,8 @@ export function createProposalPanel(core: LocalCore, hooks: Hooks) {
           if (view.baseHash !== p.baseHash || view.replacementHash !== p.replacementHash || view.diffHash !== p.diffHash
             || view.baseText !== revision.before || view.replacementText !== revision.after) throw new Error('This revision changed since it was displayed. Refresh and accept the updated comparison.');
         } else if (revision.review) {
-          const a = view.origin.kind === 'nativeOpenAi' ? view.origin.review : null;
-          if (view.origin.kind !== 'nativeOpenAi' || (revision.review.schemaVersion === 2
+          const a = isNativeOrigin(view.origin) ? view.origin.review : null;
+          if (!isNativeOrigin(view.origin) || (revision.review.schemaVersion === 2
             && (!a || a.reviewId !== revision.review.reviewId || a.findingId !== revision.review.edit.id
             || (revision.review.edit.fingerprint && a.fingerprint !== revision.review.edit.fingerprint)))) throw new Error('This suggestion changed since it was displayed. Refresh and accept the updated comparison.');
         }

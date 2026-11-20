@@ -1,4 +1,5 @@
 import type {ProposalListing, ProposalReceipt, ProposalSummary, ReviewEdit, ReviewResult} from './localCore';
+import {isNativeOrigin} from './localCore';
 
 /** A single presentation model; apply authority remains in the native host. */
 export interface Revision {
@@ -21,7 +22,7 @@ export function collectRevisions(listing: ProposalListing, reviews: ReviewResult
   const decided = new Set(listing.receipts.map(r => r.proposalId));
   const reviewed = new Set<string>();
   const key = (reviewId: string, findingId: string) => JSON.stringify([reviewId, findingId]);
-  const attributed = new Set(listing.receipts.flatMap(r => r.origin.kind === 'nativeOpenAi' && r.origin.review
+  const attributed = new Set(listing.receipts.flatMap(r => isNativeOrigin(r.origin) && r.origin.review
     ? [key(r.origin.review.reviewId, r.origin.review.findingId)] : []));
   for (const review of reviews) for (const edit of review.edits) {
     reviewed.add(key(review.reviewId, edit.id));
@@ -35,7 +36,7 @@ export function collectRevisions(listing: ProposalListing, reviews: ReviewResult
   const latest = new Map<string, ProposalSummary>();
   for (const proposal of [...listing.pending].sort((a, b) => b.createdAtMs - a.createdAtMs)) {
     if (decided.has(proposal.id)) continue;
-    const a = proposal.origin.kind === 'nativeOpenAi' ? proposal.origin.review : null;
+    const a = isNativeOrigin(proposal.origin) ? proposal.origin.review : null;
     if (a && reviewed.has(key(a.reviewId, a.findingId))) continue;
     const identity = JSON.stringify([proposal.path, proposal.baseHash, proposal.replacementHash]);
     const newer = latest.get(identity);

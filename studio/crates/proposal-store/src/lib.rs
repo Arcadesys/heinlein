@@ -107,9 +107,30 @@ impl ProposalOrigin {
             request_id: Some(request_id),
         }
     }
+    /// The same unverified provider metadata for a Claude (Anthropic) answer.
+    pub fn native_anthropic(model: String, request_id: String) -> Self {
+        Self {
+            kind: "nativeAnthropic".into(),
+            provider: Some("anthropic".into()),
+            ..Self::native_openai(model, request_id)
+        }
+    }
+    /// Native origin for an answer from `model`. Claude model IDs all start
+    /// with `claude-`; every other native answer is OpenAI's.
+    pub fn native(model: String, request_id: String) -> Self {
+        if model.starts_with("claude-") {
+            Self::native_anthropic(model, request_id)
+        } else {
+            Self::native_openai(model, request_id)
+        }
+    }
+    /// Suggested by Studio's own request path rather than an MCP client.
+    pub fn is_native(&self) -> bool {
+        matches!(self.kind.as_str(), "nativeOpenAi" | "nativeAnthropic")
+    }
     fn validate(&self) -> Result<()> {
         if let Some(r) = &self.review {
-            if self.kind != "nativeOpenAi"
+            if !self.is_native()
                 || !valid_id(&r.review_id)
                 || !valid_metadata(&r.finding_id)
                 || !valid_hash(&r.fingerprint)
@@ -133,11 +154,16 @@ impl ProposalOrigin {
                     && self.model.is_none()
                     && self.request_id.is_none()
             }
-            "nativeOpenAi" => {
+            "nativeOpenAi" | "nativeAnthropic" => {
                 self.session_id.is_empty()
                     && self.client_label.is_empty()
                     && self.identity_assurance == "unverifiedProviderMetadata"
-                    && self.provider.as_deref() == Some("openai")
+                    && self.provider.as_deref()
+                        == Some(if self.kind == "nativeOpenAi" {
+                            "openai"
+                        } else {
+                            "anthropic"
+                        })
                     && self.model.as_deref().is_some_and(valid_metadata)
                     && self.request_id.as_deref().is_some_and(valid_metadata)
             }

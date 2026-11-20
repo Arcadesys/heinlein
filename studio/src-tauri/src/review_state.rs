@@ -277,7 +277,7 @@ impl ReviewSession {
         let replacement =
             drafting_questions::splice_revision(base, from, to, &edit.original, &edit.replacement)
                 .map_err(|e| e.to_string())?;
-        let mut origin = ProposalOrigin::native_openai(
+        let mut origin = ProposalOrigin::native(
             self.result.model.clone(),
             item.provenance
                 .first()

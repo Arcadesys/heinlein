@@ -105,7 +105,7 @@ impl Review {
     }
     /// Native dialog is created from the retained plan, never renderer-provided text.
     pub fn confirmation_message(&self) -> String {
-        let origin = if self.origin.kind == "nativeOpenAi" {
+        let origin = if self.origin.is_native() {
             format!("Recorded provider: {}\nRecorded model: {}\nRecorded request: {}\nProvider metadata is unverified stored attribution, not author approval", self.origin.provider.as_deref().unwrap_or(""), self.origin.model.as_deref().unwrap_or(""), self.origin.request_id.as_deref().unwrap_or(""))
         } else {
             format!(
