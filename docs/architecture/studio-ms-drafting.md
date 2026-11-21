@@ -103,11 +103,13 @@ silently stripped or rewritten. This conservative guard is not an asset resolver
 The snapshot adds a generated title/byline and metadata frontmatter so the
 existing Python CLI strips only that generated block, preserving the first
 source heading. Metadata requires author-entered title, author, rights, language,
-formats, and explicit approval of no cover and existing FREE PLAY branding.
+formats and a book design. The design picks the Plain (unbranded) or FREE PLAY
+style, page size, fonts, large print, cover (typographic, one JPEG/PNG image the
+author picks natively, or none), copyright/title pages, subtitle and dedication.
+FREE PLAY still needs explicit approval of its branding and preset colophon.
 There are no inherited author identities, rights statements or editorial profiles.
-FREE PLAY also includes the existing publisher's preset colophon text; selecting
-an unknown imprint does not avoid its fallback. A different imprint/cover/assets
-requires a separately configured manual publishing project in this first version.
+The publisher rejects unknown imprints, fonts and front-matter keys rather than
+falling back to FREE PLAY. Other assets still need a manual publishing project.
 
 Native authority retains a preview token and OS-selected parent directory; the
 renderer cannot supply a root or destination path. A final native confirmation

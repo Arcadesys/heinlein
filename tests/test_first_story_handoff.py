@@ -72,3 +72,33 @@ def test_core_handoff_rejects_metadata_assets_before_cli(tmp_path, field, value)
     assert not list((target / "copies").iterdir())
     assert (target / "source/ms/z-opening.md").read_bytes() == b"# Scene opening\n\nFirst scene \xe2\x80\x94 exact words.\n"
     assert (target / "source/ms/a-ending.md").read_bytes() == b"Second scene follows the first.\n\nTHE END.\n"
+
+
+def test_core_handoff_book_design_is_honored_by_the_cli(tmp_path):
+    """Design chosen in Studio reaches heinlein.yaml, and the build follows it."""
+    pytest.importorskip("pypdf")
+    from pypdf import PdfReader
+    from heinlein.outputs.pdf import chrome_path
+    try:
+        chrome_path()
+    except RuntimeError:
+        pytest.skip("PDF check needs Chrome")
+    metadata = {"title": "Synthetic First Story", "author": "Example Author", "rights": "Example Author retains rights.",
+                "language": "en-US", "formats": ["html", "pdf"], "folderName": "release",
+                "freePlayApproved": False, "noCoverApproved": False,
+                "design": {"style": "plain", "pageSize": "trade", "largePrint": False, "bodyFont": "Lora",
+                           "displayFont": "Inter", "cover": "none", "copyrightPage": False, "titlePage": True,
+                           "subtitle": "A synthetic novella", "dedication": "For the night shift."}}
+    settings = tmp_path / "metadata.json"
+    settings.write_text(json.dumps(metadata))
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    subprocess.run(["cargo", "run", "--locked", "--manifest-path", str(ROOT / "studio/Cargo.toml"), "-p", "repository-core", "--example", "first_story_handoff", "--", str(tmp_path / "handoff"), str(settings)], check=True, env=env, capture_output=True, text=True)
+    project = tmp_path / "handoff/copies/release"
+    subprocess.run([sys.executable, "-m", "heinlein", "build", "--debug-html"], cwd=project, env=env, check=True, capture_output=True, text=True)
+    printed = (project / "dist/print.html").read_text()
+    body = printed.split("</style>", 1)[1]
+    assert "FREE PLAY" not in body and "Arcades" not in body
+    assert 'class="page cover' not in body and 'class="page colophon"' not in body
+    assert 'class="page title-page"' in body and "For the night shift." in body
+    page = PdfReader(next((project / "dist").glob("*.pdf"))).pages[0]
+    assert (round(float(page.mediabox.width)), round(float(page.mediabox.height))) == (432, 648)

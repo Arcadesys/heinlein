@@ -42,6 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             folder_name: "release".into(),
             free_play_approved: true,
             no_cover_approved: true,
+            design: Default::default(),
         }
     };
     let plan = repo.preview_publishing_copy(metadata, &recovery)?;

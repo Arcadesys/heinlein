@@ -15,6 +15,7 @@
     "allow-read-document",
     "allow-save-markdown-export",
     "allow-export-manuscript",
+    "allow-reveal-repository",
     "allow-load-manuscript",
     "allow-list-system-fonts",
     "allow-illustration-request",

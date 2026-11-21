@@ -272,10 +272,25 @@ pub(crate) async fn preview_publishing_copy(
             .map_err(|_| "Guide unavailable")?
             .pending = None;
         let epoch = state.mutation_gate.generation();
-        let plan = with_repository(&app, &repository_id, |repo| {
+        let mut plan = with_repository(&app, &repository_id, |repo| {
             repo.preview_publishing_copy(metadata, super::recovery_store(&app)?.as_ref())
                 .map_err(|e| e.to_string())
         })?;
+        if plan.needs_cover_image() {
+            let Some(image) = app
+                .dialog()
+                .file()
+                .set_title("Choose a cover image (JPEG or PNG)")
+                .add_filter("Cover image", &["jpg", "jpeg", "png"])
+                .blocking_pick_file()
+            else {
+                return Ok(None);
+            };
+            plan.attach_cover(read_cover(
+                &image.into_path().map_err(|_| "Choose a local image file")?,
+            )?)
+            .map_err(|e| e.to_string())?;
+        }
         let Some(folder) = app
             .dialog()
             .file()
@@ -308,6 +323,19 @@ pub(crate) async fn preview_publishing_copy(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+/// Read a chosen cover without following it past the size limit.
+fn read_cover(path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let file = fs::File::open(path).map_err(|e| e.to_string())?;
+    if !file.metadata().map_err(|e| e.to_string())?.is_file() {
+        return Err("Choose an image file".into());
+    }
+    let mut bytes = Vec::new();
+    file.take(repository_core::COVER_LIMIT as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    Ok(bytes)
 }
 fn take_copy(
     host: &mut Host,
@@ -343,7 +371,7 @@ pub(crate) async fn confirm_publishing_copy(
         let state = app.state::<BrowserState>();
         let (plan, parent, epoch) = take_copy(&mut *state.first_story.lock().map_err(|_| "Guide unavailable")?, &repository_id, &preview_id)?;
         let metadata_summary = plan.confirmation_summary();
-        let message = format!("{metadata_summary}\n\nCreate a NEW publishing copy at {}?\n{} scenes, {}\nFREE PLAY branding; no cover. Source remains canonical. No overwrite or reverse sync.\nSource revision: {}", parent.join(&plan.preview.folder_name).display(), plan.preview.sources.len(), plan.preview.folder_name, plan.preview.source_revision);
+        let message = format!("{metadata_summary}\n\nCreate a NEW publishing copy at {}?\n{} scenes, {}\nSource remains canonical. No overwrite or reverse sync.\nSource revision: {}", parent.join(&plan.preview.folder_name).display(), plan.preview.sources.len(), plan.preview.folder_name, plan.preview.source_revision);
         if !app.dialog().message(message).title("Create publishing copy").buttons(MessageDialogButtons::OkCancel).blocking_show() { return Ok(false); }
         let _selection = state.selection_gate.try_lock().map_err(|_| "Another folder operation is in progress")?;
         let _mutation = state.mutation_gate.author_operation()?; confirmation_current(&state, epoch)?;
@@ -451,6 +479,7 @@ mod tests {
                     folder_name: "copy".into(),
                     free_play_approved: true,
                     no_cover_approved: true,
+                    design: Default::default(),
                 },
                 &recovery,
             )

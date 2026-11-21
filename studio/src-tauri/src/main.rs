@@ -507,6 +507,33 @@ fn with_repository<T>(
     let _workspace = github::edit_lock(app, repo.root())?;
     operation(&repo)
 }
+/// Opens the selected project's folder in Finder. The renderer sends only the
+/// opaque repository ID; the root path never leaves the native host. Nothing is
+/// read or written, so the workspace edit lock is not taken.
+#[tauri::command]
+fn reveal_repository(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+) -> Result<(), String> {
+    check_window(&window)?;
+    let root = {
+        let state = app.state::<BrowserState>();
+        let guard = state
+            .selected
+            .lock()
+            .map_err(|_| "Repository unavailable")?;
+        let selected = guard.as_ref().ok_or("Open a repository first")?;
+        if selected.id != repository_id {
+            return Err("Repository changed; refresh the view".into());
+        }
+        selected.repo.root().to_path_buf()
+    };
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(root.to_string_lossy(), None::<&str>)
+        .map_err(|_| "Could not open the project folder in Finder".to_string())
+}
 #[tauri::command]
 async fn list_directory(
     app: tauri::AppHandle,
@@ -923,6 +950,7 @@ fn production_main() {
         })
         .invoke_handler(tauri::generate_handler![
             manuscript_export::export_manuscript,
+            reveal_repository,
             preferences::preferences_request,
             markdown_export::save_markdown_export,
             projects::project_request,
