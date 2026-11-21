@@ -9,6 +9,7 @@ import { formatKeys } from './shortcuts';
 import type {CapturedLibraryScope} from './librarySnapshot';
 import {createHeinleinHeader, setHeinleinStatus} from './heinleinHeader';
 import './heinleinReview.css';
+import { placeSuggestion, type AnchorRect } from './suggestionPlacement';
 import { reviewerEditorForm, blankReviewer } from './reviewerEditor';
 export interface ReviewScope {
     repositoryId: string;
@@ -39,6 +40,11 @@ interface Hooks {
     announce?(text: string): void;
     jumpToEdit?(input: ReviewMarkInput, edit: ReviewEdit): Promise<boolean>;
     marksChanged?(input: ReviewMarkInput | null, report: (count: number | null) => void): void;
+    /** Where the highlight for this suggestion is drawn, in viewport pixels, or null when it is not on screen. */
+    anchorFor?(id: string): AnchorRect | null;
+    /** Scrolls the manuscript so this suggestion's highlight is visible. Never moves the selection. */
+    revealSuggestion?(id: string): void;
+    suggestionScroller?(): HTMLElement | null;
 }
 // Native catalog allows 50 saved custom agents plus two built-ins.
 const MAX_REVIEWERS = 52;
@@ -92,7 +98,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     suggestionDialog.setAttribute('aria-label', 'Review suggestion');
     const dialogTitle = el('h2', 'Review suggestion');
     const dialogBody = el('div');
-    const dialogClose = button('Close suggestion', () => closeSuggestion());
+    const dialogClose = iconButton('Close suggestion', 'M3 3l8 8M11 3l-8 8', () => closeSuggestion(), 'review-suggestion-close');
     const dialogNavigation = el('nav', '', 'review-suggestion-navigation');
     dialogNavigation.setAttribute('aria-label', 'Suggestion navigation');
     const dialogPrevious = button('Previous', () => navigateSuggestion(-1));
@@ -104,7 +110,77 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const dialogMessage = el('p', '', 'review-suggestion-message');
     dialogMessage.hidden = true;
     dialogMessage.setAttribute('aria-live', 'polite');
-    suggestionDialog.append(dialogTitle, dialogClose, dialogNavigation, dialogBody, dialogMessage);
+    const dialogHead = el('header', '', 'review-suggestion-head');
+    dialogHead.append(dialogTitle, dialogClose);
+    dialogBody.className = 'review-suggestion-body';
+    // One scroll surface holding the controls, so the caret can sit outside it and keyboard users can always reach the scroll.
+    const dialogSurface = el('div', '', 'review-suggestion-surface');
+    dialogSurface.append(dialogHead, dialogBody, dialogMessage, dialogNavigation);
+    suggestionDialog.append(dialogSurface);
+    // A press on the backdrop (the dialog box itself, outside its content) closes it like Close does.
+    suggestionDialog.addEventListener('click', event => { if (event.target === suggestionDialog && !busy && suggestionOutside(event)) closeSuggestion(); });
+    const suggestionOutside = (event: MouseEvent) => { const r = suggestionDialog.getBoundingClientRect(); return event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom; };
+    let placeFrame = 0;
+    let placedScroller: HTMLElement | null = null;
+    const activeIds = () => dialogCard ? suggestionIds(dialogCard) : [];
+    // Emphasis for the open card's highlights is a stylesheet rule keyed by id, not an editor change: CodeMirror
+    // redraws keep it, the chip's DOM node is never replaced (so focus returns to it), and nothing reflows.
+    const activeStyle = el('style');
+    activeStyle.dataset.reviewActive = '';
+    const quote = (id: string) => `"${id.replace(/["\\\n]/g, c => c === '\n' ? '\\a ' : `\\${c}`)}"`;
+    function markActive(on: boolean) {
+        const ids = on ? activeIds() : [];
+        if (!ids.length) { activeStyle.remove(); activeStyle.textContent = ''; return; }
+        const marks = ids.map(id => `.cm-content .cm-review-mark[data-review-id=${quote(id)}]`).join(', ');
+        const points = ids.map(id => `.cm-content .cm-review-point[data-review-id=${quote(id)}]::after`).join(', ');
+        const rules = `${marks} { background: color-mix(in srgb, var(--accent, var(--fg)) 22%, var(--surface)); box-shadow: 0 0 0 2px var(--accent, var(--fg)); }\n`
+            + `${points} { background: var(--accent, var(--fg)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, var(--fg)) 30%, transparent); }\n`
+            + `@media (prefers-reduced-motion: no-preference) { ${marks} { animation: review-mark-pulse .5s ease-out 1; } }`;
+        if (activeStyle.textContent !== rules) activeStyle.textContent = rules;
+        if (!activeStyle.isConnected) document.head.append(activeStyle);
+    }
+    /** Floats the card beside its highlight. Only the card moves; the manuscript is never reflowed. */
+    function placeDialog() {
+        placeFrame = 0;
+        if (!suggestionDialog.open) return;
+        const id = activeIds()[0];
+        const anchor = id ? hooks.anchorFor?.(id) ?? null : null;
+        const style = suggestionDialog.style;
+        // Natural height: the surface scrolls inside the card, so the card's own height is already capped.
+        const natural = dialogSurface.scrollHeight + 2;
+        const placement = placeSuggestion(anchor, {width: innerWidth, height: innerHeight}, natural);
+        suggestionDialog.dataset.placement = placement.kind;
+        if (placement.kind === 'sheet') {
+            for (const key of ['left', 'top', 'width', 'max-height', '--arrow-x']) style.removeProperty(key);
+            if (placement.maxHeight) style.maxHeight = `${placement.maxHeight}px`;
+        }
+        else {
+            style.left = `${placement.left}px`; style.top = `${placement.top}px`; style.width = `${placement.width}px`;
+            style.maxHeight = `${placement.maxHeight}px`; style.setProperty('--arrow-x', `${placement.arrowX}px`);
+        }
+        // Pinned title and navigation only when they leave real room to read; at large text in a small card everything scrolls together.
+        const available = placement.kind === 'sheet' ? placement.maxHeight ?? innerHeight * .78 : placement.maxHeight;
+        suggestionDialog.toggleAttribute('data-pinned', available >= 3 * (dialogHead.offsetHeight + dialogNavigation.offsetHeight));
+        markActive(true);
+    }
+    const schedulePlace = () => { if (!placeFrame && typeof requestAnimationFrame === 'function') placeFrame = requestAnimationFrame(placeDialog); };
+    function followAnchor(on: boolean) {
+        placedScroller?.removeEventListener('scroll', schedulePlace);
+        removeEventListener('resize', schedulePlace);
+        placedScroller = null;
+        if (placeFrame) { cancelAnimationFrame(placeFrame); placeFrame = 0; }
+        if (!on) return;
+        placedScroller = hooks.suggestionScroller?.() ?? null;
+        placedScroller?.addEventListener('scroll', schedulePlace, {passive: true});
+        addEventListener('resize', schedulePlace, {passive: true});
+    }
+    /** Brings the card's highlight into view, then anchors to it once the editor has scrolled. */
+    function anchorDialog(reveal: boolean) {
+        const id = activeIds()[0];
+        if (reveal && id) hooks.revealSuggestion?.(id);
+        placeDialog();
+        schedulePlace();
+    }
     let dialogCards: HTMLElement[] = [];
     let dialogIndex = -1;
     let dialogCard: HTMLElement | null = null;
@@ -124,6 +200,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         if (!dialogCard && !suggestionDialog.open) return;
         restoreSuggestionCard();
         dialogCards = []; dialogIndex = -1;
+        followAnchor(false); markActive(false);
         if (suggestionDialog.open) suggestionDialog.close();
         suggestionDialog.remove();
         if (dialogReturn?.isConnected && !dialogReturn.classList.contains('cm-content')) dialogReturn.focus({preventScroll: true});
@@ -151,6 +228,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         dialogPrevious.disabled = busy || pending !== null || index === 0;
         dialogNext.disabled = busy || pending !== null || index === dialogCards.length - 1;
         update();
+        if (suggestionDialog.open) anchorDialog(true);
     }
     function navigateSuggestion(direction: 1 | -1) {
         const index = dialogIndex + direction;
@@ -187,6 +265,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             dialogPosition.textContent = 'All suggestions decided';
             dialogPrevious.disabled = dialogNext.disabled = true;
             dialogClose.focus({preventScroll: true});
+            placeDialog();
         }
         dialogMessage.textContent = note ?? '';
         dialogMessage.hidden = !note;
@@ -913,6 +992,8 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             markNote.hidden = marked === null || marked >= open;
             markNote.textContent = marked ? `${marked} of ${open} waiting ${open === 1 ? 'suggestion is' : 'suggestions are'} marked in the open text. The others belong to another file or no longer match.` : 'None of these suggestions is marked in the open text. They belong to another file, or the open text no longer matches this review.';
             update();
+            // Fresh highlights after a decision: re-attach the open card to its new mark.
+            if (suggestionDialog.open) anchorDialog(true);
         });
     }
     /** Where the reviewers landed, shown first so the decision context is above the reading overview and diff list. */
@@ -1952,6 +2033,9 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             showSuggestionCard(index);
             document.body.append(suggestionDialog);
             suggestionDialog.showModal();
+            followAnchor(true);
+            // Opened from a visible highlight, so it is already on screen; do not scroll the text under the writer.
+            anchorDialog(false);
             dialogClose.focus({preventScroll: true});
             return true;
         },

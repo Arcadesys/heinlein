@@ -1192,6 +1192,21 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       return true;
     },
     marksChanged: (input, report) => reviewMarkPublisher.publish(input, report),
+    // Geometry only: reads where a highlight is drawn, never moves the selection or the text.
+    anchorFor: id => {
+      const view = (chapterEditor ?? editor)?.view; const mark = view && reviewMarksIn(view.state).find(mark => mark.id === id);
+      if (!view || !mark) return null;
+      const start = view.coordsAtPos(mark.from, 1), end = view.coordsAtPos(mark.to, -1) ?? start;
+      if (!start || !end) return null;
+      // A highlight wrapping lines points at its first line, where the reader's eye starts.
+      const sameLine = Math.abs(end.top - start.top) < 2;
+      return {left: start.left, right: sameLine ? Math.max(end.right, start.left + 2) : start.left + 2, top: start.top, bottom: sameLine ? end.bottom : start.bottom};
+    },
+    revealSuggestion: id => {
+      const view = (chapterEditor ?? editor)?.view; const mark = view && reviewMarksIn(view.state).find(mark => mark.id === id);
+      if (view && mark) view.dispatch({effects: EditorView.scrollIntoView(mark.from, {y: 'center'})});
+    },
+    suggestionScroller: () => (chapterEditor ?? editor)?.view.scrollDOM ?? null,
     focusEditor: () => focusWriterView(),
   });
   libraryReviewEntry.hidden=!reviewPanel.librarySupported;reviewPanel.adoptLibraryEntry(libraryReviewEntry);

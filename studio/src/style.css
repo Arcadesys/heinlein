@@ -1198,6 +1198,8 @@ body:has(.question-panel-integrated) .selection-ask-action, body:has(.question-p
 /* Inline suggestion chips use paint only: no padding, font or line-height changes. */
 .cm-review-mark { border-radius: .2em; background: var(--surface); box-shadow: 0 0 0 1px var(--fg); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .cm-review-mark:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+/* The open card's highlights are emphasized by a rule reviewPanel injects per id (paint only); this is its pulse. */
+@keyframes review-mark-pulse { from { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--fg)) 25%, transparent); } }
 .revisions-dialog { width:min(40rem, calc(100vw - 2rem)); }
 .revisions-dialog .revision-toolbar { align-items:center; justify-content:flex-end; flex-wrap:wrap; }
 .revisions-dialog .revision-toolbar .revision-count { flex:1; margin:0; color:var(--fg-muted); font-size:.9rem; }

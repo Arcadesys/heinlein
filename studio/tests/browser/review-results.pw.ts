@@ -127,7 +127,22 @@ test('completed review closes Editors and keeps manuscript chips actionable', as
   await expect(dialog).toBeVisible();await expect(dialog.locator('.review-inline-diff')).toBeVisible();
   await expect(dialog.getByRole('button',{name:'Reject',exact:true})).toBeVisible();
   expect((await new AxeBuilder({page}).include('.review-suggestion-dialog').analyze()).violations).toEqual([]);
+  // The card floats beside its highlight, points at it, never covers it, and opening it reflows nothing.
+  await expect(dialog).toHaveAttribute('data-placement',info.project.name==='narrow'?'sheet':/^(below|above)$/);
+  const chipId=await chip.getAttribute('data-review-id');
+  expect(await page.locator('style[data-review-active]').evaluate(node=>node.textContent)).toContain(`data-review-id="${chipId}"`);
+  const [box,mark]=[await dialog.boundingBox(),await chip.boundingBox()];
+  const placement=await dialog.getAttribute('data-placement');
+  if(placement==='sheet'){const viewport=page.viewportSize()!;expect(Math.round(box!.y+box!.height)).toBe(viewport.height);expect(Math.round(box!.width)).toBe(viewport.width);}
+  else if(placement==='below')expect(box!.y).toBeGreaterThanOrEqual(mark!.y+mark!.height);else expect(box!.y+box!.height).toBeLessThanOrEqual(mark!.y);
+  if(placement!=='sheet'){
+    expect(Math.abs((placement==='below'?box!.y-(mark!.y+mark!.height):mark!.y-(box!.y+box!.height)))).toBeLessThan(40);
+    expect(box!.x).toBeLessThanOrEqual(mark!.x+mark!.width);expect(box!.x+box!.width).toBeGreaterThanOrEqual(mark!.x);
+  }
+  expect(await shape()).toEqual(before);
+  await page.screenshot({path:`/tmp/heinlein-anchored-suggestion-${info.project.name}.png`});
   await page.keyboard.press('Escape');await expect(editor).toBeFocused();expect(await shape()).toEqual(before);
+  await expect(page.locator('style[data-review-active]')).toHaveCount(0);
   const state=await page.evaluate(()=>(window as any).questionsFixture.state());expect(state.source).toBe(state.original);expect(state.applied).toBe(0);
   expect(errors).toEqual([]);await expect(page.locator('vite-error-overlay')).toHaveCount(0);
   await page.screenshot({path:`/tmp/heinlein-auto-close-review-${info.project.name}.png`});
