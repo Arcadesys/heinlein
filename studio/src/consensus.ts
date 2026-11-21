@@ -34,6 +34,22 @@ export function summarizeConsensus(open: ReviewEdit[]): Consensus {
   };
 }
 
+/**
+ * Count decisions rather than raw edits: competing alternatives for one span share a
+ * conflict group and are one choice for the author, as in the card list and summary.
+ */
+export function countDecisions(edits: ReviewEdit[], waiting: (edit: ReviewEdit) => boolean): {total: number; decided: number; open: number} {
+  const units = new Map<string, ReviewEdit[]>();
+  for (const edit of edits) {
+    const key = edit.conflictGroup ? `group:${edit.conflictGroup}` : `edit:${edit.id}`;
+    const members = units.get(key) ?? [];
+    members.push(edit); units.set(key, members);
+  }
+  // Accepting one alternative settles its span; rejecting one leaves the others to choose from.
+  const open = [...units.values()].filter(members => !members.some(m => m.status === 'accepted') && members.some(waiting)).length;
+  return {total: units.size, decided: units.size - open, open};
+}
+
 /** One sentence for the results header, e.g. "3 reviewers · 7 suggestions · 4 agreed by 2 or more…". */
 export function consensusSentence(c: Consensus): string {
   const n = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;

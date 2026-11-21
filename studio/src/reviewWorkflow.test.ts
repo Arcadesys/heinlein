@@ -87,7 +87,9 @@ it('streams a continued batch and ignores its late progress after final validati
         return new Promise<ReviewResult>(resolve => {finish=resolve;});
     });
     await f.start();
-    await f.click('Continue next reviewer batch');
+    // Run review sends the queued batch by itself; a queued call is not reported as a failure.
+    await vi.waitFor(() => expect((f.core as unknown as LocalCore).continueReview).toHaveBeenCalledOnce());
+    expect(panel!.element.querySelector('[role=status]')!.textContent).not.toContain('Review incomplete');
     const event: ReviewProgress = {requestId,completedCalls:1,totalCalls:2,reviewer:0,sourceIndex:0,chunkIndex:2,status:'receiving',receivedBytes:1024,suggestions:3};
     progress(event);
     expect(panel!.element.querySelector('.review-activity')!.textContent).toContain('1 of 2 calls completed');
@@ -207,7 +209,7 @@ it('groups competing alternatives into one card, and Keep mine records each alte
  expect(f.core.approveReviewEdit).not.toHaveBeenCalled(); expect(f.core.chooseReviewEdit).not.toHaveBeenCalled();
  expect(panel!.element.querySelector('.review-conflict')).toBeNull();
  expect(panel!.element.querySelector('.review-status')!.textContent).toContain('Your manuscript was not changed');
- expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('3 suggestions · 2 decided');
+ expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('2 suggestions · 1 decided');
 });
 it('steps between cards from the progress strip without choosing, applying or rejecting anything', async () => {
  const f=fixture(); await f.start();
@@ -297,6 +299,18 @@ function automaticFixture(custom:ReviewerDefinition[]=[]) {
  (f.core as unknown as LocalCore).continueReview=continuation;
  return {...f,make,continuation};
 }
+it('Run review sends every queued batch without asking to Continue, then reports ready',async()=>{
+ const f=automaticFixture();panel!.open();await vi.waitFor(()=>expect(f.button('Preview review').disabled).toBe(false));await f.click('Preview review');await vi.waitFor(()=>expect(f.button('Run review').disabled).toBe(false));await f.click('Run review');
+ await vi.waitFor(()=>expect(panel!.element.querySelector('[role=status]')!.textContent).toContain('Review ready.'));
+ expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.continuation).toHaveBeenCalledOnce();
+ expect(panel!.element.textContent).not.toContain('Review incomplete');
+});
+it('Run review stops on a failed call and reports it as incomplete',async()=>{
+ const f=automaticFixture();f.core.requestReview.mockImplementation(async r=>{const value=await f.make(r,1);value.workflow!.coverage[1].status='failed';value.workflow!.coverage[1].error='timeout';return value;});
+ panel!.open();await vi.waitFor(()=>expect(f.button('Preview review').disabled).toBe(false));await f.click('Preview review');await vi.waitFor(()=>expect(f.button('Run review').disabled).toBe(false));await f.click('Run review');
+ await vi.waitFor(()=>expect(panel!.element.querySelector('[role=status]')!.textContent).toContain('Review incomplete.'));
+ expect(f.continuation).not.toHaveBeenCalled();expect(panel!.element.querySelector('[role=status]')!.textContent).toContain('Review incomplete.');
+});
 it('Review chapter automatically runs both built-ins and subsequent batches, opens consolidation, and saves individual passes',async()=>{
  const f=automaticFixture();await panel!.reviewChapter();
  expect(f.core.previewReview).toHaveBeenCalledOnce();expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.continuation).toHaveBeenCalledOnce();
@@ -513,7 +527,7 @@ it('preserves the saved review on failed capture and ignores late completion aft
 });
 it('refreshes decisions when showing a hidden pane without replaying reviewers',async()=>{
  const f=fixture();await f.start();panel!.hide();f.record().edits[0].status='accepted';f.record().edits[1].status='supersededByAuthorChoice';f.record().revision=8;panel!.show();panel!.show();
- await vi.waitFor(()=>expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('3 suggestions · 2 decided'));expect(f.core.getReview).toHaveBeenCalledOnce();expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.core.approveReviewEdit).not.toHaveBeenCalled();
+ await vi.waitFor(()=>expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('2 suggestions · 1 decided'));expect(f.core.getReview).toHaveBeenCalledOnce();expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.core.approveReviewEdit).not.toHaveBeenCalled();
 });
 it('opens another saved review without a refresh race and ignores late refresh after clear',async()=>{
  const f=fixture();await f.start();panel!.hide();const other={...structuredClone(f.record()),reviewId:'other'};f.core.getReview.mockResolvedValueOnce(other);
@@ -555,7 +569,7 @@ it('fresh library review keeps excluded targets excluded and validates only the 
 it('quiet decision refresh preserves highlights invalidated by typing until explicit refresh',async()=>{
  const f=fixture();const marksChanged=vi.fn((input:unknown,report:(count:number|null)=>void)=>report(input?2:null));Object.assign(f.hooks,{marksChanged});await f.start();
  panel!.marksInvalidated();panel!.hide();f.record().edits[0].status='accepted';f.record().revision=2;panel!.show();
- await vi.waitFor(()=>expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('3 suggestions · 1 decided'));
+ await vi.waitFor(()=>expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('2 suggestions · 1 decided'));
  expect(panel!.element.querySelector('.review-mark-status')!.textContent).toContain('Highlights are off because the open text changed');expect(marksChanged.mock.calls.at(-1)![0]).toBeNull();
  await f.click('Refresh review');expect(marksChanged.mock.calls.at(-1)![0]).not.toBeNull();expect(panel!.element.querySelector('.review-mark-status')!.textContent).not.toContain('Highlights are off because the open text changed');
 });
