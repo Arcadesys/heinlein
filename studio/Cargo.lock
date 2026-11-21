@@ -1870,7 +1870,7 @@ dependencies = [
 
 [[package]]
 name = "heinlein-claude-auth"
-version = "1.10.0"
+version = "1.11.0"
 dependencies = [
  "keyring",
  "reqwest",
@@ -1911,7 +1911,7 @@ dependencies = [
 
 [[package]]
 name = "heinlein-studio"
-version = "1.10.0"
+version = "1.11.0"
 dependencies = [
  "cc",
  "drafting-questions",
