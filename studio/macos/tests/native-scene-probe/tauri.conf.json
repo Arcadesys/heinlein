@@ -20,7 +20,10 @@
             "allow-preview-drafting-change",
             "allow-apply-drafting-change",
             "core:event:allow-emit",
-            "allow-read-document"
+            "allow-read-document",
+            "allow-save-document",
+            "allow-scene-versions",
+            "allow-read-scene-version"
           ]
         }
       ]

@@ -10,7 +10,12 @@ for(const [format,extension] of [['markdown','md'],['pdf','pdf'],['epub','epub']
  test(`${format} exports the complete ordered manuscript with references off`,async({page},info)=>{
   const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));const dialog=await open(page);
   await expect(dialog).toContainText('Entire manuscript — Synthetic book');await expect(dialog.getByRole('checkbox',{name:'Include reference sheets'})).not.toBeChecked();
-  await dialog.getByRole('combobox',{name:'Export format'}).selectOption(format);
+  const formatSelect=dialog.getByRole('combobox',{name:'Export format'});
+  await formatSelect.selectOption(format);
+  if (format==='docx' || format==='epub') {
+    const requirement=process.env.VITE_HEINLEIN_DIRECT_MAC==='1' ? /included and works offline/ : /Python publishing tools and Pandoc/;
+    await expect(formatSelect).toHaveAccessibleDescription(requirement);
+  }
   await dialog.getByRole('textbox',{name:'Export author'}).fill('Synthetic Author');
   expect((await new AxeBuilder({page}).include('dialog').withTags(['wcag2a','wcag2aa']).analyze()).violations).toEqual([]);
   await page.screenshot({path:info.outputPath(`export-${format}.png`)});
