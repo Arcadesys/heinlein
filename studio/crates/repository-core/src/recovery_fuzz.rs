@@ -126,7 +126,7 @@ fn seeded_saves_and_recovery_state_machine() {
                         Error::EditorChanged
                     };
                     assert_eq!(
-                        repo.save_inner(path, &hash, &next, || Err(error))
+                        repo.save_inner(path, &hash, &next, |_| Err(error))
                             .unwrap_err(),
                         error
                     );
@@ -205,7 +205,7 @@ fn seeded_saves_and_recovery_state_machine() {
                 11 => {
                     let external = case.text();
                     assert_eq!(
-                        repo.save_inner(path, &hash, &next, || {
+                        repo.save_inner(path, &hash, &next, |_| {
                             fs::write(root.join(path), &external).unwrap();
                             Ok(())
                         })
@@ -216,7 +216,7 @@ fn seeded_saves_and_recovery_state_machine() {
                 }
                 12 => {
                     assert_eq!(
-                        repo.save_inner(path, &hash, &next, || {
+                        repo.save_inner(path, &hash, &next, |_| {
                             fs::write(root.join("replacement"), &texts[index]).unwrap();
                             fs::set_permissions(
                                 root.join("replacement"),
@@ -275,7 +275,17 @@ fn seeded_saves_and_recovery_state_machine() {
             for entry in fs::read_dir(&private).unwrap() {
                 let entry = entry.unwrap();
                 assert!(!entry.file_name().to_string_lossy().ends_with(".tmp"));
-                assert_eq!(entry.metadata().unwrap().mode() & 0o777, 0o600);
+                if entry.file_name().to_string_lossy().starts_with("history-") {
+                    assert!(entry.file_type().unwrap().is_dir());
+                    assert_eq!(entry.metadata().unwrap().mode() & 0o777, 0o700);
+                    for version in fs::read_dir(entry.path()).unwrap() {
+                        let version = version.unwrap();
+                        assert!(version.file_type().unwrap().is_file());
+                        assert_eq!(version.metadata().unwrap().mode() & 0o777, 0o600);
+                    }
+                } else {
+                    assert_eq!(entry.metadata().unwrap().mode() & 0o777, 0o600);
+                }
             }
         }
     });

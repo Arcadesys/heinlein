@@ -361,14 +361,13 @@ pub(crate) fn inventory(app: &tauri::AppHandle) -> Result<(Store, Registry)> {
         .path()
         .app_data_dir()
         .map_err(|_| "Project library unavailable")?;
-    let r = Registry::open(&d.join("github-state-v1"), &d.join("github-sources-v1"))
-        .map_err(|_| "Managed project registry unavailable")?;
+    let r = super::github::registry(app)?;
     let s = store(app)?;
     s.migrate(
         &d.join("recent-folders-v1.json"),
         &r.list()
             .map_err(|_| "Managed project registry needs recovery")?,
-        &d.join("github-sources-v1"),
+        &super::github::legacy_sources(&d),
     )?;
     Ok((s, r))
 }

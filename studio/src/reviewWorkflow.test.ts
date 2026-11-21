@@ -574,6 +574,17 @@ it('quiet decision refresh preserves highlights invalidated by typing until expl
  await f.click('Refresh review');expect(marksChanged.mock.calls.at(-1)![0]).not.toBeNull();expect(panel!.element.querySelector('.review-mark-status')!.textContent).not.toContain('Highlights are off because the open text changed');
 });
 
+it.each(['repair', 'discard', 'failure', 'reopen'])('offers safe review recovery: %s', async action => {
+ const f=fixture(); await f.start(); Object.assign(f.record().workflow!.coverage[0],{status:'failed',error:'invalidResponse'});
+ const discardReview=vi.fn().mockResolvedValue(undefined); if(action==='failure') discardReview.mockRejectedValue(new Error('Review changed elsewhere'));
+ Object.assign(f.core,{discardReview,continueReview:vi.fn().mockRejectedValue(new Error('The captured source or context changed. Start a fresh review; completed results were preserved.'))});
+ panel!.hide();panel!.show();await vi.waitFor(()=>expect(f.button('Retry failed chunks')?.disabled).toBe(false));await f.click('Retry failed chunks');
+ expect((panel!.element.querySelector('.review-recovery-actions') as HTMLElement).hidden).toBe(false);
+ if(action==='reopen') {await panel!.openSaved('review-stable');expect((panel!.element.querySelector('.review-recovery-actions') as HTMLElement).hidden).toBe(true);}
+ else if(action==='repair') { await f.click('Repair review'); expect(panel!.element.textContent).toContain('Current text captured.'); expect(discardReview).not.toHaveBeenCalled(); }
+ else {await f.click('Discard saved review');expect(document.activeElement).toBe(f.button('Confirm discard saved review'));expect(discardReview).not.toHaveBeenCalled();await f.click('Keep saved review');expect(discardReview).not.toHaveBeenCalled();await f.click('Discard saved review');await f.click('Confirm discard saved review');expect(discardReview).toHaveBeenCalledWith('repo','review-stable',1);expect(panel!.element.hidden).toBe(action!=='failure');if(action==='failure')expect(panel!.element.textContent).toContain('Review changed elsewhere');}
+ expect(f.core.requestReview).toHaveBeenCalledOnce();
+});
 function authenticationFixture() {
     const f = fixture();
     let saved!: ReviewResult;

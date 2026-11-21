@@ -49,6 +49,14 @@ fn atomic_review_reload_and_revision_cas_never_restore_an_older_pending_list() {
         b"Synthetic author bytes"
     );
     assert!(reopened.with_revision(&repo, &id, 1, || Ok(())).is_err());
+    assert!(matches!(reopened.discard(&repo, &id, 1), Err(Error::Conflict)));
+    reopened.discard(&repo, &id, 2).unwrap();
+    drop(reopened);
+    let reopened = ReviewStore::open(&path).unwrap();
+    assert!(reopened.list::<Record>(&repo).unwrap().is_empty());
+    assert!(matches!(reopened.load::<Record>(&repo, &id), Err(Error::NotFound)));
+    assert!(matches!(reopened.save(&repo, &id, Some(2), &record), Err(Error::Conflict)));
+    assert_eq!(std::fs::read(root.join("scene.md")).unwrap(), b"Synthetic author bytes");
 }
 #[test]
 fn private_review_store_refuses_symlinks_unknown_fields_and_source_side_storage() {

@@ -90,7 +90,7 @@ describe('read-only Markdown export',()=>{
   });
   it('keeps author comments out of every export format and fails the export on an unclosed one',async()=>{
     const noted=new Map([['ms/a.md',doc('ms/a.md','---\ntitle: A\n---\nShe left {>>make this colder<<}.\n')]]);
-    const exported=await prepareMarkdownExport(bridge(),'repo','Act one',{kind:'group',id:'g'},state,noted);
+    const exported=await prepareMarkdownExport(bridge(),'repo','Act one',{kind:'group',id:'g'},state,noted,{illustrated:true});
     expect(exported.text).toContain('She left.\n'); expect(exported.text).not.toContain('{>>'); expect(exported.text).not.toContain('colder');
     const open=new Map([['ms/a.md',doc('ms/a.md','She left {>>unfinished\n')]]);
     await expect(prepareMarkdownExport(bridge(),'repo','Act one',{kind:'group',id:'g'},state,open)).rejects.toThrow('unfinished comment');
@@ -132,4 +132,14 @@ it('explicit reference opt-in keeps captured sources and passes the chosen forma
  const format=document.querySelector<HTMLSelectElement>('select')!;format.value='epub';format.dispatchEvent(new Event('change'));
  document.querySelector<HTMLButtonElement>('dialog button')!.click();await vi.waitFor(()=>expect(convert).toHaveBeenCalledOnce());
  expect(convert.mock.calls[0]).toMatchObject(['repo','Book.epub',{format:'epub',title:'Book',author:''}]);expect(vi.mocked(core.readDocument).mock.calls.filter(([,path])=>path==='ms/a.md')).toHaveLength(1);exporter.destroy();
+});
+
+it('retains the owning scene for two illustrations with identical relative URLs',async()=>{
+  const book={...state,scenes:state.scenes.map(s=>({...s,path:`ms/${s.id}/scene.md`}))};
+  const core=bridge();
+  core.readDocument=async(_id,path)=>doc(path,`![Map of ${path}](map.png)\n`);
+  const out=await prepareMarkdownExport(core,'repo','Book',{kind:'group',id:'g'},book,new Map(),{illustrated:true});
+  expect(out.images).toEqual([{scene:'ms/b/scene.md',url:'map.png'},{scene:'ms/a/scene.md',url:'map.png'}]);
+  expect(out.text).toContain('![Map of ms/b/scene.md](heinlein-illustration-0)');
+  expect(out.text).toContain('![Map of ms/a/scene.md](heinlein-illustration-1)');
 });

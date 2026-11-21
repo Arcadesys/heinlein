@@ -348,7 +348,21 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const status = el('p', '', 'review-status');
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
-    function say(text: string, kind: 'note' | 'warning' | '' = '') { status.textContent = text; status.className = `review-status${kind ? ' review-decision-note' : ''}${kind === 'warning' ? ' review-status-warning' : ''}`; }
+    function say(text: string, kind: 'note' | 'warning' | '' = '') { if (/captured source or context changed/i.test(text)) recoveryNeeded = true; status.textContent = text; status.className = `review-status${kind ? ' review-decision-note' : ''}${kind === 'warning' ? ' review-status-warning' : ''}`; }
+
+    let recoveryNeeded = false;
+    const recovery = el('section', '', 'review-recovery-actions');
+    recovery.hidden = true;
+    recovery.setAttribute('aria-label', 'Review recovery');
+    const recoveryHelp = el('p', 'Repair captures current text for a fresh review; completed results stay saved. Discard removes only this saved review and its unapplied suggestions. Applied manuscript changes remain.');
+    const repairReview = button('Repair review', () => { void startFreshReview(); });
+    const discardSaved = button('Discard saved review', () => { discardConfirmation.hidden = false; confirmDiscard.focus(); });
+    const discardConfirmation = el('div');
+    discardConfirmation.hidden = true;
+    const confirmDiscard = button('Confirm discard saved review', () => { void discardSavedReview(); });
+    const keepSaved = button('Keep saved review', () => { discardConfirmation.hidden = true; discardSaved.focus(); });
+    discardConfirmation.append(el('p', 'Permanently discard this saved review? Your manuscript will be preserved.'), confirmDiscard, keepSaved);
+    recovery.append(recoveryHelp, repairReview, discardSaved, discardConfirmation);
 
     const activity = el('div', '', 'review-activity');
     activity.hidden = true;
@@ -423,7 +437,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     reconnectReview.hidden = true;
     resultActions.append(continueNote, reconnectReview, continueBatch);
     resultsView.append(edits, resultActions);
-    body.append(menu, setupView, resultsView);
+    body.append(recovery, menu, setupView, resultsView);
 
     // Footer, pinned: the one primary action and its context, or the marks legend.
     const footer = el('footer', '', 'review-footer');
@@ -562,6 +576,9 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         refreshReview.hidden = !result || !core.getReview;
         refreshReview.disabled = Boolean(busy || pending || automaticRunning);
         saved.querySelectorAll<HTMLButtonElement>('button').forEach(button => button.disabled = Boolean(busy || pending || automaticRunning));
+        recovery.hidden = !recoveryNeeded || view !== 'results' || !result;
+        repairReview.disabled = discardSaved.disabled = confirmDiscard.disabled = keepSaved.disabled = Boolean(busy || pending || automaticRunning);
+        discardSaved.hidden = !core.discardReview;
         startNew.disabled = discard.disabled = Boolean(busy || pending || automaticRunning);
         cancel.hidden = !pending && !automaticRunning;
         keepWriting.hidden = !pending;
@@ -639,7 +656,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         void core.cancelQuestion?.(id).catch(() => { });
         retry.hidden = Boolean(result?.workflow);
     } }
-    function clear() { closeSuggestion(); suspended=false; cancelRequest(); background.clear(); element.hidden = true; hooks.visibilityChanged?.(false); element.classList.remove('review-tucked'); scope = null; recaptureLibrary = null; result = null; authenticationProof = null; marksInvalidatedByTyping = false; config = null; savedRecords = []; shownReview = null; historyOpen = null; view = 'setup'; receipts.clear(); publishMarks(); saved.replaceChildren(); savedSection.hidden = true; edits.replaceChildren(); historyHost.replaceChildren(); aboutHost.replaceChildren(); sources.replaceChildren(); sourceSignature = ''; batchPreview.replaceChildren(); blob.textContent = ''; say(''); toggleMenu(false); update(); }
+    function clear() { recoveryNeeded = false; discardConfirmation.hidden = true; closeSuggestion(); suspended=false; cancelRequest(); background.clear(); element.hidden = true; hooks.visibilityChanged?.(false); element.classList.remove('review-tucked'); scope = null; recaptureLibrary = null; result = null; authenticationProof = null; marksInvalidatedByTyping = false; config = null; savedRecords = []; shownReview = null; historyOpen = null; view = 'setup'; receipts.clear(); publishMarks(); saved.replaceChildren(); savedSection.hidden = true; edits.replaceChildren(); historyHost.replaceChildren(); aboutHost.replaceChildren(); sources.replaceChildren(); sourceSignature = ''; batchPreview.replaceChildren(); blob.textContent = ''; say(''); toggleMenu(false); update(); }
     function untuck() {
         if (element.classList.contains('review-tucked')) {
             element.classList.remove('review-tucked');
@@ -1287,6 +1304,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         catch (error) {
             if (live(token)) {
                 background.finish(requestId, 'attention', 'Review could not be completed.');
+                recoveryNeeded = continuing && /captured source or context changed|invalid|malformed/i.test(message(error));
                 say(message(error), 'warning');
                 // Continuation must never fall back to resubmitting an old full capture.
                 retry.hidden = continuing && Boolean(oldResult?.workflow);
@@ -1330,6 +1348,17 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 update();
             }
         }
+    }
+    async function discardSavedReview() {
+        if (!scope || !result || !core.discardReview || busy || pending || automaticRunning) return;
+        const token = generation;
+        busy = true; update();
+        try {
+            await core.discardReview(scope.repositoryId, result.reviewId, result.revision ?? 0);
+            if (!live(token)) return;
+            clear(); hooks.focusEditor(); hooks.announce?.('Saved review discarded. Manuscript preserved.');
+        } catch (error) { if (live(token)) say(message(error), 'warning'); }
+        finally { if (live(token)) { busy = false; update(); } }
     }
     async function startFreshReview() {
         if (!scope || busy || pending || automaticRunning) return;
@@ -1376,6 +1405,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             useSelection = false;
             reviewerIds = selectedReviewers.filter(id => definitions.some(definition => definition.id === id));
             const missingReviewers = selectedReviewers.filter(id => !reviewerIds.includes(id));
+            recoveryNeeded = false; discardConfirmation.hidden = true;
             view = 'setup';
             sourceSignature = '';
             sources.replaceChildren();
@@ -1728,6 +1758,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         const next = await core.getReview(scope.repositoryId, id);
         if (live(token)) {
             result = validate(next);
+            recoveryNeeded = false; discardConfirmation.hidden = true;
             recaptureLibrary = null;
             marksInvalidatedByTyping = false;
             render();

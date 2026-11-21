@@ -366,9 +366,13 @@ struct Catalog {
 pub struct Registry {
     pub state: StateDir,
     sources: PathBuf,
+    identity_root: Option<PathBuf>,
 }
 impl Registry {
     pub fn open(state: &Path, sources: &Path) -> Result<Self> {
+        Self::open_with_identity_root(state, sources, None)
+    }
+    pub fn open_with_identity_root(state: &Path, sources: &Path, identity_root: Option<PathBuf>) -> Result<Self> {
         let state = StateDir::open(state)?;
         let sources = StateDir::open(sources)?;
         if state.path().starts_with(sources.path()) || sources.path().starts_with(state.path()) {
@@ -377,6 +381,7 @@ impl Registry {
         Ok(Self {
             state,
             sources: sources.path().to_owned(),
+            identity_root,
         })
     }
     // Only an explicitly marked fresh, unpublished opening is disposable. Take
@@ -512,6 +517,12 @@ impl Registry {
     pub fn checkout(&self, id: &str) -> Result<PathBuf> {
         uuid_id(id)?;
         Ok(self.sources.join(id))
+    }
+    pub fn open_source(&self, id: &str) -> Result<repository_core::Repository> {
+        let path = self.checkout(id)?;
+        let identity = self.identity_root.as_ref().map(|root| root.join(id));
+        repository_core::Repository::open_with_identity(&path, identity.as_deref())
+            .map_err(|_| Error::Storage)
     }
     pub fn reopen(&self, id: &str) -> Result<(Workspace, git2::Repository)> {
         let w = self.get(id)?;

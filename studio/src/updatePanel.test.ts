@@ -51,3 +51,24 @@ it('offers a release build only after discovery and keeps installation explicit'
  f.request.mockResolvedValueOnce({state:'release-build-ready',channel:'release',availableVersion:'2.0.0'});
  await f.click('Download and build release');expect(f.request).toHaveBeenLastCalledWith('buildRelease');expect(f.panel.element.textContent).toContain('revealed in Finder');expect(build.hidden).toBe(true);expect(f.quit).not.toHaveBeenCalled();f.panel.destroy();
 });
+
+it('exposes build progress while controls are busy and keeps the finished result between polls',async()=>{
+ const f=fixture();
+ f.request.mockResolvedValue({state:'release-available',channel:'release',availableVersion:'2.0.0'});
+ await f.panel.open();
+ let finish!:(value:UpdateStatus)=>void;
+ f.request.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve}));
+ await f.click('Download and build release');
+ const status=f.panel.element.querySelector('[role="status"]')!;
+ expect(status.textContent).toContain('Downloading and building');
+ expect(status.closest('[aria-busy="true"]')).toBeNull();
+ await f.panel.poll();
+ expect(f.request.mock.calls).toEqual([['status'],['buildRelease']]);
+ finish({state:'release-build-ready',channel:'release',availableVersion:'2.0.0'});
+ await tick();
+ await f.click('Close updates');
+ await f.panel.poll();
+ expect(f.request.mock.calls).toEqual([['status'],['buildRelease']]);
+ expect(f.panel.notice.textContent).toContain('Update ready');
+ f.panel.destroy();
+});

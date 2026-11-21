@@ -476,6 +476,19 @@ impl ReviewStore {
             .map(|n| serde_json::from_value(self.value(&n)?).map_err(|_| Error::InvalidProposal))
             .collect()
     }
+    /// Delete only the displayed revision; stale hosts cannot resurrect it with save.
+    pub fn discard(&self, repo: &Repository, id: &str, revision: u64) -> Result<()> {
+        let _gate = self.0.gate.lock().map_err(|_| Error::StorageIo)?;
+        let _lock = self.0.lock()?;
+        self.0.check_repository(repo)?;
+        let key = record_key(&repo.project_key(), id)?;
+        if self.value(&key)?.get("revision").and_then(|v| v.as_u64()) != Some(revision) {
+            return Err(Error::Conflict);
+        }
+        self.0.check_directory()?;
+        unlinkat(&self.0.directory, key.as_str(), AtFlags::empty()).map_err(|_| Error::StorageIo)?;
+        self.0.directory.sync_all().map_err(|_| Error::StorageIo)
+    }
     /// Revision CAS prevents another host from restoring a dismissed finding.
     pub fn save<T: Serialize>(
         &self,
