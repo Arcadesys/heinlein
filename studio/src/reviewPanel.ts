@@ -2,7 +2,7 @@ import {createReviewActivity} from './reviewActivity';
 import {renderMarkdown} from './markdown';
 import type { LocalCore, QuestionStatus, ReviewEdit, ReviewResult, ReviewRequest, ReviewerDefinition, CustomReviewer, ReviewCoverage, ReviewProgress, ProposalOutcome } from './localCore';
 import { createStageStrip } from './stageStrip';
-import { agreementLabel, reviewersOf, consensusSentence, stageOf, summarizeConsensus } from './consensus';
+import { agreementLabel, reviewersOf, consensusSentence, countDecisions, stageOf, summarizeConsensus } from './consensus';
 import { changedSpan, decisionLabel, invisibleChangeNote, lineageDelta, patchContext, waiting, type PatchContext } from './reviewComparison';
 import type { ReviewMarkInput } from './reviewMarks';
 import { formatKeys } from './shortcuts';
@@ -430,7 +430,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
     const connection = el('p', '', 'review-connection'), connectionText = el('span');
     const connect = button('Connect ChatGPT', hooks.openConnection, 'review-connect');
     connection.append(connectionText, connect);
-    const run = button('Run review', () => { if (workflowMode && !preparedRequest) void prepareBatch(); else void submit(); }, 'review-run');
+    const run = button('Run review', () => { if (workflowMode && !preparedRequest) void prepareBatch(); else void runReview(); }, 'review-run');
     const retry = button('Retry review', () => { void submit(); });
     retry.hidden = true;
     const cancel = button('Cancel review', () => { cancelRequest(); say('Review canceled locally. Already-sent text cannot be recalled and usage may count. Your manuscript was not changed.'); update(); });
@@ -579,10 +579,10 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
         background.setVisible(!element.hidden && !element.classList.contains('review-tucked'));
     }
     function updateStrip() {
-        const all = result?.edits ?? [];
-        const decided = all.filter(e => !waiting(e)).length;
-        progress.textContent = `${plural(all.length, 'suggestion')} · ${decided} decided`;
-        barFill.style.width = `${all.length ? Math.round(decided / all.length * 100) : 0}%`;
+        // Competing alternatives for one span are one decision, matching the card counter and summary.
+        const {total, decided} = countDecisions(result?.edits ?? [], waiting);
+        progress.textContent = `${plural(total, 'suggestion')} · ${decided} decided`;
+        barFill.style.width = `${total ? Math.round(decided / total * 100) : 0}%`;
         const cards = [...edits.querySelectorAll<HTMLElement>('.review-card')];
         const at = cards.findIndex(c => c.classList.contains('review-opened'));
         counter.textContent = cards.length ? `${at < 0 ? '–' : at + 1} / ${cards.length}` : '0 / 0';
@@ -1266,8 +1266,15 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             const total = result.workflow?.coverage.length;
             if (authenticationFailed())
                 say(`Review paused: ChatGPT authorization failed. ${completed} of ${total} calls completed. Reconnect the same account to resume; completed results are saved.`, 'warning');
+            else if (automaticRunning && continuesAutomatically(result)) {
+                // Native dispatch sends at most eight calls per batch. Queued calls are not
+                // failures; the automatic loop sends the next batch, so do not warn here.
+                say(`Batch finished. ${completed} of ${total} calls completed. Sending the next batch…`);
+                render();
+                return result;
+            }
             else if (completed !== undefined && completed !== total)
-                say(`Review incomplete. ${completed} of ${total} calls completed. ${plural(result.edits.filter(waiting).length, 'suggestion')} retained. Check the call details below.`, 'warning');
+                say(`Review incomplete. ${completed} of ${total} calls completed. ${plural(countDecisions(result.edits, waiting).open, 'suggestion')} retained. Check the call details below.`, 'warning');
             else say(`Review ready. ${plural(result.edits.filter(waiting).length, 'suggestion')} to decide, one at a time.`);
             background.finish(requestId, completed !== undefined && completed !== total ? 'attention' : 'complete',
                 completed !== undefined && completed !== total ? `Review incomplete. ${completed} of ${total} calls completed.` : `Review complete. ${plural(result.edits.filter(waiting).length, 'suggestion')} ready.`);
@@ -1675,7 +1682,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                 return;
             preparedRequest = request;
             coverage = next;
-            batchPreview.replaceChildren(el('h3', 'Exact batch preview'), el('p', `${reviewerIds.length} reviewer(s), ${new Set(next.filter(c => c.id !== 'consolidation').map(c => `${c.sourceIndex}:${c.fromUtf8}:${c.toUtf8}`)).size} editable chunks, ${next.length} selected calls including one final consolidation pass. This batch runs at most ${Math.min(8, next.length)} chunks. Interrupted chunks retry up to two times; additional plan usage may count.${automaticRunning ? ' Review chapter continues all remaining batches automatically.' : ' Remaining calls need Continue.'}`), el('p', fullContextOrder ? 'Each target call includes the complete selected context in library order.' : 'Each call has bounded neighboring context and the selected read-only context, not the whole work at once.'), el('p', 'Sent to OpenAI with your selected ChatGPT account and model. Plan usage may count.'));
+            batchPreview.replaceChildren(el('h3', 'Exact batch preview'), el('p', `${reviewerIds.length} reviewer(s), ${new Set(next.filter(c => c.id !== 'consolidation').map(c => `${c.sourceIndex}:${c.fromUtf8}:${c.toUtf8}`)).size} editable chunks, ${next.length} selected calls including one final consolidation pass. Calls are sent in batches of up to 8, one batch after another, until all ${next.length} have run. Interrupted chunks retry up to two times; additional plan usage may count.`), el('p', fullContextOrder ? 'Each target call includes the complete selected context in library order.' : 'Each call has bounded neighboring context and the selected read-only context, not the whole work at once.'), el('p', 'Sent to OpenAI with your selected ChatGPT account and model. Plan usage may count.'));
             if (fullContextOrder) for (const path of fullContextOrder) { const snapshot = scope.snapshots.find(item => item.path === path)!; batchPreview.append(el('p', `Context: ${path} · ${bytes(snapshot.source).toLocaleString()} UTF-8 bytes`)); }
             const details = el('details');
             details.append(el('summary', 'Reviewer definitions and chunk coverage'));
@@ -1690,7 +1697,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
                     details.append(el('p', `Reviewer ${c.reviewer + 1}: read-only context ${request.workflow!.context[range.sourceIndex]?.path}, UTF-8 bytes ${range.fromUtf8}–${range.toUtf8}.`));
             batchPreview.append(details);
             preview.open = true;
-            say(automaticRunning ? 'Running all chapter reviewers, including saved custom agents, then consolidation. Remaining batches continue automatically.' : `Ready to send ${plural(Math.min(8, next.length), 'call')}. Check the batch and text below, then choose Run review.`);
+            say(automaticRunning ? 'Running all chapter reviewers, including saved custom agents, then consolidation. Remaining batches continue automatically.' : `Ready to send ${plural(next.length, 'call')}. Check the batch and text below, then choose Run review.`);
         }
         catch (error) {
             if (live(token))
@@ -1802,6 +1809,46 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             if (!automatic) void configure();
             title.focus({ preventScroll: true });
         }
+    /** True when every unfinished call is merely queued for a later batch: nothing failed, was cancelled or errored. */
+    function continuesAutomatically(answer: ReviewResult | null | undefined): boolean {
+        const calls = answer?.workflow?.coverage;
+        if (!calls || calls.some(c => c.status === 'failed' || c.status === 'cancelled' || c.error)) return false;
+        const remaining = calls.filter(c => c.status !== 'completed');
+        return remaining.length > 0 && remaining.every(c => c.status === 'queued' || c.status === 'notRun');
+    }
+    /** Send the remaining queued batches one after another. Returns null when a batch made no progress. */
+    async function continueQueuedBatches(answer: ReviewResult | undefined, token: number): Promise<ReviewResult | undefined | null> {
+        // Native dispatch already retries transient chunk failures up to three attempts.
+        // Stop after exhaustion; explicit continuation can retry failed chunks.
+        while (live(token) && continuesAutomatically(answer)) {
+            const completed = answer!.workflow!.coverage.filter(c => c.status === 'completed').length;
+            answer = await submit(true);
+            if (!answer || !live(token)) return answer;
+            if ((answer.workflow?.coverage.filter(c => c.status === 'completed').length ?? 0) <= completed) {
+                say('Review stopped because the next batch made no progress. Completed calls are saved.', 'warning');
+                return null;
+            }
+        }
+        return answer;
+    }
+    /** Run review: send the first batch, then keep sending queued batches until every call has run or one fails. */
+    async function runReview() {
+        if (!workflowMode || !core.continueReview) { await submit(); return; }
+        if (disposed || pending || busy || automaticRunning) return;
+        automaticRunning = true;
+        const token = generation;
+        let completedSuccessfully = false;
+        update();
+        try {
+            // Each batch's own result message already says ready or incomplete.
+            const answer = await continueQueuedBatches(await submit(), token);
+            completedSuccessfully = Boolean(live(token) && answer?.workflow?.coverage.every(c => c.status === 'completed'));
+        } catch (error) {
+            if (live(token)) say(message(error), 'warning');
+        } finally {
+            if (live(token)) { automaticRunning = false; update(); if (completedSuccessfully) returnToInlineSuggestions(); }
+        }
+    }
     async function reviewChapter() {
         if (disposed || pending || busy || automaticRunning) { show(); return; }
         clear();
@@ -1833,23 +1880,7 @@ export function createReviewPanel(core: LocalCore, hooks: Hooks) {
             if (scopeProblem()) { say(scopeProblem()!, 'warning'); return; }
             await prepareBatch();
             if (!live(token) || !preparedRequest) return;
-            let answer = await submit();
-            // Native dispatch already retries transient chunk failures up to three attempts.
-            // Stop after exhaustion; explicit continuation can retry failed chunks.
-            while (live(token) && answer?.workflow) {
-                const calls = answer.workflow.coverage;
-                if (calls.some(c => c.status === 'failed' || c.status === 'cancelled' || c.error)) break;
-                const remaining = calls.filter(c => c.status !== 'completed');
-                if (!remaining.length) break;
-                const completed = calls.length - remaining.length;
-                if (!remaining.every(c => c.status === 'queued' || c.status === 'notRun')) break;
-                answer = await submit(true);
-                if (!answer || !live(token)) return;
-                if ((answer.workflow?.coverage.filter(c => c.status === 'completed').length ?? 0) <= completed) {
-                    say('Chapter review stopped because the next batch made no progress. Completed passes are saved.', 'warning');
-                    return;
-                }
-            }
+            const answer = await continueQueuedBatches(await submit(), token);
             if (!live(token) || !answer) return;
             if (answer.workflow?.coverage.some(c => c.id === 'consolidation' && c.status === 'completed') &&
                 answer.readingFeedback?.some(entry => entry.coverageId === 'consolidation')) {
