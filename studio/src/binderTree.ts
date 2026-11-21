@@ -11,14 +11,24 @@ export interface BinderHooks {
 
 const NO_CHAPTER = '';
 const basename = (path: string) => path.split('/').pop() || path;
+let binderIds = 0;
 
 /** Chapters and scenes share the drafting panel’s local move and undo flow. */
 export function createBinderTree(hooks: BinderHooks) {
   const element = document.createElement('nav'); element.className = 'binder-tree'; element.setAttribute('aria-label', 'Chapters and scenes');
   const heading = document.createElement('h3'); heading.className = 'binder-heading'; heading.textContent = 'Chapters and scenes';
-  const list = document.createElement('ul'); list.className = 'binder-list';
-  element.append(heading, list);
+  const list = document.createElement('ul'); list.className = 'binder-list'; list.id = `binder-list-${++binderIds}`;
+  const toggleAll = document.createElement('button'); toggleAll.type = 'button'; toggleAll.className = 'binder-toggle-all';
+  toggleAll.setAttribute('aria-controls', list.id);
+  const header = document.createElement('div'); header.className = 'binder-header'; header.append(heading, toggleAll);
+  element.append(header, list);
   const expanded = new Set<string>(); let lastCurrentChapter: string | null = null; let seeded = false;
+  let sectionIds: string[] = [];
+  toggleAll.addEventListener('click', () => {
+    if (sectionIds.length && sectionIds.every(id => expanded.has(id))) expanded.clear();
+    else for (const id of sectionIds) expanded.add(id);
+    refresh();
+  });
 
   function refresh() {
     const state = hooks.state(); const current = hooks.currentPath();
@@ -33,6 +43,11 @@ export function createBinderTree(hooks: BinderHooks) {
     if (!seeded && state.scenes.length) { seeded = true; if (currentChapter === null) expanded.add(state.scenes[0].groupId ?? NO_CHAPTER); }
     const sections = [...state.groups.map(group => ({id: group.id, title: group.title})),
       ...(state.scenes.some(scene => !scene.groupId) ? [{id: NO_CHAPTER, title: 'No chapter'}] : [])];
+    sectionIds = sections.map(section => section.id);
+    const allOpen = sectionIds.length > 0 && sectionIds.every(id => expanded.has(id));
+    toggleAll.textContent = allOpen ? 'Collapse all' : 'Expand all';
+    toggleAll.setAttribute('aria-label', allOpen ? 'Collapse all chapters' : 'Expand all chapters');
+    toggleAll.hidden = sectionIds.length < 2;
     for (const section of sections) {
       const scenes = state.scenes.filter(scene => (scene.groupId ?? NO_CHAPTER) === section.id);
       const item = document.createElement('li'); item.className = 'binder-chapter';
