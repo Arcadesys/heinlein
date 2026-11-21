@@ -42,12 +42,14 @@ mod export_pipeline;
 mod first_story;
 mod github;
 mod manuscript_export;
+mod illustrations;
 mod markdown_export;
 mod mcp_access;
 #[cfg(all(test, unix))]
 mod persistence_tests;
 mod preferences;
 mod preferences_store;
+mod project_shortcuts;
 mod projects;
 mod proposals;
 mod questions;
@@ -151,6 +153,30 @@ fn check_window(window: &tauri::WebviewWindow) -> Result<(), String> {
     }
     Ok(())
 }
+fn writing_home(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let documents = app.path().document_dir().map_err(|_| "Documents folder unavailable")?;
+    Ok(resolved_future_path(&documents)?.join("Heinlein"))
+}
+fn ensure_writing_home(path: &Path) -> Result<(), String> {
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let existing = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+            if existing.is_dir() {
+                Ok(())
+            } else {
+                Err("Documents/Heinlein must be a folder".into())
+            }
+        }
+        Err(e) => Err(format!("Could not create Documents/Heinlein: {e}")),
+    }
+}
 fn recent_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(app
         .path()
@@ -253,7 +279,13 @@ fn select_repository_with_origin(
         return Err("Heinlein is quitting".into());
     }
     state.mutation_gate.note_activity();
-    let repo = Repository::open(&path).map_err(|e| e.to_string())?;
+    let legacy_identity = workspace
+        .as_ref()
+        .and_then(|managed| private_storage.parent().map(|data| (data, &managed.id)))
+        .map(|(data, id)| resolved_future_path(data).map(|data| github::legacy_sources(&data).join(id)))
+        .transpose()?;
+    let repo = Repository::open_with_identity(&path, legacy_identity.as_deref())
+        .map_err(|e| e.to_string())?;
     guard_auth_repository_separation(repo.root(), private_storage)?;
     if let Some(parent) = private_storage.parent() {
         guard_auth_repository_separation(repo.root(), &parent.join("standalone-drafts-v1"))?;
@@ -344,6 +376,43 @@ fn select_repository_with_origin(
         );
     }
     Ok(session)
+}
+#[tauri::command]
+async fn create_local_project(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    name: String,
+) -> Result<Option<Session>, String> {
+    check_window(&window)?;
+    projects::validate_new_name(&name)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<BrowserState>();
+        let _selection = state.selection_gate.try_lock()
+            .map_err(|_| "Another folder selection is in progress")?;
+        let home = writing_home(&app)?;
+        ensure_writing_home(&home)?;
+        let Some(parent) = app.dialog().file()
+            .set_directory(home)
+            .set_title("Choose where to create your new project")
+            .blocking_pick_folder() else { return Ok(None); };
+        let parent = parent.into_path().map_err(|_| "Select a local filesystem folder")?;
+        let parent = parent.canonicalize().map_err(|_| "Choose an available local folder")?;
+        let data = app.path().app_data_dir().map_err(|_| "Private storage unavailable")?;
+        guard_auth_repository_separation(&parent.join(&name), &data)?;
+        guard_auth_repository_separation(&parent.join(&name), &github::sources_root(&app)?)?;
+        #[cfg(target_os = "macos")]
+        update::guard_repository(&parent.join(&name), &app.path().home_dir().map_err(|_| "Home unavailable")?)?;
+        if state.quitting.load(Ordering::SeqCst) || state.unsaved_changes.load(Ordering::SeqCst) {
+            return Err("Save your current writing before creating a project".into());
+        }
+        let recovery = recovery_store(&app)?;
+        let library = projects::Store::open(&data.join("projects-v1"))?;
+        let path = projects::create_local_project(&parent, &name, &recovery, &library)?;
+        select(&app, path).map(Some).map_err(|error| {
+            // Leave the initialized project available for retry; never delete writing.
+            format!("The project folder was created, but could not be opened: {error}. Use Open existing project to try again.")
+        })
+    }).await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
 async fn pick_repository(
@@ -495,6 +564,42 @@ async fn read_document(
     tauri::async_runtime::spawn_blocking(move || {
         with_repository(&app, &repository_id, |r| {
             r.read(&relative_path).map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn scene_versions(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    relative_path: String,
+) -> Result<Vec<repository_core::SceneVersion>, String> {
+    check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        with_repository(&app, &repository_id, |repo| {
+            with_recovery(&app, |store| store.scene_versions(repo, &relative_path))
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn read_scene_version(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    relative_path: String,
+    saved_at: u64,
+    hash: String,
+) -> Result<String, String> {
+    check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        with_repository(&app, &repository_id, |repo| {
+            with_recovery(&app, |store| {
+                store.scene_version(repo, &relative_path, saved_at, &hash)
+            })
         })
     })
     .await
@@ -790,6 +895,7 @@ fn production_main() {
         .plugin(tauri_plugin_opener::init())
         .manage(runtime)
         .manage(BrowserState::default())
+        .manage(illustrations::ImageHost::default())
         .manage(questions::QuestionHost::default())
         .setup(|app| {
             let _ = custom_reviewers::refresh(app.handle());
@@ -863,6 +969,7 @@ fn production_main() {
             questions::preview_review,
             questions::continue_review,
             questions::list_reviews,
+            questions::discard_review,
             questions::choose_review_edit,
             questions::approve_review_edit,
             questions::ask_question,
@@ -894,10 +1001,14 @@ fn production_main() {
             drafting::history_drafting_change,
             drafting::pick_drafting_import,
             pick_repository,
+            create_local_project,
             recent_repositories,
             open_recent_repository,
             list_directory,
             read_document,
+            illustrations::illustration_request,
+            scene_versions,
+            read_scene_version,
             save_document,
             read_recovery,
             stage_recovery,

@@ -1,14 +1,16 @@
+import {imageLinks,imageMarkdown} from './illustrationLinks';
 import type {Document, DraftingState, LocalCore} from './localCore';
 import {withReferenceSheets} from './sheetManagement';
 import './markdownExport.css';
 
 export type ExportScope = {kind: 'group'; id: string} | {kind: 'folder'; path: string} | {kind: 'project'};
 interface ExportPart {title: string; path?: string; level: number}
-export interface MarkdownExport {filename: string; text: string; count: number}
+export interface ExportImage {scene:string; url:string}
+export interface MarkdownExport {plainText?:string;images?:ExportImage[];filename: string; text: string; count: number}
 export const EXPORT_FORMATS = [{id:'markdown',label:'Markdown',extension:'md'},{id:'pdf',label:'PDF',extension:'pdf'},{id:'epub',label:'EPUB',extension:'epub'},{id:'html',label:'HTML',extension:'html'},{id:'docx',label:'DOCX',extension:'docx'}] as const;
 export type ExportFormat = typeof EXPORT_FORMATS[number]['id'];
-export interface ManuscriptExportSpec {format:ExportFormat;title:string;author:string;text:string}
-export interface ExportOptions {includeReferences?:boolean}
+export interface ManuscriptExportSpec {images?:ExportImage[];format:ExportFormat;title:string;author:string;text:string}
+export interface ExportOptions {illustrated?:boolean;includeReferences?:boolean}
 
 const MAX_BYTES = 64 * 1024 * 1024;
 const MAX_ITEMS = 4096;
@@ -25,6 +27,22 @@ export function exportBody(source: string): string {
   const end = closing.exec(source);
   if (!end) throw new Error('A sheet has unfinished YAML metadata. Resolve it before exporting.');
   return source.slice(end.index + end[0].length);
+}
+
+// A complete CriticMarkup comment, `{>>note<<}`, that never crosses a blank line.
+const COMMENT = /\{>>(?:(?!<<\}|\r?\n[ \t]*\r?\n|\r[ \t]*\r)[\s\S])*?<<\}/y;
+
+/** Remove private author comments, plus one space directly before each; refuse an unclosed one. */
+export function stripComments(body: string): string {
+  let out = '', cursor = 0;
+  for (let open = body.indexOf('{>>'); open !== -1; open = body.indexOf('{>>', cursor)) {
+    COMMENT.lastIndex = open;
+    const match = COMMENT.exec(body);
+    if (!match) throw new Error('A scene has an unfinished comment. Close or remove it before exporting.');
+    out += body.slice(cursor, open > cursor && body[open - 1] === ' ' ? open - 1 : open);
+    cursor = open + match[0].length;
+  }
+  return out + body.slice(cursor);
 }
 
 /** Read-only snapshot: no save, recovery, organization, or network calls. */
@@ -73,14 +91,28 @@ export async function prepareMarkdownExport(core: LocalCore, repositoryId: strin
   }
   if (parts.length > MAX_ITEMS) throw new Error('Too many sheets to export. Choose a smaller group.');
   let text = `${heading(title, 1)}\n\n`;
+  let plainText=text;
+  const images:ExportImage[]=[];
+  const ids=new Map<string,number>();
   let count = 0;
   let bytes = new TextEncoder().encode(text).length;
   for (const part of parts) {
     let section = `${heading(part.title, part.level)}\n\n`;
+    plainText+=section;
     if (part.path) {
       const doc = await read(part.path);
       if (doc.generatedCompatibility) throw new Error(`Open the original source sheets for ${part.path} before exporting.`);
-      section += exportBody(doc.text) + '\n\n';
+      const body=stripComments(exportBody(doc.text));
+      plainText+=body+'\n\n';
+      let cursor=0;
+      if(options.illustrated)for(const link of imageLinks(body)){
+        const key=JSON.stringify([part.path,link.url]);
+        let index=ids.get(key);
+        if(index===undefined){index=images.length;images.push({scene:part.path,url:link.url});ids.set(key,index);}
+        section+=body.slice(cursor,link.from)+imageMarkdown(link.alt,`heinlein-illustration-${index}`);
+        cursor=link.to;
+      }
+      section += body.slice(cursor) + '\n\n';
       count++;
     }
     bytes += new TextEncoder().encode(section).length;
@@ -89,7 +121,7 @@ export async function prepareMarkdownExport(core: LocalCore, repositoryId: strin
   }
   if (!count) throw new Error('No Markdown sheets were found to export.');
   const filename = (title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-').replace(/^\.+|[. ]+$/g, '').slice(0, 120) || 'manuscript') + '.md';
-  return {filename, text, count};
+  return {filename, text, count,...(images.length?{images,plainText}:{})};
 }
 
 function libraryParts(state: DraftingState, groupId: string | null = null,includeReferences=false): ExportPart[] {
@@ -172,15 +204,16 @@ export function createMarkdownExport(core: LocalCore, hooks: {
       if(cache.has(path))return Promise.resolve(cache.get(path)!);
       if(!reads.has(path))reads.set(path,core.readDocument(id,path).then(doc=>{cache.set(path,doc);return doc;}));return reads.get(path)!;
     }};
-    function info(){dependency.textContent=format.value==='markdown'?'Markdown needs no converter. Images and attachments are not bundled.':'Uses the Heinlein publishing pipeline and Pandoc. PDF also requires Chrome. Local image attachments are not bundled in this version.';}
+    function info(){dependency.textContent=format.value==='markdown'?'Markdown needs no converter. Images and attachments are not bundled.':format.value==='pdf'||format.value==='epub'?'Includes local PNG and JPEG illustrations. PDF also requires Chrome.':'Uses Pandoc. Images are supported in EPUB and PDF.';}
     async function prepare(){const ticket=++generation;prepared=null;save.disabled=true;status.textContent='Preparing export…';
-      try{const next=await prepareMarkdownExport(frozenCore,snapshot!.repositoryId,title,scope,snapshot!.state,snapshot!.buffers,{includeReferences:references.checked});if(current!==version||ticket!==generation)return;prepared=next;status.textContent=`${next.count} ${next.count===1?'sheet':'sheets'} ready. Current editor text captured when this dialog opened.`;save.disabled=false;}
+      try{const next=await prepareMarkdownExport(frozenCore,snapshot!.repositoryId,title,scope,snapshot!.state,snapshot!.buffers,{includeReferences:references.checked,illustrated:true});if(current!==version||ticket!==generation)return;prepared=next;status.textContent=`${next.count} ${next.count===1?'sheet':'sheets'} ready. Current editor text captured when this dialog opened.`;save.disabled=false;}
       catch(error){if(current===version&&ticket===generation)status.textContent=`Export failed: ${String(error)}`;}}
     references.addEventListener('change',()=>{void prepare();});format.addEventListener('change',info);info();
     save.onclick=async()=>{
       if(!prepared)return;const choice=EXPORT_FORMATS.find(c=>c.id===format.value)!;const filename=prepared.filename.replace(/\.md$/,`.${choice.extension}`);
       save.disabled=true;cancel.disabled=true;format.disabled=true;references.disabled=true;author.disabled=true;status.textContent=`Preparing ${choice.label} and choosing a new export file…`;
-      try{const spec:ManuscriptExportSpec={format:choice.id,title,author:author.value.trim(),text:prepared.text};const saved=core.exportManuscript?await core.exportManuscript(snapshot.repositoryId,filename,spec):await core.saveMarkdownExport!(snapshot.repositoryId,filename,prepared.text);
+      try{const illustrated=choice.id==='pdf'||choice.id==='epub';
+        const spec:ManuscriptExportSpec={format:choice.id,title,author:author.value.trim(),text:illustrated?prepared.text:(prepared.plainText??prepared.text),...(illustrated&&prepared.images?{images:prepared.images}:{})};const saved=core.exportManuscript?await core.exportManuscript(snapshot.repositoryId,filename,spec):await core.saveMarkdownExport!(snapshot.repositoryId,filename,spec.text);
         if(current!==version)return;if(saved){dismiss();hooks.report(`Exported ${prepared.count} ${prepared.count===1?'sheet':'sheets'} as one ${choice.label} file.`);}else status.textContent='Export canceled. Choose a location to try again.';
       }catch(error){if(current===version)status.textContent=`Export failed: ${String(error)}`;}
       finally{if(current===version){save.disabled=false;cancel.disabled=false;format.disabled=false;references.disabled=false;author.disabled=false;save.focus();}}

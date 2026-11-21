@@ -47,7 +47,7 @@ impl Script {
             Action::Status => "status",
             Action::Check => "check",
             Action::Schedule => "schedule",
-            Action::OpenRelease => {
+            Action::OpenRelease | Action::BuildRelease => {
                 return Err("Release downloads disabled in synthetic fixture".into())
             }
         };

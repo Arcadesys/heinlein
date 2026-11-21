@@ -27,6 +27,7 @@ pub(crate) enum Action {
     Check,
     Schedule,
     OpenRelease,
+    BuildRelease,
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -327,7 +328,7 @@ impl Runtime {
             Action::Status => "status",
             Action::Check => "check",
             Action::Schedule => "schedule",
-            Action::OpenRelease => {
+            Action::OpenRelease | Action::BuildRelease => {
                 return Err("Release downloads do not replace managed source apps".into())
             }
         };
@@ -423,6 +424,59 @@ fn check_release() -> Result<Status, String> {
     let release = serde_json::from_slice(&bytes).map_err(|_| "Release metadata unavailable")?;
     release_status(release, env!("CARGO_PKG_VERSION"))
 }
+fn build_release(version: &str) -> Result<PathBuf, String> {
+    let parsed = semver::Version::parse(version).map_err(|_| "Invalid release version")?;
+    if !parsed.pre.is_empty() || !parsed.build.is_empty() {
+        return Err("Only stable releases can be built".into());
+    }
+    let python = [
+        "/opt/homebrew/bin/python3",
+        "/usr/local/bin/python3",
+        "/usr/bin/python3",
+    ]
+    .into_iter()
+    .find(|p| Path::new(p).is_file())
+    .ok_or("Python 3 is required")?;
+    let home = std::env::var_os("HOME").ok_or("Home unavailable")?;
+    let cargo = PathBuf::from(&home).join(".cargo/bin");
+    let output = std::process::Command::new(python)
+        .env_clear()
+        .env("HOME", home)
+        .env(
+            "PATH",
+            format!(
+                "{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+                cargo.display()
+            ),
+        )
+        .env("LANG", "en_US.UTF-8")
+        .env("OPENSSL_STATIC", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args([
+            "-I",
+            "-S",
+            "-c",
+            include_str!("../../macos/build_release.py"),
+            version,
+        ])
+        .output()
+        .map_err(|_| "Release build unavailable")?;
+    if !output.status.success() {
+        return Err("Release build failed".into());
+    }
+    let path = PathBuf::from(
+        String::from_utf8(output.stdout)
+            .map_err(|_| "Build output unavailable")?
+            .trim(),
+    );
+    if !path.is_absolute()
+        || !path.is_dir()
+        || path.file_name().and_then(|s| s.to_str()) != Some("Heinlein Studio.app")
+    {
+        return Err("Build output unavailable".into());
+    }
+    Ok(path)
+}
 fn atomic(path: &Path, value: &serde_json::Value) -> Result<(), String> {
     use std::io::Write;
     let parent = path.parent().ok_or("Updater storage unavailable")?;
@@ -472,6 +526,52 @@ pub(crate) async fn update_request(
             return Err("Heinlein is quitting".into());
         }
         state.mutation_gate.note_activity();
+        if matches!(action, Action::BuildRelease) {
+            let runtime = app.state::<Runtime>();
+            let _gate = runtime.idle()?;
+            if !runtime.release_enabled || runtime.exiting.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err("Release builds unavailable".into());
+            }
+            let previous = runtime
+                .release_status
+                .lock()
+                .map_err(|_| "Update status unavailable")?
+                .clone()
+                .ok_or("Check for a newer release first")?;
+            if !matches!(
+                previous.state.as_str(),
+                "release-available" | "release-build-failed"
+            ) {
+                return Err("Check for a newer release first".into());
+            }
+            let version = previous
+                .available_version
+                .as_deref()
+                .ok_or("Release version unavailable")?;
+            let result = build_release(version);
+            let next = match result {
+                Ok(path) => {
+                    use tauri_plugin_opener::OpenerExt;
+                    app.opener().reveal_item_in_dir(path).map_err(|_| {
+                        "App built, but Finder could not show the temporary build folder"
+                    })?;
+                    Status {
+                        state: "release-build-ready".into(),
+                        ..previous
+                    }
+                }
+                Err(_) => Status {
+                    state: "release-build-failed".into(),
+                    ..previous
+                },
+            };
+            *runtime
+                .release_status
+                .lock()
+                .map_err(|_| "Update status unavailable")? = Some(next.clone());
+            return Ok(next);
+        }
         if matches!(action, Action::OpenRelease) {
             let runtime = app.state::<Runtime>();
             let _gate = runtime.idle()?;

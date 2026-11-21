@@ -323,8 +323,8 @@ describe('typewriter volume and cached sounds', () => {
     expect(lengths[2]).toBeGreaterThan(lengths[1]);
     sounds.setVolume(0); mock.context.currentTime += 0.1; sounds.play();
     expect(mock.source.start).toHaveBeenCalledTimes(4);
-    sounds.setVolume(2); expect(sounds.volume()).toBe(1);
-    sounds.setVolume(NaN); expect(sounds.volume()).toBe(1);
+    sounds.setVolume(2); expect(sounds.volume()).toBe(2);sounds.setVolume(10);expect(sounds.volume()).toBe(5);mock.context.currentTime+=.1;sounds.play();expect(mock.gain.gain.value).toBeCloseTo(.25);
+    sounds.setVolume(NaN); expect(sounds.volume()).toBe(5);
     sounds.destroy();
   });
 });
@@ -333,8 +333,43 @@ describe('remembered sound choice',()=>{
   it('restores requested state and volume without starting audio until a gesture',async()=>{
     const values=new Map<string,string>();const storage={getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value);}};
     const first=createTypewriterSound({storage,createContext:()=>{throw Error('audio unavailable');}});
-    first.setVolume(.8);await first.setEnabled(true);first.destroy();
+    first.setVolume(5);await first.setEnabled(true);first.destroy();
     const createContext=vi.fn(()=>{throw Error('must wait for gesture');});const second=createTypewriterSound({storage,createContext});
-    expect(second.requested()).toBe(true);expect(second.volume()).toBe(.8);expect(second.enabled()).toBe(false);expect(createContext).not.toHaveBeenCalled();
+    expect(second.requested()).toBe(true);expect(second.volume()).toBe(5);expect(second.enabled()).toBe(false);expect(createContext).not.toHaveBeenCalled();
+  });
+});
+
+ describe('Sound Sketchbook kept voices', () => {
+  it('loads the selected bundled clip once and remembers it without autoplay', async () => {
+    const mock = audioMock();
+    const sample = {} as AudioBuffer;
+    const loadSample = vi.fn(async (_url:string, _audio:AudioContext) => sample);
+    const values = new Map<string,string>();
+    const storage = {getItem:(key:string)=>values.get(key)??null,setItem:(key:string,value:string)=>{values.set(key,value);}};
+    const sound = createTypewriterSound({storage, createContext:mock.createContext, loadSample});
+    await sound.setVoice('sample-02');
+    expect(loadSample).not.toHaveBeenCalled();
+    await sound.setEnabled(true);
+    expect(loadSample.mock.calls[0][0]).toContain('/sounds/sound-sketchbook/02_wooden_thock.mp3');
+    sound.play(); expect(mock.source.buffer).toBe(sample);
+    await sound.setVoice('classic'); await sound.setVoice('sample-02');
+    expect(loadSample).toHaveBeenCalledTimes(1);
+    const restored = createTypewriterSound({storage,createContext:mock.createContext,loadSample});
+    expect(restored.voice()).toBe('sample-02'); expect(restored.enabled()).toBe(false);
+    expect(await restored.setVoice('unknown')).toBe(false);
+    sound.destroy(); restored.destroy();
+  });
+  it('previews while off without changing the remembered enabled preference', async () => {
+    const mock = audioMock(); const sound = createTypewriterSound({storage:null,createContext:mock.createContext});
+    expect(await sound.preview()).toBe(true);
+    expect(mock.source.start).toHaveBeenCalledOnce();
+    expect(sound.requested()).toBe(false); expect(sound.enabled()).toBe(false); sound.destroy();
+  });
+  it('ignores a stale sample load after disabling', async () => {
+    const mock = audioMock(); let finish!: (sample:AudioBuffer)=>void;
+    const sound=createTypewriterSound({storage:null,createContext:mock.createContext,loadSample:()=>new Promise(resolve=>{finish=resolve;})});
+    await sound.setVoice('8-bit-triangle'); const pending=sound.setEnabled(true); await Promise.resolve();
+    await sound.setEnabled(false); finish({} as AudioBuffer); await pending;
+    expect(sound.enabled()).toBe(false); sound.play(); expect(mock.source.start).not.toHaveBeenCalled(); sound.destroy();
   });
 });

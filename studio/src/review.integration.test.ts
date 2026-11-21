@@ -163,11 +163,12 @@ describe('Studio Heinlein Review integration', () => {
     const native = {...core, listProposals: vi.fn(async () => ({pending: [], receipts: []})), reviewProposal: vi.fn(async () => proposal()), reviewProposalRevert: vi.fn(async () => proposal()), cancelProposalReview: vi.fn(async () => {}), applyProposalReview: vi.fn(async (_repositoryId: string, binding: ProposalBinding): Promise<ProposalOutcome> => {disk = proposal().replacementText; accepted++; return {receipt: {id: `receipt-${accepted}`, kind: 'apply', status: 'completed', proposalId: binding.proposalId, path: 'scene.md', baseHash: binding.baseHash, replacementHash: binding.replacementHash, diffHash: binding.diffHash, origin, parentReceiptId: null, message: null, createdAtMs: Date.now(), revertAvailable: true}, warning: null};})};
     await start(native); await open(); button('Run review').click(); await vi.waitFor(() => expect(button('Accept…').disabled).toBe(false));
     button('Open review').click(); await vi.waitFor(() => expect(panel().hidden).toBe(false));
+    await vi.waitFor(() => expect(button('Accept…').disabled).toBe(false));
     for (let index = 0; index < 2; index++) {
       button('Accept…').click(); await vi.waitFor(() => expect(document.querySelector('[aria-label="Review whole-scene proposal"]')).not.toBeNull());
       expect(native.applyProposalReview).toHaveBeenCalledTimes(index); expect(native.saveDocument).not.toHaveBeenCalled();
       const comparison = document.querySelector('[aria-label="Review whole-scene proposal"]')!; expect(comparison.textContent).toContain('Native OpenAI suggestion'); expect(comparison.querySelector('.proposal-full-source pre')!.textContent).toBe(disk);
-      button('Accept revision').click(); await vi.waitFor(() => expect(native.getReview).toHaveBeenCalledTimes(index + 1));
+      button('Accept revision').click(); await vi.waitFor(() => expect(native.getReview).toHaveBeenCalledTimes(index + 2));
       await vi.waitFor(() => expect(panel().hidden).toBe(false)); expect(native.applyProposalReview).toHaveBeenCalledTimes(index + 1); expect(view().state.doc.toString()).toBe(disk.replace(/\r\n/g, '\n'));
     }
     expect(disk).toContain('paragraph'); expect(disk).toContain('Final line'); expect(native.saveDocument).not.toHaveBeenCalled();
@@ -232,4 +233,22 @@ describe('Studio Heinlein Review integration', () => {
     });
   });
 
+});
+
+it('a fresh review rereads the saved chapter paths without navigating or reusing the previous text', async () => {
+ const core=bridge(); let saved:ReviewResult;
+ core.requestReview.mockImplementation(async request => {saved=result(request);return saved;});
+ core.getReview.mockImplementation(async()=>saved!);
+ await start(core);await app!.showDocument('other.md');await open();
+ [...panel().querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent?.startsWith('Entire chapter…'))!.click();
+ await vi.waitFor(()=>expect(panel().textContent).toContain('Entire chapter captured.'));
+ button('Run review').click();await vi.waitFor(()=>expect(core.requestReview).toHaveBeenCalledOnce());
+ await vi.waitFor(()=>expect(button('Open review')).toBeTruthy());button('Open review').click();
+ await vi.waitFor(()=>expect(button('Start a new review').disabled).toBe(false));
+ const editor=view(),before=editor.state.doc.toString();
+ core.readDocument.mockImplementation(async(_repo,path)=>({path,text:`Current ${path}`,contentHash:'f'.repeat(64),sizeBytes:20,frontmatter:null,generatedCompatibility:false}));
+ button('Start a new review').click();await vi.waitFor(()=>expect(panel().textContent).toContain('Current text captured.'));
+ expect(core.requestReview).toHaveBeenCalledOnce();expect(view()).toBe(editor);expect(view().state.doc.toString()).toBe(before);
+ button('Run review').click();await vi.waitFor(()=>expect(core.requestReview).toHaveBeenCalledTimes(2));
+ expect(core.requestReview.mock.calls[1][0].snapshots.map(s=>[s.path,s.source])).toEqual([['scene.md','Current scene.md'],['other.md','Current other.md']]);
 });

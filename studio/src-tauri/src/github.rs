@@ -189,10 +189,82 @@ fn data(app: &tauri::AppHandle) -> Result<PathBuf> {
         .app_data_dir()
         .map_err(|_| "GitHub storage is unavailable".into())
 }
-fn registry(app: &tauri::AppHandle) -> Result<Registry> {
-    let p = data(app)?;
-    Registry::open(&p.join("github-state-v1"), &p.join("github-sources-v1"))
-        .map_err(|e| e.to_string())
+const SOURCES_DIR: &str = "github-sources-v1";
+
+pub(crate) fn legacy_sources(data: &Path) -> PathBuf {
+    data.join(SOURCES_DIR)
+}
+
+pub(crate) fn sources_root(app: &tauri::AppHandle) -> Result<PathBuf> {
+    Ok(super::writing_home(app)?.join(SOURCES_DIR))
+}
+
+pub(crate) fn registry(app: &tauri::AppHandle) -> Result<Registry> {
+    open_registry(&data(app)?, &sources_root(app)?)
+}
+
+fn open_registry(data: &Path, sources: &Path) -> Result<Registry> {
+    let state = StateDir::open(&data.join("github-state-v1")).map_err(|e| e.to_string())?;
+    let _move_lock = state.lock("source-location.lock").map_err(|e| e.to_string())?;
+    let legacy = legacy_sources(data);
+    let identity = legacy_sources(&super::resolved_future_path(data)?);
+    super::ensure_writing_home(sources.parent().ok_or("Heinlein writing folder unavailable")?)?;
+    relocate_sources(&legacy, sources)?;
+    let registry = Registry::open_with_identity_root(state.path(), sources, Some(identity))
+        .map_err(|e| e.to_string())?;
+    refresh_shortcuts(&registry, sources);
+    Ok(registry)
+}
+
+/// Readable project names in Documents/Heinlein. Advisory only: a failure here
+/// never blocks opening managed writing.
+fn refresh_shortcuts(registry: &Registry, sources: &Path) {
+    let (Some(home), Ok(workspaces)) = (sources.parent(), registry.list()) else {
+        return;
+    };
+    let projects: Vec<_> = workspaces
+        .iter()
+        .map(|w| super::project_shortcuts::Shortcut {
+            id: &w.id,
+            owner: &w.repo.owner,
+            name: &w.repo.name,
+        })
+        .collect();
+    let _ = super::project_shortcuts::refresh(home, SOURCES_DIR, &projects);
+}
+
+fn source_directory(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => Ok(true),
+        Ok(_) => Err("Heinlein's managed writing location must be a folder".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("Could not inspect Heinlein's writing location: {error}")),
+    }
+}
+
+fn relocate_sources(old: &Path, new: &Path) -> Result<()> {
+    if !source_directory(old)? {
+        return Ok(());
+    }
+    if source_directory(new)? {
+        return Err("Managed writing exists in both locations. Both folders were kept.".into());
+    }
+    StateDir::open(old).map_err(|e| e.to_string())?;
+    // A single no-replace rename keeps every saved file and the checkout inode.
+    // If the volume cannot rename the folder atomically, leave it in place.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        old,
+        rustix::fs::CWD,
+        new,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(|e| format!("Could not move managed writing to Documents/Heinlein: {e}"))?;
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("Moving managed writing is unavailable on this platform".into());
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    Ok(())
 }
 fn services(app: &tauri::AppHandle) -> Result<Arc<Services>> {
     let state = app.state::<BrowserState>();
@@ -241,7 +313,11 @@ pub(crate) fn selection(app: &tauri::AppHandle, path: &Path) -> Result<Option<Wo
     ] {
         guard_auth_repository_separation(&root, &d.join(name))?;
     }
-    let sources = super::resolved_future_path(&d.join("github-sources-v1"))?;
+    let sources = sources_root(app)?;
+    let legacy = super::resolved_future_path(&legacy_sources(&d))?;
+    if root.starts_with(&legacy) || legacy.starts_with(&root) {
+        return Err("Open this managed project from Heinlein's GitHub list".into());
+    }
     if root.starts_with(&sources) || sources.starts_with(&root) {
         let r = registry(app)?;
         let w = r
@@ -256,8 +332,7 @@ pub(crate) fn selection(app: &tauri::AppHandle, path: &Path) -> Result<Option<Wo
     Ok(None)
 }
 pub(crate) fn edit_lock(app: &tauri::AppHandle, root: &Path) -> Result<Option<gh::registry::Lock>> {
-    let d = data(app)?;
-    let sources = super::resolved_future_path(&d.join("github-sources-v1"))?;
+    let sources = sources_root(app)?;
     if !root.starts_with(&sources) {
         return Ok(None);
     }
@@ -1204,6 +1279,46 @@ pub(crate) async fn github_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn managed_writing_move_preserves_saved_bytes_and_recovery_identity() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let data = temp.path().join("private");
+        let legacy = legacy_sources(&data);
+        let id = uuid::Uuid::new_v4().to_string();
+        let old_repo = legacy.join(&id);
+        StateDir::open(&legacy).unwrap();
+        std::fs::create_dir(&old_repo).unwrap();
+        std::fs::write(old_repo.join("scene.md"), "Saved writing").unwrap();
+        let old_key = repository_core::Repository::open(&old_repo).unwrap().project_key();
+        let documents = temp.path().join("Documents");
+        std::fs::create_dir(&documents).unwrap();
+        let new = documents.join("Heinlein").join(SOURCES_DIR);
+
+        for _ in 0..2 {
+            let registry = open_registry(&data, &new).unwrap();
+            let repo = registry.open_source(&id).unwrap();
+            assert_eq!(repo.root(), new.join(&id));
+            assert_eq!(repo.project_key(), old_key);
+            assert_eq!(repo.read("scene.md").unwrap().text, "Saved writing");
+            assert!(!legacy.exists());
+        }
+    }
+
+    #[test]
+    fn managed_writing_move_keeps_both_locations_on_collision() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let old = temp.path().join("old");
+        let new = temp.path().join("new");
+        StateDir::open(&old).unwrap();
+        StateDir::open(&new).unwrap();
+        std::fs::write(old.join("scene.md"), b"old").unwrap();
+        std::fs::write(new.join("scene.md"), b"new").unwrap();
+
+        assert!(relocate_sources(&old, &new).is_err());
+        assert_eq!(std::fs::read(old.join("scene.md")).unwrap(), b"old");
+        assert_eq!(std::fs::read(new.join("scene.md")).unwrap(), b"new");
+    }
+
     #[test]
     fn public_configuration_override_missing_and_invalid() {
         assert_eq!(public_client(None).unwrap(), CLIENT_ID);

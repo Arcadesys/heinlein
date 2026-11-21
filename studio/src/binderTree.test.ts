@@ -42,6 +42,15 @@ describe('binder tree', () => {
   it('opens the first chapter with scenes when nothing is open', () => {
     setup(null); expect(toggles().map(t => t.getAttribute('aria-expanded'))).toEqual(['true', 'false', 'false']);
   });
+  it('expands and collapses every chapter at once', () => {
+    setup('ms/c.md'); const all = document.querySelector<HTMLButtonElement>('.binder-toggle-all')!;
+    expect(all.textContent).toBe('Expand all'); all.click();
+    expect(toggles().map(t => t.getAttribute('aria-expanded'))).toEqual(['true', 'true', 'true']);
+    expect(all.textContent).toBe('Collapse all'); all.click();
+    expect(toggles().map(t => t.getAttribute('aria-expanded'))).toEqual(['false', 'false', 'false']);
+    expect(all.textContent).toBe('Expand all');
+    toggles().forEach(t => t.click()); expect(all.textContent).toBe('Collapse all');
+  });
   it('hides itself with no manuscript', () => {
     setup(null, null); expect(document.querySelector<HTMLElement>('.binder-tree')!.hidden).toBe(true);
   });

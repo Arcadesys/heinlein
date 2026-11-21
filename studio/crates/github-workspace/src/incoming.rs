@@ -628,8 +628,7 @@ impl IncomingPlan {
         let base = transport::tree_files(&repo, common)?;
         let ours = transport::tree_files(&repo, local)?;
         let theirs = transport::tree_files(&repo, remote)?;
-        let root = repository_core::Repository::open(registry.checkout(id)?)
-            .map_err(|_| Error::Storage)?;
+        let root = registry.open_source(id)?;
         if operations::disk_files(&root, &ours)? != ours {
             return Err(Error::Changed);
         }
@@ -726,7 +725,7 @@ pub fn apply(
         return Err(Error::Changed);
     }
     let root =
-        repository_core::Repository::open(registry.checkout(id)?).map_err(|_| Error::Storage)?;
+        registry.open_source(id)?;
     if operations::disk_files(&root, &plan.ours)? != plan.ours {
         return Err(Error::Changed);
     }
@@ -827,7 +826,7 @@ pub fn rollback(registry: &Registry, id: &str) -> Result<()> {
         return Err(Error::Changed);
     }
     let root =
-        repository_core::Repository::open(registry.checkout(id)?).map_err(|_| Error::Storage)?;
+        registry.open_source(id)?;
     let store =
         repository_core::workspace_update::UpdateStore::open(&dir.path().join("update-backups"))
             .map_err(|_| Error::Storage)?;

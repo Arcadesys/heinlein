@@ -1,3 +1,6 @@
+import type {ImageHost} from './illustrations';
+import type {FullScreenHost} from './fullScreenControl';
+import {windowFullscreen} from './windowFullscreen';
 import type {ManuscriptExportSpec} from './markdownExport';
 import type {PreferenceRequest,PreferenceSnapshot} from './preferences';
 import type {ProjectRequest,ProjectResponse,ProjectResume} from './projects';
@@ -89,6 +92,7 @@ export interface ReadingFeedback { assessment?: { strengths: string; improvement
 export interface ReadingFeedbackView { coverageId?: string | null; path: string; reviewer: string; feedback: ReadingFeedback }
 export interface ReviewResult { readingFeedback?: ReadingFeedbackView[]; reviewId: string; requestId: string; model: string; schemaVersion: 1|2; revision?:number;projectKey?:string|null; scope: 'scene' | 'chapter'; edits: ReviewEdit[]; workflow?:{definitions:{instanceId:string;definition:ReviewerDefinition;hash:string}[];coverage:ReviewCoverage[];sources:{id:string;path:string;sourceHash:string;readOnly:boolean;order:number}[];decisions:{findingId:string;kind:string;competing:string[];proposalId:string|null}[];accountId:string;accountGeneration:number;contextNotice:string}|null }
 export interface LocalCore {
+  fullscreen?:FullScreenHost;
   exportManuscript?(repositoryId:string,filename:string,spec:ManuscriptExportSpec):Promise<boolean>;
   preferencesRequest?(request:PreferenceRequest):Promise<PreferenceSnapshot>;
   saveMarkdownExport?(repositoryId: string, filename: string, text: string): Promise<boolean>;
@@ -96,7 +100,7 @@ export interface LocalCore {
   mcpRequest?(request:McpAccessRequest):Promise<McpAccessView>;
   standalone?(request:DraftRequest):Promise<DraftResponse>;
   available(): boolean;
-  updateRequest?(action: 'status'|'check'|'schedule'|'openRelease'):Promise<UpdateStatus>;
+  updateRequest?(action: 'status'|'check'|'schedule'|'openRelease'|'buildRelease'):Promise<UpdateStatus>;
   githubRequest?(request: GitHubRequest): Promise<GitHubResponse>;
   loadFirstStory?(repositoryId: string): Promise<FirstStoryState>;
   saveFirstStory?(repositoryId: string, guide: FirstStoryState, markProof: boolean): Promise<FirstStoryState>;
@@ -115,6 +119,7 @@ export interface LocalCore {
   continueReview?(repositoryId:string,reviewId:string,requestId:string,connection:QuestionConnection,onProgress?: (progress: ReviewProgress) => void):Promise<ReviewResult>;
   prepareReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<{proposalId: string}>;
   rejectReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<ReviewResult>;
+  discardReview?(repositoryId: string, reviewId: string, revision: number): Promise<void>;
   getReview?(repositoryId: string, reviewId: string): Promise<ReviewResult>;
   questionStatus?(): Promise<QuestionStatus>;
   askQuestion?(request: QuestionRequest, connection: QuestionConnection, onProgress?: (text: string) => void): Promise<QuestionAnswer>;
@@ -142,6 +147,7 @@ export interface LocalCore {
   pickDraftingImport?(repositoryId: string): Promise<DraftingSelection | null>;
   onDraftingImportError?(callback: (message: string) => void): Promise<() => void>;
   onDraftingFilesDropped?(callback: (selection: DraftingSelection) => void): Promise<() => void>;
+  createLocalProject?(name: string): Promise<RepositorySession | null>;
   pickRepository(): Promise<RepositorySession | null>;
   recentRepositories(): Promise<RecentRepository[]>;
   openRecentRepository(id: string): Promise<RepositorySession>;
@@ -149,6 +155,9 @@ export interface LocalCore {
   readDocument(repositoryId: string, relativePath: string): Promise<Document>;
   loadManuscript(repositoryId: string, relativePath: string): Promise<Manuscript>;
   listSystemFonts(): Promise<string[]>;
+  images?: ImageHost;
+  sceneVersions?(repositoryId: string, relativePath: string): Promise<SceneVersion[]>;
+  readSceneVersion?(repositoryId: string, relativePath: string, version: SceneVersion): Promise<string>;
   saveDocument(repositoryId: string, relativePath: string, expectedHash: string, text: string): Promise<Document>;
   readRecovery(repositoryId: string, relativePath: string): Promise<RecoveryDraft | null>;
   stageRecovery(repositoryId: string, relativePath: string, expectedHash: string, text: string): Promise<RecoveryDraft>;
@@ -163,6 +172,7 @@ export interface LocalCore {
 // Root selection and guarded file writes belong to the native host;
 // no credentials, filesystem handles, or absolute root paths enter the renderer.
 export const localCore: LocalCore = {
+  fullscreen:isTauri()?windowFullscreen:undefined,
   available: isTauri,
   exportManuscript:(repositoryId,filename,spec)=>invoke('export_manuscript',{repositoryId,filename,spec}),
   preferencesRequest:request=>invoke('preferences_request',{request}),
@@ -194,6 +204,7 @@ export const localCore: LocalCore = {
   },
   prepareReviewEdit: (repositoryId, reviewId, editId) => invoke('prepare_review_edit', {repositoryId, reviewId, editId}),
   rejectReviewEdit: (repositoryId, reviewId, editId) => invoke('reject_review_edit', {repositoryId, reviewId, editId}),
+  discardReview: (repositoryId, reviewId, revision) => invoke('discard_review', {repositoryId, reviewId, revision}),
   getReview: (repositoryId, reviewId) => invoke('get_review', {repositoryId, reviewId}),
   questionStatus: () => invoke('question_status'),
   askQuestion: (request, connection, onProgress) => {
@@ -225,6 +236,15 @@ export const localCore: LocalCore = {
   pickDraftingImport: repositoryId => invoke('pick_drafting_import', {repositoryId}),
   onDraftingImportError: callback => listen<string>('drafting-import-error', event => callback(event.payload)),
   onDraftingFilesDropped: callback => listen<DraftingSelection>('drafting-files-dropped', event => callback(event.payload)),
+  images: {
+    pick:(repositoryId,scene)=>invoke('illustration_request',{repositoryId,scene,request:{action:'pick'}}),
+    read:(repositoryId,scene,url)=>invoke('illustration_request',{repositoryId,scene,request:{action:'read',url}}),
+    commit:(repositoryId,scene,id)=>invoke('illustration_request',{repositoryId,scene,request:{action:'commit',id}}),
+    describe:(repositoryId,scene,id)=>invoke('illustration_request',{repositoryId,scene,request:{action:'describe',id}}),
+    discard:(repositoryId,scene,id)=>invoke('illustration_request',{repositoryId,scene,request:{action:'discard',id}}),
+  },
+  sceneVersions: (repositoryId, relativePath) => invoke('scene_versions', {repositoryId, relativePath}),
+  readSceneVersion: (repositoryId, relativePath, version) => invoke('read_scene_version', {repositoryId, relativePath, savedAt:version.savedAt,hash:version.hash}),
   saveDocument: (repositoryId, relativePath, expectedHash, text) => invoke('save_document', {repositoryId, relativePath, expectedHash, text}),
   readRecovery: (repositoryId, relativePath) => invoke('read_recovery', {repositoryId, relativePath}),
   stageRecovery: (repositoryId, relativePath, expectedHash, text) => invoke('stage_recovery', {repositoryId, relativePath, expectedHash, text}),
@@ -238,6 +258,7 @@ export const localCore: LocalCore = {
   onCheckForUpdates:callback=>listen('check-for-updates',callback),
   projectRequest:request=>invoke('project_request',{request}),
   mcpRequest:request=>invoke('mcp_access_request',{request}),
+  createLocalProject: name => invoke('create_local_project', {name}),
   pickRepository: () => invoke('pick_repository'),
   recentRepositories: () => invoke('recent_repositories'),
   openRecentRepository: id => invoke('open_recent_repository', { id }),
@@ -246,3 +267,5 @@ export const localCore: LocalCore = {
   loadManuscript: (repositoryId, relativePath) => invoke('load_manuscript', { repositoryId, relativePath }),
   listSystemFonts: () => invoke('list_system_fonts'),
 };
+
+export interface SceneVersion {sourcePath?:string|null; savedAt: number; hash: string}

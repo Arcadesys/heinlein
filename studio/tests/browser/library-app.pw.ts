@@ -27,7 +27,7 @@ test('full app navigates the project tree and editor',{tag:'@smoke'},async({page
  await page.getByRole('button',{name:'First sheet',exact:true}).click();
  await expect(page.getByRole('textbox',{name:'Markdown editor'})).toBeVisible();
  await expect(page.locator('.preview .path')).toBeHidden();
- if((await page.viewportSize())!.width<=1000){await page.getByRole('button',{name:'Back to sheets'}).click(); await expect(page.getByRole('button',{name:'First sheet',exact:true})).toBeVisible();}
+ if((await page.viewportSize())!.width<=1000){await page.getByRole('button',{name:'Document actions',exact:true}).click();await page.getByRole('button',{name:'Editing actions',exact:true}).click();await page.getByRole('button',{name:'Back to sheets'}).click(); await expect(page.getByRole('button',{name:'First sheet',exact:true})).toBeVisible();}
  await expect(page.getByRole('button',{name:'First sheet',exact:true})).toHaveAttribute('aria-current','true');
  expect((await new AxeBuilder({page}).include('.workspace').analyze()).violations).toEqual([]);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);

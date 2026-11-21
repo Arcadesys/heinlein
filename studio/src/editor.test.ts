@@ -30,6 +30,16 @@ describe('paste integrity', () => {
   });
 });
 describe('byte-preserving editor changes', () => {
+  it('restores a historical selection as one undoable change with exact newline bytes', () => {
+    const editor = createEditor(document.createElement('div'), 'Start\rremoved\nLater 🦊.\r\n', () => {}, () => {});
+    const before = editor.text();
+    editor.restorePassage(6, 13, '');
+    expect(editor.text()).toBe('Start\r\nLater 🦊.\r\n');
+    expect(editor.view.state.doc.toString()).toBe('Start\nLater 🦊.\n');
+    editor.undo(); expect(editor.text()).toBe(before);
+    editor.redo(); expect(editor.text()).toBe('Start\r\nLater 🦊.\r\n');
+    editor.destroy();
+  });
   it('retains unknown frontmatter, CRLF and mixed unchanged endings', () => {
     const raw = '---\r\nunknown: yes\r\n---\nHello\r\nWorld';
     expect(applyRawChanges(raw, [{from: 21, to: 26, insert: 'Goodbye'}])).toBe('---\r\nunknown: yes\r\n---\nGoodbye\r\nWorld');

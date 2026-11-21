@@ -53,6 +53,7 @@ def build(
     output: Path,
     lua_filter: Path | None = None,
     toc: bool = False,
+    reader: str = "markdown",
 ) -> Path:
     """Run pandoc to produce an EPUB.
 
@@ -62,7 +63,7 @@ def build(
     most ereaders use for their side-panel chapter list.
     """
     args = [
-        "-f", "markdown",
+        "-f", reader,
         "-t", "epub",
         "-o", str(output),
         "--css", str(css),

@@ -4,6 +4,34 @@ An additive native desktop editor with local autosave and explicit recovery deci
 folder, browse its files, and use a scene manifest to navigate the manuscript.
 The existing Python publisher and its CLI remain unchanged.
 
+## Illustrations
+
+In a project scene, choose **Document actions → Editing actions → Insert image…**.
+Choose a PNG or JPEG and review the filename, dimensions, scene and insertion point.
+Type the image description or mark it decorative. **Draft description with AI** sends a
+metadata-free, resized copy of the selected image to OpenAI using the connected
+account. Review its wording before inserting. Manual insertion works offline.
+
+**Insert image** copies the original into the project's `assets/images/` folder
+and inserts a standard relative Markdown image link at the cursor or after selected
+writing. Undo removes the insertion. Reading displays local illustrations, and
+Studio previews link changes before a cross-folder move. EPUB and print PDF
+exports include the images from each source scene. PNG and JPEG files may be up to
+16 MiB and 24 megapixels each. GitHub's text-sharing controls do not upload them.
+
+## Scene history
+
+Open a project scene, then choose **Document actions → Editing actions → Scene history…**.
+Compare an earlier version with the current scene (including unsaved writing) or with
+another saved version. Choose a changed passage to read both texts. **Restore this
+passage** restores only the displayed change. **Choose a smaller selection** lets you
+select exact words and a destination. Choose **Review selected restore…** to read the current and replacement text, or the insertion position and surrounding text. **Confirm replacement** or **Confirm insertion** applies the selection. **Back to selection** or Escape lets you revise it. Undo reverses a restore in one step.
+
+Studio starts collecting history when it saves changes to a project Markdown file.
+Versions stay in private local storage and follow the scene through renames and moves made in Studio. A new scene at the old filename starts its own history.
+Each file retains its 20 most recent previous versions plus a daily version for up
+to 30 earlier writing days. Standalone drafts use their existing recovery workflow.
+
 ## Markdown Reading
 
 Use **Reading** beside **Source** to read formatted Markdown in project documents
@@ -11,7 +39,7 @@ or standalone drafts. Reading includes your current unsaved text; returning to
 Source keeps your selection and undo history. Switching views does not save or
 change the manuscript. Headings, emphasis, lists, quotes, links and code are
 rendered with your writing appearance settings. Link destinations appear as text,
-embedded images are not loaded, and raw HTML stays literal. Frontmatter remains
+local PNG and JPEG illustrations render with their descriptions, and raw HTML stays literal. Frontmatter remains
 available in Source. Resolve any pending recovery in Source first.
 
 ## Preferences and daily progress
@@ -45,7 +73,7 @@ Native builds require Rust 1.89 or newer for OS-backed file locking.
 
 ## 1.8 release packaging
 
-Heinlein Studio is version **1.8.0**. The independent Python
+Heinlein Studio is version **1.9.0**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:
@@ -70,8 +98,11 @@ release app does not include that source-update launcher.
 Standalone apps check published GitHub releases shortly after launch and hourly
 while visible. **Update available…** or **Update needs attention…** appears without
 changing the manuscript layout or keyboard focus. **Heinlein Studio → Check for
-Updates…** also checks explicitly. Release downloads are installed manually after
-saving and quitting; unpublished source changes are not release updates. Managed
+Updates…** also checks explicitly. **Download and build release** explicitly downloads the published tag and builds a
+separate app using Python, Git, Node/npm, Rust and Apple build tools. The result
+is revealed in Finder; save and quit before copying it to Applications. Failed
+builds leave the running app untouched. Release downloads are installed manually
+after saving and quitting; unpublished source changes are not release updates. Managed
 source installations retain their separate source check and next-launch updater.
 
 The build is ARM64 for Apple Silicon, ad-hoc signed, and not notarized or signed
@@ -483,16 +514,17 @@ Choose **Heinlein Review** in a source scene or mapped assembled chapter. Choose
 editable sources versus read-only context, one to three reviewer instances and
 optional author notes, then **Preview reviewer batch**. **Run Heinlein Review**
 uses only your selected ChatGPT account/model, at most eight serial calls per
-explicit batch. Continue explicitly for remaining coverage; partial results stay
-available. Combined selected context is bounded to 1 MiB and 128 windows, with no
-silent truncation or automatic retry.
+explicit batch. **Review chapter** continues remaining batches automatically;
+manual batch reviews offer Continue. Partial results stay available. Combined
+selected context is bounded to 1 MiB and 128 windows, with no silent truncation.
 
 The consolidated versioned JSON contains exact prepared patches, comments,
 locations, immutable reviewer snapshots, coverage and decisions. **Approve this change…**
 applies an exact patch only after the existing native final confirmation. Choose
 conflicting alternatives explicitly; unrelated suggestions remain usable after
 approved byte shifts. **Reject this change** persists before dismissal, including across
-reopen/restart/regenerated duplicates. Saved review reload never runs providers.
+reopen/restart/regenerated duplicates. Opening a saved review is read-only;
+reopening its project also checks for unfinished review jobs as described below.
 See [the review contract](../docs/architecture/studio-heinlein-review.md) for
 limits, lineage, source safety and synthetic versus native/live evidence.
 
@@ -543,6 +575,26 @@ server failures up to three attempts with cancellation-aware backoff. Successful
 chunks are persisted once and not resent. Quota/auth/invalid-output failures do
 not automatically retry. After exhaustion, **Retry failed chunks** continues the
 same saved review, preserving completed results. Interrupted or cancelled chunks
-can resume explicitly after reopening. Any continuation requires unchanged captured
-source/context, so finish remaining batches before applying suggestions. Ambiguous transport failures and retries may incur additional
-plan usage. Nothing is automatically applied to manuscript files.
+can resume explicitly after reopening. Recoverable invalid responses also offer
+manual retry, without an automatic invalid-output retry loop. A changed capture
+requires **Start a new review**, which reads current text and requires a fresh
+preview/send. Opening results refreshes saved decisions without restoring highlights
+invalidated by typing; use **Refresh review** explicitly to recheck those marks.
+
+When Studio reopens the last project, or you open another project, it attempts to
+finish that project's saved unfinished reviews in the background. It continues the
+same review IDs with their original reviewer definitions, account and model,
+keeping completed chunks, feedback and decisions. Queued or interrupted calls and
+retryable temporary failures receive one recovery attempt per app session; healthy
+remaining batches continue to completion. Cancelled reviews and invalid output
+wait for an explicit action. Auth, quota, identity, and invalid saved-context errors
+remain blocked. A failed batch or one making no progress stops
+recovery rather than retrying indefinitely. A notification reports completion or
+reviews needing attention, without opening Chats, changing focus or reflowing text.
+
+Recovery does not switch accounts/models or sign in. It pauses when the connection
+is unavailable, writing/recovery needs attention, or the captured source/context or
+scene mapping changed. Any continuation requires unchanged captured source/context,
+so finish remaining batches before applying suggestions. Ambiguous transport
+failures and retries may incur additional plan usage. Nothing is automatically
+applied to manuscript files.

@@ -323,3 +323,26 @@ fn project_library_preserves_selection_identity_label_and_resume_across_native_r
         b"Changed externally"
     );
 }
+
+#[test]
+fn new_project_selection_opens_and_reopens_the_empty_first_scene() {
+    let f = Fixture::new();
+    let library = projects::Store::open(&f.root.join("projects-v1")).unwrap();
+    let recovery = RecoveryStore::open(f.root.join("draft-recovery-v1")).unwrap();
+    let root = projects::create_local_project(&f.root, "Ready project", &recovery, &library).unwrap();
+    let state = f.state();
+    let session = f.select(&state, &root).unwrap();
+    assert_eq!(session.name, "Ready project");
+    let resume = session.resume.unwrap();
+    assert_eq!(resume.path, "ms/first-scene.md");
+    let selected = state.selected.lock().unwrap();
+    let repo = &selected.as_ref().unwrap().repo;
+    assert_eq!(repo.read(&resume.path).unwrap().text, "");
+    assert!(projects::validate_resume(repo, &resume).is_ok());
+    drop(selected);
+    drop(state);
+    let restarted = f.state();
+    let reopened = f.select(&restarted, &root).unwrap();
+    assert_eq!(reopened.project_id, session.project_id);
+    assert_eq!(reopened.resume.unwrap().scene_id, resume.scene_id);
+}

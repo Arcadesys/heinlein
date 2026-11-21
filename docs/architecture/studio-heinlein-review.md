@@ -64,9 +64,10 @@ different window. The preview discloses this limited global context.
 
 Coverage records queued, running, completed, failed, cancelled and not-run calls
 individually. Each running intent and settled result is persisted before the next
-call. Valid siblings survive schema failures/cancellation. Interrupted running
-calls are not automatically repeated; preserve the record and explicitly start
-a fresh review if needed. Finding-cap failure retains the whole valid prior
+call. Valid siblings survive schema failures/cancellation. On project load,
+interrupted running calls resume in the same saved review after native capture
+and connection validation. Completed calls are not repeated. Explicitly cancelled
+reviews remain stopped until the author continues them. Finding-cap failure retains the whole valid prior
 result, never a silently truncated call. Incomplete coverage is not a complete
 review, and zero findings is valid. An active batch must settle before approval.
 
@@ -234,7 +235,13 @@ existing diff links. All assessments survive saved-review reopening. If an
 individual pass fails or an assessment is missing, consolidation is marked
 incomplete without sending partial reports. A consolidation failure, cancellation
 or input exceeding the 200,000-byte request cap retains individual results and
-is shown in call details. There are no automatic retries or silent truncation.
+is shown in call details. Transient failures have bounded retries; invalid or
+oversized responses are never silently truncated.
+
+Advisory prose limits count Unicode characters consistently with JSON Schema in
+native and renderer validation. Exact patch text and whole request/response limits
+remain UTF-8 byte limits. Assessment format/length failures have specific call
+details; neither repair nor retry modifies existing review decisions.
 
 Advisory prose limits count Unicode characters consistently with JSON Schema in
 native and renderer validation. Exact patch text and whole request/response limits
@@ -257,8 +264,21 @@ limit. Oversize plans fail without dropping reviewers.
 The run stops on cancellation, a failed call, an invalid response, or continuation
 without progress or after bounded transient retries are exhausted. Explicit
 **Retry failed chunks** continues the saved review while preserving completed
-results. **Resume interrupted chunks** explicitly resumes interrupted/cancelled calls
-after reopening; the native single-review gate prevents replacing an active batch.
+results. A separate manual-output allowlist admits recoverable format/assessment
+failures without broadening automatic retry. Fresh reviews recapture saved paths
+and target/context roles, invalidate the prior preview, and require explicit send.
+Quiet result refresh updates durable decisions but preserves typing-invalidated
+highlights until an explicit refresh. Project load also attempts unfinished saved reviews once per renderer
+lifetime, including queued/running calls and transient failures, then continues
+healthy batches until complete. Cancelled/permanently failed jobs remain stopped.
+Recovery preserves captured reviewer definitions, account/model, completed results
+and decisions; it does not create replacement reviews. The restored project's editor
+finishes loading first, and recovery remains hidden without focus or geometry changes.
+A generation guard cancels old-project work, late responses cannot replace newer
+state, and a no-progress/failure stop prevents unbounded usage. Manual saved-review
+opens and decisions cannot race the startup coordinator. **Resume interrupted
+chunks** remains available for explicit continuation. Native single-review admission
+precedes active-cache replacement, including when viewing other saved reviews.
 All continuation requires unchanged captured source/context; finish batches before
 applying suggestions, or start a fresh review after changing the capture. Completed individual
 assessments remain persisted in the native review record. Success opens and

@@ -228,18 +228,65 @@
   .review-agents-dialog .review-agent-actions button { width: 100%; }
 }
 
-/* A top-layer diff over the passage; opening it never resizes the manuscript. */
-.review-suggestion-dialog { box-sizing: border-box; width: min(44rem, calc(100vw - 1rem)); max-width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); overflow: auto; padding: clamp(.75rem, 3vw, 1.5rem); border: 2px solid var(--fg); border-radius: 12px; color: var(--fg); background: var(--bg); font-size: max(18px, 1rem); line-height: 1.6; box-shadow: var(--shadow); }
-.review-suggestion-dialog::backdrop { background: #0009; }
+/* A top-layer card floating beside its highlight; opening it never resizes or reflows the manuscript. */
+.review-suggestion-dialog {
+  --pop-border: color-mix(in srgb, var(--fg) 16%, transparent);
+  position: fixed; inset: auto; margin: 0; box-sizing: border-box;
+  width: min(30rem, calc(100vw - 2rem)); max-width: calc(100vw - 2rem); max-height: calc(100dvh - 2rem);
+  overflow: visible; padding: 0; border: 1px solid var(--pop-border); border-radius: 14px;
+  color: var(--fg); background: var(--bg); font-size: max(17px, .95rem); line-height: 1.55;
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 10%, transparent), 0 10px 28px -6px color-mix(in srgb, #000 24%, transparent), 0 28px 60px -18px color-mix(in srgb, #000 28%, transparent);
+}
+.review-suggestion-dialog[open] { display: flex; flex-direction: column; }
+/* The text stays readable behind the card: only a faint veil, never a blackout. */
+.review-suggestion-dialog::backdrop { background: color-mix(in srgb, #000 6%, transparent); }
 .review-suggestion-dialog [hidden] { display: none !important; }
-.review-suggestion-dialog h2 { margin-top: 0; font-size: 1.5em; }
-.review-suggestion-dialog :is(button, summary) { min-height: 48px; min-width: 48px; font: inherit; white-space: normal; }
 .review-suggestion-dialog :is(p, h4, pre, button, summary, code) { overflow-wrap: anywhere; }
 .review-suggestion-dialog pre { white-space: pre-wrap; }
 .review-suggestion-dialog :focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
-.review-suggestion-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-block: .75rem; }
-.review-suggestion-position { flex: 1 1 8rem; margin: 0; text-align: center; font-weight: 700; }
-.review-suggestion-navigation button { flex: 1 1 6rem; }
+.review-suggestion-dialog :is(button, summary) { min-height: 48px; font: inherit; white-space: normal; }
+
+.review-suggestion-surface { flex: 1 1 auto; min-height: 0; max-height: inherit; overflow: auto; overscroll-behavior: contain; border-radius: inherit; }
+.review-suggestion-dialog[data-pinned] .review-suggestion-surface { scroll-padding-block: calc(48px + 1.25rem) calc(48px + 1.5rem); }
+.review-suggestion-dialog[data-pinned] .review-suggestion-head { position: sticky; top: 0; z-index: 1; }
+.review-suggestion-dialog[data-pinned] .review-suggestion-navigation { position: sticky; bottom: 0; z-index: 1; }
+.review-suggestion-head { display: flex; align-items: center; gap: .5rem; padding: .55rem .55rem .35rem 1.1rem; border-bottom: 1px solid var(--pop-border); border-radius: 14px 14px 0 0; background: var(--surface); }
+.review-suggestion-head h2 { flex: 1; margin: 0; font: 600 .8125rem/1.3 var(--font-ui, var(--ui-fallback)); letter-spacing: .06em; text-transform: uppercase; color: var(--fg-muted); }
+.review-suggestion-close { display: inline-grid; place-items: center; width: 48px; min-width: 48px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--fg-muted); cursor: pointer; }
+.review-suggestion-close:hover { background: var(--surface-hover); color: var(--fg); }
+.review-suggestion-body { min-width: 0; padding: .9rem 1.1rem .4rem; }
+.review-suggestion-body > .review-card { margin: 0; padding: 0; border: 0; background: none; box-shadow: none; }
+.review-suggestion-message { margin: 0 1.1rem .5rem; }
+.review-suggestion-navigation { display: flex; align-items: center; gap: .25rem; margin: 0; padding: .4rem .55rem; border-top: 1px solid var(--pop-border); border-radius: 0 0 14px 14px; background: var(--surface); }
+.review-suggestion-position { flex: 1; margin: 0; text-align: center; font: 600 .8125rem/1.3 var(--font-ui, var(--ui-fallback)); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.review-suggestion-navigation button { flex: 0 0 auto; padding: 0 .9rem; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--fg); font: 500 .875rem var(--font-ui, var(--ui-fallback)); cursor: pointer; }
+.review-suggestion-navigation button:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--pop-border); }
+.review-suggestion-navigation button:disabled { opacity: .4; cursor: default; }
+
+/* Caret pointing at the highlighted passage. */
+.review-suggestion-dialog:is([data-placement="below"], [data-placement="above"])::before {
+  content: ""; position: absolute; left: calc(var(--arrow-x, 50%) - 7px); width: 14px; height: 14px;
+  background: var(--surface); border: 1px solid var(--pop-border); transform: rotate(45deg); pointer-events: none;
+}
+.review-suggestion-dialog[data-placement="below"]::before { top: -8px; border-right: 0; border-bottom: 0; border-top-left-radius: 3px; }
+.review-suggestion-dialog[data-placement="above"]::before { bottom: -8px; border-left: 0; border-top: 0; border-bottom-right-radius: 3px; }
+
+/* Narrow windows, or a highlight that cannot be pointed at: a sheet from the bottom edge. */
+.review-suggestion-dialog[data-placement="sheet"] { left: 0; right: 0; bottom: 0; top: auto; width: 100%; max-width: 100%; max-height: min(78dvh, 40rem); border-radius: 18px 18px 0 0; border-bottom: 0; }
+.review-suggestion-dialog[data-placement="sheet"] .review-suggestion-head { border-radius: 18px 18px 0 0; padding-top: .9rem; position: relative; }
+.review-suggestion-dialog[data-placement="sheet"] .review-suggestion-head::before { content: ""; position: absolute; top: .4rem; left: 50%; width: 2.5rem; height: 4px; margin-left: -1.25rem; border-radius: 999px; background: var(--border-strong, var(--pop-border)); }
+.review-suggestion-dialog[data-placement="sheet"] .review-suggestion-navigation { border-radius: 0; padding-bottom: max(.4rem, env(safe-area-inset-bottom)); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .review-suggestion-dialog[open] { animation: review-pop-in .16s cubic-bezier(.2, .8, .3, 1) both; }
+  .review-suggestion-dialog[open][data-placement="above"] { animation-name: review-pop-in-above; }
+  .review-suggestion-dialog[open][data-placement="sheet"] { animation: review-sheet-in .22s cubic-bezier(.2, .8, .3, 1) both; }
+  .review-suggestion-dialog[open]::backdrop { animation: review-veil-in .16s ease-out both; }
+}
+@keyframes review-pop-in { from { opacity: 0; transform: translateY(-6px) scale(.985); } }
+@keyframes review-pop-in-above { from { opacity: 0; transform: translateY(6px) scale(.985); } }
+@keyframes review-sheet-in { from { transform: translateY(100%); } }
+@keyframes review-veil-in { from { opacity: 0; } }
 
 /* Consensus summary: text-only and wrapping. */
 .heinlein-review-panel .review-consensus { display: grid; gap: .35rem; min-width: 0; padding: .75rem .85rem; border: 1px solid var(--border); border-radius: 10px; }
@@ -255,3 +302,7 @@
 .stage-strip li[aria-current="step"] { color: var(--fg); font-weight: 700; border-bottom-color: var(--fg); }
 .stage-strip li[aria-current="step"] .stage-mark { border-width: 2px; }
 .revisions-dialog .stage-strip { padding-inline: 0; }
+
+.review-recovery-actions { display: flex; flex-wrap: wrap; gap: .75rem; padding: 1rem; border: 2px solid var(--warn); border-radius: .5rem; margin-block: .75rem; font-size: 1rem; }
+.review-recovery-actions > p, .review-recovery-actions > div { flex-basis: 100%; margin: 0; }
+.review-recovery-actions button { white-space: normal; }

@@ -7,7 +7,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
-from heinlein import frontmatter, pandoc, twine
+from heinlein import comments, frontmatter, pandoc, twine
 from heinlein.config import HeinleinConfig
 from heinlein.outputs import docx as out_docx
 from heinlein.outputs import epub as out_epub
@@ -151,6 +151,8 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
     else:
         front, body_md = frontmatter.parse_file(cfg.manuscript)
         body_md = frontmatter.strip_title_block(body_md)
+    # Private author notes never reach any output (EPUB, HTML, PDF, DOCX).
+    body_md = comments.strip_comments(body_md)
 
     cover = cfg.cover
     if cover is None and front.get("cover"):

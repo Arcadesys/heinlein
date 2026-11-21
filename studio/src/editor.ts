@@ -1,10 +1,11 @@
 import { Annotation, Compartment, EditorState, StateEffect, StateField, Transaction, RangeSet } from '@codemirror/state';
 import { EditorView, keymap, drawSelection, gutter, GutterMarker, Decoration, type DecorationSet } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap, invertedEffects, undo, redo } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, isolateHistory, invertedEffects, undo, redo } from '@codemirror/commands';
 import { search, searchKeymap, openSearchPanel } from '@codemirror/search';
 import { markdown } from '@codemirror/lang-markdown';
 import type { TypewriterKey } from './writingFeedback';
 import { focusMode } from './focusMode';
+import { authorCommentMarks } from './authorComments';
 
 // CodeMirror uses LF positions internally. Preserve every untouched source byte,
 // including mixed newline styles, instead of serializing a parsed manuscript.
@@ -167,7 +168,7 @@ export function createEditor(parent: HTMLElement, source: string, changed: (raw:
           }
         }
       }),
-      focusMode,
+      focusMode, authorCommentMarks,
       // Colors and type come from Appearance tokens on :root, so themes restyle the editor live.
       EditorView.theme({
         '&': {color: 'var(--fg)', backgroundColor: 'transparent', minHeight: '24rem'},
@@ -187,6 +188,22 @@ export function createEditor(parent: HTMLElement, source: string, changed: (raw:
       view.dispatch({effects: passageEffect.of(converted)});
     },
     selectPassage: (from: number, to: number) => view.dispatch({selection: {anchor: normalize(raw.slice(0, from)).length, head: normalize(raw.slice(0, to)).length}, scrollIntoView: true}),
+    restorePassage: (from: number, to: number, passage: string) => {
+      // Include adjacent CR/LF characters in the edit when a splice can form
+      // a new CRLF pair. CodeMirror and the exact byte buffer must agree.
+      const left = raw[from - 1] === '\r' ? from - 1 : from;
+      const right = raw[to] === '\n' ? to + 1 : to;
+      const prefix = raw.slice(left, from), suffix = raw.slice(to, right);
+      const start = normalize(raw.slice(0, left)).length;
+      const insert = normalize(prefix + passage + suffix);
+      const next = raw.slice(0, from) + passage + raw.slice(to);
+      view.dispatch({
+        changes: {from: start, to: normalize(raw.slice(0, right)).length, insert},
+        selection: {anchor: normalize(next.slice(0, from)).length, head: normalize(next.slice(0, from + passage.length)).length},
+        annotations: [replacement.of({text: next, origin: 'history'}), isolateHistory.of('full')],
+        scrollIntoView: true,
+      });
+    },
     replaceText: (text: string, origin: EditorChangeOrigin = 'programmatic') => {
       view.dispatch({changes: {from: 0, to: view.state.doc.length, insert: text.replace(/\r\n|\r/g, '\n')}, annotations: replacement.of({text, origin})});
     },

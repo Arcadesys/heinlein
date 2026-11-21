@@ -1,3 +1,7 @@
+import {insertIllustration} from './illustrations';
+import {openSceneHistory} from './sceneHistory';
+import {createWritingChrome} from './writingChrome';
+import {createFullScreenControl} from './fullScreenControl';
 import {bindPreferenceStatus,flushPreferences} from './preferences';
 import {createConversationRail} from './conversationRail';
 import {createChapterWriter,chapterEditExtension} from './chapterEditing';
@@ -27,7 +31,7 @@ import { createNavigationDrawer } from './navigationDrawer';
 import { assembleChapter, chapterSelection, frontmatterEnd, type AssembledChapter } from './assembledChapter';
 import { createManuscriptSearch, editorOffset, type SearchScope, type SearchMatch } from './manuscriptSearch';
 import {StateEffect} from '@codemirror/state';
-import {EditorView} from '@codemirror/view';
+import {EditorView, keymap} from '@codemirror/view';
 import { createProposalPanel } from './proposalPanel';
 import {createMcpAccessPanel} from './mcpAccess';
 import { createWritingPanel, type WritingSummary } from './writingPanel';
@@ -35,6 +39,8 @@ import { createEditor, rawOffset } from './editor';
 import { captureSelectionQuestion, createSelectionQuestionPanel, selectionQuestionAvailability, selectionQuestionProblem, type SelectionQuestionState } from './selectionQuestion';
 import { createQuestionPanel, questionBytes, QUESTION_LIMITS } from './questionPanel';
 import { createSelectionAskAction } from './selectionAsk';
+import { openNoteDialog } from './noteDialog';
+import { insertNote, noteTarget } from './authorComments';
 import { createDraftingPanel, REPOSITORY_DRAG_TYPE } from './draftingPanel';
 import { openLibraryReviewPicker } from './libraryReviewPicker';
 import { writingEntries } from './writingEntries';
@@ -457,6 +463,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   proposalsEntry.hidden = true;
 
   // Floating status pill: where you are, what you've written, and the way into everything else.
+  let writingChrome:ReturnType<typeof createWritingChrome>|undefined;
+  let fullScreenControl:ReturnType<typeof createFullScreenControl>|undefined;
   let appCommands:ReturnType<typeof actionMenu>|undefined;
   let headerMedia:MediaQueryList|undefined;
   const pill = el('header', '', 'status-pill chrome');
@@ -560,6 +568,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     current:()=>standalone?.active?null:repository,
     switchProject,
     openLocal:async()=>{const before=repository?.id;await dirtySync;if(writeInFlight)await writeInFlight;await stageQueue;if(dirty&&!await saveCurrent())return false;await selectRepository(()=>core.pickRepository());return !!repository&&repository.id!==before&&!repositoryDetached;},
+    createLocal:core.createLocalProject?async name=>{
+      const before=repository?.id;
+      await dirtySync;if(writeInFlight)await writeInFlight;await stageQueue;
+      if(dirty&&!await saveCurrent())return false;
+      let creationError:unknown;
+      await selectRepository(async()=>{try{return await core.createLocalProject!(name);}catch(error){creationError=error;throw error;}});
+      if(creationError)throw creationError;
+      return !!repository&&repository.id!==before&&!repositoryDetached;
+    }:undefined,
     openGitHub:()=>{void github.open(true);},
     newDraft:async()=>{await standalone?.newDraft();},drafts:async()=>{await standalone?.list();},
     metadata:p=>{if(repository?.projectId===p.id&&p.revision>=(repository.projectRevision??0)){repository.name=p.name;repository.projectRevision=p.revision;renderOrigin();if(chromeReady)renderPill();}},
@@ -675,6 +692,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     const items: HTMLElement[] = [];
     if(repository&&(core.exportManuscript||core.saveMarkdownExport)&&drafting.state?.revision)items.push(button('Export manuscript…',()=>{void markdownExport.open(drafting.state!.project,{kind:'project'});}));
     items.push(projectLibrary.supported ? button('Projects…', () => { void projectLibrary.open(); }) : button('Open project…', () => { void selectRepository(() => core.pickRepository()); }));
+    if (core.createLocalProject) items.push(button('New project…',()=>{void projectLibrary.create();}));
     if (repository?.projectId) items.push(button('Project settings', () => { void projectLibrary.settings(repository!.projectId!); }));
     if (repository) items.push(searchManuscript, button('Source files', () => showNavView('files', true)));
     if(projectEntries.childElementCount)items.push(el('hr'),el('p','Switch project','menu-label'),projectEntries);
@@ -793,14 +811,15 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     scheduleProjectPosition();
   }
   function mountDocumentView(toolbar:HTMLElement,host:HTMLElement,target:EditorView,content:()=>Omit<ReaderContent,'marks'>,modeChanged?:(mode:'source'|'reading')=>void){
-    const reader=createMarkdownReader({label:'Reading view',content:()=>({...content(),marks:reviewMarksIn(target.state)}),open:id=>{reviewPanel?.openSuggestion(id);},showSource:()=>{setDocumentView('source');focusWriterView();}});
+    const imageSession=repository?.id;
+    const reader=createMarkdownReader({label:'Reading view',image: core.images && imageSession && !standalone?.active ? (path,url)=>core.images!.read(imageSession,path,url) : undefined,content:()=>({...content(),marks:reviewMarksIn(target.state)}),open:id=>{reviewPanel?.openSuggestion(id);},showSource:()=>{setDocumentView('source');focusWriterView();}});
     host.after(reader.element);
     const group=el('div','','md-view-toggle');group.setAttribute('role','group');group.setAttribute('aria-label','Document view');
     const source=button('Source',()=>{setDocumentView('source');focusWriterView();}),reading=button('Reading',()=>setDocumentView('reading'));
     source.setAttribute('aria-pressed','true');reading.setAttribute('aria-pressed','false');
     group.append(source,reading);toolbar.prepend(group);
-    const secondary=[...toolbar.children].filter(node=>node!==group && node!==questionButton && !node.classList.contains('back-to-sheets') && !node.classList.contains('review-chapter-action')) as HTMLElement[];const metadata=host.closest('.page')?.querySelector<HTMLElement>('.metadata');if(metadata)secondary.push(metadata);const badge=host.closest('.page')?.querySelector<HTMLElement>('.page-meta .badge');if(badge)secondary.push(badge);
-    editorCommands?.destroy();const commands=actionMenu('Editor actions',secondary,root);editorCommands=commands;const role=host.closest('.page')?.querySelector<HTMLElement>('.document-role');if(role){commands.button.replaceChildren(role,document.createTextNode(' actions'));commands.button.setAttribute('aria-description','Editor actions for this document');}toolbar.append(commands.button,commands.storage);documentCommandBar.replaceChildren(toolbar);
+    const secondary=[...toolbar.children].filter(node=>node!==group && node!==questionButton && !node.classList.contains('review-chapter-action')) as HTMLElement[];const metadata=host.closest('.page')?.querySelector<HTMLElement>('.metadata');if(metadata)secondary.push(metadata);const badge=host.closest('.page')?.querySelector<HTMLElement>('.page-meta .badge');if(badge)secondary.push(badge);
+    editorCommands?.destroy();const commands=actionMenu('Editor actions',secondary,root);editorCommands=commands;const role=host.closest('.page')?.querySelector<HTMLElement>('.document-role');if(role){commands.button.replaceChildren(role,document.createTextNode(' actions'));commands.button.setAttribute('aria-description','Editor actions for this document');}if(documentTabs.items().length){commands.button.dataset.tabFocus='editor-actions';documentTabs.setEditorActions(commands.button);toolbar.append(commands.storage);}else toolbar.append(commands.button,commands.storage);documentCommandBar.replaceChildren(toolbar);
     documentReader=reader;documentView={host,toolbar,source,reading,editor:target,modeChanged};
     target.dispatch({effects:StateEffect.appendConfig.of(EditorView.updateListener.of(update=>{if(documentReader===reader&&readingActive()&&(update.docChanged||reviewMarksIn(update.state)!==reviewMarksIn(update.startState)))reader.update();}))});
     const key=readingKey();if(key&&readingDocuments.has(key)&&!recoveryPending)setDocumentView('reading');
@@ -863,8 +882,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   layout.append(navigation.element, preview);
   chromeReady = true;
   resetPreview();
+  if(core.fullscreen)fullScreenControl=createFullScreenControl(core.fullscreen,{entered:()=>writingChrome?.hide(),exited:()=>writingChrome?.show(),focusWriting:focusWriterView,report:error=>{status.textContent=`Could not change full screen: ${String(error)}`;status.classList.add('error');}});
   appCommands=actionMenu('More actions',[...corner.children,...pill.children].filter(node=>node!==pillProject&&node!==pillSave&&node!==goalButton&&node!==proposalsEntry) as HTMLElement[],root,()=>repository?.name??'Heinlein Studio',refreshHeaderLayout);
-  pill.replaceChildren(pillProject,proposalsEntry,appCommands.button,goalButton,appCommands.storage);pill.prepend(navigation.element.querySelector('.navigation-toggle')!);corner.hidden=true;
+  pill.replaceChildren(pillProject,...(fullScreenControl?[fullScreenControl.button]:[]),proposalsEntry,appCommands.button,goalButton,appCommands.storage);pill.prepend(navigation.element.querySelector('.navigation-toggle')!);corner.hidden=true;
   headerMedia=window.matchMedia?.('(max-width:760px)');headerMedia?.addEventListener?.('change',refreshHeaderLayout);
   function refreshHeaderLayout(){
     if(!appCommands)return;
@@ -876,6 +896,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     appCommands.button.setAttribute('aria-label','More actions');
   }
   root.replaceChildren(glow, ...(projectLibrary.supported ? [pill, layout] : [layout, pill]), noticeSlot, goalCard, corner, firstStory.element, github.element, updates.element, updates.notice, projectLibrary.element,mcpAccess.element,chatRail.element);
+  writingChrome=createWritingChrome(root,{focusWriting:()=>{if(standalone?.active){(root.querySelector<HTMLElement>('.standalone-page .markdown-reader:not([hidden])')??root.querySelector<HTMLElement>('.standalone-page .cm-content'))?.focus();}else focusWriterView();},changed:hidden=>{navigation.focus(hidden);chatRail.focus(hidden);},canHide:()=>!root.inert&&!recoveryPending&&!repositoryDetached});
+  writingChrome.setGoalVisible(!!loadAppearance().focusGoal);pill.insertBefore(writingChrome.hideButton,appCommands.button);root.append(writingChrome.element);
   const drafting = createDraftingPanel(core, {
     root, repository: () => standalone?.active?null:repository, run: runStructural, runOrganization: runLibraryOrganization, verify: verifyStructuralBuffer, selectedPath:()=>opened?.path??null,currentGroup:()=>{const match=currentChapter?/^__chapter__\/(.+)\.md$/.exec(currentChapter.chapter.source):null;return match?decodeURIComponent(match[1]):null;},
     show: () => { renderPill(); draftingEntry.hidden = Boolean(drafting.state?.revision); outline.replaceChildren(drafting.element); if (drafting.state) void writing.setManuscript(core, repository!, drafting.state); },
@@ -1061,6 +1083,24 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         snapshots: [{path: opened.path, source: editor.text(), sourceHash: opened.contentHash}]};
     },
     chapterLabel: () => chapterReviewSources()?.label ?? null,
+    recapture: async previous => {
+      const session = repository, epoch = documentEpoch;
+      const unavailable = () => disposed || !session || repository !== session || previous.repositoryId !== session.id || documentEpoch !== epoch || repositoryDetached || selecting || structuralBusy || proposalBusy || recoveryPending || recovery || dirty || saving || staging || writeInFlight || guardPending || writePaused;
+      if (unavailable()) throw new Error('Save your writing and finish the current local operation before capturing a new review. Nothing was sent.');
+      if (!previous.snapshots.length || previous.snapshots.length > 128 || new Set(previous.snapshots.map(s => s.path)).size !== previous.snapshots.length)
+        throw new Error('The saved scope has no usable source mapping. Choose the scope again.');
+      const snapshots = [];
+      let total = 0;
+      for (const snapshot of previous.snapshots) {
+        const document = await core.readDocument(session!.id, snapshot.path);
+        if (unavailable()) throw new Error('The project or writing changed during capture. Capture the review again. Nothing was sent.');
+        if (document.path !== snapshot.path || document.generatedCompatibility) throw new Error('A review source is unavailable or is generated output. Choose the scope again.');
+        total += questionBytes(document.text);
+        if (total > 1024 * 1024) throw new Error('This scope exceeds 1 MiB of source text. Nothing was truncated or sent.');
+        snapshots.push({...snapshot, source: document.text, sourceHash: document.contentHash});
+      }
+      return {...previous, snapshots, selectedRange: undefined};
+    },
     captureChapter: async () => {
       const session = repository, epoch = documentEpoch, active = opened, source = editor?.text();
       const chapter = chapterReviewSources();
@@ -1080,6 +1120,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         snapshots.push({path, source: text, sourceHash: document.contentHash});
       }
       return {repositoryId: session.id, scope: 'chapter', label: chapter.label, snapshots};
+    },
+    recoveryUnavailable: () => {
+      if (disposed || !repository || repositoryDetached || selecting || structuralBusy || proposalBusy || drafting.state?.recoveryRequired) return 'Finish the current project operation before resuming saved reviews.';
+      if (dirty || saving || staging || writeInFlight || recovery || recoveryPending || guardPending || writePaused) return 'Save your writing and resolve recovery before resuming saved reviews.';
+      return null;
     },
     unavailable: reviewing => {
       if (!repository || !opened || repositoryDetached || disposed) return 'Open the reviewed repository before accepting an edit.';
@@ -1107,6 +1152,21 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       return true;
     },
     marksChanged: (input, report) => reviewMarkPublisher.publish(input, report),
+    // Geometry only: reads where a highlight is drawn, never moves the selection or the text.
+    anchorFor: id => {
+      const view = (chapterEditor ?? editor)?.view; const mark = view && reviewMarksIn(view.state).find(mark => mark.id === id);
+      if (!view || !mark) return null;
+      const start = view.coordsAtPos(mark.from, 1), end = view.coordsAtPos(mark.to, -1) ?? start;
+      if (!start || !end) return null;
+      // A highlight wrapping lines points at its first line, where the reader's eye starts.
+      const sameLine = Math.abs(end.top - start.top) < 2;
+      return {left: start.left, right: sameLine ? Math.max(end.right, start.left + 2) : start.left + 2, top: start.top, bottom: sameLine ? end.bottom : start.bottom};
+    },
+    revealSuggestion: id => {
+      const view = (chapterEditor ?? editor)?.view; const mark = view && reviewMarksIn(view.state).find(mark => mark.id === id);
+      if (view && mark) view.dispatch({effects: EditorView.scrollIntoView(mark.from, {y: 'center'})});
+    },
+    suggestionScroller: () => (chapterEditor ?? editor)?.view.scrollDOM ?? null,
     focusEditor: () => focusWriterView(),
   });
   libraryReviewEntry.hidden=!reviewPanel.librarySupported;reviewPanel.adoptLibraryEntry(libraryReviewEntry);
@@ -1149,6 +1209,24 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (dirty || saving || staging || writeInFlight || recovery || recoveryPending || guardPending || writePaused) return 'Save your scene and resolve local recovery before requesting or reviewing a revision. Nothing is saved automatically by Questions.';
     if (selecting || ((structuralBusy || proposalBusy) && !reviewing)) return 'Finish the current local operation before requesting a revision.';
     return null;
+  }
+  /** Insert an author note after the selection (or at the cursor) once the author writes it. */
+  function addNote() {
+    const writer = editor; if (!writer || document.querySelector('dialog.note-dialog[open]')) return;
+    const view = writer.view;
+    if (view.state.readOnly) { status.textContent = 'This document is read-only. Notes can be added once it is editable.'; return; }
+    showSourceView();
+    const target = noteTarget(view);
+    openNoteDialog(root, {
+      quote: target.doc.sliceString(target.from, target.to),
+      add: note => {
+        if (disposed || editor !== writer) return 'This document is no longer open. Cancel and try again.';
+        const refused = insertNote(view, target, note); if (refused) return refused;
+        status.textContent = 'Note added. Heinlein reads it when you ask for edits; exports leave it out.';
+        return null;
+      },
+      closed: () => { if (editor === writer) view.focus(); },
+    });
   }
   function draftingSelectionState(): SelectionQuestionState | null {
     const current = selectionQuestionState();
@@ -1425,7 +1503,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   applyChoices(fontChoices);
   let installedFonts: string[] | null = null;
   const lookControls: (() => void)[] = [];
-  function setLook(patch: Partial<Appearance>) { if ((patch.theme || patch.accent) && !themeBuilder.usePreset()) {showCategory('vibecode'); themeBuilder.focusStatus(); return;} look = {...look, ...patch}; saveAppearance(look); applyAppearance(look); themeBuilder.refresh(); lookControls.forEach(sync => sync()); }
+  function setLook(patch: Partial<Appearance>) { if ((patch.theme || patch.accent) && !themeBuilder.usePreset()) {showCategory('vibecode'); themeBuilder.focusStatus(); return;} look = {...look, ...patch}; saveAppearance(look); applyAppearance(look); writingChrome?.setGoalVisible(!!look.focusGoal);themeBuilder.refresh(); lookControls.forEach(sync => sync()); }
   function pressed(node: HTMLElement, on: boolean) { node.setAttribute('aria-pressed', String(on)); }
   const dialog = el('dialog', '', 'appearance-dialog settings-window');
   dialog.setAttribute('aria-labelledby', 'appearance-title');
@@ -1562,11 +1640,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   // Editor: line width and the two writing modes.
   sections.get('editor')!.append(settingRow('Line width', segmented('Line width', WIDTHS, () => look.width, width => setLook({width}))));
   const modes = group('editor', 'While writing');
-  for (const [key, label] of [['fade', 'Fade the status pill while typing'], ['focus', 'Dim all but the current paragraph']] as const) {
+  for (const [key, label] of [['fade', 'Fade the status pill while typing'], ['focus', 'Dim all but the current paragraph'],['focusGoal','Show word goal while controls are hidden']] as const) {
     const row = el('div', '', 'toggle-row'); const toggle = el('button', '', 'switch'); toggle.type = 'button';
     toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-label', label);
     toggle.addEventListener('click', () => setLook({[key]: !look[key]}));
-    lookControls.push(() => toggle.setAttribute('aria-checked', String(look[key])));
+    lookControls.push(() => toggle.setAttribute('aria-checked', String(!!look[key])));
     row.append(el('span', label), toggle); modes.append(row);
   }
   group('editor', 'Typewriter sounds').append(writing.soundSettings());
@@ -1712,10 +1790,13 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       })));
     }
     const commands: (PaletteItem | false)[] = [
+      Boolean(writingChrome) && {key:'hide-controls',label:writingChrome?.hidden?'Show writing controls':'Hide writing controls',right:formatKeys('⌘⇧H'),run:()=>writingChrome?.toggle()},
+      Boolean(fullScreenControl) && {key:'fullscreen',label:fullScreenControl?.active?'Exit full screen':'Full screen focus mode',run:()=>{void fullScreenControl?.toggle();}},
       Boolean(newDraftButton) && {key: 'new-draft', label: 'New Markdown draft', right: !repository || standalone?.active ? formatKeys('⌘N') : undefined, run: () => newDraftButton?.click()},
       Boolean(repository&&!standalone?.active&&drafting.state?.revision&&(core.exportManuscript||core.saveMarkdownExport))&&{key:'export-manuscript',label:'Export manuscript…',sub:'PDF, EPUB, Markdown, HTML or DOCX',run:()=>{void markdownExport.open(drafting.state!.project,{kind:'project'});}},
       Boolean(searchScope()) && {key: 'find-manuscript', label: 'Find in manuscript', sub: 'Search scene text locally, including the open buffer', right: formatKeys('⌘⇧F'), run: openManuscriptSearch},
       Boolean(editor) && {key: 'ask', label: 'Ask Heinlein about selection', sub: 'Opens Questions with the highlighted passage', right: formatKeys('⌘J'), run: () => askShortcut()},
+      Boolean(editor) && {key: 'add-note', label: 'Add note…', sub: 'A note for Heinlein about the highlighted passage, left out of exports', right: formatKeys('⌘⌥M'), run: () => addNote()},
       Boolean(editor) && {key: 'split', label: 'Split scene at cursor', sub: 'Previews before anything moves', right: formatKeys('⌘⇧B'), run: splitAtCursor},
       Boolean(repository && !standalone?.active) && {key: 'new-scene', label: 'New scene', sub: 'Opens Add scene or manuscript setup', right: formatKeys('⌘N'), run: () => { void newWriting(); }},
       proposals.supported && Boolean(repository) && {key: 'proposals', label: 'Revisions', sub: 'All external and in-app revisions with before/after diffs', run: () => { void proposals.open(); }},
@@ -1794,7 +1875,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       goalText.textContent = `${count(writingSummary.credited)} / ${count(writingSummary.goal)}`;
       goalFill.style.width = `${Math.min(100, (writingSummary.credited / Math.max(1, writingSummary.goal)) * 100)}%`;
       const label=`Daily goal: ${writingSummary.credited.toLocaleString()} / ${writingSummary.goal.toLocaleString()} words credited today`;
-      goalButton.setAttribute('aria-label',label);goalButton.title=label;
+      goalButton.setAttribute('aria-label',label);goalButton.title=label;writingChrome?.setGoal(`${goalText.textContent} words`,label);
     }
   }
   renderPill();
@@ -1804,6 +1885,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true);
   zoomKeyHandler = (event: KeyboardEvent) => {
     if (disposed || event.isComposing) return;
+    if(fullScreenControl&&(event.key==='F11'||(event.key==='Escape'&&fullScreenControl.active)||(event.ctrlKey&&event.metaKey&&!event.altKey&&!event.shiftKey&&event.key.toLowerCase()==='f'))&&!root.inert&&!document.querySelector('dialog[open]')){event.preventDefault();event.stopPropagation();if(!event.repeat)void fullScreenControl.toggle();return;}
+    if(writingChrome?.hidden&&((event.metaKey||event.ctrlKey)&&['k','p','o',',','/','\\','j'].includes(event.key.toLowerCase())))writingChrome.show();
     const action = shortcutAction(event);
     if (action) { event.preventDefault(); setZoom(action); return; }
     const newShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n' && !event.shiftKey && !event.altKey;
@@ -1868,7 +1951,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (!reviewApplying) reviewPanel?.documentChanged(); currentChapter = null;
     writing.clearScene();
     cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; recoveryErrorMessage = null; recovery = null; recoveryPending = false; writePaused = null;
-    editorCommands?.destroy();editorCommands=null;documentCommandBar.replaceChildren();documentReader = null; documentView = null;
+    editorCommands?.destroy();editorCommands=null;documentCommandBar.replaceChildren();documentReader = null; documentView = null;documentTabs.setEditorActions(null);
     chapterEditor?.destroy(); chapterEditor = null;chapterWriter=null;
     editor?.destroy(); editor = null; opened = null; threadSidebar.render(); saveButton = null; dirtyBadge = null; setDirty(false); documentTabs.unmount();activeDocumentPane.removeAttribute('aria-labelledby');
     if(!repository&&standalone?.supported){queueMicrotask(()=>{if(!repository&&!disposed)void startInitialSession();});return;}
@@ -2002,6 +2085,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     status.classList.remove('error');
     status.textContent = 'Opening your writing…';
     let resumed:ProjectResume|null=null;
+    let reviewRecoveryRepository: RepositorySession | null = null;
     try {
       const selected = await select();
       if (disposed || current !== generation) return;
@@ -2061,8 +2145,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       await refreshRecent();
       void refreshSharing();
       if(selected.resume&&await showDocument(selected.resume.path,true,()=>!disposed&&generation===current,undefined,selected.resume))resumed=selected.resume;
+      if (!draftingLoadFailed) reviewRecoveryRepository = selected;
     } catch (error) { if (!disposed && current === generation) { if (repositoryDetached) reportDetachedRepository(); else reportError(error); } }
-    finally { if (!disposed && current === generation) { selecting = false; open.disabled = false; layout.inert = false; editor?.setEditable(!recoveryPending && (editor !== previousEditor || !wasReadOnly)); [...recent.querySelectorAll('button'), ...projectEntries.querySelectorAll('button')].forEach(node => { node.disabled = false; }); if (dirty && !writePaused) scheduleAutosave(); if(resumed)focusResumedDocument(resumed); } }
+    finally { if (!disposed && current === generation) { selecting = false; open.disabled = false; layout.inert = false; editor?.setEditable(!recoveryPending && (editor !== previousEditor || !wasReadOnly)); [...recent.querySelectorAll('button'), ...projectEntries.querySelectorAll('button')].forEach(node => { node.disabled = false; }); if (dirty && !writePaused) scheduleAutosave(); if(resumed)focusResumedDocument(resumed); if (reviewRecoveryRepository && repository === reviewRecoveryRepository && !repositoryDetached) void reviewPanel?.recoverOutstanding(repository.id, repository.projectKey ?? repository.id); } }
   }
   async function showDirectory(path: string) {
     const current = generation;
@@ -2080,6 +2165,12 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       if (palette.scope() === 'files') palette.refresh();
       listing.replaceChildren();undoFileRename.hidden=!drafting.canUndoRename;
       if (scan?.incomplete) listing.append(el('p', 'Some entries could not be checked; uncertain files and folders remain visible.', 'muted'));
+      if (!path && !entries.length && fileFirstRepository && drafting.supported) {
+        listing.append(button('Start writing…',()=>{void(async()=>{
+          const id=repository?.id;const state=await openDrafting();
+          if(repository?.id===id&&state&&!state.revision&&!state.recoveryRequired)drafting.initialize();
+        })();},'primary'));
+      }
       if (path) listing.append(button('↑ Parent folder', () => { void showDirectory(parentPath(path)); }, 'file-entry parent'));
       if (core.exportManuscript||core.saveMarkdownExport) listing.append(button('Export folder…', () => {void markdownExport.open(basename(path) || repository!.name, {kind:'folder', path});}));
       for (const entry of entries) {
@@ -2266,15 +2357,46 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       editor.view.dispatch({effects: StateEffect.appendConfig.of(EditorView.updateListener.of(update => {if (update.docChanged) questionMarkerSignature = ''; if (update.docChanged || update.selectionSet) draftingQuestions?.stateChanged();}))});
       selectionAsk = createSelectionAskAction(editor.view, {current: draftingSelectionState, fallback: askDrafting, keys: formatKeys('⌘J'),
         revise: snapshot => { void askDraftingSelection(snapshot).then(() => draftingQuestions?.setMode('revision')); },
+        note: () => addNote(),
         ask: snapshot => {void askDraftingSelection(snapshot);}, stale: () => {status.textContent = 'The selection changed. Highlight the passage again before asking.';}});
       if (recoveryPending && draft) showRecoveryChoice(doc, draft, host);
       if (/\.(md|markdown)$/i.test(doc.path)) {
         const target = editor.view;
+        toolbar.append(button('Add note…', () => addNote(), 'source-only'));
+        target.dispatch({effects: StateEffect.appendConfig.of(keymap.of([{key: 'Mod-Alt-m', run: () => { addNote(); return true; }}]))});
+        if (core.images && repository && !standalone?.active && !doc.generatedCompatibility) {
+          const session=repository.id, writer=editor;
+          toolbar.append(button('Insert image…', () => {
+            showSourceView();
+            const editable=()=>!disposed && editor===writer && repository?.id===session && !repositoryDetached &&
+              !recoveryPending && !selecting && !guardPending && !structuralBusy && !proposalBusy && !writePaused && !writer.view.state.readOnly;
+            void insertIllustration(root,core,session,doc.path,writer.view,editable,message=>{status.textContent=message;});
+          },'source-only'));
+        }
+        if (core.sceneVersions && core.readSceneVersion && repository && !standalone?.active && !doc.generatedCompatibility) {
+          const session = repository.id, writer = editor;
+          toolbar.append(button('Scene history…', () => {
+            const current = writer.text();
+            openSceneHistory({
+              root, title: doc.path, current,
+              list: () => core.sceneVersions!(session, doc.path),
+              read: version => core.readSceneVersion!(session, doc.path, version),
+              restore: (from, to, passage) => {
+                if (disposed || editor !== writer || repository?.id !== session || repositoryDetached || recoveryPending ||
+                    selecting || guardPending || structuralBusy || proposalBusy || writePaused || writer.view.state.readOnly || writer.text() !== current) return false;
+                showSourceView();
+                writer.restorePassage(from, to, passage);
+                return true;
+              },
+              focus: focusWriterView,
+            });
+          }));
+        }
         const roleInSource = documentRole.textContent;
         mountDocumentView(toolbar, host, target, () => {
           const value = target.state.doc.toString();
           const body = frontmatterEnd(value) ?? 0;
-          return {text: value, ranges: [{from: body, to: value.length}], note: body ? 'Frontmatter is not shown in Reading. See Document details or Source.' : undefined};
+          return {text: value, ranges: [{from: body, to: value.length, path:doc.path}], note: body ? 'Frontmatter is not shown in Reading. See Document details or Source.' : undefined};
         }, mode => { documentRole.textContent = mode === 'reading' ? 'Reading' : roleInSource; });
       }
       updateSaveState();
@@ -2308,7 +2430,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     },message=>{status.textContent=message;}))});
     else for(const issue of assembled.recoveryNotices??[])explanation.after(button(`${issue.message} Open ${issue.path}`,()=>{void showDocument(issue.path);}));
     reader.view.dispatch({effects: StateEffect.appendConfig.of(reviewMarks())});
-    mountDocumentView(toolbar, host, reader.view, () => ({text: reader.text(), ranges: (currentChapter??assembled).parts.map((part,index,parts) => ({from:index?parts[index-1].to:part.from,to:part.to}))}), mode => { explanation.textContent = mode === 'reading' ? 'Reading the current chapter. Switch to Source to edit its sheets together.' : sourceHint; });
+    mountDocumentView(toolbar, host, reader.view, () => ({text: reader.text(), ranges: (currentChapter??assembled).parts.map((part,index,parts) => ({from:index?parts[index-1].to:part.from,to:part.to,path:part.document.path}))}), mode => { explanation.textContent = mode === 'reading' ? 'Reading the current chapter. Switch to Source to edit its sheets together.' : sourceHint; });
     reader.view.contentDOM.setAttribute('aria-label', 'Chapter manuscript');
     reader.view.contentDOM.setAttribute('aria-readonly', String(!writer));
     reader.view.contentDOM.tabIndex = 0;
@@ -2444,6 +2566,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   const unbindPreferences=bindPreferenceStatus(root,settingsNote);
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { unbindPreferences();headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();editorCommands?.destroy();navigation.destroy();markdownExport.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();chatRail.destroy();threadSidebar.destroy();mcpAccess.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); checkUpdatesUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { unbindPreferences();headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();fullScreenControl?.destroy();writingChrome?.destroy();editorCommands?.destroy();navigation.destroy();markdownExport.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();chatRail.destroy();threadSidebar.destroy();mcpAccess.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); checkUpdatesUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

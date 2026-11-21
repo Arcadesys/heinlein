@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {createMarkdownExport, exportBody, prepareMarkdownExport} from './markdownExport';
+import {createMarkdownExport, exportBody, prepareMarkdownExport, stripComments} from './markdownExport';
 import type {Document, DraftingState, Entry, LocalCore} from './localCore';
 
 const doc = (path: string, text = `Body of ${path} — 🐺\r\n\r\nPunch.\n`): Document => ({path, text, contentHash:'hash', sizeBytes:text.length, frontmatter:null, generatedCompatibility:false});
@@ -73,6 +73,28 @@ describe('read-only Markdown export',()=>{
     await expect(prepareMarkdownExport(core,'repo','Book',{kind:'project'},{...state,scenes:[]})).rejects.toThrow('missing');
     await expect(prepareMarkdownExport(core,'repo','Deleted',{kind:'group',id:'deleted'},state)).rejects.toThrow('no longer');
   });
+  it('removes private author comments and the one space before each, leaving the prose intact',()=>{
+    expect(stripComments('new {>>x<<}.')).toBe('new.');
+    expect(stripComments('Start{>>tight<<} end')).toBe('Start end');
+    expect(stripComments('two  {>>x<<}.')).toBe('two .');
+    expect(stripComments('a {>>one<<} {>>two<<} b')).toBe('a b');
+    expect(stripComments('Wraps {>>over\r\na line<<} — fine.\r\n')).toBe('Wraps — fine.\r\n');
+    expect(stripComments('{>>lead<<}Body\n\nNext {>>x<<}\n')).toBe('Body\n\nNext\n');
+    expect(stripComments('No notes — 🐺 <<} stray close\n')).toBe('No notes — 🐺 <<} stray close\n');
+  });
+  it('refuses an unclosed comment, including one that would close only across a blank line',()=>{
+    expect(()=>stripComments('Body {>>never closed\n')).toThrow('A scene has an unfinished comment. Close or remove it before exporting.');
+    expect(()=>stripComments('Body {>>split\n\nlater<<} text')).toThrow('unfinished comment');
+    expect(()=>stripComments('Body {>>split\r\n \r\nlater<<}')).toThrow('unfinished comment');
+    expect(()=>stripComments('ok {>>x<<} then {>>open')).toThrow('unfinished comment');
+  });
+  it('keeps author comments out of every export format and fails the export on an unclosed one',async()=>{
+    const noted=new Map([['ms/a.md',doc('ms/a.md','---\ntitle: A\n---\nShe left {>>make this colder<<}.\n')]]);
+    const exported=await prepareMarkdownExport(bridge(),'repo','Act one',{kind:'group',id:'g'},state,noted,{illustrated:true});
+    expect(exported.text).toContain('She left.\n'); expect(exported.text).not.toContain('{>>'); expect(exported.text).not.toContain('colder');
+    const open=new Map([['ms/a.md',doc('ms/a.md','She left {>>unfinished\n')]]);
+    await expect(prepareMarkdownExport(bridge(),'repo','Act one',{kind:'group',id:'g'},state,open)).rejects.toThrow('unfinished comment');
+  });
   it('strips only complete frontmatter and preserves body punctuation, whitespace and line endings',()=>{
     for(const newline of ['\n','\r\n','\r']) expect(exportBody(`\uFEFF---${newline}title: Secret${newline}...${newline}Body — 🐺${newline}`)).toBe(`Body — 🐺${newline}`);
     expect(exportBody('Punch.\n\n— Again.\n')).toBe('Punch.\n\n— Again.\n');
@@ -110,4 +132,14 @@ it('explicit reference opt-in keeps captured sources and passes the chosen forma
  const format=document.querySelector<HTMLSelectElement>('select')!;format.value='epub';format.dispatchEvent(new Event('change'));
  document.querySelector<HTMLButtonElement>('dialog button')!.click();await vi.waitFor(()=>expect(convert).toHaveBeenCalledOnce());
  expect(convert.mock.calls[0]).toMatchObject(['repo','Book.epub',{format:'epub',title:'Book',author:''}]);expect(vi.mocked(core.readDocument).mock.calls.filter(([,path])=>path==='ms/a.md')).toHaveLength(1);exporter.destroy();
+});
+
+it('retains the owning scene for two illustrations with identical relative URLs',async()=>{
+  const book={...state,scenes:state.scenes.map(s=>({...s,path:`ms/${s.id}/scene.md`}))};
+  const core=bridge();
+  core.readDocument=async(_id,path)=>doc(path,`![Map of ${path}](map.png)\n`);
+  const out=await prepareMarkdownExport(core,'repo','Book',{kind:'group',id:'g'},book,new Map(),{illustrated:true});
+  expect(out.images).toEqual([{scene:'ms/b/scene.md',url:'map.png'},{scene:'ms/a/scene.md',url:'map.png'}]);
+  expect(out.text).toContain('![Map of ms/b/scene.md](heinlein-illustration-0)');
+  expect(out.text).toContain('![Map of ms/a/scene.md](heinlein-illustration-1)');
 });

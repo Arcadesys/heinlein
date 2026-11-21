@@ -32,7 +32,9 @@ export function syntheticProjects(seed?:ProjectSeed,persist?:(state:ProjectSeed)
  const hash=(text:string)=>{let h=2166136261;for(const c of text)h=Math.imul(h^c.codePointAt(0)!,16777619);return `synthetic-hash-${(h>>>0).toString(16)}-${text.length}`;};
  function doc(p:Project,path:string):Document{const text=documents[p.id]?.[path];if(text===undefined)throw Error('Synthetic document missing');return{path,text,contentHash:hash(text),sizeBytes:new TextEncoder().encode(text).length,frontmatter:null,generatedCompatibility:false};}
  function session(p:Project):RepositorySession{const id=`project-session-${++serial}`;sessions.set(id,p.id);active=id;const h=p.resume;const resume=h&&documents[p.id]?.[h.path]!==undefined&&hash(documents[p.id][h.path])===h.sourceHash?h:null;return{id,name:p.name,projectKey:`source-key-${p.id}`,projectId:p.id,projectRevision:p.revision,githubWorkspaceId:p.workspaceId,manifests:[],resume:copy(resume),warning:h&&!resume?'The last document changed. Open it from Writing.':null};}
- const core:LocalCore={...draft.core,
+ let fullscreen=false;const fullscreenListeners=new Set<()=>void>();
+ const fullscreenHost={isFullscreen:async()=>fullscreen,setFullscreen:async(value:boolean)=>{fullscreen=value;for(const listener of fullscreenListeners)listener();},onChanged:async(callback:()=>void)=>{fullscreenListeners.add(callback);return()=>{fullscreenListeners.delete(callback);};}};
+ const core:LocalCore={...draft.core,fullscreen:fullscreenHost,
   async projectRequest(r:ProjectRequest):Promise<ProjectResponse>{requests.push(copy(r));switch(r.action){
    case'list':return copy(projects);
    case'lastOpened':return lastOpenedProjectId?{id:lastOpenedProjectId}:null;
@@ -44,6 +46,7 @@ export function syntheticProjects(seed?:ProjectSeed,persist?:(state:ProjectSeed)
    case'cancel':plans.delete(r.previewId);return null;
    case'activate':{const p=plans.get(r.previewId);plans.delete(r.previewId);if(!p||p.origin!==active||p.epoch!==epoch||dirty||p.project.revision!==project(p.project.id).revision)throw Error('Project switch became stale');lastOpenedProjectId=p.project.id;save();return session(project(p.project.id));}
   }},
+  createLocalProject:async name=>{const p:Project={id:`new-local-${++serial}`,name,revision:1,kind:'local',workspaceId:null,resume:null,unavailable:null,github:null};projects.unshift(p);const path='ms/first-scene.md',sceneId=`first-scene-${++serial}`;documents[p.id]={[path]:''};manuscripts[p.id]={...emptyManuscript(p),revision:`manifest-${++serial}`,untrackedPaths:[],scenes:[{id:sceneId,title:'First scene',path,groupId:null}],library:[{id:sceneId,kind:'scene',parentId:null}]};p.resume={path,sceneId,sourceHash:hash(''),anchor:0,head:0,scrollTop:0};save();return session(p);},
   pickRepository:async()=>session(project('local-a')),
   recentRepositories:async()=>[],openRecentRepository:async()=>{throw Error('Use the project library');},
   listDirectory:async(id,path)=>{const p=selected(id);if(path)return[];return Object.entries(documents[p.id]).map(([path,text])=>({path,name:path,kind:'file' as const,sizeBytes:new TextEncoder().encode(text).length}));},

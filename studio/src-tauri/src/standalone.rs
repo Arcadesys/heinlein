@@ -97,11 +97,7 @@ fn store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .join("standalone-drafts-v1"))
 }
 fn managed_destination(app: &tauri::AppHandle, path: &Path) -> Result<Option<PathBuf>, String> {
-    let private = app
-        .path()
-        .app_data_dir()
-        .map_err(|_| "Private storage unavailable")?;
-    let sources = super::resolved_future_path(&private.join("github-sources-v1"))?;
+    let sources = super::github::sources_root(app)?;
     if !path.starts_with(&sources) {
         return Ok(None);
     }
@@ -264,6 +260,25 @@ fn placement_intent(
         scene_path,
     }
 }
+fn current_placement_location(
+    app: &tauri::AppHandle,
+    intent: &PlacementIntent,
+) -> Result<PlacementIntent, String> {
+    let data = app.path().app_data_dir().map_err(|_| "Private storage unavailable")?;
+    let legacy = super::github::legacy_sources(&super::resolved_future_path(&data)?);
+    let Ok(relative) = Path::new(&intent.destination).strip_prefix(&legacy) else {
+        return Ok(intent.clone());
+    };
+    let sources = super::github::sources_root(app)?;
+    let mut current = intent.clone();
+    current.destination = sources.join(relative).to_string_lossy().into_owned();
+    if let Some(root) = &intent.project_root {
+        let relative = Path::new(root).strip_prefix(&legacy).map_err(|_| "Placement project unavailable")?;
+        current.project_root = Some(sources.join(relative).to_string_lossy().into_owned());
+    }
+    Ok(current)
+}
+
 fn verify_intent(intent: &PlacementIntent) -> Result<(), String> {
     if intent.kind == "file" {
         DraftDestination::open(Path::new(&intent.destination))?.verify_file(&intent.source_hash)
@@ -542,7 +557,20 @@ fn execute(
             let (target, path) = match destination.as_str() {
                 "file" => (Target::File(DraftDestination::open(&chosen)?), chosen),
                 "existingProject" => {
-                    let repo = Arc::new(Repository::open(&chosen).map_err(|e| e.to_string())?);
+                    let repo = match managed_destination(app, &chosen)? {
+                        Some(root) => {
+                            if root != chosen {
+                                return Err("Choose the managed project folder itself".into());
+                            }
+                            let workspace = super::github::selection(app, &root)?
+                                .ok_or("Managed project authority unavailable")?;
+                            super::github::registry(app)?
+                                .open_source(&workspace.id)
+                                .map_err(|e| e.to_string())?
+                        }
+                        None => Repository::open(&chosen).map_err(|e| e.to_string())?,
+                    };
+                    let repo = Arc::new(repo);
                     let before = repo.load_drafting().map_err(|e| e.to_string())?;
                     let revision = before
                         .revision
@@ -675,8 +703,9 @@ fn execute(
             let store = host.store.as_ref().unwrap();
             let lease = lease(&host, &handle)?;
             for intent in store.pending(lease.id())? {
-                safe_destination(app, Path::new(&intent.destination))?;
-                match verify_intent(&intent) {
+                let current = current_placement_location(app, &intent)?;
+                safe_destination(app, Path::new(&current.destination))?;
+                match verify_intent(&current) {
                     Ok(()) => {
                         store.finish_placement(lease, &intent)?;
                     }
@@ -684,7 +713,7 @@ fn execute(
                         // Absence proves no final destination was published, but a project transaction
                         // may still have an interrupted manifest: only plain files can be cleared.
                         if intent.kind == "file"
-                            && matches!(std::fs::symlink_metadata(&intent.destination),Err(e) if e.kind()==std::io::ErrorKind::NotFound)
+                            && matches!(std::fs::symlink_metadata(&current.destination),Err(e) if e.kind()==std::io::ErrorKind::NotFound)
                         {
                             store.cancel_intent(lease, &intent.id)?;
                         } else {
@@ -728,8 +757,9 @@ fn execute(
                 project_root: receipt.project_root.clone(),
                 scene_path: receipt.scene_path.clone(),
             };
-            safe_destination(app, Path::new(&intent.destination))?;
-            let (parent, relative, changed) = current_placed_copy(&intent)?;
+            let current = current_placement_location(app, &intent)?;
+            safe_destination(app, Path::new(&current.destination))?;
+            let (parent, relative, changed) = current_placed_copy(&current)?;
             let session = super::select(app, parent)?;
             Ok(json!({"session":session,"path":relative,"changed":changed}))
         }
