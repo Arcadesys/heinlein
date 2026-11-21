@@ -78,6 +78,7 @@ fn main() {
             "read_document",
             "save_markdown_export",
             "export_manuscript",
+            "reveal_repository",
             "illustration_request",
             "scene_versions",
             "read_scene_version",

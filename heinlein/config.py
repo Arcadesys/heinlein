@@ -16,7 +16,59 @@ PAGE_SIZES = {
     "trade":  (6.0, 9.0),
     "mass":   (4.25, 6.87),
     "letter": (8.5, 11.0),
+    "small":  (5.0, 8.0),
+    "a5":     (5.83, 8.27),
 }
+
+# Book styles selected by `imprint:`. "plain" is the neutral, unbranded style:
+# no imprint name, marks, end page or house colours. The others are presets
+# for The Arcades' imprints. The publisher defaults to free-play for existing
+# projects; Studio writes "plain" unless the author picks an imprint.
+IMPRINT_SLUGS = ("plain", "free-play", "insert-coin")
+
+# Type families an author can choose for body text and headings. `stack` is the
+# CSS font-family value; `google` is the Google Fonts css2 family spec used by
+# PDF/HTML builds; `bundled` families ship in heinlein/fonts and are the only
+# ones allowed for reproducible PDFs, which never touch the network.
+FONT_FAMILIES: dict[str, dict[str, Any]] = {
+    "Lora": {
+        "stack": "'Lora', Georgia, serif",
+        "google": "Lora:ital,wght@0,400;0,500;1,400;1,500",
+        "bundled": True,
+    },
+    "Inter": {
+        "stack": "'Inter', sans-serif",
+        "google": "Inter:wght@300;400;500;600",
+        "bundled": True,
+    },
+    "EB Garamond": {
+        "stack": "'EB Garamond', Garamond, Georgia, serif",
+        "google": "EB+Garamond:ital,wght@0,400;0,500;1,400;1,500",
+        "bundled": False,
+    },
+    "Crimson Pro": {
+        "stack": "'Crimson Pro', Georgia, serif",
+        "google": "Crimson+Pro:ital,wght@0,300;0,400;0,500;1,400;1,500",
+        "bundled": False,
+    },
+    "Source Serif 4": {
+        "stack": "'Source Serif 4', Georgia, serif",
+        "google": "Source+Serif+4:ital,wght@0,300;0,400;0,500;1,400;1,500",
+        "bundled": False,
+    },
+    "Libre Baskerville": {
+        "stack": "'Libre Baskerville', Baskerville, Georgia, serif",
+        "google": "Libre+Baskerville:ital,wght@0,400;0,700;1,400",
+        "bundled": False,
+    },
+    "Atkinson Hyperlegible": {
+        "stack": "'Atkinson Hyperlegible', Verdana, sans-serif",
+        "google": "Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400",
+        "bundled": False,
+    },
+}
+DEFAULT_BODY_FONT = "Lora"
+DEFAULT_DISPLAY_FONT = "Inter"
 
 
 _UNIT_TO_IN = {"in": 1.0, "mm": 1.0 / 25.4, "cm": 1.0 / 2.54, "pt": 1.0 / 72.0}
@@ -56,6 +108,26 @@ class PageConfig:
 
 
 @dataclass
+class FontConfig:
+    body: str = DEFAULT_BODY_FONT
+    display: str = DEFAULT_DISPLAY_FONT
+
+    @property
+    def is_default(self) -> bool:
+        return self.body == DEFAULT_BODY_FONT and self.display == DEFAULT_DISPLAY_FONT
+
+
+@dataclass
+class FrontMatterConfig:
+    """Which generated pages surround the story in the PDF."""
+
+    cover: bool = True
+    copyright: bool = True
+    title_page: bool = True
+    end_page: bool = True
+
+
+@dataclass
 class PdfConfig:
     """Options that affect only the PDF artifact."""
 
@@ -68,6 +140,8 @@ class HeinleinConfig:
     cover: Path | None = None
     imprint: str = "free-play"
     page: PageConfig = field(default_factory=PageConfig)
+    fonts: FontConfig = field(default_factory=FontConfig)
+    front_matter: FrontMatterConfig = field(default_factory=FrontMatterConfig)
     pdf: PdfConfig = field(default_factory=PdfConfig)
     metadata: dict[str, Any] = field(default_factory=dict)
     formats: tuple[str, ...] = ALL_FORMATS
@@ -105,6 +179,38 @@ def _coerce_page(raw: dict[str, Any]) -> PageConfig:
             raise ValueError("page.large_print must be true or false")
         p.large_print = raw["large_print"]
     return p
+
+
+def _coerce_fonts(raw: Any) -> FontConfig:
+    if raw is None:
+        return FontConfig()
+    if not isinstance(raw, dict):
+        raise ValueError("'fonts' must map body and display to a font name")
+    fonts = FontConfig()
+    for key in raw:
+        if key not in ("body", "display"):
+            raise ValueError(f"Unknown fonts key: {key}. Valid: ['body', 'display']")
+        name = str(raw[key])
+        if name not in FONT_FAMILIES:
+            raise ValueError(f"Unknown font: {name}. Valid: {list(FONT_FAMILIES)}")
+        setattr(fonts, key, name)
+    return fonts
+
+
+def _coerce_front_matter(raw: Any) -> FrontMatterConfig:
+    if raw is None:
+        return FrontMatterConfig()
+    if not isinstance(raw, dict):
+        raise ValueError("'front_matter' must map page names to true or false")
+    front = FrontMatterConfig()
+    valid = ("cover", "copyright", "title_page", "end_page")
+    for key, value in raw.items():
+        if key not in valid:
+            raise ValueError(f"Unknown front_matter key: {key}. Valid: {list(valid)}")
+        if not isinstance(value, bool):
+            raise ValueError(f"front_matter.{key} must be true or false")
+        setattr(front, key, value)
+    return front
 
 
 def _coerce_pdf(raw: dict[str, Any]) -> PdfConfig:
@@ -196,6 +302,19 @@ def load(
 
     page = _coerce_page(raw.get("page") or {})
     pdf = _coerce_pdf(raw.get("pdf") or {})
+    fonts = _coerce_fonts(raw.get("fonts"))
+    front_matter = _coerce_front_matter(raw.get("front_matter"))
+    if pdf.reproducible:
+        for name in (fonts.body, fonts.display):
+            if not FONT_FAMILIES[name]["bundled"]:
+                bundled = [n for n, f in FONT_FAMILIES.items() if f["bundled"]]
+                raise ValueError(
+                    f"pdf.reproducible works only with bundled fonts {bundled}; "
+                    f"{name} would be downloaded at build time"
+                )
+    imprint = str(raw.get("imprint", "free-play"))
+    if imprint not in IMPRINT_SLUGS:
+        raise ValueError(f"Unknown imprint: {imprint}. Valid: {list(IMPRINT_SLUGS)}")
 
     formats = _coerce_formats(formats_override if formats_override is not None else raw.get("formats"))
 
@@ -235,8 +354,10 @@ def load(
     return HeinleinConfig(
         manuscript=manuscript,
         cover=cover_path,
-        imprint=raw.get("imprint", "free-play"),
+        imprint=imprint,
         page=page,
+        fonts=fonts,
+        front_matter=front_matter,
         pdf=pdf,
         metadata=metadata,
         formats=formats,

@@ -118,7 +118,7 @@ Native builds require Rust 1.89 or newer for OS-backed file locking.
 
 ## 1.10 release packaging
 
-Heinlein Studio is version **1.10.0**. The independent Python
+Heinlein Studio is version **1.11.0**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:
@@ -241,10 +241,14 @@ style has no score or gate to pass.
 manuscript. Review all included scenes in order, metadata and text treatment.
 Scene frontmatter, links, images and include directives require a separately
 configured publishing project; the guide reports them rather than dropping them.
-Groups stay organizational. Supply your own author/rights information and
-explicitly approve the no-cover choice and the existing FREE PLAY / The Arcades
-branding (including its preset colophon). If you do not want that branding, use a
-separate manual publisher configuration; there is no generic unbranded preset.
+Groups stay organizational. Supply your own author/rights information, then set
+the **Book design**: style (Plain, with no imprint branding, or FREE PLAY
+Publishing), page size, body and heading fonts, large print, cover (typographic,
+an image file you pick at preview, or none), copyright and title pages, subtitle
+and dedication. FREE PLAY needs an explicit approval of its The Arcades branding
+and preset colophon. A chosen cover image (JPEG or PNG, up to 25 MB) is copied
+into the new folder; the story folder is never changed. These choices are
+written into the copy's `heinlein.yaml`, so `heinlein build` follows them.
 
 Choose an existing parent folder with the native picker. Only an additional
 native confirmation creates a **new** folder with `manuscript.md`, `heinlein.yaml`
