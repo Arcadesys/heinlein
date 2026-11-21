@@ -77,6 +77,7 @@ fn main() {
             "read_document",
             "save_markdown_export",
             "export_manuscript",
+            "publish_book",
             "save_document",
             "read_recovery",
             "stage_recovery",

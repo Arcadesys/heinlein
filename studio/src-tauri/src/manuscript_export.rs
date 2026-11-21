@@ -45,6 +45,26 @@ pub fn save_new(
         })?;
     file.write_all(bytes).and_then(|()|file.sync_all()).map_err(|_|"The export could not be fully saved. A partial new file may remain; use a new filename to retry.".into())
 }
+/// Bundled publisher package root (`publishing/heinlein`), or the checkout in dev builds.
+pub(crate) fn publishing_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let root = app
+        .path()
+        .resource_dir()
+        .map_err(|_| "Publishing resources unavailable.")?
+        .join("publishing");
+    #[cfg(debug_assertions)]
+    let root = if root.join("heinlein/studio_export.py").is_file() {
+        root
+    } else {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf()
+    };
+    Ok(root)
+}
 #[tauri::command]
 pub async fn export_manuscript(
     app: tauri::AppHandle,
@@ -68,22 +88,7 @@ pub async fn export_manuscript(
             .path()
             .app_data_dir()
             .map_err(|_| "Private storage unavailable.")?;
-        let root = app
-            .path()
-            .resource_dir()
-            .map_err(|_| "Publishing resources unavailable.")?
-            .join("publishing");
-        #[cfg(debug_assertions)]
-        let root = if root.join("heinlein/studio_export.py").is_file() {
-            root
-        } else {
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .to_path_buf()
-        };
+        let root = publishing_root(&app)?;
         let python = if spec.format == Format::Markdown {
             std::path::PathBuf::new()
         } else {

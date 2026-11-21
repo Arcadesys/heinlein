@@ -414,6 +414,18 @@ the source project; existing files are never replaced. No source edits or automa
 uploads occur. Conversion failures and canceled location pickers leave a retryable
 dialog. Local image attachments are not bundled in this version.
 
+**Publish book…** builds the designed book (PDF, EPUB and DOCX by default; HTML
+and plain text optional) straight from the live manuscript. It is a button in
+the Library header, a More actions entry and a command-palette entry. It uses
+current editor text in Library order, leaves out reference sheets and private
+notes, and runs the same `heinlein.build` pipeline as `heinlein build`. If the
+Studio project has its own `heinlein.yaml`, its page size, accents, styles and
+cover apply; Studio's title, author and rights win. The author approves the book
+design and imprint branding once; Studio remembers that and the metadata per
+project, so later publishes are one click plus a folder choice. Each publish
+writes a NEW dated folder outside the project. Nothing is replaced and no source
+file is written. Needs the Heinlein Python publisher and Pandoc; PDF needs Chrome.
+
 Markdown requires no converter. Other formats use the bundled Heinlein publishing
 adapter plus a locally installed Python runtime with Heinlein's dependencies and
 Pandoc; PDF also requires Chrome/Chromium. The adapter reuses the existing Pandoc

@@ -7,6 +7,7 @@ import {createThreadSidebar} from './threadSidebar';
 import {readThreads,putThread,sceneThreadScope,groupThreadScope,chapterThreadScope,scopeForReview,type ThreadScope,type WriterThread} from './threadStore';
 import {actionMenu} from './actionMenu';
 import {createMarkdownExport} from './markdownExport';
+import {createBookPublish} from './bookPublish';
 import {createDocumentTabs,type DocumentTab} from './documentTabs';
 import {createTypingChrome} from './typingChrome';
 import {createReferencePane,REFERENCE_ACTION_MESSAGE} from './referencePane';
@@ -681,7 +682,9 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       else {resetPreview(); await showDirectory('');}
     },
   });
-  corner.prepend(openGitHubEntry, firstStoryEntry, githubEntry, updateEntry);
+  const publishEntry = button('Publish book…', () => {if (drafting.state) bookPublish.open(drafting.state.project);}, 'publish-entry');
+  publishEntry.setAttribute('aria-haspopup', 'dialog'); publishEntry.hidden = true;
+  corner.prepend(openGitHubEntry, firstStoryEntry, publishEntry, githubEntry, updateEntry);
   const draftingEntry = button('Open library', () => { void openDrafting(); }, 'drafting-entry');
   draftingEntry.hidden = true;
   const outline = el('div');
@@ -697,6 +700,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   const projectTitle = el('h2', 'Open a repository');
   const projectMenu = rowMenu('Project actions', () => {
     const items: HTMLElement[] = [];
+    if(canPublish())items.push(button('Publish book…',()=>{bookPublish.open(drafting.state!.project);}));
     if(repository&&(core.exportManuscript||core.saveMarkdownExport)&&drafting.state?.revision)items.push(button('Export manuscript…',()=>{void markdownExport.open(drafting.state!.project,{kind:'project'});}));
     items.push(projectLibrary.supported ? button('Projects…', () => { void projectLibrary.open(); }) : button('Open project…', () => { void selectRepository(() => core.pickRepository()); }));
     if (core.createLocalProject) items.push(button('New project…',()=>{void projectLibrary.create();}));
@@ -708,7 +712,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     return items;
   }, 'project-menu');
   const projectExport=button('Export manuscript…',()=>{if(drafting.state)void markdownExport.open(drafting.state.project,{kind:'project'});},'project-export');projectExport.hidden=true;
-  const projectHead = el('div', '', 'tree-project'); projectHead.append(projectTitle, projectExport, projectMenu);
+  const projectPublish=button('Publish book…',()=>{if(drafting.state)bookPublish.open(drafting.state.project);},'project-publish primary');projectPublish.hidden=true;projectPublish.setAttribute('aria-haspopup','dialog');
+  const projectHead = el('div', '', 'tree-project'); projectHead.append(projectTitle, projectPublish, projectExport, projectMenu);
   manuscriptBody.append(projectHead, draftingEntry, manifests, outline);
   manuscriptPane.append(manuscriptBody);
   async function openChapterGroup(id:string) {
@@ -937,16 +942,20 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     exportGroup: (core.exportManuscript||core.saveMarkdownExport) ? (id, title) => {void markdownExport.open(title, {kind:'group', id});} : undefined,
     report: (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); },
   });
+  function markdownExportSnapshot() {
+    if (!repository || standalone?.active || repositoryDetached || recoveryPending || selecting || structuralBusy || proposalBusy || guardPending) return null;
+    const buffers = new Map<string, Document>();
+    if (opened && editor && !opened.generatedCompatibility) buffers.set(opened.path, {...opened, text: editor.text()});
+    return {repositoryId: repository.id, state: drafting.state ? structuredClone(drafting.state) : null, buffers};
+  }
   const markdownExport = createMarkdownExport(core, {
     root,
-    snapshot: () => {
-      if (!repository || standalone?.active || repositoryDetached || recoveryPending || selecting || structuralBusy || proposalBusy || guardPending) return null;
-      const buffers = new Map<string, Document>();
-      if (opened && editor && !opened.generatedCompatibility) buffers.set(opened.path, {...opened, text: editor.text()});
-      return {repositoryId: repository.id, state: drafting.state ? structuredClone(drafting.state) : null, buffers};
-    },
+    snapshot: markdownExportSnapshot,
     report: (message, error = false) => {status.textContent = message; status.classList.toggle('error', error);},
   });
+  // Publish shares Export's guarded snapshot: current editor text, no saves.
+  const bookPublish = createBookPublish(core, {root, snapshot: markdownExportSnapshot, report: (message, error = false) => {status.textContent = message; status.classList.toggle('error', error);}});
+  function canPublish() {return Boolean(repository&&!standalone?.active&&drafting.state?.revision&&core.publishBook);}
   draftingStarted = true;
   const proposals = createProposalPanel(core, {
     root, repository: reviewRepository, run: runProposal,
@@ -1853,6 +1862,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       Boolean(writingChrome) && {key:'hide-controls',label:writingChrome?.hidden?'Show writing controls':'Hide writing controls',right:formatKeys('⌘⇧H'),run:()=>writingChrome?.toggle()},
       Boolean(fullScreenControl) && {key:'fullscreen',label:fullScreenControl?.active?'Exit full screen':'Full screen focus mode',run:()=>{void fullScreenControl?.toggle();}},
       Boolean(newDraftButton) && {key: 'new-draft', label: 'New Markdown draft', right: formatKeys('⌘N'), run: () => newDraftButton?.click()},
+      canPublish()&&{key:'publish-book',label:'Publish book…',sub:'Designed PDF, EPUB and DOCX from your current text',run:()=>{bookPublish.open(drafting.state!.project);}},
       Boolean(repository&&!standalone?.active&&drafting.state?.revision&&(core.exportManuscript||core.saveMarkdownExport))&&{key:'export-manuscript',label:'Export manuscript…',sub:'PDF, EPUB, Markdown, HTML or DOCX',run:()=>{void markdownExport.open(drafting.state!.project,{kind:'project'});}},
       Boolean(searchScope()) && {key: 'find-manuscript', label: 'Find in manuscript', sub: 'Search scene text locally, including the open buffer', right: formatKeys('⌘⇧F'), run: openManuscriptSearch},
       Boolean(activeWriter()) && {key: 'ask', label: 'Ask Heinlein about selection', sub: 'Opens Questions with the highlighted passage', right: formatKeys('⌘J'), run: () => askShortcut()},
@@ -1916,6 +1926,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   function renderPill() {
     projectExport.hidden=!(repository&&!standalone?.active&&drafting.state?.revision&&(core.exportManuscript||core.saveMarkdownExport));
+    projectPublish.hidden=!canPublish();publishEntry.hidden=!canPublish();
     if (newDraftButton) {
       newDraftButton.setAttribute('aria-keyshortcuts', 'Meta+N Control+N');
     }
@@ -2604,6 +2615,6 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
   }
   const unbindPreferences=bindPreferenceStatus(root,settingsNote);
   return { showDirectory, showDocument, showManuscript, selectRepository, saveCurrent,
-    destroy: () => { wordCounts?.destroy();typingChrome.destroy();unbindPreferences();headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();fullScreenControl?.destroy();writingChrome?.destroy();editorCommands?.destroy();navigation.destroy();markdownExport.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();chatRail.destroy();threadSidebar.destroy();mcpAccess.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); checkUpdatesUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
+    destroy: () => { wordCounts?.destroy();typingChrome.destroy();unbindPreferences();headerMedia?.removeEventListener?.('change',refreshHeaderLayout);appCommands?.destroy();fullScreenControl?.destroy();writingChrome?.destroy();editorCommands?.destroy();navigation.destroy();markdownExport.destroy();bookPublish.destroy();reference.clear();documentTabs.destroy();if(projectPositionTimer)clearTimeout(projectPositionTimer);projectLibrary.destroy();chatRail.destroy();threadSidebar.destroy();mcpAccess.destroy();pillMenus.forEach(menu => menu.destroy());busyObserver.disconnect();repositoryHome.destroy(); standalone?.destroy(); updates.destroy(); github.destroy(); firstStory.destroy(); themeBuilder.destroy(); reviewPanel?.destroy(); chapterEditor?.destroy(); manuscriptSearch.close(); questions?.destroy(); selectionAsk?.destroy(); draftingQuestions?.destroy(); proposals.destroy(); drafting.destroy(); dropUnlisten?.(); dropErrorUnlisten?.(); writing.destroy(); disposed = true; cancelAutosave(); cancelSaveNotice(); composing = false; documentEpoch++; editor?.destroy(); closeUnlisten?.(); quitRefusedUnlisten?.(); checkUpdatesUnlisten?.(); root.inert=false; window.removeEventListener('beforeunload', unload); if (zoomKeyHandler) document.removeEventListener('keydown', zoomKeyHandler, true); document.removeEventListener('mousemove', wake); statusQuiet.disconnect(); noticeResize?.disconnect(); if (statusTimer) clearTimeout(statusTimer); palette.close(); helpLayer?.remove(); root.classList.remove('studio', 'typing'); }
   };
 }

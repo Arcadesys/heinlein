@@ -99,7 +99,11 @@ The Studio project is your editable source. The publishing CLI works from a
 manuscript Markdown file and, optionally, `heinlein.yaml`. That YAML file sets
 metadata, output formats, page layout, and output paths.
 
-Studio's optional **First story** guide can prepare a separate, text-only
+Studio's **Publish book…** button builds the designed PDF, EPUB and DOCX
+directly from the live manuscript with the same pipeline as `heinlein build`.
+See [Publish book](studio/README.md).
+
+Studio's optional **First story** guide can also prepare a separate, text-only
 publishing copy with `manuscript.md`, `heinlein.yaml`, and a source receipt.
 The copy is a snapshot: later edits do not synchronize in either direction.
 See [the guide and its limits](studio/README.md#your-first-story), then use the

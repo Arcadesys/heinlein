@@ -1,6 +1,7 @@
 import type {FullScreenHost} from './fullScreenControl';
 import {windowFullscreen} from './windowFullscreen';
 import type {ManuscriptExportSpec} from './markdownExport';
+import type {PublishResult, PublishSpec} from './bookPublish';
 import type {PreferenceRequest,PreferenceSnapshot} from './preferences';
 import type {ProjectRequest,ProjectResponse,ProjectResume} from './projects';
 import type {McpAccessRequest,McpAccessView} from './mcpAccess';
@@ -105,6 +106,8 @@ export interface ReviewResult { readingFeedback?: ReadingFeedbackView[]; reviewI
 export interface LocalCore {
   fullscreen?:FullScreenHost;
   exportManuscript?(repositoryId:string,filename:string,spec:ManuscriptExportSpec):Promise<boolean>;
+  /** Build the designed book from live text into a NEW folder; null when the author cancels the folder picker. */
+  publishBook?(repositoryId:string,spec:PublishSpec):Promise<PublishResult|null>;
   preferencesRequest?(request:PreferenceRequest):Promise<PreferenceSnapshot>;
   saveMarkdownExport?(repositoryId: string, filename: string, text: string): Promise<boolean>;
   projectRequest?(request:ProjectRequest):Promise<ProjectResponse>;
@@ -188,6 +191,7 @@ export const localCore: LocalCore = {
   fullscreen:isTauri()?windowFullscreen:undefined,
   available: isTauri,
   exportManuscript:(repositoryId,filename,spec)=>invoke('export_manuscript',{repositoryId,filename,spec}),
+  publishBook:(repositoryId,spec)=>invoke('publish_book',{repositoryId,spec}),
   preferencesRequest:request=>invoke('preferences_request',{request}),
   saveMarkdownExport: (repositoryId, filename, text) => invoke('save_markdown_export', {repositoryId, filename, text}),
   updateRequest: action=>invoke('update_request',{action}),
