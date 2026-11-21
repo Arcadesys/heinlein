@@ -25,3 +25,23 @@ test('@smoke failed output can be retried explicitly and changed writing starts 
  const state=await page.evaluate(()=>(window as any).retryFixture.state());expect(state.requests).toEqual([]);expect(state.previews[0].snapshots[0].source).toBe('Fresh current source after author approval.');expect(state.saved.edits[0].status).toBe('accepted');expect(state.attempts).toBe(1);
  expect(await shape()).toEqual(before);expect(errors).toEqual([]);
 });
+
+for(const action of ['repair','discard']) test(`source mismatch offers accessible ${action}`,async({page},info)=>{
+ await page.goto('/tests/browser/review-retry.html');
+ await page.getByRole('button',{name:'Heinlein',exact:true}).click();await page.getByRole('button',{name:'Whole scene',exact:true}).click();
+ const panel=page.getByRole('region',{name:'Heinlein Review',exact:true});
+ await panel.getByRole('button',{name:'Reopen saved review saved-failed'}).click();
+ await page.evaluate(()=>(window as any).retryFixture.mismatch());
+ const original=await page.evaluate(()=>JSON.stringify((window as any).retryFixture.state().documents));
+ await panel.getByRole('button',{name:'Retry failed chunks',exact:true}).click();
+ const recovery=panel.getByRole('region',{name:'Review recovery'});await expect(recovery).toBeVisible();
+ await recovery.scrollIntoViewIfNeeded();
+ expect((await new AxeBuilder({page}).include('.heinlein-review-panel').analyze()).violations).toEqual([]);
+ for(const name of ['Repair review','Discard saved review']){const b=recovery.getByRole('button',{name,exact:true});const box=await b.boundingBox();expect(box!.height).toBeGreaterThanOrEqual(44);expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(page.viewportSize()!.width+1);}
+ await page.screenshot({path:`/tmp/heinlein-recovery-choices-${info.project.name}.png`});
+ const button=recovery.getByRole('button',{name:action==='repair'?'Repair review':'Discard saved review',exact:true});await button.focus();await page.keyboard.press('Enter');
+ if(action==='repair') await expect(panel).toContainText('Current text captured.');
+ else {const confirm=recovery.getByRole('button',{name:'Confirm discard saved review',exact:true});await expect(confirm).toBeFocused();await page.keyboard.press('Enter');await expect(panel).toBeHidden();expect(await page.evaluate(()=>(window as any).retryFixture.state().discarded)).toBe(true);}
+ expect(await page.evaluate(()=>JSON.stringify((window as any).retryFixture.state().documents))).toBe(original);
+ expect(await page.evaluate(()=>(window as any).retryFixture.state().requests)).toEqual([]);
+});

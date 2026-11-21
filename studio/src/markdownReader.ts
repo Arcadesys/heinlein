@@ -2,12 +2,14 @@
 // allowlist of elements and text nodes, so nothing in the source can add markup, attributes, requests or scripts.
 // Every text node is a verbatim slice of the LF source with a known range, which is what lets review marks land exactly.
 import { markdownLanguage } from '@codemirror/lang-markdown';
-import type { ReviewMark } from './reviewMarks';
 import {findAuthorComments} from './authorComments';
+import {imageLinks} from './illustrationLinks';
+import type { ReviewMark } from './reviewMarks';
 import { formatKeys, isMac } from './shortcuts';
 
 type MdNode = ReturnType<typeof markdownLanguage.parser.parse>['topNode'];
-export interface ReaderRange { from: number; to: number }
+type ImageLoader = (path:string,url:string)=>Promise<string>;
+export interface ReaderRange { from: number; to: number; path?:string }
 export interface ReaderContent { text: string; ranges: ReaderRange[]; note?: string; marks?: readonly ReviewMark[] }
 /** Reading only. Source view, opening and saving have no such bound. */
 export const READING_LIMIT_BYTES = 2 * 1024 * 1024;
@@ -24,7 +26,7 @@ export function linkIsUnsafe(url: string) {
 interface TextEntry { node: Text; from: number; to: number }
 interface Rendered { content: HTMLElement; marked: Map<string, HTMLElement> }
 
-export function renderMarkdown(doc: string, ranges: readonly ReaderRange[], marks: readonly ReviewMark[] = []): Rendered {
+export function renderMarkdown(doc: string, ranges: readonly ReaderRange[], marks: readonly ReviewMark[] = [], image?:ImageLoader): Rendered {
   const content = document.createElement('div');
   content.className = 'markdown-reader-content';
   let texts: TextEntry[] = [];
@@ -53,6 +55,10 @@ export function renderMarkdown(doc: string, ranges: readonly ReaderRange[], mark
   const generated = (parent: HTMLElement, value: string) => { make('span', parent, 'md-generated').textContent = value; };
   const children = (node: MdNode) => { const list: MdNode[] = []; for (let child = node.firstChild; child; child = child.nextSibling) list.push(child); return list; };
 
+  let owner:string|undefined;
+  let images=new Map<number, ReturnType<typeof imageLinks>[number]>();
+  const loaded = new Map<string, Promise<string>>();
+  let loading = Promise.resolve();
   function destination(url: MdNode | undefined, parent: HTMLElement, offset: number) {
     if (!url) return;
     const unsafe = linkIsUnsafe(doc.slice(url.from + offset, url.to + offset));
@@ -71,6 +77,27 @@ export function renderMarkdown(doc: string, ranges: readonly ReaderRange[], mark
       if (tag) inline(child, make(tag, parent), offset);
       else if (child.name === 'Link' || child.name === 'Image') {
         const wrapper = make('span', parent, child.name === 'Link' ? 'md-link' : 'md-image');
+        const illustration = images.get(child.from);
+        if (child.name === 'Image' && illustration && image && owner) {
+          const {alt, url} = illustration;
+          const path = owner, key = JSON.stringify([path, url]);
+          const img = make('img', wrapper);
+          img.alt = alt;
+          img.style.maxWidth = '100%';
+          img.style.height = 'auto';
+          const missing = () => {wrapper.textContent = `Missing or unsupported illustration: ${alt ? alt+' · ' : ''}${url}`;};
+          img.onerror = missing;
+          if (!loaded.has(key)) {
+            const request = loading.then(() => image(path, url));
+            loaded.set(key, request);
+            loading = request.then(() => {}, () => {});
+          }
+          void loaded.get(key)!.then(data => {
+            if (/^data:image\/(?:png|jpeg);base64,/.test(data)) img.src = data;
+            else missing();
+          }, missing);
+          continue;
+        }
         if (child.name === 'Image') generated(wrapper, 'Image not loaded: ');
         // Only the label reads as text here. The destination is shown once below, and titles stay out.
         const marks = child.getChildren('LinkMark');
@@ -138,7 +165,10 @@ export function renderMarkdown(doc: string, ranges: readonly ReaderRange[], mark
     }
   }
   for (const range of ranges) {
-    const tree = markdownLanguage.parser.parse(doc.slice(range.from, range.to));
+    const body=doc.slice(range.from,range.to);
+    owner=range.path;
+    images=new Map((image && owner ? imageLinks(body):[]).map(item=>[item.from,item]));
+    const tree = markdownLanguage.parser.parse(body);
     for (const child of children(tree.topNode)) {
       const before = content.children.length;
       block(child, content, range.from);
@@ -214,7 +244,7 @@ export function renderMarkdown(doc: string, ranges: readonly ReaderRange[], mark
   return {content, marked};
 }
 
-export function createMarkdownReader(hooks: {label: string; content(): ReaderContent; open?(id: string): void; showSource(): void}) {
+export function createMarkdownReader(hooks: {label: string; image?: ImageLoader; content(): ReaderContent; open?(id: string): void; showSource(): void}) {
   const element = document.createElement('section');
   element.className = 'markdown-reader';
   element.setAttribute('aria-label', hooks.label);
@@ -260,7 +290,7 @@ export function createMarkdownReader(hooks: {label: string; content(): ReaderCon
       note.textContent = source.note;
       body.append(note);
     }
-    const rendered = renderMarkdown(source.text, source.ranges, marks);
+    const rendered = renderMarkdown(source.text, source.ranges, marks,hooks.image);
     marked = rendered.marked;
     body.append(rendered.content);
     current = before ? marks.findIndex(mark => mark.id === before) : -1;

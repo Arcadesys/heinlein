@@ -151,7 +151,7 @@ pub fn preview(
     ensure_action(api, c, &w, &p, kind)?;
     let tracked = crate::transport::tree_files(&git, w.head_oid.parse()?)?;
     let root =
-        repository_core::Repository::open(registry.checkout(id)?).map_err(|_| Error::Storage)?;
+        registry.open_source(id)?;
     let disk = crate::operations::disk_files(&root, &tracked)?;
     Ok(Plan{preview:Preview{id:uuid::Uuid::new_v4().to_string(),workspace_id:w.id.clone(),kind:kind.into(),repository:w.repo.clone(),account:c.account.clone(),detail:p,method:method.into(),warning:if kind=="ready"{"Mark only this pull request ready for review. This does not merge or send new commits."}else{"Merge only this reviewed head into the named branch. GitHub automation may run. Checks shown as unknown are not green. The API cannot atomically pin the target branch tip or retargeting; it revalidates the head, while the named target can advance. No stack/queue/bypass request or automatic retry."}.into()},before:w,disk})
 }
@@ -203,7 +203,7 @@ pub fn apply(
     }
     ensure_action(api, c, &w, &fresh, &plan.preview.kind)?;
     let root =
-        repository_core::Repository::open(registry.checkout(&w.id)?).map_err(|_| Error::Storage)?;
+        registry.open_source(&w.id)?;
     if crate::operations::disk_files(&root, &plan.disk)? != plan.disk {
         return Err(Error::Changed);
     }

@@ -1,6 +1,7 @@
 //! Bounded repository access and explicit, revision-guarded Markdown saves. Native hosts choose roots; renderers receive relative paths only.
 //! Unix descriptor-relative opens reject every symlink component, including concurrent swaps.
 mod drafting;
+pub mod illustrations;
 #[cfg(all(test, unix))]
 mod fuzz_support;
 #[cfg(unix)]
@@ -21,6 +22,7 @@ pub use publishing_copy::{
     BookDesign, PublishingMetadata, PublishingPlan, PublishingPreview, PublishingSource,
     COVER_LIMIT,
 };
+pub use recovery::history::SceneVersion;
 pub use recovery::{RecoveryDraft, RecoveryStore};
 #[cfg(unix)]
 use rustix::{
@@ -56,6 +58,7 @@ pub enum Error {
     NotDirectory,
     NotFile,
     UnsupportedText,
+    InvalidImage,
     TooLarge,
     LimitExceeded,
     InvalidManifest,
@@ -93,6 +96,7 @@ impl fmt::Display for Error {
             Self::NotFound => "Repository item was not found",
             Self::NotDirectory => "Item is not a directory",
             Self::NotFile => "Item is not a regular file",
+            Self::InvalidImage => "Choose a valid PNG or JPEG up to 16 MiB and 24 megapixels",
             Self::UnsupportedText => "Only UTF-8 text documents are supported",
             Self::TooLarge => "File exceeds the read limit",
             Self::LimitExceeded => "Repository browsing limit exceeded",
@@ -255,6 +259,7 @@ fn declares_assembled_path(raw: &GuardManifest, base: &str, path: &str) -> bool 
 
 pub struct Repository {
     root: PathBuf,
+    project_key: String,
     save_gate: Mutex<()>,
     standalone_review: Option<standalone::ReviewDocument>,
     #[cfg(unix)]
@@ -360,15 +365,14 @@ impl Repository {
     }
     /// Stable opaque identity for local preferences/recovery, never an authorization token.
     pub fn project_key(&self) -> String {
-        // Root paths are absolute, normalized and opened without following symlinks.
-        format!(
-            "{:x}",
-            Sha256::digest(self.root.as_os_str().as_encoded_bytes())
-        )
+        self.project_key.clone()
+    }
+    /// The trusted host may preserve the previous identity when relocating a managed project.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open_with_identity(path.as_ref(), None)
     }
     #[cfg(unix)]
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
+    pub fn open_with_identity(path: &Path, identity_path: Option<&Path>) -> Result<Self> {
         // Root selection is native-host-only. Walk the selection itself with no-follow
         // descriptors, rather than canonicalize-then-open (which has a symlink race).
         if !path.is_absolute() {
@@ -406,8 +410,11 @@ impl Repository {
         if (held.dev(), held.ino()) != (resolved.dev(), resolved.ino()) {
             return Err(Error::Conflict);
         }
+        let identity_path = identity_path.unwrap_or(&root);
+        let project_key = format!("{:x}", Sha256::digest(identity_path.as_os_str().as_encoded_bytes()));
         Ok(Self {
             root,
+            project_key,
             fd,
             save_gate: Mutex::new(()),
             standalone_review: None,
@@ -425,7 +432,7 @@ impl Repository {
         Ok((held.dev(), held.ino()))
     }
     #[cfg(not(unix))]
-    pub fn open(_path: impl AsRef<Path>) -> Result<Self> {
+    pub fn open_with_identity(_path: &Path, _identity_path: Option<&Path>) -> Result<Self> {
         Err(Error::UnsupportedPlatform)
     }
     #[cfg(unix)]
@@ -588,7 +595,7 @@ impl Repository {
     /// The native host serializes access; the mutex additionally serializes callers of this core.
     pub fn save(&self, path: &str, expected_hash: &str, text: &str) -> Result<Document> {
         let _save = self.save_gate.lock().map_err(|_| Error::Io)?;
-        self.save_inner(path, expected_hash, text, || Ok(()))
+        self.save_inner(path, expected_hash, text, |_| Ok(()))
     }
     /// Author-confirmed whole-scene operations must reject all pending recovery.
     /// Keep the normal lock order: repository save gate, then recovery gate. Never
@@ -615,7 +622,12 @@ impl Repository {
     ) -> Result<Document> {
         let _save = self.save_gate.lock().map_err(|_| Error::Io)?;
         recovery.with_clean_paths(self, &[path.to_owned()], || {
-            self.save_inner(path, expected_hash, text, before_commit)
+            self.save_inner(path, expected_hash, text, |previous| {
+                if let Some(previous) = previous {
+                    recovery.remember_scene(self, previous)?;
+                }
+                before_commit()
+            })
         })
     }
     /// Native save route also observes process-lifetime scene ownership.
@@ -638,7 +650,12 @@ impl Repository {
     ) -> Result<Document> {
         let _save = self.save_gate.lock().map_err(|_| Error::Io)?;
         recovery.with_owned_scene(self, path, || {
-            self.save_inner(path, expected_hash, text, before_commit)
+            self.save_inner(path, expected_hash, text, |previous| {
+                if let Some(previous) = previous {
+                    recovery.remember_scene(self, previous)?;
+                }
+                before_commit()
+            })
         })
     }
     fn save_inner(
@@ -646,10 +663,11 @@ impl Repository {
         path: &str,
         expected_hash: &str,
         text: &str,
-        before_commit: impl FnOnce() -> Result<()>,
+        before_commit: impl FnOnce(Option<&Document>) -> Result<()>,
     ) -> Result<Document> {
+        // Standalone review drafts keep their own recovery; they have no scene history.
         if let Some(draft) = &self.standalone_review {
-            return draft.save(path, expected_hash, text, before_commit);
+            return draft.save(path, expected_hash, text, || before_commit(None));
         }
         self.require_clean_structure()?;
         self.allowed(path, false)?;
@@ -684,7 +702,7 @@ impl Repository {
         if current.text == text {
             return Ok(current);
         }
-        self.replace(path, expected_hash, text, before_commit)?;
+        self.replace(path, expected_hash, text, || before_commit(Some(&current)))?;
         Ok(Document {
             path: path.into(),
             text: text.into(),
@@ -1027,7 +1045,7 @@ mod save_failure_tests {
         let repo = Repository::open(dir.path()).unwrap();
         let doc = repo.read("scene.md").unwrap();
         assert_eq!(
-            repo.save_inner("scene.md", &doc.content_hash, "Edited", || Err(Error::Io))
+            repo.save_inner("scene.md", &doc.content_hash, "Edited", |_| Err(Error::Io))
                 .unwrap_err(),
             Error::Io
         );
@@ -1066,7 +1084,7 @@ mod save_failure_tests {
         std::fs::write(&path, "Original").unwrap();
         let repo = Repository::open(dir.path()).unwrap();
         let doc = repo.read("scene.md").unwrap();
-        let result = repo.save_inner("scene.md", &doc.content_hash, "Edited", || {
+        let result = repo.save_inner("scene.md", &doc.content_hash, "Edited", |_| {
             std::fs::write(&path, "External").unwrap();
             Ok(())
         });

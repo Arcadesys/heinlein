@@ -26,6 +26,8 @@ export function createUpdatePanel(core:LocalCore,options:{quit:()=>Promise<void>
   const element=document.createElement('dialog');element.className='update-panel';element.setAttribute('aria-labelledby','update-panel-title');
   const heading=document.createElement('h2');heading.id='update-panel-title';heading.textContent='Heinlein updates';heading.tabIndex=-1;
   const status=document.createElement('p');status.setAttribute('role','status');
+  status.setAttribute('aria-atomic','true');
+  const controls=document.createElement('div');
   const notice=document.createElement('div');notice.className='update-notice';notice.hidden=true;notice.setAttribute('role','status');notice.setAttribute('aria-atomic','true');
   const announcement=document.createElement('span');
   const noticeButton=document.createElement('button');noticeButton.type='button';noticeButton.append(announcement);notice.append(noticeButton);
@@ -56,23 +58,27 @@ export function createUpdatePanel(core:LocalCore,options:{quit:()=>Promise<void>
   async function load(action:'status'|'check'|'schedule'|'openRelease'|'buildRelease'){
     const current=generation;
     if(!core.updateRequest){render({state:'unavailable'});return;}
-    status.textContent=action==='check'?'Checking for Heinlein updates…':action==='buildRelease'?'Downloading and building the release… This may take several minutes. Keep Heinlein open until the build finishes.':'Reading update status…';
+    status.textContent=action==='openRelease'?'Opening the release download page…':action==='check'?'Checking for Heinlein updates…':action==='buildRelease'?'Downloading and building the release… This may take several minutes. Keep Heinlein open until the build finishes.':'Reading update status…';
     const value=await core.updateRequest(action);
-    announce(value);if(element.open&&current===generation)render(value);
+    announce(value);if(element.open&&current===generation){
+      render(value);
+      if(action==='openRelease')status.textContent='The release download page opened in your browser.';
+    }
   }
   function act(run:()=>Promise<void>){
     if(busy)return pending;
-    const view=generation;busy=true;[check,schedule,quit,download,build].forEach(b=>b.disabled=true);element.setAttribute('aria-busy','true');
-    pending=run().catch(()=>{announce({state:'release-check-failed'});if(element.open&&view===generation)status.textContent='The update check is unavailable. Your running app, writing and saved accounts are unchanged. Try again later.'}).finally(()=>{busy=false;[check,schedule,quit,download,build].forEach(b=>b.disabled=false);check.disabled=unavailable;element.removeAttribute('aria-busy')});return pending;
+    const view=generation;busy=true;[check,schedule,quit,download,build].forEach(b=>b.disabled=true);controls.setAttribute('aria-busy','true');
+    pending=run().catch(()=>{announce({state:'release-check-failed'});if(element.open&&view===generation)status.textContent='The update check is unavailable. Your running app, writing and saved accounts are unchanged. Try again later.'}).finally(()=>{busy=false;[check,schedule,quit,download,build].forEach(b=>b.disabled=false);check.disabled=unavailable;controls.removeAttribute('aria-busy')});return pending;
   }
   exit.onclick=close;
   const explanation=document.createElement('p');explanation.textContent='Updates build the trusted Heinlein main source locally. Nothing replaces the app while it is running. You can defer an update and keep writing; quitting uses the normal save and recovery checks. Python, Node/npm, Rust and Apple build tools are required.';
-  element.append(heading,exit,status,details,explanation,check,schedule,download,build,quit);build.hidden=true;schedule.hidden=true;quit.hidden=true;download.hidden=true;
+  controls.append(check,schedule,download,build,quit);element.append(heading,exit,status,details,explanation,controls);build.hidden=true;schedule.hidden=true;quit.hidden=true;download.hidden=true;
   element.addEventListener('cancel',event=>{event.preventDefault();close()});
   async function open(action:'status'|'check'='status'){if(element.open){if(action==='check')await act(()=>load('check'));return;}openedFrom=document.activeElement as HTMLElement;const view=++generation;element.showModal();heading.focus();await pending;if(element.open&&view===generation)await act(()=>load(action))}
   async function poll(){
-    if(destroyed||busy||!core.updateRequest||latest?.state==='scheduled')return;
+    if(destroyed||busy||element.open||!core.updateRequest||latest?.state==='scheduled'||latest?.state==='release-build-ready')return;
     await act(async()=>{
+      status.textContent='Checking for Heinlein updates…';
       const value=await core.updateRequest!('status');announce(value);
       if(value.state!=='scheduled'&&value.state!=='unavailable'){
         const checked=await core.updateRequest!('check');announce(checked);if(element.open)render(checked);

@@ -200,7 +200,7 @@ pub fn version_preview(
     let head = Oid::from_str(&w.head_oid)?;
     let before = transport::tree_files(&repo, head)?;
     let root =
-        repository_core::Repository::open(registry.checkout(id)?).map_err(|_| Error::Storage)?;
+        registry.open_source(id)?;
     let expected = disk_files(&root, &before)?;
     let mut files = before.clone();
     let unique = selected.iter().collect::<std::collections::BTreeSet<_>>();
@@ -272,7 +272,7 @@ pub fn commit_version(
     }
     barrier(&plan.selected)?;
     let root =
-        repository_core::Repository::open(registry.checkout(id)?).map_err(|_| Error::Storage)?;
+        registry.open_source(id)?;
     if disk_files(
         &root,
         &transport::tree_files(&repo, Oid::from_str(&w.head_oid)?)?,
@@ -461,7 +461,7 @@ pub fn preview_send(
     }
     let tracked = transport::tree_files(&repo, Oid::from_str(&before.head_oid)?)?;
     let root =
-        repository_core::Repository::open(registry.checkout(id)?).map_err(|_| Error::Storage)?;
+        registry.open_source(id)?;
     let expected = disk_files(&root, &tracked)?;
     if version.as_ref().is_some_and(|v| v.expected != expected) {
         return Err(Error::Changed);
@@ -547,7 +547,7 @@ pub fn confirm_send(
         return Err(Error::Changed);
     }
     let root =
-        repository_core::Repository::open(registry.checkout(&w.id)?).map_err(|_| Error::Storage)?;
+        registry.open_source(&w.id)?;
     let tracked = transport::tree_files(&repo, Oid::from_str(&w.head_oid)?)?;
     let paths = p
         .expected
