@@ -78,6 +78,7 @@ impl Fixture {
             folder_name: "new-copy".into(),
             free_play_approved: true,
             no_cover_approved: true,
+            design: Default::default(),
         }
     }
     fn plan(&self) -> PublishingPlan {
@@ -247,11 +248,31 @@ fn unsupported_frontmatter_assets_references_and_invalid_metadata_stop_preview()
         assert_eq!(f.sources(), before);
     }
     let f = Fixture::new();
-    for field in ["imprint", "cover", "folder", "format", "author", "rights"] {
+    for field in [
+        "imprint",
+        "style",
+        "cover",
+        "page",
+        "font",
+        "subtitle",
+        "dedication",
+        "folder",
+        "format",
+        "author",
+        "rights",
+    ] {
         let mut m = f.metadata();
         match field {
-            "imprint" => m.free_play_approved = false,
-            "cover" => m.no_cover_approved = false,
+            "imprint" => {
+                m.design.style = "free-play".into();
+                m.free_play_approved = false
+            }
+            "style" => m.design.style = "insert-coin".into(),
+            "cover" => m.design.cover = "photo".into(),
+            "page" => m.design.page_size = "tabloid".into(),
+            "font" => m.design.body_font = "Comic Sans".into(),
+            "subtitle" => m.design.subtitle = "a\u{7}b".into(),
+            "dedication" => m.design.dedication = "x".repeat(1001),
             "folder" => m.folder_name = "../overwrite".into(),
             "format" => m.formats = vec!["invented".into()],
             "author" => m.author.clear(),
@@ -330,4 +351,102 @@ fn unsafe_parent_and_scene_paths_and_source_destination_are_rejected() {
         .preview_publishing_copy(f.metadata(), &f.recovery)
         .is_err());
     assert_eq!(fs::read(f.repo.root().join("ms/z.md")).unwrap(), before[1]);
+}
+
+#[test]
+fn book_design_reaches_publisher_config_and_free_play_needs_approval() {
+    let f = Fixture::new();
+    let mut m = f.metadata();
+    m.free_play_approved = false;
+    m.no_cover_approved = false;
+    m.design = BookDesign {
+        style: "plain".into(),
+        page_size: "trade".into(),
+        large_print: true,
+        body_font: "EB Garamond".into(),
+        display_font: "Source Serif 4".into(),
+        cover: "none".into(),
+        copyright_page: false,
+        title_page: true,
+        subtitle: "A novella".into(),
+        dedication: "For R.\n\n  and for the night shift  ".into(),
+    };
+    let p = f
+        .repo
+        .preview_publishing_copy(m.clone(), &f.recovery)
+        .unwrap();
+    let config: serde_json::Value = serde_json::from_str(&p.preview.config).unwrap();
+    assert_eq!(config["imprint"], "plain");
+    assert_eq!(config["cover"], serde_json::Value::Null);
+    assert_eq!(
+        config["page"],
+        serde_json::json!({"size": "trade", "large_print": true})
+    );
+    assert_eq!(
+        config["fonts"],
+        serde_json::json!({"body": "EB Garamond", "display": "Source Serif 4"})
+    );
+    assert_eq!(
+        config["front_matter"],
+        serde_json::json!({"cover": false, "copyright": false, "title_page": true})
+    );
+    assert_eq!(config["metadata"]["subtitle"], "A novella");
+    assert_eq!(
+        config["metadata"]["dedication"],
+        serde_json::json!(["For R.", "and for the night shift"])
+    );
+    assert!(p.preview.design_summary.contains("Plain style"));
+    // FREE PLAY branding still needs the author's explicit approval.
+    m.design.style = "free-play".into();
+    assert!(matches!(
+        f.repo.preview_publishing_copy(m.clone(), &f.recovery),
+        Err(Error::PublishingMetadata)
+    ));
+    m.free_play_approved = true;
+    let p = f.repo.preview_publishing_copy(m, &f.recovery).unwrap();
+    assert!(p.preview.config.contains("\"imprint\": \"free-play\""));
+}
+#[test]
+fn saved_guides_without_design_load_with_plain_defaults() {
+    let m: PublishingMetadata = serde_json::from_value(serde_json::json!({
+        "title": "T", "author": "A", "rights": "R", "language": "en", "formats": ["html"],
+        "folderName": "copy", "freePlayApproved": true, "noCoverApproved": true
+    }))
+    .unwrap();
+    assert_eq!(m.design, BookDesign::default());
+    assert_eq!(m.design.style, "plain");
+}
+#[test]
+fn image_cover_is_validated_attached_and_copied() {
+    let f = Fixture::new();
+    let mut m = f.metadata();
+    m.design.cover = "image".into();
+    let mut p = f.repo.preview_publishing_copy(m, &f.recovery).unwrap();
+    assert!(p.needs_cover_image());
+    // Writing without the chosen image is refused.
+    assert_eq!(f.write(&p), Err(Error::PublishingCover));
+    assert_eq!(fs::read_dir(&f.parent).unwrap().count(), 0);
+    for bad in [
+        Vec::new(),
+        b"GIF89a....".to_vec(),
+        vec![0xFF; COVER_LIMIT + 1],
+    ] {
+        assert_eq!(p.clone().attach_cover(bad), Err(Error::PublishingCover));
+    }
+    let png = [b"\x89PNG\r\n\x1a\n".as_slice(), b"synthetic"].concat();
+    p.attach_cover(png.clone()).unwrap();
+    assert_eq!(p.preview.cover_file.as_deref(), Some("cover.png"));
+    let config: serde_json::Value = serde_json::from_str(&p.preview.config).unwrap();
+    assert_eq!(config["cover"], "cover.png");
+    assert_eq!(config["front_matter"]["cover"], true);
+    f.write(&p).unwrap();
+    let output = f.parent.join("new-copy");
+    assert_eq!(fs::read(output.join("cover.png")).unwrap(), png);
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(output.join("source-receipt.json")).unwrap()).unwrap();
+    assert_eq!(receipt["cover"]["file"], "cover.png");
+    assert_eq!(receipt["configHash"], content_hash(&p.preview.config));
+    // A typographic design cannot smuggle an image in.
+    let mut plain = f.plan();
+    assert_eq!(plain.attach_cover(png), Err(Error::PublishingMetadata));
 }

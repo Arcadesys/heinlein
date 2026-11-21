@@ -32,85 +32,14 @@ def chrome_path() -> str:
     )
 
 
-def _render_html(
-    *,
-    templates_dir: Path,
-    title: str,
-    title_html: str,
-    subtitle: str,
-    author: str,
-    genre: str,
-    language: str,
-    page_w: float,
-    page_h: float,
-    bleed_in: float,
-    sheet_w: float,
-    sheet_h: float,
-    margin_top: str,
-    margin_side: str,
-    body_font_size: int,
-    body_line_height: float,
-    prose_font_size: int,
-    prose_line_height: float,
-    local_fonts: bool,
-    font_css: str,
-    cover_eyebrow: str,
-    cover_uri: str | None,
-    imprint_name: str,
-    imprint_tagline: str,
-    imprint_tagline_long: str,
-    imprint_blurb: str,
-    imprint_url: str,
-    colophon_lines: list[str],
-    colophon_intro: str,
-    isbn_lines: list[str],
-    issue_tag: str,
-    dedication_lines: list[str],
-    body_html: str,
-    tokens_css: str,
-    project_print_css: str,
-) -> str:
+def _render_html(*, templates_dir: Path, **ctx: Any) -> str:
+    """Render print.html.j2 with the shared context built by build.py."""
     env = Environment(
         loader=FileSystemLoader(str(templates_dir)),
         autoescape=select_autoescape(enabled_extensions=("j2",), default_for_string=False),
     )
     tmpl = env.get_template("print.html.j2")
-    return tmpl.render(
-        title=title,
-        title_html=title_html,
-        subtitle=subtitle,
-        author=author,
-        genre=genre,
-        language=language,
-        page_w=page_w,
-        page_h=page_h,
-        bleed_in=bleed_in,
-        sheet_w=sheet_w,
-        sheet_h=sheet_h,
-        margin_top=margin_top,
-        margin_side=margin_side,
-        body_font_size=body_font_size,
-        body_line_height=body_line_height,
-        prose_font_size=prose_font_size,
-        prose_line_height=prose_line_height,
-        local_fonts=local_fonts,
-        font_css=font_css,
-        cover_eyebrow=cover_eyebrow,
-        cover_uri=cover_uri,
-        imprint_name=imprint_name,
-        imprint_tagline=imprint_tagline,
-        imprint_tagline_long=imprint_tagline_long,
-        imprint_blurb=imprint_blurb,
-        imprint_url=imprint_url,
-        colophon_lines=colophon_lines,
-        colophon_intro=colophon_intro,
-        isbn_lines=isbn_lines,
-        issue_tag=issue_tag,
-        dedication_lines=dedication_lines,
-        body_html=body_html,
-        tokens_css=tokens_css,
-        project_print_css=project_print_css,
-    )
+    return tmpl.render(**ctx)
 
 
 def _print_to_pdf(html: str, output: Path, *, keep_html: Path | None = None) -> None:

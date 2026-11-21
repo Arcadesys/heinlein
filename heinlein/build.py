@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from heinlein import comments, frontmatter, pandoc, twine
-from heinlein.config import HeinleinConfig
+from heinlein.config import FONT_FAMILIES, HeinleinConfig
 from heinlein.outputs import docx as out_docx
 from heinlein.outputs import epub as out_epub
 from heinlein.outputs import html as out_html
@@ -27,6 +27,15 @@ FREE_PLAY_DEFAULTS = {
 # Imprint presets, selected by the `imprint:` slug in heinlein.yaml. Any field
 # can be overridden per-project via the matching `metadata:` key.
 IMPRINTS = {
+    # Neutral, unbranded style: no imprint name, marks or end page. A project
+    # can still name its own publisher through metadata.publisher.
+    "plain": {
+        "imprint_name": "",
+        "imprint_tagline": "",
+        "imprint_tagline_long": "",
+        "imprint_blurb": "",
+        "imprint_url": "",
+    },
     "free-play": FREE_PLAY_DEFAULTS,
     "insert-coin": {
         "imprint_name": "Insert Coin",
@@ -36,6 +45,76 @@ IMPRINTS = {
         "imprint_url": "thearcades.me",
     },
 }
+
+
+# Styles that print an imprint's marks, issue tag and dark end page.
+BRANDED_IMPRINTS = ("free-play", "insert-coin")
+
+# Plain style colour tokens: black ink on white, with no house accent colours.
+# Appended after tokens.css so every var(--neon-pink)/var(--accent) use in the
+# templates falls back to ink.
+PLAIN_TOKENS_CSS = """/* plain style: neutral, unbranded tokens */
+:root {
+  --paper:        #ffffff;
+  --ink:          #111111;
+  --ink-muted:    #555555;
+  --rule:         rgba(0,0,0,0.12);
+  --neon-pink:    #111111;
+  --accent:       #555555;
+  --gold:         #555555;
+}
+"""
+
+# Plain style print overrides: a typographic cover in ink on paper and quiet
+# rules in place of the gradient treatments.
+PLAIN_PRINT_CSS = """/* plain style: print overrides */
+.cover { background: var(--paper); color: var(--ink); }
+.cover-top, .cover-imprint { color: var(--ink-muted); }
+.cover-rule { background: var(--ink); opacity: 0.5; }
+.cover-title { color: var(--ink); }
+.cover-sub { color: var(--ink-muted); }
+.cover-author { color: var(--ink); }
+.title-page .eyebrow { color: var(--ink-muted); }
+.title-page .rule { background: var(--ink); opacity: 0.4; }
+"""
+
+
+def _is_branded(cfg: HeinleinConfig) -> bool:
+    return cfg.imprint in BRANDED_IMPRINTS
+
+
+def _font_stack(name: str) -> str:
+    return FONT_FAMILIES[name]["stack"]
+
+
+def _google_fonts_href(body: str, display: str) -> str:
+    """Google Fonts css2 URL for the chosen families plus JetBrains Mono labels.
+
+    The default Lora/Inter pairing keeps the long-standing URL byte for byte.
+    """
+    families = []
+    for name in (display, "JetBrains Mono", body):
+        spec = "JetBrains+Mono:wght@400;500" if name == "JetBrains Mono" else FONT_FAMILIES[name]["google"]
+        if spec not in families:
+            families.append(spec)
+    return (
+        "https://fonts.googleapis.com/css2?"
+        + "&".join(f"family={spec}" for spec in families)
+        + "&display=swap"
+    )
+
+
+def _font_override_css(cfg: HeinleinConfig) -> str:
+    """EPUB/HTML rules for author-chosen type. Empty for the default pairing."""
+    if cfg.fonts.is_default:
+        return ""
+    body = _font_stack(cfg.fonts.body)
+    display = _font_stack(cfg.fonts.display)
+    return (
+        "/* author-chosen fonts */\n"
+        f"body {{ font-family: {body}; }}\n"
+        f"h1, h2, h3, .first > p::first-letter, nav#TOC a, .twine-choice, .twine-back, .twine-restart {{ font-family: {display}; }}\n"
+    )
 
 
 def _imprint(cfg: HeinleinConfig) -> dict[str, str]:
@@ -101,7 +180,20 @@ def _title_html(title: str) -> str:
     return f"{first}<br>{rest}"
 
 
-def _colophon_lines(front: dict[str, Any], cfg_meta: dict[str, Any], title: str, author: str) -> list[str]:
+def _type_names(body: str, display: str) -> str:
+    return body if body == display else f"{body} and {display}"
+
+
+def _colophon_lines(
+    front: dict[str, Any],
+    cfg_meta: dict[str, Any],
+    title: str,
+    author: str,
+    *,
+    body_font: str = "Lora",
+    display_font: str = "Inter",
+    branded: bool = True,
+) -> list[str]:
     override = cfg_meta.get("colophon")
     if override:
         if isinstance(override, str):
@@ -109,21 +201,36 @@ def _colophon_lines(front: dict[str, Any], cfg_meta: dict[str, Any], title: str,
         return [str(line) for line in override]
 
     rights = cfg_meta.get("rights") or f"“{title}” © {author}. All rights reserved."
-    return [
-        rights,
-        "Set in Lora, Inter, and JetBrains Mono. Designed for screen and small format.",
-    ]
+    if branded and (body_font, display_font) == ("Lora", "Inter"):
+        typeset = "Set in Lora, Inter, and JetBrains Mono. Designed for screen and small format."
+    else:
+        typeset = f"Set in {_type_names(body_font, display_font)}."
+    lines = [rights]
+    if not branded and cfg_meta.get("publisher"):
+        lines.append(f"Published by {cfg_meta['publisher']}.")
+    lines.append(typeset)
+    return lines
 
 
-def _colophon_intro(title: str, imprint_name: str, imprint_blurb: str) -> str:
-    """Italic Lora intro line that opens the colophon — matches the design
-    system's CopyrightPage."""
+def _colophon_intro(
+    title: str,
+    imprint_name: str,
+    imprint_blurb: str,
+    *,
+    body_font: str = "Lora",
+    display_font: str = "Inter",
+    branded: bool = True,
+) -> str:
+    """Italic intro line that opens the colophon — matches the design
+    system's CopyrightPage. The plain style has no imprint to introduce."""
+    if not branded:
+        return ""
     blurb = imprint_blurb.rstrip(".")
     if blurb:
         blurb = blurb[0].lower() + blurb[1:]
     return (
         f"<em>{title}</em> is a publication of {imprint_name}, "
-        f"{blurb}. Set in Lora and Inter. "
+        f"{blurb}. Set in {_type_names(body_font, display_font)}. "
         "Designed and edited in Chicago."
     )
 
@@ -194,14 +301,22 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
     language = cfg.metadata.get("language", "en-US")
     slug = _slug(title)
     imprint = _imprint(cfg)
+    branded = _is_branded(cfg)
     edition_front = {**front, "title": title, "author": author}
 
     templates = _templates_dir()
     tokens_css = (templates / "tokens.css").read_text(encoding="utf-8")
     accents_override = _accents_override_css(cfg.accents)
+    if not branded:
+        tokens_css = tokens_css + "\n" + PLAIN_TOKENS_CSS
     if accents_override:
         tokens_css = tokens_css + "\n" + accents_override
     project_print_css = _project_style_css(cfg.styles.get("print"))
+    if not branded:
+        project_print_css = PLAIN_PRINT_CSS + ("\n" + project_print_css if project_print_css else "")
+    # EPUB/HTML: plain tokens and chosen fonts, before per-project accents.
+    format_css = (PLAIN_TOKENS_CSS if not branded else "") + _font_override_css(cfg)
+    fonts = cfg.fonts
 
     dedication_lines = _dedication_lines(front, cfg.metadata)
 
@@ -231,6 +346,14 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         "prose_line_height": 1.65 if cfg.page.large_print else 1.6,
         "local_fonts": cfg.pdf.reproducible,
         "font_css": _local_font_css(templates) if cfg.pdf.reproducible else "",
+        "google_fonts_href": _google_fonts_href(fonts.body, fonts.display),
+        "font_body_stack": _font_stack(fonts.body),
+        "font_display_stack": _font_stack(fonts.display),
+        "branded": branded,
+        "show_cover": cfg.front_matter.cover,
+        "show_copyright": cfg.front_matter.copyright,
+        "show_title_page": cfg.front_matter.title_page,
+        "show_end_page": cfg.front_matter.end_page and branded,
         "cover_eyebrow": _cover_eyebrow(cfg.metadata, imprint["imprint_name"]),
         "cover_uri": cover.as_uri() if cover else None,
         "imprint_name": imprint["imprint_name"],
@@ -238,10 +361,16 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
         "imprint_tagline_long": imprint["imprint_tagline_long"],
         "imprint_blurb": imprint["imprint_blurb"],
         "imprint_url": imprint["imprint_url"],
-        "colophon_lines": _colophon_lines(front, cfg.metadata, title, author),
-        "colophon_intro": _colophon_intro(title, imprint["imprint_name"], imprint["imprint_blurb"]),
+        "colophon_lines": _colophon_lines(
+            front, cfg.metadata, title, author,
+            body_font=fonts.body, display_font=fonts.display, branded=branded,
+        ),
+        "colophon_intro": _colophon_intro(
+            title, imprint["imprint_name"], imprint["imprint_blurb"],
+            body_font=fonts.body, display_font=fonts.display, branded=branded,
+        ),
         "isbn_lines": _isbn_lines(cfg.metadata),
-        "issue_tag": _issue_tag(cfg.metadata),
+        "issue_tag": _issue_tag(cfg.metadata) if branded else "",
         "dedication_lines": dedication_lines,
         "body_html": body_html,
         "tokens_css": tokens_css,
@@ -264,7 +393,7 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
     if "epub" in cfg.formats:
         out = cfg.output / f"{slug}.epub"
         epub_css = _epub_css_for(
-            templates, cfg.accents, cfg.styles.get("epub")
+            templates, cfg.accents, cfg.styles.get("epub"), format_css
         )
         try:
             out_epub.build(
@@ -297,7 +426,10 @@ def build(cfg: HeinleinConfig, *, debug_dir: Path | None = None) -> dict[str, Pa
     if "html" in cfg.formats:
         out = cfg.output / f"{slug}.html"
         include_header = _html_include_header(
-            cfg.accents, cfg.styles.get("html")
+            cfg.accents,
+            cfg.styles.get("html"),
+            format_css,
+            None if fonts.is_default else _google_fonts_href(fonts.body, fonts.display),
         )
         try:
             out_html.build(
@@ -402,6 +534,7 @@ def _epub_css_for(
     templates: Path,
     accents: dict[str, str],
     stylesheet: Path | None = None,
+    style_css: str = "",
 ) -> Path:
     """Return a CSS path for the EPUB build, with accent overrides applied.
 
@@ -410,9 +543,11 @@ def _epub_css_for(
     and returns its path — the caller is responsible for deleting it.
     """
     base = templates / "epub.css"
-    if not accents and stylesheet is None:
+    if not accents and stylesheet is None and not style_css:
         return base
     css = base.read_text(encoding="utf-8")
+    if style_css:
+        css = css + "\n" + style_css
     css = css + "\n" + _accents_override_css(accents)
     css = _append_project_style(css, stylesheet)
     tmp = tempfile.NamedTemporaryFile(
@@ -426,16 +561,21 @@ def _epub_css_for(
 def _html_include_header(
     accents: dict[str, str],
     stylesheet: Path | None = None,
+    style_css: str = "",
+    fonts_href: str | None = None,
 ) -> Path | None:
-    """Write a temp HTML fragment with an accents override <style> block.
+    """Write a temp HTML fragment with style, font and accent overrides.
 
     Returns None when there are no overrides. The caller deletes the file.
     """
-    if not accents and stylesheet is None:
+    if not accents and stylesheet is None and not style_css and fonts_href is None:
         return None
-    css = _accents_override_css(accents)
+    css = style_css + _accents_override_css(accents)
     css = _append_project_style(css, stylesheet)
-    block = "<style>\n" + css + "</style>\n"
+    block = ""
+    if fonts_href:
+        block += f'<link href="{fonts_href}" rel="stylesheet">\n'
+    block += "<style>\n" + css + "</style>\n"
     tmp = tempfile.NamedTemporaryFile(
         mode="w", suffix=".html", delete=False, encoding="utf-8"
     )
@@ -450,7 +590,7 @@ def _cover_eyebrow(cfg_meta: dict[str, Any], imprint_name: str = "FREE PLAY Publ
         return str(eyebrow)
     issue = cfg_meta.get("issue")
     year = cfg_meta.get("year") or cfg_meta.get("date") or ""
-    parts = [imprint_name]
+    parts = [imprint_name] if imprint_name else []
     if issue:
         parts.append(f"Issue {issue}")
     if year:

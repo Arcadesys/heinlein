@@ -162,11 +162,19 @@ Drop a `heinlein.yaml` next to your manuscript:
 ```yaml
 manuscript: manuscript.md
 cover: cover.jpg
-imprint: free-play
+imprint: free-play         # free-play (default), insert-coin, or plain (unbranded)
 page:
-  size: digest             # digest=5.5x8.5, trade=6x9, mass=4.25x6.87, letter=8.5x11
+  size: digest             # digest=5.5x8.5, trade=6x9, small=5x8, a5, mass=4.25x6.87, letter=8.5x11
   margins: { top: 0.85in, side: 0.7in }
   large_print: false       # opt-in PDF prose: 15pt, 1.65 line height
+fonts:
+  body: Lora               # Lora, Inter, EB Garamond, Crimson Pro, Source Serif 4,
+  display: Inter           # Libre Baskerville, Atkinson Hyperlegible
+front_matter:              # PDF pages around the story; all default to true
+  cover: true
+  copyright: true
+  title_page: true
+  end_page: true           # branded styles only
 pdf:
   reproducible: false      # fixed metadata/ID; requires metadata.date
 styles:
@@ -187,6 +195,16 @@ output: dist/
 the cover, title page, colophon, headings, margins, and end page keep the
 standard FREE PLAY treatment. `page.size: letter` is available for 8.5 × 11in
 editions.
+
+`imprint: plain` is the neutral, unbranded style: black ink on white, no
+imprint name, coin marks, issue tag or end page. Name your own publisher with
+`metadata.publisher` and it appears on the copyright page. Studio's publishing
+step writes `plain` unless you choose FREE PLAY; projects without an
+`imprint:` line keep FREE PLAY.
+
+`fonts` picks the body and heading families for PDF, EPUB and HTML. Lora and
+Inter are bundled; the others load from Google Fonts at build time, so
+`pdf.reproducible` accepts only the bundled pair.
 
 `pdf.reproducible: true` makes PDF output hermetic and repeatable. It uses the
 bundled Inter, Lora, and JetBrains Mono fonts, requires `metadata.date`, and
