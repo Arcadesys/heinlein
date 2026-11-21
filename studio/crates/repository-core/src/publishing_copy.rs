@@ -10,7 +10,88 @@ use {
 
 const LIMIT: usize = 8 * 1024 * 1024;
 const SEPARATOR: &str = "\n\n---\n\n";
-const TREATMENT: &str = "All declared ms scenes, in manifest order; groups add no chapters. Exact scene bytes joined by two newlines, --- and two newlines. No scene frontmatter or references supported. A generated title/byline precedes scene text so the existing Python CLI strips only that generated block. No source headings are stripped. No cover; explicitly approved FREE PLAY imprint. Source remains canonical; copies never synchronize.";
+const TREATMENT: &str = "All declared ms scenes, in manifest order; groups add no chapters. Exact scene bytes joined by two newlines, --- and two newlines. No scene frontmatter or references supported. A generated title/byline precedes scene text so the existing Python CLI strips only that generated block. No source headings are stripped. Source remains canonical; copies never synchronize.";
+/// Largest cover image copied into a publishing copy.
+pub const COVER_LIMIT: usize = 25 * 1024 * 1024;
+// These lists mirror the Python publisher (heinlein/config.py). A value the
+// publisher would reject never reaches heinlein.yaml.
+pub const BOOK_STYLES: [&str; 2] = ["plain", "free-play"];
+pub const PAGE_SIZES: [&str; 6] = ["digest", "trade", "small", "a5", "mass", "letter"];
+pub const BOOK_FONTS: [&str; 7] = [
+    "Lora",
+    "Inter",
+    "EB Garamond",
+    "Crimson Pro",
+    "Source Serif 4",
+    "Libre Baskerville",
+    "Atkinson Hyperlegible",
+];
+pub const COVER_CHOICES: [&str; 3] = ["typographic", "none", "image"];
+
+/// Author-chosen book design, written into the copy's heinlein.yaml.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub struct BookDesign {
+    pub style: String,
+    pub page_size: String,
+    pub large_print: bool,
+    pub body_font: String,
+    pub display_font: String,
+    pub cover: String,
+    pub copyright_page: bool,
+    pub title_page: bool,
+    pub subtitle: String,
+    pub dedication: String,
+}
+impl Default for BookDesign {
+    fn default() -> Self {
+        Self {
+            style: "plain".into(),
+            page_size: "digest".into(),
+            large_print: false,
+            body_font: "Lora".into(),
+            display_font: "Inter".into(),
+            cover: "typographic".into(),
+            copyright_page: true,
+            title_page: true,
+            subtitle: String::new(),
+            dedication: String::new(),
+        }
+    }
+}
+impl BookDesign {
+    pub fn summary(&self) -> String {
+        let style = if self.style == "free-play" {
+            "FREE PLAY Publishing branding"
+        } else {
+            "Plain style, no imprint branding"
+        };
+        let cover = match self.cover.as_str() {
+            "image" => "cover image you chose",
+            "none" => "no cover page",
+            _ => "typographic cover",
+        };
+        format!(
+            "{style}; {} page; {} body, {} headings{}; {cover}",
+            self.page_size,
+            self.body_font,
+            self.display_font,
+            if self.large_print {
+                "; large print"
+            } else {
+                ""
+            }
+        )
+    }
+    fn dedication_lines(&self) -> Vec<String> {
+        self.dedication
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from)
+            .collect()
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -21,8 +102,13 @@ pub struct PublishingMetadata {
     pub language: String,
     pub formats: Vec<String>,
     pub folder_name: String,
+    #[serde(default)]
     pub free_play_approved: bool,
+    /// Legacy guide field from before cover choices; kept so saved guides load.
+    #[serde(default)]
     pub no_cover_approved: bool,
+    #[serde(default)]
+    pub design: BookDesign,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,23 +130,91 @@ pub struct PublishingPreview {
     pub config: String,
     pub treatment: String,
     pub folder_name: String,
+    /// File name of the attached cover image, once one is attached.
+    pub cover_file: Option<String>,
+    pub design_summary: String,
 }
 #[derive(Debug, Clone)]
 pub struct PublishingPlan {
     pub preview: PublishingPreview,
     metadata: PublishingMetadata,
+    cover: Option<Vec<u8>>,
 }
 
 impl PublishingPlan {
     pub fn confirmation_summary(&self) -> String {
         format!(
-            "Title: {}\nAuthor: {}\nRights: {}\nFormats: {}",
+            "Title: {}\nAuthor: {}\nRights: {}\nFormats: {}\nDesign: {}",
             self.metadata.title,
             self.metadata.author,
             self.metadata.rights,
-            self.metadata.formats.join(", ")
+            self.metadata.formats.join(", "),
+            self.metadata.design.summary()
         )
     }
+    pub fn needs_cover_image(&self) -> bool {
+        self.metadata.design.cover == "image"
+    }
+    /// Attach the author's chosen cover. Only JPEG and PNG are copied, and only
+    /// when the design asks for an image cover.
+    pub fn attach_cover(&mut self, bytes: Vec<u8>) -> Result<()> {
+        if !self.needs_cover_image() {
+            return Err(Error::PublishingMetadata);
+        }
+        let name = cover_file_name(&bytes).ok_or(Error::PublishingCover)?;
+        self.preview.config = config_json(&self.metadata, Some(name))?;
+        self.preview.cover_file = Some(name.into());
+        self.cover = Some(bytes);
+        Ok(())
+    }
+}
+fn cover_file_name(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.is_empty() || bytes.len() > COVER_LIMIT {
+        None
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("cover.jpg")
+    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("cover.png")
+    } else {
+        None
+    }
+}
+fn config_json(m: &PublishingMetadata, cover: Option<&str>) -> Result<String> {
+    let d = &m.design;
+    let mut metadata = serde_json::json!({"title": m.title, "author": m.author, "rights": m.rights, "language": m.language});
+    if !d.subtitle.trim().is_empty() {
+        metadata["subtitle"] = d.subtitle.trim().into();
+    }
+    let dedication = d.dedication_lines();
+    if !dedication.is_empty() {
+        metadata["dedication"] = dedication.into();
+    }
+    // JSON is a YAML subset accepted by the existing publisher, with safe quoting.
+    serde_json::to_string_pretty(&serde_json::json!({
+        "manuscript": "manuscript.md", "imprint": d.style, "cover": cover,
+        "source_format": "markdown", "chapters": false, "formats": m.formats, "output": "dist",
+        "page": {"size": d.page_size, "large_print": d.large_print},
+        "fonts": {"body": d.body_font, "display": d.display_font},
+        "front_matter": {"cover": d.cover != "none", "copyright": d.copyright_page, "title_page": d.title_page},
+        "metadata": metadata
+    }))
+    .map_err(|_| Error::Io)
+}
+fn validate_design(d: &BookDesign) -> bool {
+    let plain = |v: &str, max: usize, newlines: bool| {
+        v.len() <= max
+            && text_only(v)
+            && !v
+                .chars()
+                .any(|c| (c.is_control() && !(newlines && c == '\n')) || c == '<' || c == '>')
+    };
+    BOOK_STYLES.contains(&d.style.as_str())
+        && PAGE_SIZES.contains(&d.page_size.as_str())
+        && BOOK_FONTS.contains(&d.body_font.as_str())
+        && BOOK_FONTS.contains(&d.display_font.as_str())
+        && COVER_CHOICES.contains(&d.cover.as_str())
+        && plain(&d.subtitle, 200, false)
+        && plain(&d.dedication, 1000, true)
 }
 
 fn validate_metadata(m: &PublishingMetadata) -> Result<()> {
@@ -68,6 +222,9 @@ fn validate_metadata(m: &PublishingMetadata) -> Result<()> {
     // Apply the scene boundary here too; never introduce uncopied asset references.
     if !text_only(&m.title) || !text_only(&m.author) {
         return Err(Error::PublishingText);
+    }
+    if !validate_design(&m.design) {
+        return Err(Error::PublishingMetadata);
     }
     let fields = [
         (&m.title, 200),
@@ -79,8 +236,7 @@ fn validate_metadata(m: &PublishingMetadata) -> Result<()> {
         v.trim().is_empty()
             || v.len() > *max
             || v.chars().any(|c| c.is_control() || c == '<' || c == '>')
-    }) || !m.free_play_approved
-        || !m.no_cover_approved
+    }) || (m.design.style == "free-play" && !m.free_play_approved)
         || m.formats.is_empty()
         || m.formats.len() > 5
         || m.formats
@@ -195,12 +351,9 @@ impl Repository {
             // JSON is a YAML subset accepted by the existing publisher, with safe quoting.
             let front = serde_json::json!({"title": metadata.title, "author": metadata.author, "rights": metadata.rights});
             let manuscript = format!("---\n{}\n---\n# {}\n*by {}*\n\n{}", serde_json::to_string(&front).map_err(|_| Error::Io)?, metadata.title, metadata.author, texts.join(SEPARATOR));
-            let config = serde_json::to_string_pretty(&serde_json::json!({
-                "manuscript": "manuscript.md", "imprint": "free-play", "cover": null,
-                "source_format": "markdown", "chapters": false, "formats": metadata.formats, "output": "dist",
-                "metadata": {"title": metadata.title, "author": metadata.author, "rights": metadata.rights, "language": metadata.language}
-            })).map_err(|_| Error::Io)?;
-            Ok(PublishingPlan {preview: PublishingPreview {id: uuid::Uuid::new_v4().to_string(), source_revision: revision(&manifest, &sources), manifest_revision: manifest, sources, manuscript, config, treatment: TREATMENT.into(), folder_name: metadata.folder_name.clone()}, metadata})
+            let config = config_json(&metadata, None)?;
+            let design_summary = metadata.design.summary();
+            Ok(PublishingPlan {preview: PublishingPreview {id: uuid::Uuid::new_v4().to_string(), source_revision: revision(&manifest, &sources), manifest_revision: manifest, sources, manuscript, config, treatment: format!("{TREATMENT} Design: {design_summary}."), folder_name: metadata.folder_name.clone(), cover_file: None, design_summary}, metadata, cover: None})
         })
     }
     /// Parent is chosen by the native host. New directory is exposed only after all
@@ -215,6 +368,16 @@ impl Repository {
     ) -> Result<()> {
         let _gate = self.save_gate.lock().map_err(|_| Error::Io)?;
         validate_metadata(&plan.metadata)?;
+        // An image cover must be attached, and nothing else may carry one.
+        let cover = match (&plan.cover, &plan.preview.cover_file) {
+            (Some(bytes), Some(name))
+                if plan.needs_cover_image() && cover_file_name(bytes) == Some(name.as_str()) =>
+            {
+                Some((name.as_str(), bytes.as_slice()))
+            }
+            (None, None) if !plan.needs_cover_image() => None,
+            _ => return Err(Error::PublishingCover),
+        };
         let destination = Repository::open(parent)?;
         if destination.root().starts_with(self.root()) {
             return Err(Error::PublishingDestination);
@@ -237,8 +400,11 @@ impl Repository {
                     "manifestRevision": plan.preview.manifest_revision, "sourceRevision": plan.preview.source_revision,
                     "sources": plan.preview.sources, "manuscriptHash": content_hash(&plan.preview.manuscript),
                     "configHash": content_hash(&plan.preview.config), "treatment": plan.preview.treatment,
+                    "cover": cover.map(|(name, bytes)| serde_json::json!({"file": name, "sha256": sha256_hex(bytes), "sizeBytes": bytes.len()})),
                 })).map_err(|_| Error::Io)?;
-                for (name, bytes) in [("manuscript.md", plan.preview.manuscript.as_bytes()), ("heinlein.yaml", plan.preview.config.as_bytes()), ("source-receipt.json", receipt.as_slice())] {
+                let mut files = vec![("manuscript.md", plan.preview.manuscript.as_bytes()), ("heinlein.yaml", plan.preview.config.as_bytes()), ("source-receipt.json", receipt.as_slice())];
+                if let Some(cover) = cover { files.push(cover); }
+                for (name, bytes) in files {
                     let fd = openat(&directory, name, OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC, Mode::from_raw_mode(0o600)).map_err(crate::errno)?;
                     let mut file = File::from(fd); file.write_all(bytes).map_err(|_| Error::Io)?; file.sync_all().map_err(|_| Error::Io)?;
                 }
@@ -250,13 +416,17 @@ impl Repository {
             })();
             if result.is_err() {
                 if let Ok(directory) = openat(&destination.fd, stage.as_str(), OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW, Mode::empty()) {
-                    for name in ["manuscript.md", "heinlein.yaml", "source-receipt.json"] { let _ = unlinkat(&directory, name, AtFlags::empty()); }
+                    for name in ["manuscript.md", "heinlein.yaml", "source-receipt.json", "cover.jpg", "cover.png"] { let _ = unlinkat(&directory, name, AtFlags::empty()); }
                     let _ = unlinkat(&destination.fd, stage.as_str(), AtFlags::REMOVEDIR);
                 }
             }
             result
         })
     }
+}
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
 }
 fn revision(manifest: &str, sources: &[PublishingSource]) -> String {
     content_hash(&serde_json::to_string(&(manifest, sources)).expect("serializable source receipt"))

@@ -1,12 +1,19 @@
 import type {LocalCore, RepositorySession} from './localCore';
-export interface PublishingMetadata {title: string; author: string; rights: string; language: string; formats: string[]; folderName: string; freePlayApproved: boolean; noCoverApproved: boolean}
+export interface BookDesign {style: string; pageSize: string; largePrint: boolean; bodyFont: string; displayFont: string; cover: string; copyrightPage: boolean; titlePage: boolean; subtitle: string; dedication: string}
+export interface PublishingMetadata {title: string; author: string; rights: string; language: string; formats: string[]; folderName: string; freePlayApproved: boolean; noCoverApproved: boolean; design?: BookDesign}
+// Choices mirror the publisher (heinlein/config.py) and the native validator.
+export const BOOK_STYLES = [['plain', 'Plain (no imprint branding)'], ['free-play', 'FREE PLAY Publishing']] as const;
+export const PAGE_SIZES = [['digest', 'Digest, 5.5 × 8.5 in'], ['trade', 'Trade, 6 × 9 in'], ['small', 'Small, 5 × 8 in'], ['a5', 'A5, 148 × 210 mm'], ['mass', 'Mass market, 4.25 × 6.87 in'], ['letter', 'Letter, 8.5 × 11 in']] as const;
+export const BOOK_FONTS = ['Lora', 'Inter', 'EB Garamond', 'Crimson Pro', 'Source Serif 4', 'Libre Baskerville', 'Atkinson Hyperlegible'] as const;
+export const COVER_CHOICES = [['typographic', 'Typographic cover from the title and author'], ['image', 'Cover image (you choose the file at preview)'], ['none', 'No cover page']] as const;
+export function defaultBookDesign(): BookDesign {return {style: 'plain', pageSize: 'digest', largePrint: false, bodyFont: 'Lora', displayFont: 'Inter', cover: 'typographic', copyrightPage: true, titlePage: true, subtitle: '', dedication: ''};}
 export interface FirstStoryState {
   schemaVersion: 1; manuscriptPath: string; revision: string; enabled: boolean; stage: number;
   steps: ('todo' | 'done' | 'skipped')[]; idea: string[]; approach: 'discovery' | 'plan'; plan: string;
   structureReviewed: boolean; sentenceReviewed: boolean; sourceRevision: string | null; proofRevision: string | null;
   releaseChecks: boolean[]; publishing: PublishingMetadata | null;
 }
-export interface PublishingCopy {destination: string; preview: {id: string; sourceRevision: string; manifestRevision: string; sources: {id: string; title: string; path: string; contentHash: string; sizeBytes: number}[]; manuscript: string; config: string; treatment: string; folderName: string}}
+export interface PublishingCopy {destination: string; preview: {id: string; sourceRevision: string; manifestRevision: string; sources: {id: string; title: string; path: string; contentHash: string; sizeBytes: number}[]; manuscript: string; config: string; treatment: string; folderName: string; coverFile?: string | null; designSummary?: string}}
 export const FIRST_STORY_STAGES = ['Find an idea', 'Choose a way in', 'Draft to an ending', 'Revise story and voice', 'Proof a saved revision', 'Prepare a publishing copy'] as const;
 export function emptyFirstStory(): FirstStoryState {return {schemaVersion: 1, manuscriptPath: 'ms/manuscript.json', revision: 'new', enabled: false, stage: 0, steps: Array(6).fill('todo'), idea: Array(4).fill(''), approach: 'discovery', plan: '', structureReviewed: false, sentenceReviewed: false, sourceRevision: null, proofRevision: null, releaseChecks: Array(4).fill(false), publishing: null};}
 export function invalidateFirstStory(state: FirstStoryState) {
@@ -47,6 +54,11 @@ export function createFirstStory(core: LocalCore, options: {session(): Repositor
   function check(label: string, value: boolean, update: (v: boolean) => void) {
     const wrap = node('label', label); wrap.className = 'guide-check'; const input = node('input'); input.type = 'checkbox'; input.checked = value;
     input.addEventListener('change', () => {editGeneration++; discardCopy(); update(input.checked);}); wrap.prepend(input); return wrap;
+  }
+  function choose(label: string, value: string, choices: readonly (readonly [string, string])[], update: (v: string) => void) {
+    const wrap = node('label', label); const select = node('select'); select.setAttribute('aria-label', label); // the label's text would otherwise include every option
+    for (const [v, text] of choices) {const option = node('option', text); option.value = v; select.append(option);}
+    select.value = value; select.addEventListener('change', () => {editGeneration++; discardCopy(); update(select.value);}); wrap.append(select); return wrap;
   }
   function help(summary: string, content: string) {const details = node('details'); details.append(node('summary', summary), node('p', content)); return details;}
   async function persist(proof = false) {
@@ -114,10 +126,26 @@ export function createFirstStory(core: LocalCore, options: {session(): Repositor
   function renderPublishing(stage: HTMLElement, s: FirstStoryState) {
     stage.append(node('p', 'Next: choose metadata and make a separate publishing copy. Metadata means the title, author and rights information printed with the story. This prepares local files; it does not share or publish them.'), node('p', 'Text-only copies include every declared scene in reading order. Groups add no chapters. Scene frontmatter, links, images and include directives need a separate manual publishing project.'));
     const m = s.publishing ??= {title: '', author: '', rights: '', language: 'en-US', formats: ['html', 'epub'], folderName: 'first-story-publishing-copy', freePlayApproved: false, noCoverApproved: false};
+    const d = m.design = {...defaultBookDesign(), ...m.design};
     for (const [key, label] of [['title', 'Story title'], ['author', 'Author name to print'], ['rights', 'Rights statement (your choice)'], ['language', 'Language code'], ['folderName', 'New publishing-copy folder name']] as const) stage.append(field(label, m[key], v => {m[key] = v;}));
     const formats = node('fieldset'); formats.append(node('legend', 'Formats to build later')); for (const f of ['html', 'epub', 'pdf', 'docx', 'text']) formats.append(check(f.toUpperCase(), m.formats.includes(f), value => {m.formats = value ? [...m.formats, f] : m.formats.filter(x => x !== f);})); stage.append(formats);
-    stage.append(check('I choose no cover for this text-only copy', m.noCoverApproved, v => m.noCoverApproved = v), check('I approve the existing FREE PLAY Publishing branding for this copy', m.freePlayApproved, v => m.freePlayApproved = v), help('What the imprint choice means', 'The existing publisher adds FREE PLAY Publishing / The Arcades branding and its preset colophon text. This is not a claim that you belong to that imprint. If you do not want this branding, stop here and configure a separate publishing project manually. No personal rights or author profile is inherited. PDF needs Chrome; EPUB/DOCX/HTML need the existing Pandoc setup.'), node('p', 'Release checklist — author judgment, never automatic edits:'));
-    ['Rights and permissions are mine or cleared', 'Title, author and reading order are reviewed', 'No-cover choice and imprint are reviewed', 'I will inspect the built files before sharing'].forEach((label, i) => stage.append(check(label, s.releaseChecks[i], v => s.releaseChecks[i] = v)));
+    const design = node('fieldset'); design.className = 'book-design'; design.append(node('legend', 'Book design'));
+    const approval = check('I approve the FREE PLAY Publishing branding for this copy', m.freePlayApproved, v => m.freePlayApproved = v); approval.hidden = d.style !== 'free-play';
+    const fonts = BOOK_FONTS.map(f => [f, f] as const);
+    design.append(
+      choose('Style', d.style, BOOK_STYLES, v => {d.style = v; approval.hidden = v !== 'free-play';}), approval,
+      choose('Page size', d.pageSize, PAGE_SIZES, v => d.pageSize = v),
+      choose('Body text font', d.bodyFont, fonts, v => d.bodyFont = v),
+      choose('Heading font', d.displayFont, fonts, v => d.displayFont = v),
+      check('Large print (bigger body text)', d.largePrint, v => d.largePrint = v),
+      choose('Cover', d.cover, COVER_CHOICES, v => d.cover = v),
+      check('Include a copyright page', d.copyrightPage, v => d.copyrightPage = v),
+      check('Include a title page', d.titlePage, v => d.titlePage = v),
+      field('Subtitle (optional)', d.subtitle, v => d.subtitle = v),
+      field('Dedication (optional)', d.dedication, v => d.dedication = v, true),
+    );
+    stage.append(design, help('What these choices mean', 'Plain has no imprint name, marks or end page. FREE PLAY adds FREE PLAY Publishing / The Arcades branding and its preset colophon text; choosing it is not a claim that you belong to that imprint. Fonts other than Lora and Inter download from Google Fonts when you build. A cover image is copied into the new folder; your story folder is unchanged. No personal rights or author profile is inherited. PDF needs Chrome; EPUB/DOCX/HTML need the existing Pandoc setup.'), node('p', 'Release checklist — author judgment, never automatic edits:'));
+    ['Rights and permissions are mine or cleared', 'Title, author and reading order are reviewed', 'Cover, style and front matter are reviewed', 'I will inspect the built files before sharing'].forEach((label, i) => stage.append(check(label, s.releaseChecks[i], v => s.releaseChecks[i] = v)));
     stage.append(button('Preview publishing copy…', async () => {
       const view = generation; const source = sourceGeneration;
       await options.settle(); requireCurrent(view, source);
@@ -131,7 +159,10 @@ export function createFirstStory(core: LocalCore, options: {session(): Repositor
       copy = result; message.textContent = copy ? 'Preview ready. No publishing files written yet.' : 'Destination choice canceled. No publishing files written.'; render(true);
     }, true));
     if (copy) {
-      const prepared = copy; const preview = node('section'); preview.setAttribute('aria-label', 'Publishing copy preview'); preview.append(node('h3', 'Publishing copy preview'), node('p', `New folder: ${prepared.destination}`), node('p', prepared.preview.treatment));
+      const prepared = copy; const preview = node('section'); preview.setAttribute('aria-label', 'Publishing copy preview'); preview.append(node('h3', 'Publishing copy preview'), node('p', `New folder: ${prepared.destination}`));
+      if (prepared.preview.designSummary) preview.append(node('p', `Design: ${prepared.preview.designSummary}`));
+      if (prepared.preview.coverFile) preview.append(node('p', `Cover image will be copied as ${prepared.preview.coverFile}`));
+      preview.append(node('p', prepared.preview.treatment));
       const ordered = node('ol'); for (const source of prepared.preview.sources) ordered.append(node('li', `${source.title} — ${source.path}`)); preview.append(ordered);
       for (const [label, text] of [['Exact combined Markdown', prepared.preview.manuscript], ['Publisher configuration', prepared.preview.config], ['Source provenance', JSON.stringify({revision: prepared.preview.sourceRevision, manifestRevision: prepared.preview.manifestRevision, sources: prepared.preview.sources}, null, 2)]]) {const details = node('details'); const pre = node('pre', text); pre.tabIndex = 0; details.append(node('summary', label), pre); preview.append(details);}
       preview.append(button('Cancel copy preview', () => {copy = null; message.textContent = 'Copy preview canceled. No publishing files written.'; render(true);}), button('Create this new copy…', () => withLockedEdits(async () => {

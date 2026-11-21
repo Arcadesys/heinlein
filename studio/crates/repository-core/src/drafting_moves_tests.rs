@@ -106,6 +106,7 @@ fn movement_group_slots_preserve_gaps_ids_bytes_and_actual_publishing_order() {
                 folder_name: "synthetic-copy".into(),
                 free_play_approved: true,
                 no_cover_approved: true,
+                design: Default::default(),
             },
             &f.recovery,
         )
