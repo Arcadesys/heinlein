@@ -5,7 +5,7 @@ export const SHORTCUT_GROUPS: {name: string; items: {label: string; keys: string
     {label: 'Show or hide navigation', keys: '⌘\\'}, {label: 'Reorder scene in palette', keys: '⌥↑ ⌥↓'}, {label: 'Step back / close', keys: 'esc'},
   ]},
   {name: 'Write', items: [
-    {label: 'New scene in project / new standalone draft', keys: '⌘N'}, {label: 'Save now', keys: '⌘S'}, {label: 'Split scene at cursor', keys: '⌘⇧B'}, {label: 'Undo / redo', keys: '⌘Z  ⌘⇧Z'}, {label: 'Find in scene', keys: '⌘F'}, {label: 'Find in manuscript', keys: '⌘⇧F'},
+    {label: 'New standalone draft', keys: '⌘N'}, {label: 'Save now', keys: '⌘S'}, {label: 'Split scene at cursor', keys: '⌘⇧B'}, {label: 'Undo / redo', keys: '⌘Z  ⌘⇧Z'}, {label: 'Find in scene', keys: '⌘F'}, {label: 'Find in manuscript', keys: '⌘⇧F'},
   ]},
   {name: 'Review', items: [
     {label: 'Next / previous marked suggestion', keys: '⌘⌥] ⌘⌥['}, {label: 'Open marked suggestion at cursor', keys: '⌘⌥O'},

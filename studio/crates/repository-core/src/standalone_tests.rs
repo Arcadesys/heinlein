@@ -348,3 +348,135 @@ fn project_locations_preserve_native_root_and_compatible_plain_legacy_records() 
     assert!(store.intent(&lease, &intent).is_err());
     assert!(store.pending(&first.id).unwrap().is_empty());
 }
+
+#[test]
+fn standalone_review_adapter_preserves_identity_and_uses_live_draft_cas() {
+    use std::sync::Arc;
+    let (t, store) = fixture();
+    let store = Arc::new(store);
+    let (lease, first) = store.create("Exact — text\r\n").unwrap();
+    let lease = Arc::new(lease);
+    let identity = t.path().join("review-identities").join(&first.id);
+    let repo = crate::Repository::standalone_review(&identity, Arc::clone(&store), &lease).unwrap();
+    assert_eq!(repo.read("draft.md").unwrap().text, first.text);
+    assert_eq!(repo.load_drafting().unwrap().scenes[0].id, first.id);
+    assert!(repo.read("other.md").is_err());
+    let second = store
+        .save(&lease, first.revision, &first.text_hash, "Typed next")
+        .unwrap();
+    assert_eq!(repo.read("draft.md").unwrap().text, second.text);
+    assert!(repo.save("draft.md", &first.text_hash, "Stale").is_err());
+    let recovery = crate::RecoveryStore::open(t.path().join("recovery")).unwrap();
+    assert!(repo
+        .save_with_clean_recovery_checked(
+            "draft.md",
+            &second.text_hash,
+            "Denied",
+            &recovery,
+            || Err(crate::Error::EditorChanged)
+        )
+        .is_err());
+    assert_eq!(store.read(&first.id).unwrap().draft.text, "Typed next");
+    let saved = repo
+        .save_with_clean_recovery_checked(
+            "draft.md",
+            &second.text_hash,
+            "Approved — exactly\r\n",
+            &recovery,
+            || Ok(()),
+        )
+        .unwrap();
+    assert_eq!(store.read(&first.id).unwrap().draft.text, saved.text);
+    assert!(!identity.join("draft.md").exists());
+    assert!(!identity.join("ms").exists());
+    let key = repo.project_key();
+    drop(lease);
+    assert!(repo.read("draft.md").is_err());
+    assert!(repo
+        .save("draft.md", &saved.content_hash, "Expired")
+        .is_err());
+    let lease = Arc::new(store.acquire(&first.id).unwrap());
+    let reopened =
+        crate::Repository::standalone_review(&identity, Arc::clone(&store), &lease).unwrap();
+    assert_eq!(reopened.project_key(), key);
+    assert!(repo.read("draft.md").is_err(), "old lease must not revive");
+    let latest = store.read(&first.id).unwrap().draft;
+    store
+        .transition(&lease, latest.revision, &latest.text_hash, "discarded")
+        .unwrap();
+    assert!(reopened.read("draft.md").is_err());
+}
+
+#[test]
+fn standalone_review_adapter_rejects_recovery_and_cross_draft_sources() {
+    use std::sync::Arc;
+    let (t, store) = fixture();
+    let store = Arc::new(store);
+    let (a, first) = store.create("A source").unwrap();
+    let (b, second) = store.create("B source").unwrap();
+    let a = Arc::new(a);
+    let b = Arc::new(b);
+    let ra = crate::Repository::standalone_review(
+        &t.path().join("identities").join(&first.id),
+        Arc::clone(&store),
+        &a,
+    )
+    .unwrap();
+    let rb = crate::Repository::standalone_review(
+        &t.path().join("identities").join(&second.id),
+        Arc::clone(&store),
+        &b,
+    )
+    .unwrap();
+    assert_ne!(ra.project_key(), rb.project_key());
+    assert!(rb.save("draft.md", &first.text_hash, "Crossed").is_err());
+    assert_eq!(store.read(&second.id).unwrap().draft.text, second.text);
+    fs::write(
+        t.path().join("drafts").join(format!("{}.json", first.id)),
+        b"broken",
+    )
+    .unwrap();
+    assert!(ra.read("draft.md").is_err());
+    assert!(ra
+        .save("draft.md", &first.text_hash, "Unsafe recovery")
+        .is_err());
+}
+
+#[test]
+fn standalone_review_adapter_rechecks_source_at_commit_boundary() {
+    use std::sync::Arc;
+    let (t, store) = fixture();
+    let store = Arc::new(store);
+    let (lease, before) = store.create("Before").unwrap();
+    let lease = Arc::new(lease);
+    let repo = crate::Repository::standalone_review(
+        &t.path().join("identity"),
+        Arc::clone(&store),
+        &lease,
+    )
+    .unwrap();
+    let recovery = crate::RecoveryStore::open(t.path().join("recovery")).unwrap();
+    assert!(repo
+        .save_with_clean_recovery_checked(
+            "draft.md",
+            &before.text_hash,
+            "Proposal",
+            &recovery,
+            || {
+                store
+                    .save(
+                        &lease,
+                        before.revision,
+                        &before.text_hash,
+                        "New author text",
+                    )
+                    .unwrap();
+                Ok(())
+            }
+        )
+        .is_err());
+    assert_eq!(
+        store.read(&before.id).unwrap().draft.text,
+        "New author text"
+    );
+}

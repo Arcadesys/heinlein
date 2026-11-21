@@ -1875,6 +1875,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "heinlein-claude-auth"
+version = "1.10.0"
+dependencies = [
+ "keyring",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "heinlein-local-mcp"
 version = "1.5.0"
 dependencies = [
@@ -1904,7 +1917,7 @@ dependencies = [
 
 [[package]]
 name = "heinlein-studio"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "base64 0.22.1",
  "cc",
@@ -1912,6 +1925,8 @@ dependencies = [
  "fontdb",
  "github-workspace",
  "heinlein-chatgpt-auth",
+ "heinlein-claude-auth",
+ "heinlein-local-mcp",
  "image",
  "proposal-store",
  "raw-window-handle",

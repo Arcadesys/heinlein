@@ -643,6 +643,32 @@ impl QuestionService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn review_edits_keep_or_delete_author_comments_whole() {
+        let source = "Teh fox {>>wait, what<<} ran.\n";
+        let attempt = |original: &str, replacement: &str| {
+            let mut r = request();
+            r.snapshots[0].source = source.into();
+            let from = source.find(original).unwrap();
+            let mut e = edit();
+            e["original"] = serde_json::json!(original);
+            e["replacement"] = serde_json::json!(replacement);
+            e["fromUtf8"] = serde_json::json!(from);
+            e["toUtf8"] = serde_json::json!(from + original.len());
+            parse_review(&r, &response(&wire(e)))
+        };
+        assert!(attempt("Teh", "The").is_ok());
+        assert!(attempt("fox {>>wait, what<<} ran", "fox bolted").is_ok());
+        for (original, replacement) in [
+            ("{>>wait, what<<}", "{>>wait<<}"),
+            ("ran.", "ran. {>>more<<}"),
+            ("{>>wait, what<<}", "{>>wait,<<} {>>what<<}"),
+            ("fox {>>wait", "fox"),
+            ("what<<}", "why<<}"),
+        ] {
+            assert!(attempt(original, replacement).is_err(), "{original} -> {replacement}");
+        }
+    }
     fn request() -> ReviewRequest {
         ReviewRequest {
             workflow: None,
@@ -781,32 +807,6 @@ mod tests {
         r.scope = ReviewScope::Chapter;
         r.snapshots = vec![r.snapshots[0].clone(); 17];
         assert!(r.validate().is_err());
-    }
-    #[test]
-    fn review_edits_keep_or_delete_author_comments_whole() {
-        let source = "Teh fox {>>wait, what<<} ran.\n";
-        let attempt = |original: &str, replacement: &str| {
-            let mut r = request();
-            r.snapshots[0].source = source.into();
-            let from = source.find(original).unwrap();
-            let mut e = edit();
-            e["original"] = serde_json::json!(original);
-            e["replacement"] = serde_json::json!(replacement);
-            e["fromUtf8"] = serde_json::json!(from);
-            e["toUtf8"] = serde_json::json!(from + original.len());
-            parse_review(&r, &response(&wire(e)))
-        };
-        assert!(attempt("Teh", "The").is_ok());
-        assert!(attempt("fox {>>wait, what<<} ran", "fox bolted").is_ok());
-        for (original, replacement) in [
-            ("{>>wait, what<<}", "{>>wait<<}"),
-            ("ran.", "ran. {>>more<<}"),
-            ("{>>wait, what<<}", "{>>wait,<<} {>>what<<}"),
-            ("fox {>>wait", "fox"),
-            ("what<<}", "why<<}"),
-        ] {
-            assert!(attempt(original, replacement).is_err(), "{original} -> {replacement}");
-        }
     }
     #[test]
     fn rejects_unicode_frontmatter_and_protected_em_dash_edits() {

@@ -22,6 +22,7 @@ it.each([null,'Novel A'])('opens the GitHub repository chooser directly from Mor
  const f=syntheticProjects(),request=f.core.githubRequest!;
  const account={id:9,login:'writer'};
  const github=vi.fn(async(r:Parameters<typeof request>[0])=>{
+  if(r.action==='chooserStatus')return {auth:{configured:true,account,confirmed:true,pending:null,message:'Connected'},error:null,workspaces:[],repositories:{id:'repository-list',account,repositories:[{id:42,owner:'writer',name:'novel',private:true,defaultBranch:'main',installationId:7}],unavailable:0},app:{id:1,clientId:'synthetic',owner:'writer',slug:'heinlein',installUrl:'https://github.com/apps/heinlein'}};
   if(r.action==='status')return {auth:{configured:true,account,confirmed:true,pending:null,message:'Connected'},error:null,workspaces:[],app:{id:1,clientId:'synthetic',owner:'writer',slug:'heinlein',installUrl:'https://github.com/apps/heinlein'}};
   if(r.action==='repositories')return {id:'repository-list',account,repositories:[{id:42,owner:'writer',name:'novel',private:true,defaultBranch:'main',installationId:7}],unavailable:0};
   return request(r);
@@ -35,7 +36,8 @@ it.each([null,'Novel A'])('opens the GitHub repository chooser directly from Mor
  await vi.waitFor(()=>expect(document.querySelector('.github-panel')?.textContent).toContain('Preview writer/novel…'));
  expect(document.querySelector('.workspace-actions-dialog')).toBeNull();
  expect(document.querySelector<HTMLDialogElement>('.github-panel')!.open).toBe(true);
- expect(github.mock.calls.map(([r])=>r.action)).toEqual(expect.arrayContaining(['status','repositories']));
+ expect(github.mock.calls.filter(([r])=>r.action==='chooserStatus')).toHaveLength(1);
+ expect(github.mock.calls.some(([r])=>r.action==='repositories')).toBe(false);
  expect(github.mock.calls.some(([r])=>r.action==='confirmOpen')).toBe(false);
  expect(JSON.stringify(f.documents)).toBe(before);expect(f.externalCalls).toEqual([]);
 });

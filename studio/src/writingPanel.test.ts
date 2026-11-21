@@ -9,7 +9,7 @@ beforeEach(()=>{const store=new Map<string,string>();vi.stubGlobal('localStorage
 afterEach(()=>{panel.destroy();vi.unstubAllGlobals();});
 describe('writing progress panel',()=>{
   it('excludes reference sheets from manuscript totals and reads',async()=>{
-    const core={readDocument:vi.fn(async()=>({text:'one two'}))} as unknown as LocalCore;
+    const core={readDocument:vi.fn(async(_id:string,path:string)=>({path,text:'one two'}))} as unknown as LocalCore;
     await panel.setManuscript(core,repo,{scenes:[{path:'ms/a.md'},{path:'ms/reference.md',reference:true}]});
     expect(panel.element.textContent).toContain('Manuscript: 2 words');
     expect(core.readDocument).toHaveBeenCalledExactlyOnceWith('session','ms/a.md');
@@ -23,13 +23,13 @@ describe('writing progress panel',()=>{
   });
   it('counts manuscript in background and keeps current unsaved scene words',async()=>{
     panel.openScene('stable','a.md','one two three');
-    const core={readDocument:vi.fn(async(_id:string,path:string)=>({text:path==='a.md'?'old':'four five'}))} as unknown as LocalCore;
+    const core={readDocument:vi.fn(async(_id:string,path:string)=>({path,text:path==='a.md'?'old':'four five'}))} as unknown as LocalCore;
     await panel.setManuscript(core,repo,book);
     expect(panel.element.textContent).toContain('Manuscript: 5 words');
     expect(core.readDocument).toHaveBeenCalledTimes(2);
   });
   it('labels incomplete manuscript counts instead of claiming a full total',async()=>{
-    const core={readDocument:vi.fn(async(_id:string,path:string)=>{if(path==='b.md')throw Error('unreadable');return {text:'one two'};})} as unknown as LocalCore;
+    const core={readDocument:vi.fn(async(_id:string,path:string)=>{if(path==='b.md')throw Error('unreadable');return {path,text:'one two'};})} as unknown as LocalCore;
     await panel.setManuscript(core,repo,book);
     expect(panel.element.textContent).toContain('Manuscript: 2 words (1 unreadable; partial)');
   });
@@ -37,11 +37,11 @@ describe('writing progress panel',()=>{
     let finish!:(value:unknown)=>void;
     const core={readDocument:vi.fn(()=>new Promise(resolve=>{finish=resolve;}))} as unknown as LocalCore;
     const one={...book,volumes:[{...book.volumes[0],chapters:[{...book.volumes[0].chapters[0],scenes:[{path:'a.md'}]}]}]};
-    const pending=panel.setManuscript(core,repo,one); panel.clearManuscript(); finish({text:'old words'}); await pending;
+    const pending=panel.setManuscript(core,repo,one); panel.clearManuscript(); finish({path:'a.md',text:'old words'}); await pending;
     expect(panel.element.textContent).toContain('Manuscript: —');
   });
   it('removes discarded text from the manuscript total and preserves exact saved snapshots',async()=>{
-    const core={readDocument:vi.fn(async()=>({text:'one two'}))} as unknown as LocalCore;
+    const core={readDocument:vi.fn(async(_id:string,path:string)=>({path,text:'one two'}))} as unknown as LocalCore;
     await panel.setManuscript(core,repo,book);
     panel.openScene('stable','a.md','one two');
     panel.changed('one two','one two three four','user');
@@ -62,7 +62,7 @@ describe('writing progress panel',()=>{
     const one={...book,volumes:[{...book.volumes[0],chapters:[{...book.volumes[0].chapters[0],scenes:[{path:'a.md'}]}]}]};
     const pending=panel.setManuscript(core,repo,one);
     panel.saved('stable','a.md','new saved words');
-    finish({text:'old'}); await pending;
+    finish({path:'a.md',text:'old'}); await pending;
     expect(panel.element.textContent).toContain('Manuscript: 3 words');
   });
 
@@ -92,7 +92,7 @@ describe('writing progress panel',()=>{
   });
 
   it('counts a flat drafting manifest',async()=>{
-    const core={readDocument:vi.fn(async()=>({text:'one two'}))} as unknown as LocalCore;
+    const core={readDocument:vi.fn(async(_id:string,path:string)=>({path,text:'one two'}))} as unknown as LocalCore;
     await panel.setManuscript(core,repo,{scenes:[{path:'ms/a.md'},{path:'ms/b.md'}]});
     expect(panel.element.textContent).toContain('Manuscript: 4 words');
   });

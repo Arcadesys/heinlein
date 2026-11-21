@@ -1,7 +1,7 @@
 // Synthetic test storage only. No production import, filesystem, account or network.
 import type { LocalCore, RepositorySession } from '../src/localCore';
 import type { DraftRequest, DraftResponse, DraftOpened, DraftPreview, StandaloneDraft } from '../src/standaloneDrafts';
-export function syntheticDraftBridge(seed: StandaloneDraft[] = [], persist?: (drafts: StandaloneDraft[]) => void) {
+export function syntheticDraftBridge(seed: StandaloneDraft[] = [], persist?: (drafts: StandaloneDraft[]) => void, hashText: (text: string) => string = text => `synthetic-${text}`) {
     const records = new Map(seed.map(d => [d.id, structuredClone(d)]));
     const leases = new Map<string, string>();
     let serial = seed.length, plan: DraftPreview | null = null;
@@ -11,7 +11,7 @@ export function syntheticDraftBridge(seed: StandaloneDraft[] = [], persist?: (dr
     let holdSave: ((resume: () => void) => void) | null = null, holdPreview: ((resume: () => void) => void) | null = null, failSave = false, dirty = false;
     let close: (() => void) | null = null;
     const save = () => persist?.([...records.values()]);
-    const hash = (text: string) => `synthetic-${text}`;
+    const hash = hashText;
     const copy = <T>(v: T): T => structuredClone(v);
     const opened = (d: StandaloneDraft): DraftOpened => { const handle = `handle-${++serial}`; leases.set(handle, d.id); return { handle, loaded: { draft: copy(d), warning: null, recoveryRequired: false }, pending: [] }; };
     const get = (handle: string) => {
@@ -41,6 +41,12 @@ export function syntheticDraftBridge(seed: StandaloneDraft[] = [], persist?: (dr
                         throw Error('Missing draft');
                     return opened(d);
                 }
+                case 'reviewSession': {
+                    const d = get(request.handle);
+                    if (d.state !== 'active' || d.revision !== request.revision || d.textHash !== request.hash) throw Error('Stale review source');
+                    return {repositoryId: `draft-review:${d.id}`, projectKey: `draft-project:${d.id}`, path: 'draft.md', sceneId: `draft-scene:${d.id}`};
+                }
+                case 'refresh': return {handle: request.handle, loaded: {draft: copy(get(request.handle)), warning: null, recoveryRequired: false}, pending: []};
                 case 'release':
                     leases.delete(request.handle);
                     return null;

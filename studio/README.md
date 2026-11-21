@@ -31,6 +31,23 @@ Studio starts collecting history when it saves changes to a project Markdown fil
 Versions stay in private local storage and follow the scene through renames and moves made in Studio. A new scene at the old filename starts its own history.
 Each file retains its 20 most recent previous versions plus a daily version for up
 to 30 earlier writing days. Standalone drafts use their existing recovery workflow.
+## Text-only writing and sound
+
+**Full screen** opens to the manuscript with the application bars and editor panels
+hidden. **Hide controls** also works in a window (under **More** on narrow screens). Press Command/Ctrl+Shift+H to
+hide or restore the controls, move to the top edge to reveal **Show controls**,
+or Tab to that button. Escape exits full screen. Save failures and recovery
+dialogs bring the controls back; hiding them never changes manuscript text.
+
+Under **Appearance → Editor**, **Show word goal while controls are hidden** keeps
+a read-only daily counter visible. It is off by default. Typewriter volume ranges
+from 0% to 500%; values above 100% boost playback while the saved volume remains
+unchanged until the author adjusts it. Sound choices and volume are remembered.
+
+The document toolbar groups secondary tools under **Document actions** (**Actions**
+in compact layouts). Each tab has one labeled **Close** control. Source, Reading
+and Heinlein remain direct writing actions, with large targets and a distinct
+keyboard focus ring.
 
 ## Markdown Reading
 
@@ -41,6 +58,34 @@ change the manuscript. Headings, emphasis, lists, quotes, links and code are
 rendered with your writing appearance settings. Link destinations appear as text,
 local PNG and JPEG illustrations render with their descriptions, and raw HTML stays literal. Frontmatter remains
 available in Source. Resolve any pending recovery in Source first.
+
+Reading is not a line-for-line copy of Source. Source keeps a gutter on its right
+edge for passage-ask markers, so Reading's column is wider (about 64px at 100%
+text size), and Reading spaces paragraphs more tightly than Source's blank
+lines. The same words therefore wrap at different points in the two views. The
+text itself is identical, and both views use the same font size and line height.
+
+## Word counts
+
+Choose **Word counts** in the writing header (**More → Word counts** on narrow screens), or search for it in the command
+palette. The button stays visible when tabs and tools slide away during typing.
+The read-only dialog shows the current scene, the whole manuscript, and a group
+picker with scene-by-scene totals. A group includes its nested groups; duplicate
+scene titles show their source paths. Closing returns to the prior focus without
+changing the editor selection or saving anything.
+
+The manuscript boundary is its indexed source scenes, each counted once.
+Reference sheets, untracked files, generated chapter exports and deleted scenes
+are excluded. Unsaved text in the open scene or assembled group editor replaces
+its saved count, rather than being added twice. Loading and unreadable scenes are
+labelled, and **Recount saved scenes** retries reads without saving the editor.
+An uninitialized library is not presented as an empty manuscript.
+
+Counts use the existing Unicode word-like segment count of Markdown source.
+Complete opening frontmatter is excluded. Punctuation, emoji and formatting marks
+alone do not count; words in code and link destinations do. Reading and Source
+use the same source text. This feature does not change the separate daily-growth
+credit rules or write manuscript data.
 
 ## Preferences and daily progress
 
@@ -71,9 +116,9 @@ Manuscripts, project stores, recovery, credentials, conversations and review age
 retain their existing separate stores. Preferences do not provide cross-device sync.
 Native builds require Rust 1.89 or newer for OS-backed file locking.
 
-## 1.8 release packaging
+## 1.10 release packaging
 
-Heinlein Studio is version **1.9.0**. The independent Python
+Heinlein Studio is version **1.10.0**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:
@@ -117,6 +162,19 @@ are external prerequisites. Publisher source archives contain code, templates,
 and package metadata; they exclude manuscripts, examples, credentials, and app
 profiles. Release notes and the release manifest identify source provenance,
 checks, and remaining runtime limits.
+
+## New local projects
+
+Open **Projects → New project…**, enter a project name, and choose the parent
+folder. Confirm the displayed destination. Heinlein creates a new folder containing
+an empty **First scene** and a manuscript index, then switches to that project.
+Existing folders and files are never overwritten. Cancel keeps the current writing
+and leaves the project name available for another attempt.
+
+Use **Open an existing folder…** for writing that already has a folder. Creating a
+project does not send anything to GitHub or copy writing out of the current project.
+If an error says creation may have finished, check the displayed location and open
+that existing folder before trying to create another copy.
 
 ## GitHub projects
 
@@ -262,6 +320,17 @@ No Git commit, pull, checkout or push is performed.
 
 ## Layout and keyboard
 
+**Cmd/Ctrl+N** always starts a standalone draft, even while a project is open.
+The current writing must pass its existing save/recovery checks before switching.
+Use the Library’s **New scene** action to add writing to a project instead.
+
+Standalone drafts have **Heinlein**, **Review draft**, and **Revisions**. Opening
+these keeps the draft locally and prepares its own review identity, without
+creating a project or sending text. Choose **Ask**, **Suggest edits**, or
+**Run review** to send the displayed text through your connected account.
+Accepted revisions update only that draft, with source and writer-lease checks;
+its independent copies are unchanged. Saved review history stays with the draft.
+
 The page fills the window. Everything else floats: a status pill at the top
 (project, scene, word count, save state, daily goal, proposals), the file browser,
 manuscript outline, and scene passages in one tabbed navigation drawer on the left (Cmd/Ctrl+\
@@ -270,6 +339,17 @@ and Questions as a card docked right while the page stays full width behind it.
 Hover over the Manuscript tab while dragging a repository file to reveal its
 existing import targets; imports still require their usual preview and confirmation.
 The pill fades while you type and returns when the pointer moves.
+
+While you type in a project source document, its document tabs, Markdown editor
+tools, and saved split actions slide into a compact **Tabs and tools** row. Click
+that button or press **Escape** to restore them without leaving the writer. Tab
+restores the controls before keyboard navigation. Editor search, completion and
+IME cancellation keep their existing Escape behavior. Typing in Questions or
+settings does not hide the tools; Reading and document changes restore them.
+The manuscript keeps its width and line wrapping. Scrolled writing stays anchored
+when it fits within the resized pane; the caret stays visible. Save/error notices
+and project navigation remain available. Reduced
+motion uses an immediate transition.
 
 - **Cmd/Ctrl+K** jumps to a scene, **Cmd/Ctrl+P** browses files and
   **Cmd/Ctrl+Shift+P** lists every command. Type `/` or `>` to switch scope, Tab
@@ -296,12 +376,14 @@ The pill fades while you type and returns when the pointer moves.
 
 ## Local MCP proposals
 
-**More actions → MCP connection…** lets you explicitly allow the current saved
-source file for a reusable local MCP connection. Review the full file list in
+**More actions → AI connections…** connects Codex, Claude Code or Claude
+Desktop to Heinlein, then lets you explicitly allow the current project for that
+reusable local MCP connection. Each assistant is set up once; project access is
+shared by all of them (see `crates/local-mcp/README.md`). Review the full file list in
 the native confirmation. Add files individually; allowing a source from another
 project replaces the selection. **Disconnect all project access** stops reads
 and proposals. Project opening alone grants nothing, and unsaved buffers remain
-private. Configure Codex once with the server's `--studio-selection` launch mode;
+private. Configure each assistant once with the server's `--studio-selection` launch mode;
 the same running server follows confirmed project changes and invalidates old
 snapshots. See the launch instructions below for the one-time setup.
 
@@ -414,7 +496,7 @@ save/recovery path handles an accepted edit.
 See [the selection-question contract](../docs/architecture/studio-selection-question.md)
 for exact anchors, clipboard considerations and integration limits.
 
-## Drafting questions with ChatGPT
+## Drafting questions with ChatGPT or Claude
 
 Highlight a passage and choose the contextual **Ask Heinlein** button to open the
 **Questions** side panel with that exact selection captured. This prepares your
@@ -438,6 +520,33 @@ mocked; complete sign-in and a real question locally to verify your account.
 Protected account storage currently supports macOS and Linux; other platforms
 reject connection until an equivalent secure storage implementation is available.
 See [drafting question boundaries](../docs/architecture/studio-drafting-questions.md).
+
+### Using Claude instead of ChatGPT
+
+Ask, Suggest revision and Review can be answered by **Claude** instead. Open the
+connection settings (**Account & model**), choose **Claude** under **Answer with**,
+paste an Anthropic API key and choose **Save key**.
+
+- **Keys:** create one at console.anthropic.com. Heinlein checks the key with
+  Anthropic before saving it. A rejected key changes nothing.
+- **Storage:** the key is kept only in this Mac's Keychain, never in your project,
+  chat history or browser storage. The panel shows only its last four characters.
+- **Billing:** Claude requests are billed per use to your Anthropic account. The
+  ChatGPT plan allowance is not used, and Heinlein never switches billing routes
+  on its own.
+- **Model:** Claude Opus 5.5 is selected by default when your key offers it.
+  Choose another under **Claude model**. Claude reasons before it answers, which
+  uses more tokens than the visible answer.
+- **Refusals:** if Anthropic's safety checks decline a passage, the request
+  continues on a fallback model inside the same call. If the whole chain declines,
+  you see "Claude declined to answer this request" and nothing changes.
+- **Switching:** choose **ChatGPT** to switch back. **Remove key** deletes the key
+  from the Keychain and returns to ChatGPT. Saved chats stay on this Mac,
+  separately for each provider and model.
+
+The same rules apply to both providers. Answers are advisory, suggestions are
+unapproved until you accept them, and nothing is sent until you choose Send.
+Saved reviews resume only with the provider, key and model they started with.
 
 ## Vibecode your theme
 
@@ -590,7 +699,7 @@ remaining batches continue to completion. Cancelled reviews and invalid output
 wait for an explicit action. Auth, quota, identity, and invalid saved-context errors
 remain blocked. A failed batch or one making no progress stops
 recovery rather than retrying indefinitely. A notification reports completion or
-reviews needing attention, without opening Chats, changing focus or reflowing text.
+reviews needing attention, without opening Editors, changing focus or reflowing text.
 
 Recovery does not switch accounts/models or sign in. It pauses when the connection
 is unavailable, writing/recovery needs attention, or the captured source/context or

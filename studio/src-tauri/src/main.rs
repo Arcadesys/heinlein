@@ -45,11 +45,14 @@ mod manuscript_export;
 mod illustrations;
 mod markdown_export;
 mod mcp_access;
+mod mcp_cli;
+mod mcp_setup;
 #[cfg(all(test, unix))]
 mod persistence_tests;
 mod preferences;
 mod preferences_store;
 mod project_shortcuts;
+mod project_creation;
 mod projects;
 mod proposals;
 mod questions;
@@ -285,10 +288,14 @@ fn select_repository_with_origin(
         .map(|(data, id)| resolved_future_path(data).map(|data| github::legacy_sources(&data).join(id)))
         .transpose()?;
     let repo = Repository::open_with_identity(&path, legacy_identity.as_deref())
-        .map_err(|e| e.to_string())?;
+        .map_err(project_creation::open_error)?;
     guard_auth_repository_separation(repo.root(), private_storage)?;
     if let Some(parent) = private_storage.parent() {
         guard_auth_repository_separation(repo.root(), &parent.join("standalone-drafts-v1"))?;
+        guard_auth_repository_separation(
+            repo.root(),
+            &parent.join("standalone-review-identities-v1"),
+        )?;
         guard_auth_repository_separation(repo.root(), &parent.join("projects-v1"))?;
     }
     let (manifests, warning) = match repo.discover() {
@@ -376,43 +383,6 @@ fn select_repository_with_origin(
         );
     }
     Ok(session)
-}
-#[tauri::command]
-async fn create_local_project(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
-    name: String,
-) -> Result<Option<Session>, String> {
-    check_window(&window)?;
-    projects::validate_new_name(&name)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<BrowserState>();
-        let _selection = state.selection_gate.try_lock()
-            .map_err(|_| "Another folder selection is in progress")?;
-        let home = writing_home(&app)?;
-        ensure_writing_home(&home)?;
-        let Some(parent) = app.dialog().file()
-            .set_directory(home)
-            .set_title("Choose where to create your new project")
-            .blocking_pick_folder() else { return Ok(None); };
-        let parent = parent.into_path().map_err(|_| "Select a local filesystem folder")?;
-        let parent = parent.canonicalize().map_err(|_| "Choose an available local folder")?;
-        let data = app.path().app_data_dir().map_err(|_| "Private storage unavailable")?;
-        guard_auth_repository_separation(&parent.join(&name), &data)?;
-        guard_auth_repository_separation(&parent.join(&name), &github::sources_root(&app)?)?;
-        #[cfg(target_os = "macos")]
-        update::guard_repository(&parent.join(&name), &app.path().home_dir().map_err(|_| "Home unavailable")?)?;
-        if state.quitting.load(Ordering::SeqCst) || state.unsaved_changes.load(Ordering::SeqCst) {
-            return Err("Save your current writing before creating a project".into());
-        }
-        let recovery = recovery_store(&app)?;
-        let library = projects::Store::open(&data.join("projects-v1"))?;
-        let path = projects::create_local_project(&parent, &name, &recovery, &library)?;
-        select(&app, path).map(Some).map_err(|error| {
-            // Leave the initialized project available for retry; never delete writing.
-            format!("The project folder was created, but could not be opened: {error}. Use Open existing project to try again.")
-        })
-    }).await.map_err(|e| e.to_string())?
 }
 #[tauri::command]
 async fn pick_repository(
@@ -804,6 +774,9 @@ async fn list_system_fonts(window: tauri::WebviewWindow) -> Result<Vec<String>, 
     .map_err(|e| e.to_string())
 }
 fn main() {
+    if mcp_cli::run_if_requested() {
+        return;
+    }
     if std::env::args_os().any(|arg| arg == "--scene-native-acceptance") {
         #[cfg(all(feature = "scene-native-acceptance", target_os = "macos"))]
         {
@@ -976,6 +949,7 @@ fn production_main() {
             questions::suggest_question_revision,
             questions::cancel_question,
             questions::connect_question_account,
+            questions::reauthenticate_review,
             questions::cancel_question_sign_in,
             questions::select_question_account,
             questions::select_question_model,
@@ -983,6 +957,11 @@ fn production_main() {
             questions::restore_question_connection,
             questions::sign_out_question_account,
             questions::open_question_usage,
+            questions::connect_claude_key,
+            questions::select_question_provider,
+            questions::select_claude_model,
+            questions::refresh_claude_models,
+            questions::remove_claude_key,
             proposals::list_proposals,
             proposals::reject_proposal,
             proposals::review_proposal,
@@ -1001,7 +980,6 @@ fn production_main() {
             drafting::history_drafting_change,
             drafting::pick_drafting_import,
             pick_repository,
-            create_local_project,
             recent_repositories,
             open_recent_repository,
             list_directory,

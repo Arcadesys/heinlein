@@ -185,7 +185,11 @@ mod tests {
                         "evidence" => value["findings"][0]["evidence"] = text,
                         _ => unreachable!(),
                     }
-                    assert_eq!(Response::parse(&value.to_string()).is_ok(), count == 2000, "{character} {field} {count}");
+                    assert_eq!(
+                        Response::parse(&value.to_string()).is_ok(),
+                        count == 2000,
+                        "{character} {field} {count}"
+                    );
                 }
             }
         }

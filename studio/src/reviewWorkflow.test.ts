@@ -87,7 +87,9 @@ it('streams a continued batch and ignores its late progress after final validati
         return new Promise<ReviewResult>(resolve => {finish=resolve;});
     });
     await f.start();
-    await f.click('Continue next reviewer batch');
+    // Run review sends the queued batch by itself; a queued call is not reported as a failure.
+    await vi.waitFor(() => expect((f.core as unknown as LocalCore).continueReview).toHaveBeenCalledOnce());
+    expect(panel!.element.querySelector('[role=status]')!.textContent).not.toContain('Review incomplete');
     const event: ReviewProgress = {requestId,completedCalls:1,totalCalls:2,reviewer:0,sourceIndex:0,chunkIndex:2,status:'receiving',receivedBytes:1024,suggestions:3};
     progress(event);
     expect(panel!.element.querySelector('.review-activity')!.textContent).toContain('1 of 2 calls completed');
@@ -207,7 +209,7 @@ it('groups competing alternatives into one card, and Keep mine records each alte
  expect(f.core.approveReviewEdit).not.toHaveBeenCalled(); expect(f.core.chooseReviewEdit).not.toHaveBeenCalled();
  expect(panel!.element.querySelector('.review-conflict')).toBeNull();
  expect(panel!.element.querySelector('.review-status')!.textContent).toContain('Your manuscript was not changed');
- expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('3 suggestions · 2 decided');
+ expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('2 suggestions · 1 decided');
 });
 it('steps between cards from the progress strip without choosing, applying or rejecting anything', async () => {
  const f=fixture(); await f.start();
@@ -297,6 +299,18 @@ function automaticFixture(custom:ReviewerDefinition[]=[]) {
  (f.core as unknown as LocalCore).continueReview=continuation;
  return {...f,make,continuation};
 }
+it('Run review sends every queued batch without asking to Continue, then reports ready',async()=>{
+ const f=automaticFixture();panel!.open();await vi.waitFor(()=>expect(f.button('Preview review').disabled).toBe(false));await f.click('Preview review');await vi.waitFor(()=>expect(f.button('Run review').disabled).toBe(false));await f.click('Run review');
+ await vi.waitFor(()=>expect(panel!.element.querySelector('[role=status]')!.textContent).toContain('Review ready.'));
+ expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.continuation).toHaveBeenCalledOnce();
+ expect(panel!.element.textContent).not.toContain('Review incomplete');
+});
+it('Run review stops on a failed call and reports it as incomplete',async()=>{
+ const f=automaticFixture();f.core.requestReview.mockImplementation(async r=>{const value=await f.make(r,1);value.workflow!.coverage[1].status='failed';value.workflow!.coverage[1].error='timeout';return value;});
+ panel!.open();await vi.waitFor(()=>expect(f.button('Preview review').disabled).toBe(false));await f.click('Preview review');await vi.waitFor(()=>expect(f.button('Run review').disabled).toBe(false));await f.click('Run review');
+ await vi.waitFor(()=>expect(panel!.element.querySelector('[role=status]')!.textContent).toContain('Review incomplete.'));
+ expect(f.continuation).not.toHaveBeenCalled();expect(panel!.element.querySelector('[role=status]')!.textContent).toContain('Review incomplete.');
+});
 it('Review chapter automatically runs both built-ins and subsequent batches, opens consolidation, and saves individual passes',async()=>{
  const f=automaticFixture();await panel!.reviewChapter();
  expect(f.core.previewReview).toHaveBeenCalledOnce();expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.continuation).toHaveBeenCalledOnce();
@@ -513,7 +527,7 @@ it('preserves the saved review on failed capture and ignores late completion aft
 });
 it('refreshes decisions when showing a hidden pane without replaying reviewers',async()=>{
  const f=fixture();await f.start();panel!.hide();f.record().edits[0].status='accepted';f.record().edits[1].status='supersededByAuthorChoice';f.record().revision=8;panel!.show();panel!.show();
- await vi.waitFor(()=>expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('3 suggestions · 2 decided'));expect(f.core.getReview).toHaveBeenCalledOnce();expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.core.approveReviewEdit).not.toHaveBeenCalled();
+ await vi.waitFor(()=>expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('2 suggestions · 1 decided'));expect(f.core.getReview).toHaveBeenCalledOnce();expect(f.core.requestReview).toHaveBeenCalledOnce();expect(f.core.approveReviewEdit).not.toHaveBeenCalled();
 });
 it('opens another saved review without a refresh race and ignores late refresh after clear',async()=>{
  const f=fixture();await f.start();panel!.hide();const other={...structuredClone(f.record()),reviewId:'other'};f.core.getReview.mockResolvedValueOnce(other);
@@ -555,7 +569,7 @@ it('fresh library review keeps excluded targets excluded and validates only the 
 it('quiet decision refresh preserves highlights invalidated by typing until explicit refresh',async()=>{
  const f=fixture();const marksChanged=vi.fn((input:unknown,report:(count:number|null)=>void)=>report(input?2:null));Object.assign(f.hooks,{marksChanged});await f.start();
  panel!.marksInvalidated();panel!.hide();f.record().edits[0].status='accepted';f.record().revision=2;panel!.show();
- await vi.waitFor(()=>expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('3 suggestions · 1 decided'));
+ await vi.waitFor(()=>expect(panel!.element.querySelector('.review-progress')!.textContent).toBe('2 suggestions · 1 decided'));
  expect(panel!.element.querySelector('.review-mark-status')!.textContent).toContain('Highlights are off because the open text changed');expect(marksChanged.mock.calls.at(-1)![0]).toBeNull();
  await f.click('Refresh review');expect(marksChanged.mock.calls.at(-1)![0]).not.toBeNull();expect(panel!.element.querySelector('.review-mark-status')!.textContent).not.toContain('Highlights are off because the open text changed');
 });
@@ -570,4 +584,100 @@ it.each(['repair', 'discard', 'failure', 'reopen'])('offers safe review recovery
  else if(action==='repair') { await f.click('Repair review'); expect(panel!.element.textContent).toContain('Current text captured.'); expect(discardReview).not.toHaveBeenCalled(); }
  else {await f.click('Discard saved review');expect(document.activeElement).toBe(f.button('Confirm discard saved review'));expect(discardReview).not.toHaveBeenCalled();await f.click('Keep saved review');expect(discardReview).not.toHaveBeenCalled();await f.click('Discard saved review');await f.click('Confirm discard saved review');expect(discardReview).toHaveBeenCalledWith('repo','review-stable',1);expect(panel!.element.hidden).toBe(action!=='failure');if(action==='failure')expect(panel!.element.textContent).toContain('Review changed elsewhere');}
  expect(f.core.requestReview).toHaveBeenCalledOnce();
+});
+function authenticationFixture() {
+    const f = fixture();
+    let saved!: ReviewResult;
+    const original = f.core.requestReview.getMockImplementation()!;
+    f.core.requestReview.mockImplementation(async request => {
+        saved = await original(request);
+        const completed = saved.workflow!.coverage[0];
+        saved.workflow!.coverage.push({...completed,id:'auth-failed',status:'failed',error:'authentication',diagnostics:{httpStatus:401,providerRequestId:'req_safe-123'}}, {...completed,id:'remaining',status:'queued',requestId:null});
+        return structuredClone(saved);
+    });
+    const reconnect = vi.fn(async () => ({status:{...await f.core.questionStatus(),generation:4},review:structuredClone(saved)}));
+    const continuation = vi.fn(async (_repo:string,_review:string,requestId:string,_connection?:unknown):Promise<ReviewResult> => ({...structuredClone(saved),requestId,workflow:{...saved.workflow!,coverage:saved.workflow!.coverage.map(c=>({...c,status:'completed',error:null}))}}));
+    Object.assign(f.core,{reauthenticateReview:reconnect,continueReview:continuation});
+    return {...f,reconnect,continuation,saved:()=>saved};
+}
+it('explains authentication and only retries after explicit same-account reconnect and a second click', async () => {
+    const f = authenticationFixture(); await f.start();
+    expect(panel!.element.textContent).toContain('ChatGPT did not authorize this review call');
+    expect(panel!.element.querySelector('[role=status]')!.textContent).toContain('Review paused: ChatGPT authorization failed. 1 of 3 calls completed.');
+    expect(panel!.element.textContent).toContain('HTTP 401 · Request req_safe-123');
+    expect(f.button('Continue next reviewer batch').hidden).toBe(true);
+    expect(f.reconnect).not.toHaveBeenCalled(); expect(f.continuation).not.toHaveBeenCalled();
+    const original = structuredClone(f.saved());
+    await f.click('Reconnect ChatGPT for this review');
+    expect(f.reconnect).toHaveBeenCalledWith('repo','review-stable',true);
+    expect(f.continuation).not.toHaveBeenCalled();
+    expect(f.button('Retry after reconnecting').hidden).toBe(false);
+    expect(f.saved()).toEqual(original);
+    await f.click('Retry after reconnecting');
+    expect(f.continuation).toHaveBeenCalledOnce();
+    expect(f.continuation.mock.calls[0][3]).toEqual({generation:4,accountId:'selected-account',model:'chosen-model'});
+    expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(3);
+    expect(f.core.requestReview).toHaveBeenCalledOnce();
+});
+it('failed reauthentication keeps all results and does not enable retry', async () => {
+    const f = authenticationFixture(); await f.start();
+    f.reconnect.mockRejectedValueOnce(new Error('Sign-in was cancelled.'));
+    await f.click('Reconnect ChatGPT for this review');
+    expect(panel!.element.textContent).toContain('Sign-in was cancelled.');
+    expect(f.continuation).not.toHaveBeenCalled();
+    expect(f.button('Continue next reviewer batch').hidden).toBe(true);
+    expect(panel!.element.querySelectorAll('.review-edit')).toHaveLength(3);
+});
+it.each(['account','model','review','older revision'])('rejects a reauthentication response for another %s', async mismatch => {
+    const f = authenticationFixture(); await f.start();
+    const status = {...await f.core.questionStatus(),generation:4};
+    const review = structuredClone(f.saved());
+    if (mismatch === 'account') status.activeAccountId='different-account';
+    if (mismatch === 'model') status.model='different-model';
+    if (mismatch === 'review') review.reviewId='different-review';
+    if (mismatch === 'older revision') review.revision=0;
+    f.reconnect.mockResolvedValueOnce({status,review});
+    await f.click('Reconnect ChatGPT for this review');
+    expect(panel!.element.textContent).toContain('were not reconnected');
+    expect(f.continuation).not.toHaveBeenCalled();
+    expect(f.button('Continue next reviewer batch').hidden).toBe(true);
+});
+it('a second authentication failure consumes the hint and requires another explicit reconnect', async () => {
+    const f = authenticationFixture(); await f.start();
+    f.continuation.mockImplementation(async (_repo,_review,requestId)=>{f.saved().requestId=requestId;return structuredClone(f.saved());});
+    await f.click('Reconnect ChatGPT for this review'); await f.click('Retry after reconnecting');
+    expect(f.button('Reconnect ChatGPT for this review').hidden).toBe(false);
+    expect(f.button('Continue next reviewer batch').hidden).toBe(true);
+    expect(f.reconnect).toHaveBeenCalledOnce(); expect(f.continuation).toHaveBeenCalledOnce();
+    await f.click('Reconnect ChatGPT for this review');
+    expect(f.reconnect).toHaveBeenCalledTimes(2); expect(f.continuation).toHaveBeenCalledOnce();
+    expect(f.button('Retry after reconnecting').hidden).toBe(false);
+});
+it('does not display arbitrary diagnostic strings', async () => {
+    const f = authenticationFixture();
+    const original = f.core.requestReview.getMockImplementation()!;
+    f.core.requestReview.mockImplementation(async request=>{
+        const answer=await original(request);
+        answer.workflow!.coverage[1].diagnostics={httpStatus:999,providerCode:'secret-body',providerRequestId:'not-a-request-secret'};
+        return answer;
+    });
+    await f.start();
+    expect(panel!.element.textContent).not.toContain('secret-body');
+    expect(panel!.element.textContent).not.toContain('not-a-request-secret');
+    expect(panel!.element.textContent).not.toContain('HTTP 999');
+});
+
+it('ignores a late reconnect after clearing the review and does not permit duplicate reconnects', async () => {
+    const f = authenticationFixture(); await f.start();
+    let finish!: (result: Awaited<ReturnType<typeof f.reconnect>>) => void;
+    const response = {status:{...await f.core.questionStatus(),generation:4},review:structuredClone(f.saved())};
+    f.reconnect.mockImplementationOnce(() => new Promise(resolve => {finish = resolve;}));
+    await f.click('Reconnect ChatGPT for this review');
+    expect(f.button('Reconnect ChatGPT for this review').disabled).toBe(true);
+    f.button('Reconnect ChatGPT for this review').click();
+    expect(f.reconnect).toHaveBeenCalledOnce();
+    panel!.clear(); finish(response); await tick();
+    expect(panel!.element.hidden).toBe(true);
+    expect(panel!.element.textContent).not.toContain('Account reconnected. Choose Retry');
+    expect(f.continuation).not.toHaveBeenCalled();
 });

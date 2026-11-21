@@ -83,6 +83,28 @@ that pin outside candidate runtime output. `signedPrepared=true` does not change
 The source-only stage CLI remains NONLAUNCHABLE and supplies no signed binary proof.
 #47 stays open until separately authorized native acceptance establishes its contract.
 
+### Python launch and runtime identity
+
+Supported preparation currently requires a stable macOS framework Python with the
+canonical layout `Python.framework/Versions/X.Y/bin/pythonX.Y`. Preparation pins
+that **launch file** and the separate `Resources/Python.app/Contents/MacOS/Python`
+**runtime image**, plus the sibling `Info.plist` path/hash. The trusted plist must
+name `CFBundleExecutable=Python` and a stable `X.Y.Z` short version matching the
+framework directory. Both images and plist must be safe regular host files; plist
+and runtime paths must stay canonical within that exact framework. These static
+pins are established before any output/build attempt, never learned from a PID or
+candidate receipt. Nonframework or unsupported layouts fail explicitly before
+preparation; there is no guessed same-image fallback.
+
+The handoff identifies the pinned launch file to run. Launch/observe/verify validate
+both image hashes and the trusted plist relationship. The independent observer
+compares the collector's exact public process executable path to the **prepared
+runtime image**, with its existing PID/start checks. It never treats the launch stub
+as the runtime image or resolves an observed alias into acceptance. The native child
+keeps its existing exact signed executable binding. Legacy single `python.path`
+metadata cannot satisfy these new pins. Existing packages/claims/receipts are never
+restamped or repaired; an identity-failed run remains incomplete and cannot retry.
+
 ### Future controls — never invoked by preparation
 
 Only after separate explicit launch authorization, use the pinned Python/script

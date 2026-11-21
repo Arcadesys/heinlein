@@ -15,7 +15,7 @@ it('preserves an explicit closed choice across later font and viewport measureme
  const writer=document.createElement('div');writer.getBoundingClientRect=()=>new DOMRect(200,0,900,700);
  rail=createConversationRail(document.createElement('div'),()=>writer);document.body.append(rail.element);rail.refresh();
  const dock=rail.element.querySelector<HTMLElement>('.conversation-rail-dock')!;expect(dock.hidden).toBe(false);
- [...rail.element.querySelectorAll('button')].find(b=>b.textContent==='Close chats')!.click();
+ [...rail.element.querySelectorAll('button')].find(b=>b.textContent==='Close editors')!.click();
  window.dispatchEvent(new Event('resize'));rail.refresh();expect(dock.hidden).toBe(true);
  rail.element.querySelector<HTMLButtonElement>('.conversation-rail-toggle')!.click();expect(dock.hidden).toBe(false);
 });

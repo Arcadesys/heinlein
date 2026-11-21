@@ -9,6 +9,7 @@ license = { text = "MIT" }
 dependencies = [
     "jinja2>=3.1",
     "pypdf>=5.1",
+    "pikepdf>=9.0",
     "pyyaml>=6.0",
     "fastapi>=0.110",
     "uvicorn>=0.27",
@@ -33,6 +34,7 @@ packages = ["heinlein"]
 
 [tool.hatch.build.targets.wheel.shared-data]
 "heinlein/templates" = "heinlein/templates"
+"heinlein/fonts" = "heinlein/fonts"
 
 # Release source archives contain only the installable publisher. Manuscripts,
 # examples, local app data, tests and workspace build products are not release data.

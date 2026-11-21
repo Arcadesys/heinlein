@@ -34,6 +34,33 @@ function fixture(selected = true) {
     const fill = (label: string, value: string) => { const input = [...p.element.querySelectorAll('label')].find(l => l.textContent === label)!.querySelector('input,textarea') as HTMLInputElement; input.value = value; input.dispatchEvent(new Event('input')); return input; };
     return { p, request, hooks, click, fill, setProblem: (p: string | null) => problem = p };
 }
+it('repository chooser opening requests status then repositories once', async () => {
+    const f = fixture(false);
+    const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async r => r.action === 'chooserStatus'
+        ? { ...structuredClone(status), repositories: { id: 'list', account: status.auth!.account!, repositories: [], unavailable: 0 } }
+        : original(r));
+    await f.p.open(true);
+    await tick();
+    expect(f.request.mock.calls.map(([r]) => r.action)).toEqual(['chooserStatus']);
+});
+it('cancelled credential access does not automatically retry or load repositories', async () => {
+    const f = fixture(false);
+    const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async r => r.action === 'chooserStatus'
+        ? { ...structuredClone(status), auth: null, error: 'Secure credential access was cancelled.' }
+        : original(r));
+    await f.p.open(true);
+    await tick();
+    expect(f.request.mock.calls.map(([r]) => r.action)).toEqual(['chooserStatus']);
+});
+it.each(['close','source'])('discards a chooser list after %s',async change=>{
+ const f=fixture(false);let finish!:(value:GitHubResponse)=>void;const original=f.request.getMockImplementation()!;
+ f.request.mockImplementation(r=>r.action==='chooserStatus'?new Promise(resolve=>finish=resolve):original(r));
+ const opening=f.p.open(true);await tick();if(change==='close')f.p.element.close();else f.p.sourceChanged();
+ finish({...structuredClone(status),repositories:{id:'late-list',account:status.auth!.account!,repositories:[],unavailable:0}} as GitHubResponse);
+ await opening;await tick();expect(f.request.mock.calls).toContainEqual([{action:'cancel',previewId:'late-list'}]);
+});
 it('opening has no implicit authentication or sharing; local versions select exact files and identity', async () => {
     const f = fixture();
     await f.p.open();

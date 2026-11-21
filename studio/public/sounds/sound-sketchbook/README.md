@@ -1,7 +1,6 @@
 # Sound Sketchbook keeps
 
 Copied from the owner's Sound Sketchbook, Typewriter keys set, on 2026-11-06.
-Source: sites-project://appgprj_6ad8d6f188548191822a6a09f88498c2
 
 Only the four clips shown in Keep are included:
 

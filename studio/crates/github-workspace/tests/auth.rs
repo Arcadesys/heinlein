@@ -3,6 +3,71 @@ use github_workspace::{auth::Auth, registry::StateDir, Error, StoreFailure};
 use std::sync::{atomic::Ordering, Arc};
 use support::*;
 #[test]
+fn chooser_reads_once_and_never_retries_cancelled_store_access() {
+    let f = Fixture::new();
+    let api = MockApi::default();
+    let (auth, store) = connected(&f.root, &api);
+    let before = store.reads.load(Ordering::SeqCst);
+    let (view, credential) = auth.chooser(&api, 1006).unwrap();
+    assert!(view.confirmed);
+    assert!(credential.unwrap().unwrap().valid());
+    assert_eq!(store.reads.load(Ordering::SeqCst) - before, 1);
+    *store.read_error.lock().unwrap() = Some(Error::StoreCancelled);
+    let before = store.reads.load(Ordering::SeqCst);
+    assert!(matches!(
+        auth.chooser(&api, 1006),
+        Err(Error::StoreCancelled)
+    ));
+    assert_eq!(store.reads.load(Ordering::SeqCst) - before, 1);
+    *store.read_error.lock().unwrap() = None;
+    auth.sign_out().unwrap();
+    let before = store.reads.load(Ordering::SeqCst);
+    let (view, credential) = auth.chooser(&api, 1006).unwrap();
+    assert!(!view.confirmed);
+    assert!(credential.unwrap().is_none());
+    assert_eq!(store.reads.load(Ordering::SeqCst) - before, 1);
+}
+#[test]
+fn chooser_refresh_preserves_rotation_barrier_and_checks_account() {
+    let f = Fixture::new();
+    let api = MockApi::default();
+    let (auth, store) = connected(&f.root, &api);
+    let before = store.reads.load(Ordering::SeqCst);
+    *store.write_error.lock().unwrap() = Some(Error::StoreCancelled);
+    let (view, credential) = auth.chooser(&api, 4590).unwrap();
+    assert!(view.confirmed);
+    assert!(matches!(credential, Err(Error::RotationNotSaved(_))));
+    assert_eq!(store.reads.load(Ordering::SeqCst) - before, 1);
+    assert!(matches!(
+        auth.ready_to_quit(),
+        Err(Error::RotationNotSaved(_))
+    ));
+    *store.write_error.lock().unwrap() = None;
+    auth.retry_saved().unwrap();
+    api.user_id.store(10, Ordering::SeqCst);
+    let (_, credential) = auth.chooser(&api, 8180).unwrap();
+    assert!(matches!(credential, Err(Error::Account)));
+}
+#[test]
+fn chooser_unconfirmed_account_does_not_return_credential() {
+    let f = Fixture::new();
+    let api = MockApi::default();
+    let store = Arc::new(MemorySecrets::default());
+    let auth = Auth::new(
+        "public-client".into(),
+        store.clone(),
+        StateDir::open(&f.root.join("auth")).unwrap(),
+    )
+    .unwrap();
+    auth.begin(&api, 1000).unwrap();
+    auth.poll(&api, 1005).unwrap();
+    let before = store.reads.load(Ordering::SeqCst);
+    let (view, credential) = auth.chooser(&api, 1006).unwrap();
+    assert!(!view.confirmed);
+    assert!(credential.unwrap().is_none());
+    assert_eq!(store.reads.load(Ordering::SeqCst) - before, 1);
+}
+#[test]
 fn missing_configuration_never_starts_fake_auth() {
     let f = Fixture::new();
     let auth = Auth::new(

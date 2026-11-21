@@ -430,6 +430,9 @@ pub(crate) struct Host {
 )]
 pub(crate) enum Request {
     List,
+    Create {
+        name: String,
+    },
     LastOpened,
     ClearLastOpened,
     Settings {
@@ -463,9 +466,14 @@ pub(crate) async fn project_request(
     request: Request,
 ) -> Result<serde_json::Value> {
     crate::check_window(&window)?;
-    tauri::async_runtime::spawn_blocking(move || dispatch(&app, request))
-        .await
-        .map_err(|_| "Project operation unavailable")?
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Request::Create { name } = request {
+            return crate::project_creation::create(&app, &window, &name);
+        }
+        dispatch(&app, request)
+    })
+    .await
+    .map_err(|_| "Project operation unavailable")?
 }
 fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<serde_json::Value> {
     let state = app.state::<crate::BrowserState>();
@@ -474,6 +482,7 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<serde_json::Valu
     }
     let (s, r) = inventory(app)?;
     match request {
+        Request::Create { .. } => Err("Project creation requires its native window".into()),
         Request::ClearLastOpened => {
             s.clear_last_opened()?;
             Ok(serde_json::Value::Null)
@@ -613,38 +622,6 @@ fn dispatch(app: &tauri::AppHandle, request: Request) -> Result<serde_json::Valu
         }
     }
 }
-// A new project is an exclusive new directory, never an existing writing folder.
-pub(crate) fn validate_new_name(name: &str) -> Result<()> {
-    if name.trim().is_empty() || name != name.trim() || name.chars().count() > 120
-        || name == "." || name == ".." || name.starts_with('.')
-        || name.chars().any(|c| c.is_control() || matches!(c, '/' | '\\' | ':')) {
-        return Err("Enter a project name of up to 120 characters without slashes, colons, control characters or a leading dot".into());
-    }
-    Ok(())
-}
-pub(crate) fn create_local_project(
-    parent: &Path,
-    name: &str,
-    recovery: &repository_core::RecoveryStore,
-    library: &Store,
-) -> Result<PathBuf> {
-    validate_new_name(name)?;
-    let parent = parent.canonicalize().map_err(|_| "Choose an available local folder")?;
-    let path = parent.join(name);
-    // Publish the folder only after a complete empty scene and manuscript exist.
-    let destination = repository_core::standalone_placement::DraftDestination::open(&path)?;
-    destination.write_project(name, "First scene", "first-scene.md", "", &id(), recovery, || Ok(()))?;
-    let repo = repository_core::Repository::open(&path).map_err(|e| e.to_string())?;
-    let state = repo.load_drafting().map_err(|e| e.to_string())?;
-    let scene = state.scenes.first().ok_or("The new project's first scene is missing")?;
-    let doc = repo.read(&scene.path).map_err(|e| e.to_string())?;
-    let project = library.register(&path, None)?;
-    library.update(&project.id, project.revision, None, Some(Resume {
-        path: scene.path.clone(), source_hash: doc.content_hash, scene_id: Some(scene.id.clone()),
-        anchor: 0, head: 0, scroll_top: 0, reading_scroll_top: None,
-    }))?;
-    Ok(path)
-}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,36 +637,6 @@ mod tests {
         std::fs::create_dir(&p).unwrap();
         std::fs::write(p.join("scene.md"), "A — e\u{301} 🦊\r\nB\nC\r\n").unwrap();
         p
-    }
-    #[test]
-    fn new_local_project_is_exclusive_and_persists_without_touching_existing_writing() {
-        let (_t, library, root) = setup();
-        let recovery = repository_core::RecoveryStore::open(root.join("private-recovery")).unwrap();
-        let writing = root.join("writing");
-        std::fs::create_dir(&writing).unwrap();
-        let path = create_local_project(&writing, "New novel — 🦊", &recovery, &library).unwrap();
-        let repo = repository_core::Repository::open(&path).unwrap();
-        let manuscript = repo.load_drafting().unwrap();
-        assert!(manuscript.revision.is_some());
-        assert_eq!(manuscript.project, "New novel — 🦊");
-        assert_eq!(manuscript.scenes.len(), 1);
-        assert_eq!(manuscript.scenes[0].title, "First scene");
-        assert_eq!(repo.read(&manuscript.scenes[0].path).unwrap().text, "");
-        let project = library.list().unwrap().pop().unwrap();
-        let resumed = project.resume.unwrap();
-        assert_eq!(resumed.path, "ms/first-scene.md");
-        assert_eq!(resumed.scene_id.as_deref(), Some(manuscript.scenes[0].id.as_str()));
-        assert!(validate_resume(&repo, &resumed).is_ok());
-        std::fs::write(path.join("ms/first-scene.md"), "Original —\r\n").unwrap();
-        assert!(create_local_project(&writing, "New novel — 🦊", &recovery, &library).unwrap_err().contains("already exists"));
-        assert_eq!(std::fs::read_to_string(path.join("ms/first-scene.md")).unwrap(), "Original —\r\n");
-        for invalid in ["", "..", "../escape", "a/b", "a\\b", ".hidden", "a:b", "a\n", " trailing "] {
-            assert!(create_local_project(&writing, invalid, &recovery, &library).is_err(), "{invalid:?}");
-        }
-        assert_eq!(std::fs::read_dir(&writing).unwrap().count(), 1);
-        drop(repo);
-        let reopened = repository_core::Repository::open(&path).unwrap().load_drafting().unwrap();
-        assert_eq!(reopened.scenes[0].id, manuscript.scenes[0].id);
     }
     fn workspace(id: &str, account: u64) -> Workspace {
         Workspace {

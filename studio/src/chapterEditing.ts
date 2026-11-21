@@ -3,7 +3,7 @@ import {EditorView} from '@codemirror/view';
 import {invertedEffects} from '@codemirror/commands';
 import {assembleChapter,type AssembledChapter} from './assembledChapter';
 import {applyRawChanges} from './editor';
-import type {LocalCore,RecoveryDraft} from './localCore';
+import type {Document,LocalCore,RecoveryDraft} from './localCore';
 export interface ChapterChange {from:number;to:number;insert:string}
 export function editChapter(before:AssembledChapter,changes:ChapterChange[]):AssembledChapter {
   const perScene=new Map<string,ChapterChange[]>();
@@ -31,7 +31,7 @@ export function chapterEditExtension(initial:AssembledChapter,changed:(chapter:A
   }),invertedEffects.of(tr=>tr.docChanged?[restore.of(tr.startState.field(field))]:[]),EditorView.updateListener.of(update=>{if(update.docChanged)changed(update.state.field(field));})];
 }
 /** Per-sheet optimistic writes, with every changed sheet staged before any manuscript write. */
-export function createChapterWriter(core:LocalCore,repositoryId:string,initial:AssembledChapter) {
+export function createChapterWriter(core:LocalCore,repositoryId:string,initial:AssembledChapter,onSaved?:(document:Document)=>void) {
   const baseline=new Map(initial.parts.map(p=>[p.document.path,p.document]));
   const drafts=new Map<string,RecoveryDraft>();let current=initial;let queue=Promise.resolve();
   const pending=()=>current.parts.filter(p=>p.document.text!==baseline.get(p.document.path)?.text);
@@ -47,7 +47,7 @@ export function createChapterWriter(core:LocalCore,repositoryId:string,initial:A
     save:()=>run(async()=>{
       await stage();const snapshots=pending().map(p=>({...p.document}));
       for(const doc of snapshots){const disk=await core.readDocument(repositoryId,doc.path);if(disk.contentHash!==baseline.get(doc.path)!.contentHash)throw Error(`The source sheet changed on disk: ${doc.path}. The chapter buffer and recovery drafts are retained.`);}
-      for(const doc of snapshots){const saved=await core.saveDocument(repositoryId,doc.path,baseline.get(doc.path)!.contentHash,doc.text);baseline.set(doc.path,saved);const draft=drafts.get(doc.path);if(draft){await core.discardRecovery(repositoryId,doc.path,draft.id);drafts.delete(doc.path);}}
+      for(const doc of snapshots){const saved=await core.saveDocument(repositoryId,doc.path,baseline.get(doc.path)!.contentHash,doc.text);baseline.set(doc.path,saved);onSaved?.(saved);const draft=drafts.get(doc.path);if(draft){await core.discardRecovery(repositoryId,doc.path,draft.id);drafts.delete(doc.path);}}
       // Edits made during a save get a recovery draft against the new disk hashes.
       await stage();return pending().length===0;
     }),

@@ -171,6 +171,7 @@ test('Toggling keeps one writer: unsaved text shows in Reading, caret and bytes 
   await editor.click();
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End');
   await page.keyboard.type('Unsaved 🦊 line.');
+  await page.getByRole('button', { name: 'Show tabs and tools', exact: true }).click();
   await group.getByRole('button', { name: 'Reading', exact: true }).click();
   await expect(reader(page)).toContainText('Unsaved 🦊 line.');
   await expect(reader(page).locator('[data-review-id]')).toHaveCount(0);
@@ -294,6 +295,7 @@ test('scene navigation reveals Source and focuses the exact passage with keyboar
   await page.keyboard.insertText('\n\n---\n\nSynthetic breadcrumb passage.\n');
   await expect.poll(() => source(page)).toContain('Synthetic breadcrumb passage.');
   const before = await source(page);
+  await page.getByRole('button', { name: 'Show tabs and tools', exact: true }).click();
   await page.getByRole('group', { name: 'Document view' }).getByRole('button', { name: 'Reading', exact: true }).click();
   await expect(reader(page)).toBeVisible();
   // Passages of the open document are listed in the ⌘K palette after the scenes.

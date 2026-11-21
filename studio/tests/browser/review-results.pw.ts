@@ -20,7 +20,7 @@ for (const zoom of [100, 200]) for (const withEdits of [true, false]) {
     await page.evaluate(withEdits => (window as any).questionsFixture.finishReviewWithFeedback(withEdits), withEdits);
     if (withEdits) {
       await expect(pane).toBeHidden();
-      await expect(page.getByRole('button',{name:'Chats',exact:true})).toHaveAttribute('aria-expanded','false');
+      await expect(page.getByRole('button',{name:'Editors',exact:true})).toHaveAttribute('aria-expanded','false');
       await page.getByRole('button',{name:'Heinlein',exact:true}).click();
     }
     if (!withEdits) {
@@ -108,7 +108,7 @@ for (const zoom of [100, 200]) {
 }
 
 
-test('completed review closes Chats and keeps manuscript chips actionable', async ({page}, info) => {
+test('completed review closes Editors and keeps manuscript chips actionable', async ({page}, info) => {
   const errors:string[]=[]; page.on('pageerror',error=>errors.push(error.message));
   await page.goto('/tests/browser/questions.html');
   await page.evaluate(async()=>{await (window as any).questionsFixture.ready;await document.fonts.ready;});
@@ -119,7 +119,7 @@ test('completed review closes Chats and keeps manuscript chips actionable', asyn
   await page.getByRole('button',{name:'Whole scene',exact:true}).click();
   await page.locator('.heinlein-review-panel').getByRole('button',{name:'Run review',exact:true}).click();
   await page.evaluate(()=>(window as any).questionsFixture.finishReviewWithFeedback(true));
-  await expect(page.getByRole('button',{name:'Chats',exact:true})).toHaveAttribute('aria-expanded','false');
+  await expect(page.getByRole('button',{name:'Editors',exact:true})).toHaveAttribute('aria-expanded','false');
   await expect(page.locator('.heinlein-review-panel')).toBeHidden(); await expect(editor).toBeFocused();
   expect(await shape()).toEqual(before);
   const chip=editor.locator('[data-review-id]').first();await expect(chip).toBeVisible();await chip.click();

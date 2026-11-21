@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest';
 import type {ReviewEdit} from './localCore';
-import {agreementLabel, consensusSentence, stageOf, summarizeConsensus} from './consensus';
+import {agreementLabel, consensusSentence, countDecisions, stageOf, summarizeConsensus} from './consensus';
 
 const prov = (displayName: string) => ({instanceId: displayName, definitionId: displayName, definitionVersion: 1, displayName, requestId: 'r', model: 'm', accountId: 'a', accountGeneration: 1});
 const edit = (id: string, names: string[], extra: Partial<ReviewEdit> = {}): ReviewEdit => ({
@@ -45,5 +45,18 @@ describe('review consensus', () => {
     expect(stageOf({running: true, hasResult: false, waiting: 0})).toBe('run');
     expect(stageOf({running: false, hasResult: true, waiting: 3})).toBe('decide');
     expect(stageOf({running: false, hasResult: true, waiting: 0})).toBe('done');
+  });
+});
+
+describe('countDecisions', () => {
+  const edit = (id: string, status: ReviewEdit['status'], conflictGroup: string | null = null) => ({id, status, conflictGroup} as ReviewEdit);
+  const waiting = (e: ReviewEdit) => e.status === 'pending' || e.status === 'prepared';
+  it('counts competing alternatives for one span as one suggestion, like the cards and summary', () => {
+    const edits = [edit('a', 'pending', 'g'), edit('b', 'pending', 'g'), edit('c', 'pending')];
+    expect(countDecisions(edits, waiting)).toEqual({total: 2, decided: 0, open: 2});
+  });
+  it('settles a span once one alternative is accepted, but not when one is only rejected', () => {
+    expect(countDecisions([edit('a', 'accepted', 'g'), edit('b', 'pending', 'g')], waiting)).toEqual({total: 1, decided: 1, open: 0});
+    expect(countDecisions([edit('a', 'rejected', 'g'), edit('b', 'pending', 'g')], waiting)).toEqual({total: 1, decided: 0, open: 1});
   });
 });

@@ -50,7 +50,12 @@ export interface DraftPreview {
     text: string;
     hash: string;
 }
+export interface DraftReviewSession { repositoryId: string; projectKey: string; path: string; sceneId?: string | null }
 export type DraftRequest = {
+    kind: 'reviewSession'; handle: string; revision: number; hash: string;
+} | {
+    kind: 'refresh'; handle: string;
+} | {
     kind: 'list';
 } | {
     kind: 'create';
@@ -92,7 +97,7 @@ export type DraftRequest = {
     handle: string;
     operation: string;
 };
-export type DraftResponse = DraftSummary[] | DraftOpened | StandaloneDraft | DraftPreview | {
+export type DraftResponse = DraftSummary[] | DraftOpened | StandaloneDraft | DraftPreview | DraftReviewSession | {
     session: RepositorySession;
     path: string;
 } | null;
@@ -108,9 +113,15 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
     leave: () => Promise<boolean>;
     beforeMount?: () => void;
     modeChanged?:(active:boolean)=>void;
+    stateChanged?:()=>void;
+    editorReady?:(editor:ReturnType<typeof createEditor>)=>void;
+    ask?:()=>void;
+    review?:()=>void;
     openCopy: (session: RepositorySession, path: string) => Promise<void>;
 }) {
     let active = false, session: DraftOpened | null = null, editor: ReturnType<typeof createEditor> | null = null, text = '', kept = '', epoch = 0, edit = 0;
+    let reviewSession: DraftReviewSession | null = null;
+    let reviewFlight: Promise<boolean> | null = null;
     let reader: ReturnType<typeof createMarkdownReader> | null = null;
     let showSource: (() => void) | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined, maxTimer: ReturnType<typeof setTimeout> | undefined, flight: Promise<boolean> | null = null, failed: string | null = null;
@@ -197,6 +208,7 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
         })();
         const result = await flight;
         flight = null;
+        if (active && epoch === myEpoch) hooks.stateChanged?.();
         return result;
     }
     function detach(keepHandle?: string) {
@@ -204,6 +216,7 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
         discardPreview();
         epoch++;
         active = false;
+        reviewSession = null;
         hooks.modeChanged?.(false);
         editor?.destroy();
         editor = null;
@@ -242,6 +255,8 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
         actions.className = 'standalone-actions';
         actions.append(node('summary', 'Draft actions'), btn('Drafts', () => void list()), btn('New draft', () => void newDraft()), btn('Retry keeping on this Mac', () => void flush()), btn('Remove draft…', () => void transition('discard')));
         toolbar.append(actions);
+        if (hooks.ask) toolbar.append(btn('Heinlein', hooks.ask));
+        if (hooks.review) toolbar.append(btn('Review draft', hooks.review));
         if (opened?.loaded.recoveryRequired)
             actions.append(btn('Use recoverable version…', () => void transition('repair')));
         if (opened?.loaded.draft.state === 'discarded')
@@ -255,6 +270,7 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
         view.append(title, status, toolbar, body, node('p', 'Choosing a destination makes an independent copy. Nothing is uploaded or shared by keeping this draft here.'));
         hooks.parent.replaceChildren(view);
         editor = createEditor(body, text, raw => changed(raw), () => void flush(), undefined, report);
+        hooks.editorReady?.(editor);
         const sourceEditor = editor;
         let sourceScroll = 0, pageScroll = 0;
         const scroller = () => { for (let parent = body.parentElement; parent; parent = parent.parentElement) if (/auto|scroll/.test(getComputedStyle(parent).overflowY)) return parent; return null; };
@@ -552,7 +568,58 @@ export function createStandaloneDrafts(core: LocalCore, hooks: {
                 schedule();
         }
     }
-    return { supported, get active() { return active; }, get text() { return text; }, flush, mount, list, newDraft, detach, async start() {
+    const readOnly = () => Boolean(session?.loaded.recoveryRequired || session?.readOnlyReason || session?.loaded.draft.state === 'discarded');
+    function reviewProblem() {
+        if (!active || !editor) return 'Open this standalone draft before reviewing it.';
+        if (readOnly()) return 'Restore or recover this draft before reviewing it.';
+        if (dirty() || flight || failed) return 'Keep your draft on this Mac before accepting a revision.';
+        return null;
+    }
+    async function prepareReview(): Promise<boolean> {
+        if (reviewFlight) return reviewFlight;
+        if (!active || busy || readOnly()) return false;
+        const myEpoch = epoch;
+        reviewFlight = (async () => {
+            if (!await flush() || !active || epoch !== myEpoch) return false;
+            if (!session) {
+                const opened = await send<DraftOpened>({kind:'create', text:''});
+                if (!active || epoch !== myEpoch) {if(opened.handle) await send({kind:'release',handle:opened.handle});return false;}
+                session = opened;
+                if (!await flush()) return false;
+            }
+            if (!session.handle) throw Error('Reopen this draft to obtain its writer lease.');
+            await hooks.sync();
+            if (!active || epoch !== myEpoch) return false;
+            const revision = edit, draft = session.loaded.draft;
+            const result = await send<DraftReviewSession>({kind:'reviewSession',handle:session.handle,revision:draft.revision,hash:draft.textHash});
+            if (!active || epoch !== myEpoch) return false;
+            reviewSession = result;
+            if (revision !== edit) throw Error('The draft changed while preparing review. Keep it and try again.');
+            return true;
+        })();
+        try {return await reviewFlight;} finally {reviewFlight = null;}
+    }
+    async function refreshReview() {
+        if (!active || !session?.handle || dirty()) throw Error('Newer draft text was preserved. Keep it and reopen the review.');
+        const myEpoch = epoch, revision = edit;
+        const opened = await send<DraftOpened>({kind:'refresh',handle:session.handle});
+        if (!active || epoch !== myEpoch || edit !== revision || dirty()) throw Error('The draft changed while reloading the revision. Your visible text was preserved.');
+        session = opened;
+        kept = opened.loaded.draft.text;
+        text = kept;
+        editor?.replaceText(text, 'programmatic');
+        editor?.markSaved(text);
+        cancelTimers();
+        hooks.dirty(false);
+        if (reader && !reader.element.hidden) reader.update();
+        report('Revision kept on this Mac');
+    }
+    function setReviewBusy(value:boolean) {busy=value;editor?.setEditable(!value&&!readOnly());}
+    return { supported, get active() { return active; }, get text() { return text; }, get editor() {return editor;},
+        get writingElement() {return reader&&!reader.element.hidden?reader.element:editor?.view.contentDOM??null;},
+        get reading() {return Boolean(reader&&!reader.element.hidden);}, get revision() {return edit;}, get readOnly() {return readOnly();},
+        get reviewTarget() {return active&&reviewSession&&session?{...reviewSession, draft:session.loaded.draft}:null;},
+        prepareReview, refreshReview, reviewProblem, setReviewBusy, focusWriting, showSource:()=>showSource?.(), flush, mount, list, newDraft, detach, async start() {
             mount();
             try {
                 const rows = await send<DraftSummary[]>({ kind: 'list' });

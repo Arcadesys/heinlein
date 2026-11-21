@@ -68,7 +68,7 @@ test('rejected findings disappear only from pending and stay dismissed after clo
     await activate(panel.locator('[data-finding-id="unrelated"]').getByRole('button', { name: 'Keep mine', exact: true }));
     await expect(panel.locator('[data-finding-id="unrelated"]')).toHaveCount(0);
     await discard(panel);
-    await page.getByRole('dialog', {name:'Scene and chapter chats',exact:true}).getByRole('button', {name:'Close chats',exact:true}).click();
+    await page.getByRole('dialog', {name:'Scene and chapter editors',exact:true}).getByRole('button', {name:'Close editors',exact:true}).click();
     await openHeinleinReview(page);
     await activate(panel.getByRole('button', { name: 'Reopen saved review synthetic-review-stable', exact: true }));
     await expect(panel.locator('.review-edit')).toHaveCount(2);
@@ -248,6 +248,7 @@ test('demo marks: caret, drag selection, typing and layout stay ordinary editing
     await expect(page.locator('.cm-review-mark')).toHaveCount(0);
     await page.keyboard.press('Backspace');
     await expect(page.locator('.cm-review-mark')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Show tabs and tools', exact: true }).click();
     await openHeinleinReview(page);
     await expect(panel.locator('.review-mark-status')).toContainText('Highlights are off because the open text changed');
 });

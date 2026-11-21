@@ -50,3 +50,8 @@ it('preserves newer typing during an in-flight save and stages it against the ne
 it('clears obsolete recovery when all edits are undone before leaving',async()=>{
  const f=bridge(),writer=createChapterWriter(f.core,'repo',initial());writer.changed(edited());await writer.stage();writer.changed(initial());await writer.stage();expect(f.drafts.size).toBe(0);expect(f.mock.saveDocument).not.toHaveBeenCalled();
 });
+it('reports exact successful saves before cleanup errors, never newer typing or failed sheets',async()=>{
+ const f=bridge(),saved=vi.fn(),writer=createChapterWriter(f.core,'repo',initial(),saved);writer.changed(edited());
+ f.mock.discardRecovery.mockRejectedValueOnce(Error('Cleanup failed'));await expect(writer.save()).rejects.toThrow('Cleanup failed');expect(saved).toHaveBeenCalledOnce();expect(saved.mock.calls[0][0]).toEqual(f.disk.get('one.md'));
+ const before=writer.view(),next=editChapter(before,[{from:0,to:5,insert:'Newer unsaved'}]);writer.changed(next);expect(saved.mock.calls[0][0].text).not.toContain('Newer unsaved');
+});

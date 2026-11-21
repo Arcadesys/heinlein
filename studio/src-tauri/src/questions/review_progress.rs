@@ -114,6 +114,7 @@ mod tests {
             status: "running".into(),
             request_id: Some("call".into()),
             error: None,
+            diagnostics: None,
         };
         reporter.transition(&coverage, &[coverage.clone()], 0);
         reporter.receiving("private 🐺 response".len());

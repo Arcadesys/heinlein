@@ -1,6 +1,8 @@
 """Render styled HTML → PDF via Chrome headless."""
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
+from importlib.metadata import version
 import shutil
 import subprocess
 import tempfile
@@ -46,6 +48,12 @@ def _render_html(
     sheet_h: float,
     margin_top: str,
     margin_side: str,
+    body_font_size: int,
+    body_line_height: float,
+    prose_font_size: int,
+    prose_line_height: float,
+    local_fonts: bool,
+    font_css: str,
     cover_eyebrow: str,
     cover_uri: str | None,
     imprint_name: str,
@@ -60,6 +68,7 @@ def _render_html(
     dedication_lines: list[str],
     body_html: str,
     tokens_css: str,
+    project_print_css: str,
 ) -> str:
     env = Environment(
         loader=FileSystemLoader(str(templates_dir)),
@@ -80,6 +89,12 @@ def _render_html(
         sheet_h=sheet_h,
         margin_top=margin_top,
         margin_side=margin_side,
+        body_font_size=body_font_size,
+        body_line_height=body_line_height,
+        prose_font_size=prose_font_size,
+        prose_line_height=prose_line_height,
+        local_fonts=local_fonts,
+        font_css=font_css,
         cover_eyebrow=cover_eyebrow,
         cover_uri=cover_uri,
         imprint_name=imprint_name,
@@ -94,6 +109,7 @@ def _render_html(
         dedication_lines=dedication_lines,
         body_html=body_html,
         tokens_css=tokens_css,
+        project_print_css=project_print_css,
     )
 
 
@@ -131,7 +147,95 @@ def _print_to_pdf(html: str, output: Path, *, keep_html: Path | None = None) -> 
             html_path.unlink(missing_ok=True)
 
 
-def build(*, ctx: dict[str, Any], output: Path, debug_dir: Path | None = None) -> Path:
+def _normalized_dates(value: Any) -> tuple[str, str]:
+    """Return PDF and XMP forms of a fixed metadata date.
+
+    Reproducible output must not silently inherit the machine clock, so callers
+    must provide metadata.date. Date-only values intentionally start at UTC
+    midnight; explicit ISO timestamps are converted to UTC.
+    """
+    if not value:
+        raise ValueError("pdf.reproducible requires metadata.date")
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        parsed = datetime.combine(value, datetime.min.time())
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(
+                "metadata.date must be an ISO date or timestamp when pdf.reproducible is true"
+            ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return (
+        parsed.strftime("D:%Y%m%d%H%M%SZ"),
+        parsed.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+
+
+def _reproducible_pdf_engine() -> Any:
+    # Studio can use an existing CLI environment for ordinary exports. Do not
+    # require its newer normalization dependency unless the author opts in.
+    try:
+        import pikepdf
+    except ImportError as error:
+        raise RuntimeError(
+            "Reproducible PDF output requires pikepdf. Update the Heinlein "
+            "Python CLI's publishing dependencies."
+        ) from error
+    return pikepdf
+
+
+def _normalize_reproducible_pdf(
+    output: Path,
+    *,
+    title: str,
+    author: str,
+    metadata_date: Any,
+) -> None:
+    """Make Chrome's PDF metadata and file ID deterministic.
+
+    Chrome writes wall-clock metadata. pikepdf rewrites the completed PDF after
+    optional named destinations have been added, so the final file has one
+    timestamp, Heinlein provenance, synchronized XMP/docinfo, and a stable ID.
+    """
+    pdf_date, xmp_date = _normalized_dates(metadata_date)
+    pikepdf = _reproducible_pdf_engine()
+    creator = f"Heinlein {version('heinlein')}"
+    with pikepdf.open(output, allow_overwriting_input=True) as pdf:
+        with pdf.open_metadata(set_pikepdf_as_editor=False, update_docinfo=False) as meta:
+            meta["dc:title"] = title
+            meta["dc:creator"] = [author]
+            meta["xmp:CreatorTool"] = creator
+            meta["xmp:CreateDate"] = xmp_date
+            meta["xmp:ModifyDate"] = xmp_date
+            meta["xmp:MetadataDate"] = xmp_date
+        pdf.docinfo["/Title"] = title
+        pdf.docinfo["/Author"] = author
+        pdf.docinfo["/Creator"] = creator
+        pdf.docinfo["/Producer"] = creator
+        pdf.docinfo["/CreationDate"] = pdf_date
+        pdf.docinfo["/ModDate"] = pdf_date
+        pdf.save(
+            output,
+            deterministic_id=True,
+            recompress_flate=True,
+            object_stream_mode=pikepdf.ObjectStreamMode.generate,
+        )
+
+
+def build(
+    *,
+    ctx: dict[str, Any],
+    output: Path,
+    debug_dir: Path | None = None,
+    reproducible: bool = False,
+    metadata_date: Any = None,
+) -> Path:
     """
     Build PDF. `ctx` is the shared template context built by build.py.
     Writes the rendered HTML to a tempfile (or debug_dir if given), then
@@ -142,6 +246,10 @@ def build(*, ctx: dict[str, Any], output: Path, debug_dir: Path | None = None) -
     planted, and the page numbers that come out of the throwaway copy are
     written into the real one. See heinlein.outputs.dests.
     """
+    if reproducible:
+        # Refuse unsupported settings before Chrome can replace an old export.
+        _normalized_dates(metadata_date)
+        _reproducible_pdf_engine()
     html = _render_html(**ctx)
     marked_html, marked = dests_mod.plant_markers(html)
 
@@ -153,4 +261,11 @@ def build(*, ctx: dict[str, Any], output: Path, debug_dir: Path | None = None) -
             _print_to_pdf(marked_html, probe)
             destinations = dests_mod.locate(probe, output, expected=marked)
         dests_mod.write_named_destinations(output, destinations)
+    if reproducible:
+        _normalize_reproducible_pdf(
+            output,
+            title=ctx["title"],
+            author=ctx["author"],
+            metadata_date=metadata_date,
+        )
     return output

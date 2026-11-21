@@ -64,6 +64,8 @@ export interface GitHubReceipt {
 export interface GitHubStatus {
     auth: GitHubAuth | null;
     error: string | null;
+    repositories?: GitHubRepositories | null;
+    repositoriesError?: string | null;
     workspaces: {
         workspace: GitHubWorkspace;
         error: string | null;
@@ -159,7 +161,7 @@ export interface GitHubProject {
     receipts: GitHubReceipt[];
 }
 export type GitHubRequest = {action:'localProject';repositoryId:string} | {
-    action: 'localProjects' | 'status' | 'connect' | 'poll' | 'signOut' | 'repositories' | 'retrySaved';
+    action: 'localProjects' | 'status' | 'chooserStatus' | 'connect' | 'poll' | 'signOut' | 'repositories' | 'retrySaved';
 } | {
     action: 'previewListedRepository';
     listId: string;

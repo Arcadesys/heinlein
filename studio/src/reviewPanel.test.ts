@@ -139,7 +139,7 @@ describe('completed review returns to the manuscript', () => {
     expect(button('Accept…')).toBeTruthy();
     expect(core.requestReview).toHaveBeenCalledTimes(1);
     expect(core.saveDocument).not.toHaveBeenCalled();
-    expect(announce).toHaveBeenCalledWith(expect.stringContaining('Chats closed'));
+    expect(announce).toHaveBeenCalledWith(expect.stringContaining('Editors closed'));
   });
   it('keeps errors visible instead of closing the rail', async () => {
     const closePane = vi.fn(), core = bridge();

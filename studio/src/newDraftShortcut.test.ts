@@ -39,7 +39,7 @@ describe('new Markdown draft shortcut',()=>{
     await setup();const button=document.querySelector('button[aria-keyshortcuts*="Meta+N"]')!;
     expect(button.getAttribute('aria-keyshortcuts')).toBe('Meta+N Control+N');
     document.dispatchEvent(new KeyboardEvent('keydown',{key:'/',metaKey:true,bubbles:true}));
-    expect(document.querySelector('.help-sheet')?.textContent).toContain('New scene in project / new standalone draft');
+    expect(document.querySelector('.help-sheet')?.textContent).toContain('New standalone draft');
   });
 });
 
@@ -109,7 +109,7 @@ describe('deferred Appearance close focus ownership',()=>{
 });
 
 
-describe('contextual project New refuses stale asynchronous work', () => {
+describe('explicit project New scene refuses stale asynchronous work', () => {
   async function initializedProject() {
     const fixture = syntheticProjects(); fixture.seedMovement();
     const root = document.createElement('div'); document.body.append(root);
@@ -121,7 +121,7 @@ describe('contextual project New refuses stale asynchronous work', () => {
   it('does not open Add scene from old state after a failed manuscript reload', async () => {
     const fixture = await initializedProject();
     fixture.core.loadDrafting = vi.fn(async () => { throw Error('Synthetic reload refused'); });
-    shortcut(); await settle();
+    explicitNewScene(); await settle();
     expect(document.querySelector('.drafting-dialog')).toBeNull();
     expect(view().state.doc.toString()).toContain('Arrival');
     expect(document.body.textContent).toContain('Synthetic reload refused');
@@ -131,12 +131,67 @@ describe('contextual project New refuses stale asynchronous work', () => {
     const fixture = await initializedProject(); const load = fixture.core.loadDrafting!;
     let finish!: () => void;
     fixture.core.loadDrafting = vi.fn(id => new Promise<Awaited<ReturnType<typeof load>>>(resolve => { void load(id).then(state => { finish = () => resolve(state); }); }));
-    shortcut(); shortcut(); await settle();
+    explicitNewScene(); explicitNewScene(); await settle();
     expect(fixture.core.loadDrafting).toHaveBeenCalledOnce();
     await app!.showDocument('ms/meeting.md'); await settle(); content().focus();
     finish(); await settle();
     expect(document.querySelector('.drafting-dialog')).toBeNull();
     expect(view().state.doc.toString()).toContain('Meeting'); expect(document.activeElement).toBe(content());
     expect(fixture.draftingCalls).toEqual([]); expect(fixture.draft.calls.filter(c => c.kind === 'create')).toEqual([]);
+  });
+});
+
+function explicitNewScene() {
+  document.dispatchEvent(new KeyboardEvent('keydown',{key:'p',ctrlKey:true,shiftKey:true,bubbles:true,cancelable:true}));
+  const row=[...document.querySelectorAll<HTMLElement>('.palette-item')].find(row=>row.querySelector('.palette-label')?.textContent==='New scene');
+  expect(row).toBeDefined(); row!.click();
+}
+describe('project shortcut always creates an unassociated draft',()=>{
+  async function openProject(initialized=true) {
+    const fixture=syntheticProjects(); if(initialized)fixture.seedMovement();
+    const root=document.createElement('div');document.body.append(root);app=mountStudio(root,fixture.core);await settle();
+    await app.selectRepository(()=>fixture.core.pickRepository());await app.showDocument(initialized?'ms/arrival.md':'scene.md');await settle();content().focus();
+    return fixture;
+  }
+  it.each([{modifier:'ctrlKey',initialized:true},{modifier:'metaKey',initialized:true},{modifier:'ctrlKey',initialized:false},{modifier:'metaKey',initialized:false}])('$modifier+N leaves initialized=$initialized project untouched',async({modifier,initialized})=>{
+    const fixture=await openProject(initialized),documents=structuredClone(fixture.documents),manuscripts=structuredClone(fixture.manuscripts);
+    const load=vi.spyOn(fixture.core,'loadDrafting'),save=vi.spyOn(fixture.core,'saveDocument');
+    const event=shortcut({[modifier]:true});await settle();
+    expect(event.defaultPrevented).toBe(true);expect(document.querySelector('.standalone-page')).not.toBeNull();
+    expect(view().state.doc.toString()).toBe('');expect(document.activeElement).toBe(content());
+    expect(document.querySelector('.drafting-dialog')).toBeNull();expect(save).not.toHaveBeenCalled();expect(load).not.toHaveBeenCalled();
+    expect(fixture.documents).toEqual(documents);expect(fixture.manuscripts).toEqual(manuscripts);expect(fixture.draftingCalls).toEqual([]);expect(fixture.externalCalls).toEqual([]);
+    type('Unassociated — café 🦊');pressButton('Keep on this Mac');await settle();
+    expect([...fixture.draft.records.values()].map(d=>d.text)).toEqual(['Unassociated — café 🦊']);expect(fixture.documents).toEqual(documents);expect(fixture.manuscripts).toEqual(manuscripts);
+  });
+  it('coalesces shortcuts while dirty project departure awaits approval and cancel preserves writing',async()=>{
+    const fixture=await openProject(),documents=structuredClone(fixture.documents);type(' — unsaved');const text=view().state.doc.toString();
+    shortcut();shortcut();await settle();expect([...document.querySelectorAll('button')].filter(b=>b.textContent==='Save and continue')).toHaveLength(1);
+    pressButton('Keep editing');await settle();expect(view().state.doc.toString()).toBe(text);expect(document.querySelector('.standalone-page')).toBeNull();expect(fixture.documents).toEqual(documents);expect(fixture.draftingCalls).toEqual([]);
+  });
+  it('requires explicit Save and continue before saving dirty project writing',async()=>{
+    const fixture=await openProject(),before=fixture.documents['local-a']['ms/arrival.md'];type(' — unsaved');
+    shortcut({ctrlKey:true});await settle();expect(fixture.documents['local-a']['ms/arrival.md']).toBe(before);pressButton('Save and continue');await settle();
+    expect(fixture.documents['local-a']['ms/arrival.md']).toBe(before+' — unsaved');expect(document.querySelector('.standalone-page')).not.toBeNull();expect(view().state.doc.toString()).toBe('');expect(fixture.draftingCalls).toEqual([]);
+  });
+  it('failed project save leaves original visible and does not create a draft',async()=>{
+    const fixture=await openProject(),documents=structuredClone(fixture.documents);type(' — unsaved');const text=view().state.doc.toString();fixture.setFailSave(true);
+    shortcut();await settle();pressButton('Save and continue');await settle();
+    expect(view().state.doc.toString()).toBe(text);expect(document.querySelector('.standalone-page')).toBeNull();expect(fixture.documents).toEqual(documents);expect(fixture.draft.records.size).toBe(0);expect(fixture.draftingCalls).toEqual([]);
+  });
+  it('ignores modified, repeated, composing and modal shortcuts in a project',async()=>{
+    const fixture=await openProject(),text=view().state.doc.toString();
+    for(const options of [{ctrlKey:false},{ctrlKey:true,shiftKey:true},{ctrlKey:true,altKey:true},{ctrlKey:true,repeat:true},{ctrlKey:true,isComposing:true}])shortcut(options);
+    const modal=document.createElement('dialog');modal.setAttribute('open','');document.body.append(modal);shortcut({ctrlKey:true});await settle();
+    expect(view().state.doc.toString()).toBe(text);expect(document.querySelector('.standalone-page')).toBeNull();expect(fixture.draftingCalls).toEqual([]);
+  });
+  it('advertises N only for New draft and keeps explicit New scene available',async()=>{
+    await openProject();expect(document.querySelector('button[aria-keyshortcuts="Meta+N Control+N"]')?.textContent).toBe('New draft');
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'p',ctrlKey:true,shiftKey:true,bubbles:true}));
+    const rows=[...document.querySelectorAll<HTMLElement>('.palette-item')];
+    const draft=rows.find(row=>row.querySelector('.palette-label')?.textContent==='New Markdown draft')!;
+    const scene=rows.find(row=>row.querySelector('.palette-label')?.textContent==='New scene')!;
+    expect(draft.querySelector('.palette-right')?.textContent).toMatch(/N/);expect(scene.querySelector('.palette-right')?.textContent).toBe('');scene.click();await settle();
+    expect(document.querySelector('dialog[aria-label="New scene"]')).not.toBeNull();expect(document.querySelector('.standalone-page')).toBeNull();
   });
 });

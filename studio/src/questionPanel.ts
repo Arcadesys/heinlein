@@ -6,7 +6,8 @@ import {renderQuestionAnswer} from './questionAnswer';
 import {createHeinleinHeader, setHeinleinStatus} from './heinleinHeader';
 import './heinleinPane.css';
 import {captureSelectionQuestion, selectionQuestionAvailability, selectionQuestionProblem, type SelectionQuestionSnapshot, type SelectionQuestionState} from './selectionQuestion';
-import type {LocalCore, QuestionRevisionAnswer, QuestionAnswer, QuestionConnection, QuestionMessage, QuestionRequest, QuestionStatus} from './localCore';
+import type {LocalCore, QuestionProvider, QuestionRevisionAnswer, QuestionAnswer, QuestionConnection, QuestionMessage, QuestionRequest, QuestionStatus} from './localCore';
+import {isNativeOrigin, originProvider} from './localCore';
 
 /** These are UTF-8 byte limits, shared with the native provider boundary. */
 export const QUESTION_LIMITS = Object.freeze({question: 4000, context: 16000, input: 32000, scene: 64000, sceneInput: 96000, history: 8, answer: 32000, memory: 64000});
@@ -75,7 +76,7 @@ function errorMessage(error: unknown): string {
     if (typeof detail.providerRequestId === 'string' && /^req_[a-zA-Z0-9_-]{1,124}$/.test(detail.providerRequestId)) parts.push(detail.providerRequestId);
     return error.message + (parts.length ? ` Details: ${parts.join(' · ')}.` : '');
   }
-  return 'The request failed. Check your OpenAI connection and try again. Nothing was retried automatically.';
+  return 'The request failed. Check your connection and try again. Nothing was retried automatically.';
 }
 export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) {
   const integrated = Boolean(hooks.passages);
@@ -85,7 +86,13 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   if (integrated) element.classList.add('question-panel-integrated');
   let disposed = false; let session: string | null = null; let version = 0; let statusVersion = 0;
   let configuration: QuestionStatus | null = null; let checking = false;
-  let authBusy: 'connect' | 'account' | 'model' | 'signout' | null = null;
+  let authBusy: 'connect' | 'account' | 'model' | 'signout' | 'provider' | 'claudeKey' | null = null;
+  // Which provider answers. Kept across status refreshes so wording never flickers.
+  let provider: QuestionProvider = 'openAi'; let wantClaude = false;
+  const isClaude = () => provider === 'anthropic';
+  const org = () => isClaude() ? 'Claude' : 'OpenAI';
+  const company = () => isClaude() ? 'Anthropic' : 'OpenAI';
+  const orgFor = (model: string) => model.startsWith('claude-') ? 'Anthropic (Claude)' : 'OpenAI';
   let seenConnection: string | null = null;
   let selectedAccountId: string | null = null; let reauthorizing = false; let addingAccount = false;
   let storedKey: string | null = null; let storageFailed = false;
@@ -121,7 +128,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const accountText = el('div', '', 'heinlein-account-text'); accountText.append(accountName, accountModel); accountCard.append(accountAvatar, accountText, accountState);
   let setupSteps: HTMLElement[] = [];
   const refresh = button('Recheck OpenAI setup', () => { void checkStatus(true); });
-  const auth = el('details', '', 'question-auth'); auth.setAttribute('aria-label', 'ChatGPT connection'); auth.open = true;
+  const auth = el('details', '', 'question-auth'); auth.setAttribute('aria-label', 'AI connection'); auth.open = true;
   auth.append(el('summary', integrated ? 'Connection settings' : 'ChatGPT account & model'));
   const consentLabel = el('label', '', 'question-consent'); const consent = el('input'); consent.type = 'checkbox';
   consent.setAttribute('aria-label', 'Allow Heinlein to use my ChatGPT plan');
@@ -140,6 +147,52 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const cancelSignIn = button('Cancel connection', () => {void cancelConnection();}); cancelSignIn.hidden = true;
   const accountLabel = el('label', 'ChatGPT account'); const accounts = el('select'); accounts.setAttribute('aria-label', 'ChatGPT account'); accountLabel.append(accounts);
   const modelLabel = el('label', 'Question model'); const models = el('select'); models.setAttribute('aria-label', 'Question model'); modelLabel.append(models);
+  // Provider choice: ChatGPT (browser sign-in, plan allowance) or Claude (Anthropic API key).
+  const providerChoice = el('fieldset', '', 'heinlein-provider'); providerChoice.append(el('legend', 'Answer with'));
+  const providerName = `question-provider-${crypto.randomUUID()}`;
+  const providerOption = (value: QuestionProvider, title: string, detail: string) => {
+    const label = el('label', '', 'heinlein-provider-option'); const input = el('input'); input.type = 'radio'; input.name = providerName; input.value = value;
+    const text = el('span', '', 'heinlein-provider-text'); text.append(el('strong', title), el('span', detail, 'heinlein-provider-detail'));
+    label.append(input, text); providerChoice.append(label); return input;
+  };
+  const chatgptOption = providerOption('openAi', 'ChatGPT', 'Sign in with your browser. Uses your ChatGPT plan.');
+  const claudeOption = providerOption('anthropic', 'Claude', 'Uses your Anthropic API key. Billed per use.');
+  const claudeSection = el('section', '', 'heinlein-claude'); claudeSection.setAttribute('aria-label', 'Claude connection'); claudeSection.hidden = true;
+  const claudeState = el('p', '', 'heinlein-claude-state'); claudeState.setAttribute('role', 'status');
+  const claudeKeyLabel = el('label', 'Anthropic API key'); const claudeKey = el('input'); claudeKey.type = 'password'; claudeKey.autocomplete = 'off'; claudeKey.spellcheck = false;
+  claudeKey.placeholder = 'sk-ant-…'; claudeKey.setAttribute('aria-label', 'Anthropic API key'); claudeKeyLabel.append(claudeKey);
+  const saveClaudeKey = button('Save key', () => {
+    const key = claudeKey.value.trim();
+    if (!key) {status.textContent = 'Paste your Anthropic API key first.'; claudeKey.focus(); return;}
+    if (!core.connectClaudeKey) return;
+    // The key leaves this field at once; only the native host keeps it, in the Keychain.
+    claudeKey.value = '';
+    void changeConnection('claudeKey', () => core.connectClaudeKey!(key), 'Checking your Anthropic API key… No manuscript text is sent.', 'Claude is connected. Review the selected model before sending.');
+  }, 'primary');
+  claudeKey.addEventListener('keydown', event => {if (event.key === 'Enter') {event.preventDefault(); saveClaudeKey.click();}});
+  const claudeModelLabel = el('label', 'Claude model'); const claudeModels = el('select'); claudeModels.setAttribute('aria-label', 'Claude model'); claudeModelLabel.append(claudeModels);
+  claudeModels.addEventListener('change', () => {
+    const slug = claudeModels.value;
+    if (slug && slug !== configuration?.claude?.selectedModel && core.selectClaudeModel) void changeConnection('model', () => core.selectClaudeModel!(slug), 'Switching Claude model. The previous conversation and context have been cleared.');
+  });
+  const removeClaudeKey = button('Remove key', () => {
+    if (core.removeClaudeKey) void changeConnection('signout', () => core.removeClaudeKey!(), 'Removing your Anthropic API key from this Mac…', 'Your Anthropic API key was removed from this Mac. ChatGPT answers again. Saved chats stay on this Mac.');
+  });
+  const claudeActions = el('div', '', 'question-actions'); claudeActions.append(saveClaudeKey, removeClaudeKey);
+  // The key field exists in the page only while the Claude card is shown, so the
+  // ChatGPT flow never presents an API-key field.
+  claudeSection.append(claudeState, claudeActions, claudeModelLabel,
+    el('p', 'Your key is stored in this Mac’s Keychain, never in your project. Claude requests are billed to your Anthropic account. Create a key at console.anthropic.com.', 'muted'));
+  providerChoice.addEventListener('change', () => {
+    const chosen: QuestionProvider = claudeOption.checked ? 'anthropic' : 'openAi';
+    if (!live() || checking || authBusy) {update(); return;}
+    if (chosen === provider) {wantClaude = false; update(); return;}
+    if (chosen === 'anthropic' && !configuration?.claude?.configured) {
+      wantClaude = true; status.textContent = 'Paste your Anthropic API key below to use Claude.'; update(); claudeKey.focus(); return;
+    }
+    wantClaude = false;
+    if (core.selectQuestionProvider) void changeConnection('provider', () => core.selectQuestionProvider!(chosen), `Switching to ${chosen === 'anthropic' ? 'Claude' : 'ChatGPT'}. The previous conversation and context have been cleared.`, `${chosen === 'anthropic' ? 'Claude' : 'ChatGPT'} now answers your questions. Review the selected model before sending.`);
+  });
   const signOut = button('Sign out of selected account', () => {
     const accountId = selectedAccountId;
     if (accountId && core.signOutQuestionAccount) void changeConnection('signout', () => core.signOutQuestionAccount!(accountId), 'Signing out of the selected ChatGPT account…');
@@ -163,12 +216,15 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   });
   models.addEventListener('change', () => {
     const slug = models.value;
+    if (isClaude()) {if (slug && slug !== configuration?.selectedModel && core.selectClaudeModel) void changeConnection('model', () => core.selectClaudeModel!(slug), 'Switching Claude model. The previous conversation and context have been cleared.'); return;}
     if (slug && slug !== configuration?.selectedModel && core.selectQuestionModel) void changeConnection('model', () => core.selectQuestionModel!(slug), 'Switching question model. The previous conversation and context have been cleared.');
   });
   consent.addEventListener('change', update);
   const connectActions = el('div', '', 'question-actions'); connectActions.append(connect, cancelSignIn, addAccount);
   const accountActions = el('div', '', 'question-actions'); accountActions.append(refresh, signOut, usage);
-  auth.append(el('p', 'Continue opens ChatGPT sign-in in your browser. Sign-in tokens stay in the native host and are never exposed here. Choose an account and model below before sending; requests use that account’s plan allowance.', 'muted'), consentLabel, connectActions, accountLabel, modelLabel, accountActions);
+  const chatgptIntro = el('p', 'Continue opens ChatGPT sign-in in your browser. Sign-in tokens stay in the native host and are never exposed here. Choose an account and model below before sending; requests use that account’s plan allowance.', 'muted');
+  auth.append(providerChoice, claudeSection, chatgptIntro, consentLabel, connectActions, accountLabel, modelLabel, accountActions);
+  let chatgptOnly: HTMLElement[] = [chatgptIntro, consentLabel, connectActions, accountLabel, modelLabel, signOut, usage, addAccount];
   const modeLabel = el('label', 'Response mode'); const mode = el('select'); mode.setAttribute('aria-label', 'Response mode');
   for (const [value, label] of [['ask', 'Ask'], ['revision', 'Suggest revision']]) {const option = el('option', label); option.value = value; mode.append(option);}
   modeLabel.append(mode);
@@ -192,14 +248,15 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   const historySummary = el('summary', 'Conversation history to send');
   const historyText = el('div'); historyText.setAttribute('aria-label', 'Exact conversation history to send');
   const historyNote = el('p', '', 'muted'); historyDetails.append(historySummary, historyNote, historyText);
-  const disclosure = el('p', 'Send shares your exact question, any revision target, the context preview, and the history preview with OpenAI using the selected ChatGPT account and model. Requests consume that plan’s usage allowance; account limits apply. Each request allows up to 2,000 output tokens. Manage ChatGPT usage to review usage or revoke access.', 'drafting-warning');
+  const chatgptDisclosure = 'Send shares your exact question, any revision target, the context preview, and the history preview with OpenAI using the selected ChatGPT account and model. Requests consume that plan’s usage allowance; account limits apply. Each request allows up to 2,000 output tokens. Manage ChatGPT usage to review usage or revoke access.';
+  const disclosure = el('p', chatgptDisclosure, 'drafting-warning');
   const guidance = el('p', 'Nothing is sent while you type or open this panel. Ask returns structured advice, quoted evidence and optional wording changes shown as diff chips. Suggest revision prepares exact-text patches in a saved proposal for your review, applied only when you explicitly accept. It never applies an answer automatically.', 'muted');
   const status = el('p', '', 'question-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const send = button('Send to OpenAI', () => { void submit(); }, 'primary');
   const cancel = button('Cancel request', () => {
     if (!pending && !preparing) return;
     const wasSent = Boolean(pending); const wasRevision = pendingRevision; cancelPending(true);
-    status.textContent = !wasSent ? 'Local preparation canceled. No request was sent.' : wasRevision ? 'Stopped locally. A pending suggestion may already have been recorded; check Revisions. OpenAI usage may still count. Your manuscript was not changed.' : 'Canceled locally. OpenAI may already have processed the request; it can still count toward your plan usage.'; update();
+    status.textContent = !wasSent ? 'Local preparation canceled. No request was sent.' : wasRevision ? `Stopped locally. A pending suggestion may already have been recorded; check Revisions. ${company()} usage may still count. Your manuscript was not changed.` : `Canceled locally. ${company()} may already have processed the request; it can still count toward your usage.`; update();
   }); cancel.hidden = true;
   const reset = button('Clear conversation', () => {
     if (storedKey) {try {localStorage.removeItem(storedKey);if(selectedThread&&threadProject){removeThread(threadProject,selectedThread.id);hooks.threadsChanged?.();}storageFailed=false;persistence.textContent='Saved conversation cleared.';} catch {storageFailed=true;persistence.textContent='Saved conversation could not be cleared. Try again before closing.';return;}}
@@ -207,7 +264,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const wasPending = Boolean(pending); const wasRevision = pendingRevision; resetContents();
     if(hooks.threadScope){storedKey=null;if(configuration)restoreConversation(configuration);}
     update();
-    status.textContent = wasPending ? 'Conversation cleared and request canceled locally. Previously sent text cannot be recalled from OpenAI.' : 'Conversation cleared from this project’s saved chat. Previously sent text cannot be recalled from OpenAI.';
+    status.textContent = wasPending ? `Conversation cleared and request canceled locally. Previously sent text cannot be recalled from ${company()}.` : `Conversation cleared from this project’s saved chat. Previously sent text cannot be recalled from ${company()}.`;
     if (wasRevision) status.textContent += ' A pending suggestion may already have been recorded; check Revisions.';
     update(); question.focus({preventScroll: true});
   });
@@ -273,7 +330,8 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       for (const [control, label] of [[addAccount, '+ Add account'], [refresh, 'Recheck'], [signOut, 'Sign out'], [usage, 'Usage']] as const) {control.setAttribute('aria-label', control.textContent!); control.textContent = label; control.classList.add('ghost');}
       accountActions.classList.add('heinlein-account-actions'); accountActions.prepend(addAccount);
       const privacy = el('p', 'Sign-in stays on this Mac. Questions use your ChatGPT plan allowance.', 'heinlein-privacy');
-      auth.replaceChildren(summary, steps, accountActions, privacy);
+      auth.replaceChildren(summary, providerChoice, steps, claudeSection, accountActions, privacy);
+      chatgptOnly = [steps, privacy, addAccount, signOut, usage];
       connectionArea.prepend(accountCard);
       const shortcut = el('kbd', /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘↵' : 'Ctrl+↵', 'heinlein-shortcut'); shortcut.setAttribute('aria-hidden', 'true'); askButton.append(shortcut);
       askButton.setAttribute('aria-keyshortcuts', 'Meta+Enter Control+Enter'); askButton.title = 'Ask (Cmd/Ctrl+Enter)';
@@ -407,6 +465,29 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     catch {storageFailed=true;persistence.textContent='Saved chat could not be read. It has not been overwritten. Clear conversation to start again.';}
   }
   function update() {
+    // ChatGPT-only controls hidden for Claude come back before the normal update decides their state.
+    for (const node of chatgptOnly) if (node.dataset.providerHidden) {node.hidden = false; delete node.dataset.providerHidden;}
+    updateConnectionAndComposer();
+    const claudeShown = isClaude() || wantClaude; const claude = configuration?.claude;
+    providerChoice.hidden = !core.connectClaudeKey;
+    chatgptOption.checked = !claudeShown; claudeOption.checked = claudeShown;
+    for (const input of [chatgptOption, claudeOption]) input.disabled = checking || Boolean(authBusy) || Boolean(configuration?.signInPending);
+    claudeSection.hidden = !claudeShown;
+    if (claudeShown && !claudeKeyLabel.parentNode) claudeSection.insertBefore(claudeKeyLabel, claudeActions);
+    else if (!claudeShown && claudeKeyLabel.parentNode) {claudeKey.value = ''; claudeKeyLabel.remove();}
+    if (claudeShown) for (const node of chatgptOnly) if (!node.hidden) {node.hidden = true; node.dataset.providerHidden = 'true';}
+    claudeState.textContent = claude?.keyHint ? `Key saved · ends in ${claude.keyHint}${claude.active ? ' · Claude answers your questions.' : '. Choose Claude above to use it.'}` : 'No key saved yet.';
+    claudeModelLabel.hidden = removeClaudeKey.hidden = !claude?.keyHint;
+    saveClaudeKey.textContent = claude?.keyHint ? 'Replace key' : 'Save key';
+    for (const control of [saveClaudeKey, removeClaudeKey, claudeModels]) control.disabled = checking || Boolean(authBusy) || Boolean(pending) || preparing;
+    send.textContent = `Send to ${org()}`;
+    if (!unified) settingsToggle.textContent = isClaude() ? 'Claude settings' : 'Connect ChatGPT';
+    if (unified) refresh.setAttribute('aria-label', `Recheck ${org()} setup`); else refresh.textContent = `Recheck ${org()} setup`;
+    disclosure.textContent = isClaude()
+      ? 'Send shares your exact question, any revision target, the context preview, and the history preview with Anthropic using your saved API key and the selected Claude model. Requests are billed to your Anthropic account. Claude reasons before it answers, which uses more tokens than the answer alone. Answers are limited in length.'
+      : chatgptDisclosure;
+  }
+  function updateConnectionAndComposer() {
     if(hooks.threadScope)lifetime.textContent='Each conversation is saved on this Mac with its scene or chapter and account/model. Each thread retains up to 100 turns within 512 KB. Other threads are not sent as history. Exact manuscript snapshots and revision authority are not restored from saved chat.';
     threadBanner.textContent=selectedThread?`${selectedThread.scope.label} · ${selectedThread.title}`:hooks.threadScope?.()?.label??'';
     refreshSceneContext();
@@ -431,7 +512,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     historyNote.textContent = mode.value === 'revision' ? 'Revision requests include no conversation history. Only the question, exact target, and optional context preview are sent.' : `Only these previous questions and answers are ${pending ? 'included in this request' : 'sent with your next question'}. Previous context snapshots are not resent.${missing ? ` ${missing} older messages are omitted to fit the request limit.` : ''}${forgotten ? ` ${forgotten} earlier turns were removed from saved history at its storage limit.` : ''}`;
     historyText.replaceChildren();
     if (!history.length) historyText.append(el('p', 'No previous messages included.', 'muted'));
-    history.forEach((message, index) => historyText.append(el('h4', message.role === 'user' ? 'You' : 'OpenAI'), preview(message.text, `History message ${index + 1}`)));
+    history.forEach((message, index) => historyText.append(el('h4', message.role === 'user' ? 'You' : org()), preview(message.text, `History message ${index + 1}`)));
     question.disabled = Boolean(pending) || preparing || Boolean(authBusy);
     followScene.disabled = captureSelection.disabled = captureScene.disabled = Boolean(pending) || preparing || Boolean(authBusy);
     removeContext.disabled = Boolean(pending) || preparing || Boolean(authBusy) || (!context && contextMode === 'none');
@@ -456,7 +537,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       passageNote.hidden = !passage || !passageStale(passage);
       passageNote.textContent = passageNote.hidden ? '' : 'This passage changed. Select it again before requesting a rewrite.';
       const ready = connectionReady();
-      setHeinleinStatus(settingsToggle, ready ? 'ready' : checking ? 'checking' : 'attention', ready ? `Ready · ${configuration!.model}` : checking ? 'Checking connection' : configuration?.usageLimited ? 'Usage limited' : 'Not connected');
+      setHeinleinStatus(settingsToggle, ready ? 'ready' : checking ? 'checking' : 'attention', ready ? `Ready · ${configuration!.model}` : checking ? 'Checking connection' : configuration?.usageLimited ? 'Usage limited' : 'Not connected', isClaude() ? 'Claude' : 'ChatGPT');
       connectionArea.hidden = ready && !showSettings;
       const account = activeAccount(); const signedIn = Boolean(account?.signedIn && account.planEnabled) && !reauthorizing;
       const name = account && !reauthorizing ? account.label.replace(/\s*\([^)]*\)$/, '') : addingAccount ? 'New account' : 'No account connected';
@@ -478,7 +559,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       sceneChip.node.hidden = !sceneAttached; sceneChip.text.textContent = context ? `${contextName} · ${words(context)}` : `${contextName} · unavailable`; sceneChip.x.disabled = removeContext.disabled;
       addScene.hidden = revising || contextMode === 'scene'; addScene.disabled = captureScene.disabled;
       addPassage.hidden = revising || contextMode !== 'none' || !passage || passageStale(passage); addPassage.disabled = captureScene.disabled;
-      sendNoteText.textContent = `Sends your message${passageText ? ' + the passage' : sceneAttached && context ? hooks.current()?.contextLabel ? ` + ${hooks.current()?.contextLabel}` : ' + the whole scene' : ''} to ChatGPT. `;
+      sendNoteText.textContent = `Sends your message${passageText ? ' + the passage' : sceneAttached && context ? hooks.current()?.contextLabel ? ` + ${hooks.current()?.contextLabel}` : ' + the whole scene' : ''} to ${isClaude() ? 'Claude' : 'ChatGPT'}. `;
       settingsToggle.setAttribute('aria-expanded', String(!connectionArea.hidden));
     }
     notifyPassages();
@@ -534,9 +615,13 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const key = JSON.stringify([next.generation, next.activeAccountId, next.selectedModel, next.accounts.find(account => account.id === next.activeAccountId)?.planEnabled]);
     if (seenConnection !== null && seenConnection !== key) {persist(); resetContents(); storedKey=null;}
     seenConnection = key; configuration = next; selectedAccountId = next.activeAccountId; reauthorizing = false; addingAccount = false;
+    provider = next.provider ?? 'openAi'; if (isClaude()) wantClaude = false;
+    claudeModels.replaceChildren();
+    for (const value of next.claude?.models ?? []) {const option = el('option', value.displayName || value.slug); option.value = value.slug; claudeModels.append(option);}
+    claudeModels.value = next.claude?.selectedModel ?? '';
     restoreConversation(next);
     const account = activeAccount();
-    connection.textContent = `${account && !unified ? `ChatGPT · ${account.label}${next.model ? ` · ${next.model}` : ''}. ` : ''}${next.message}${next.usageLimited ? ' Plan usage is limited. Manage usage or explicitly recheck before trying again.' : ''}`;
+    connection.textContent = `${account && !unified ? `${isClaude() ? '' : 'ChatGPT · '}${account.label}${next.model ? ` · ${next.model}` : ''}. ` : ''}${next.message}${next.usageLimited ? ' Plan usage is limited. Manage usage or explicitly recheck before trying again.' : ''}`;
     accounts.replaceChildren(); models.replaceChildren();
     const accountPlaceholder = el('option', 'Choose an account'); accountPlaceholder.value = ''; accountPlaceholder.disabled = true; accounts.append(accountPlaceholder);
     next.accounts.forEach(value => {const option = el('option', `${value.label}${!value.signedIn ? ' · signed out' : !value.planEnabled ? ' · plan use disabled' : ''}`); option.value = value.id; accounts.append(option);});
@@ -550,12 +635,12 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   async function checkStatus(remote = false) {
     if (!live() || authBusy) return;
     const request = ++statusVersion; checking = true; configuration = null;
-    connection.textContent = remote ? 'Rechecking ChatGPT account and available models…' : 'Checking local OpenAI setup…'; update();
+    connection.textContent = remote ? (isClaude() ? 'Rechecking your Anthropic API key and available models…' : 'Rechecking ChatGPT account and available models…') : 'Checking your connection setup…'; update();
     try {
       if (!core.available() || !core.questionStatus || !core.askQuestion || !core.cancelQuestion) {
-        applyConfiguration({configured: false, model: null, message: 'OpenAI questions need a configured native Heinlein host. Local drafting remains available.', accounts: [], activeAccountId: null, models: [], selectedModel: null, signInPending: false, generation: 0, usageLimited: false});
+        applyConfiguration({configured: false, model: null, message: 'Questions need a configured native Heinlein host. Local drafting remains available.', accounts: [], activeAccountId: null, models: [], selectedModel: null, signInPending: false, generation: 0, usageLimited: false});
       } else {
-        let result = await (remote && core.refreshQuestionConnection ? core.refreshQuestionConnection() : core.questionStatus());
+        let result = await (remote && isClaude() && core.refreshClaudeModels ? core.refreshClaudeModels() : remote && core.refreshQuestionConnection ? core.refreshQuestionConnection() : core.questionStatus());
         if (!live() || request !== statusVersion) return;
         if (!remote && core.restoreQuestionConnection && !result.usageLimited && !result.signInPending
           && result.models.length === 0 && result.selectedModel
@@ -568,10 +653,10 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       }
     } catch {
       if (!live() || request !== statusVersion) return;
-      configuration = null; connection.textContent = 'OpenAI setup could not be checked. Recheck when the native host is available. You can keep drafting locally.';
+      configuration = null; connection.textContent = 'Connection setup could not be checked. Recheck when the native host is available. You can keep drafting locally.';
     } finally { if (live() && request === statusVersion) {checking = false; update();} }
   }
-  async function changeConnection(kind: NonNullable<typeof authBusy>, action: () => Promise<QuestionStatus>, message: string) {
+  async function changeConnection(kind: NonNullable<typeof authBusy>, action: () => Promise<QuestionStatus>, message: string, done?: string) {
     if (!live() || checking || authBusy || configuration?.signInPending) return;
     const epoch = ++statusVersion; authBusy = kind; persist(); resetContents(); storedKey=null; configuration = null; consent.checked = false;
     status.textContent = message; connection.textContent = message; update();
@@ -579,10 +664,10 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       const next = await action();
       if (!live() || statusVersion !== epoch) return;
       applyConfiguration(next);
-      status.textContent = kind === 'signout' ? 'Signed out of the selected account. Its chat stays saved on this Mac and returns when you sign in.' : 'Connection updated. Review the selected account and model before sending.';
+      status.textContent = done ?? (kind === 'signout' ? 'Signed out of the selected account. Its chat stays saved on this Mac and returns when you sign in.' : 'Connection updated. Review the selected account and model before sending.');
     } catch (error) {
       if (!live() || statusVersion !== epoch) return;
-      configuration = null; connection.textContent = 'Connection change was not confirmed. Recheck OpenAI setup before sending.'; status.textContent = errorMessage(error);
+      configuration = null; connection.textContent = 'Connection change was not confirmed. Recheck the connection before sending.'; status.textContent = errorMessage(error); if (kind === 'claudeKey') wantClaude = true;
     } finally {if (live() && statusVersion === epoch) {authBusy = null; update();}}
   }
   async function cancelConnection() {
@@ -600,7 +685,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
   }
   function cancelPending(reportOutcome = false) {
     const epoch = ++version; preparing = false;
-    if (!streaming.hidden) { streamingLabel.textContent = 'OpenAI · Interrupted preview · Not added to history'; streaming.setAttribute('aria-busy', 'false'); }
+    if (!streaming.hidden) { streamingLabel.textContent = `${org()} · Interrupted preview · Not added to history`; streaming.setAttribute('aria-busy', 'false'); }
     const request = pending; const wasRevision = pendingRevision; pending = null; pendingRevision = false;
     if (request && core.cancelQuestion) {
       try {void core.cancelQuestion(request.requestId).then(accepted => {
@@ -631,7 +716,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
     const binding: QuestionConnection = {generation: configuration.generation, accountId: configuration.activeAccountId!, model: configuration.model!};
     const epoch = ++version; let snapshot: SelectionQuestionSnapshot | undefined;
     preparing = true;
-    status.textContent = revising ? 'Checking the exact saved revision target… You can keep writing.' : 'Asking OpenAI… You can keep writing and saving your draft.'; update();
+    status.textContent = revising ? 'Checking the exact saved revision target… You can keep writing.' : `Asking ${org()}… You can keep writing and saving your draft.`; update();
     try {
       if (revising) {
         snapshot = await captureSelectionQuestion(target!);
@@ -642,18 +727,18 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
         if (snapshot.sourceHash !== snapshot.sourceSha256) throw new Error('The selected source does not match its saved hash. Save and capture the selection again.');
       }
       preparing = false; pending = request; pendingRevision = Boolean(snapshot); reopenThread=true;persist(); update(); if (unified) body.scrollTop = body.scrollHeight;
-      streaming.hidden = true; streamingText.textContent = ''; streamingLabel.textContent = 'OpenAI · Streaming answer';
+      streaming.hidden = true; streamingText.textContent = ''; streamingLabel.textContent = `${org()} · Streaming answer`;
       const answer = snapshot
         ? await core.suggestQuestionRevision!(request, binding, {repositoryId: snapshot.repositoryId, path: snapshot.path, sourceHash: snapshot.sourceHash, fromUtf8: snapshot.fromUtf8, toUtf8: snapshot.toUtf8, selectedText: snapshot.selectedText})
         : await core.askQuestion(request, binding, text => {
           if (!live() || version !== epoch || pending !== request || typeof text !== 'string' || !plainUnicode(text) || questionBytes(text) > QUESTION_LIMITS.answer) return;
           const first = streaming.hidden;
           streamingText.textContent = text; streaming.hidden = !text; streaming.setAttribute('aria-busy', 'true');
-          if (first && text) status.textContent = 'Receiving OpenAI answer… Preview is incomplete until the request finishes.';
+          if (first && text) status.textContent = `Receiving ${org()} answer… Preview is incomplete until the request finishes.`;
         });
       if (!live() || version !== epoch || pending !== request) return;
       if (answer.requestId !== request.requestId) throw new Error('The response did not match this question. It was ignored.');
-      if (!answer.text?.trim()) throw new Error('OpenAI returned no text. No retry was sent automatically.');
+      if (!answer.text?.trim()) throw new Error(`${org()} returned no text. No retry was sent automatically.`);
       if (questionBytes(answer.text) > QUESTION_LIMITS.answer || !plainUnicode(answer.text)) throw new Error('The answer exceeded the safe text limit or contained invalid text. It was not added to the conversation.');
       let revision: Revision | undefined;
       if (snapshot) {
@@ -673,7 +758,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       const latest = transcript.lastElementChild as HTMLElement | null;
       if (latest && !integrated && !element.hidden) conversation.scrollTop += latest.getBoundingClientRect().top - conversation.getBoundingClientRect().top - 20;
       status.textContent = revision ? 'Suggested revision recorded. Review it or reject it below. Your manuscript has not been changed.' : answer.incomplete ? 'OpenAI returned an incomplete answer. It is marked below; nothing was retried automatically.' : 'Answer ready. Your manuscript has not been changed.';
-    } catch (error) { if (live() && version === epoch) {status.textContent = errorMessage(error); if (!streaming.hidden) { streamingLabel.textContent = 'OpenAI · Interrupted preview · Not added to history'; streaming.setAttribute('aria-busy', 'false'); } void checkStatus();} }
+    } catch (error) { if (live() && version === epoch) {status.textContent = errorMessage(error); if (!streaming.hidden) { streamingLabel.textContent = `${org()} · Interrupted preview · Not added to history`; streaming.setAttribute('aria-busy', 'false'); } void checkStatus();} }
     finally { if (live() && version === epoch) {preparing = false; pending = null; pendingRevision = false; update();} }
   }
   function revisionGuard(revision: Revision, reviewing = false) {
@@ -689,7 +774,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       if (integrated) {section.append(message, ...(unified ? [el('p', 'Heinlein', 'heinlein-answer-label')] : []), renderQuestionAnswer(turn.answer.text, `Answer ${index + 1}`)); if (turn.answer.incomplete) section.append(el('p', 'Incomplete answer', 'drafting-warning'));}
       else section.append(el('h4', 'You'), message, el('h4', turn.answer.incomplete ? 'Heinlein · Incomplete answer' : 'Heinlein'), renderQuestionAnswer(turn.answer.text, `Answer ${index + 1}`));
       const details = el('details', '', 'question-response-details'); details.append(el('summary', 'Response details'), el('p', `${turn.contextBytes.toLocaleString()} UTF-8 bytes of context sent`, 'muted'), el('p', usage || 'Token usage was not returned.', 'muted'));
-      const origin = el('p', `Recorded origin: native OpenAI · Model: ${turn.answer.model} · Request: ${turn.answer.requestId}. Provider metadata is not authenticated authorship.`, 'muted'); details.append(origin); section.append(details);
+      const origin = el('p', `Recorded origin: native ${orgFor(turn.answer.model)} · Model: ${turn.answer.model} · Request: ${turn.answer.requestId}. Provider metadata is not authenticated authorship.`, 'muted'); details.append(origin); section.append(details);
       if(turn.scenePath)section.append(el('p', `Scene: ${turn.scenePath}`, 'muted'));
       if(turn.proposalId&&!turn.revision)section.append(el('p', 'Saved revision suggestion. Open Revisions to review its current status.', 'muted'));
       const revision = turn.revision;
@@ -795,7 +880,7 @@ export function createQuestionPanel(core: LocalCore, hooks: QuestionPanelHooks) 
       let done = false;
       const finish = (accepted: boolean) => {if (done) return; done = true; fullReviewCancel = null; fullReview.hidden = true; fullReview.replaceChildren(); prior.forEach(([child, hidden]) => {child.hidden = hidden;}); resolve(accepted); if (!element.hidden) question.focus({preventScroll: true});};
       const bindings = el('details', '', 'question-review-bindings');
-      const attribution = view.origin.kind === 'nativeOpenAi' ? `Native OpenAI suggestion · ${view.origin.model} · ${view.origin.requestId}. Provider metadata is not authenticated authorship.` : `Unverified local MCP client: ${view.origin.clientLabel} · ${view.origin.sessionId}`;
+      const attribution = isNativeOrigin(view.origin) ? `Native ${originProvider(view.origin)} suggestion · ${view.origin.model} · ${view.origin.requestId}. Provider metadata is not authenticated authorship.` : `Unverified local MCP client: ${view.origin.clientLabel} · ${view.origin.sessionId}`;
       bindings.append(el('summary', 'Review details'), el('p', attribution), el('p', `Proposal: ${view.proposalId} · Base: ${view.baseHash} · Replacement: ${view.replacementHash} · Diff: ${view.diffHash}`, 'path')); fullReview.append(bindings);
       fullReviewCancel = () => finish(false);
       fullReview.append(button('Cancel review', () => finish(false)), button('Accept revision', () => finish(true), 'primary'));

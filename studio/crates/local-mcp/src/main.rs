@@ -1,12 +1,5 @@
-use futures::{future, StreamExt};
-use heinlein_local_mcp::{LocalMcp, Selection, MAX_REQUEST_BYTES};
-use rmcp::{
-    service::{RxJsonRpcMessage, TxJsonRpcMessage},
-    transport::async_rw::JsonRpcMessageCodec,
-    RoleServer, ServiceExt,
-};
+use heinlein_local_mcp::{LocalMcp, Selection};
 use std::path::PathBuf;
-use tokio_util::codec::{FramedRead, FramedWrite};
 
 const USAGE: &str = "Usage: heinlein-local-mcp --studio-selection PRIVATE_ABSOLUTE_DIRECTORY [--client-label LABEL]\nOr: heinlein-local-mcp --repository ABSOLUTE_PATH (--manuscript RELATIVE_INDEX | --scene RELATIVE_MARKDOWN [--scene RELATIVE_MARKDOWN ...]) [--proposal-store PRIVATE_ABSOLUTE_PATH] [--client-label LABEL]\nLocal stdio only. Read-only by default. Optional proposal storage enables suggestions for native Studio review, never manuscript writes or approval. Index: ms/manuscript.json or scene-manifest.json. Restart after index changes. This command does not install client configuration or credentials.";
 
@@ -71,24 +64,5 @@ async fn run() -> Result<(), String> {
             client_label,
         )?
     };
-    // The SDK's ordinary stdio reader is unbounded. Its official codec lets this
-    // adapter bound JSON lines before parsing and close on malformed/oversized input.
-    let input = FramedRead::new(
-        tokio::io::stdin(),
-        JsonRpcMessageCodec::<RxJsonRpcMessage<RoleServer>>::new_with_max_length(MAX_REQUEST_BYTES),
-    )
-    .take_while(|message| future::ready(message.is_ok()))
-    .map(Result::unwrap);
-    let output = FramedWrite::new(
-        tokio::io::stdout(),
-        JsonRpcMessageCodec::<TxJsonRpcMessage<RoleServer>>::default(),
-    );
-    server
-        .serve((output, input))
-        .await
-        .map_err(|_| "MCP initialization failed")?
-        .waiting()
-        .await
-        .map_err(|_| "MCP session ended unexpectedly")?;
-    Ok(())
+    heinlein_local_mcp::serve_stdio(server).await
 }

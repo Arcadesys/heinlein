@@ -58,7 +58,13 @@ export interface DraftingResult { state: DraftingState; undoId: string | null }
 export interface DraftingSelection { id: string; files: {name: string; sizeBytes: number}[] }
 export type ProposalOrigin =
   | { kind: 'localMcp'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedLocalProcess' }
-  | { kind: 'nativeOpenAi'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedProviderMetadata'; provider: 'openai'; model: string; requestId: string; review?:{reviewId:string;findingId:string;fingerprint:string;competing:string[]} };
+  | { kind: 'nativeOpenAi'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedProviderMetadata'; provider: 'openai'; model: string; requestId: string; review?:{reviewId:string;findingId:string;fingerprint:string;competing:string[]} }
+  | { kind: 'nativeAnthropic'; sessionId: string; clientLabel: string; identityAssurance: 'unverifiedProviderMetadata'; provider: 'anthropic'; model: string; requestId: string; review?:{reviewId:string;findingId:string;fingerprint:string;competing:string[]} };
+export type NativeProposalOrigin = Extract<ProposalOrigin, {kind: 'nativeOpenAi' | 'nativeAnthropic'}>;
+/** Suggested by Studio's own Ask/Review path (ChatGPT or Claude), not an MCP client. */
+export function isNativeOrigin(origin: ProposalOrigin): origin is NativeProposalOrigin { return origin.kind === 'nativeOpenAi' || origin.kind === 'nativeAnthropic'; }
+/** The company named in recorded provider metadata. */
+export function originProvider(origin: NativeProposalOrigin) { return origin.kind === 'nativeAnthropic' ? 'Anthropic (Claude)' : 'OpenAI'; }
 export interface ProposalSummary { id: string; path: string; baseHash: string; replacementHash: string; diffHash: string; origin: ProposalOrigin; createdAtMs: number; baseText?: string; replacementText?: string; refreshed?: boolean; unavailable?: string | null }
 export interface ProposalReview { id: string; kind: 'apply' | 'revert'; proposalId: string; path: string; baseHash: string; replacementHash: string; diffHash: string; baseText: string; replacementText: string; origin: ProposalOrigin; expiresAtMs: number; parentReceiptId: string | null }
 export interface ProposalBinding { reviewId: string; proposalId: string; baseHash: string; replacementHash: string; diffHash: string }
@@ -71,7 +77,12 @@ export interface QuestionStatus {
   configured: boolean; model: string | null; message: string;
   accounts: QuestionAccount[]; activeAccountId: string | null; models: QuestionModel[];
   selectedModel: string | null; signInPending: boolean; generation: number; usageLimited: boolean;
+  /** Which provider answers. The fields above describe its connection. Absent from older hosts: ChatGPT. */
+  provider?: QuestionProvider; claude?: ClaudeConnection | null;
 }
+export type QuestionProvider = 'openAi' | 'anthropic';
+/** The Claude card. Never contains the API key itself. */
+export interface ClaudeConnection { configured: boolean; active: boolean; keyHint: string | null; models: QuestionModel[]; selectedModel: string | null }
 export interface QuestionConnection { generation: number; accountId: string; model: string }
 export interface QuestionMessage { role: 'user' | 'assistant'; text: string }
 export interface QuestionRequest { requestId: string; question: string; context: string; history: QuestionMessage[] }
@@ -82,7 +93,8 @@ export interface ReviewSnapshot { path: string; source: string; sourceHash: stri
 export interface ReviewerDefinition {id:string; version:number; displayName:string; instructions:string}
 export interface CustomReviewer {id:string; version:number; displayName:string; description:string; instructions:string; output:'notes'|'notes_and_edits'}
 export interface ReviewOptions {consolidate?:boolean;reviewers:string[]; context:ReviewSnapshot[]; contextNote:string; ranges:{path:string;fromUtf8:number;toUtf8:number}[];reviewId?:string|null;fullContextOrder?:string[]}
-export interface ReviewCoverage {contextRanges?:{sourceIndex:number;fromUtf8:number;toUtf8:number}[];id:string; sourceIndex:number;fromUtf8:number;toUtf8:number;windowFrom:number;windowTo:number;reviewer:number;status:string;requestId:string|null;error:string|null}
+export interface ReviewCallDiagnostics {httpStatus?:number|null;providerCode?:string|null;providerRequestId?:string|null}
+export interface ReviewCoverage {diagnostics?:ReviewCallDiagnostics|null;contextRanges?:{sourceIndex:number;fromUtf8:number;toUtf8:number}[];id:string; sourceIndex:number;fromUtf8:number;toUtf8:number;windowFrom:number;windowTo:number;reviewer:number;status:string;requestId:string|null;error:string|null}
 export interface ReviewRequest { requestId: string; repositoryId: string; scope: 'scene' | 'chapter'; snapshots: ReviewSnapshot[]; workflow?:ReviewOptions|null }
 /** Activity only: streamed provider text is never an actionable review result. */
 export interface ReviewProgress {requestId:string; completedCalls:number; totalCalls:number; reviewer:number; sourceIndex:number; chunkIndex:number; status:string; receivedBytes:number; suggestions:number}
@@ -117,6 +129,7 @@ export interface LocalCore {
   chooseReviewEdit?(repositoryId:string,reviewId:string,editId:string):Promise<ReviewResult>;
   approveReviewEdit?(repositoryId:string,reviewId:string,editId:string):Promise<ProposalOutcome|null>;
   continueReview?(repositoryId:string,reviewId:string,requestId:string,connection:QuestionConnection,onProgress?: (progress: ReviewProgress) => void):Promise<ReviewResult>;
+  reauthenticateReview?(repositoryId:string,reviewId:string,allowChatgptPlan:true):Promise<{status:QuestionStatus;review:ReviewResult}>;
   prepareReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<{proposalId: string}>;
   rejectReviewEdit?(repositoryId: string, reviewId: string, editId: string): Promise<ReviewResult>;
   discardReview?(repositoryId: string, reviewId: string, revision: number): Promise<void>;
@@ -132,6 +145,11 @@ export interface LocalCore {
   refreshQuestionConnection?(): Promise<QuestionStatus>;
   restoreQuestionConnection?(): Promise<QuestionStatus>;
   signOutQuestionAccount?(accountId?: string): Promise<QuestionStatus>;
+  connectClaudeKey?(apiKey: string): Promise<QuestionStatus>;
+  selectQuestionProvider?(provider: QuestionProvider): Promise<QuestionStatus>;
+  selectClaudeModel?(slug: string): Promise<QuestionStatus>;
+  refreshClaudeModels?(): Promise<QuestionStatus>;
+  removeClaudeKey?(): Promise<QuestionStatus>;
   openQuestionUsage?(): Promise<void>;
   listProposals?(repositoryId: string): Promise<ProposalListing>;
   rejectProposal?(repositoryId: string, proposalId: string): Promise<ProposalReceipt>;
@@ -215,6 +233,7 @@ export const localCore: LocalCore = {
   suggestQuestionRevision: (request, connection, target) => invoke('suggest_question_revision', {request, connection, target}),
   cancelQuestion: requestId => invoke('cancel_question', {requestId}),
   connectQuestionAccount: options => invoke('connect_question_account', options),
+  reauthenticateReview: (repositoryId,reviewId,allowChatgptPlan) => invoke('reauthenticate_review', {repositoryId,reviewId,allowChatgptPlan}),
   cancelQuestionSignIn: () => invoke('cancel_question_sign_in'),
   selectQuestionAccount: accountId => invoke('select_question_account', {accountId}),
   selectQuestionModel: slug => invoke('select_question_model', {slug}),
@@ -222,6 +241,11 @@ export const localCore: LocalCore = {
   restoreQuestionConnection: () => invoke('restore_question_connection'),
   signOutQuestionAccount: accountId => invoke('sign_out_question_account', {accountId: accountId ?? null}),
   openQuestionUsage: () => invoke('open_question_usage'),
+  connectClaudeKey: apiKey => invoke('connect_claude_key', {apiKey}),
+  selectQuestionProvider: provider => invoke('select_question_provider', {provider}),
+  selectClaudeModel: slug => invoke('select_claude_model', {slug}),
+  refreshClaudeModels: () => invoke('refresh_claude_models'),
+  removeClaudeKey: () => invoke('remove_claude_key'),
   listProposals: repositoryId => invoke('list_proposals', {repositoryId}),
   rejectProposal: (repositoryId, proposalId) => invoke('reject_proposal', {repositoryId, proposalId}),
   reviewProposal: (repositoryId, proposalId) => invoke('review_proposal', {repositoryId, proposalId}),
@@ -258,7 +282,7 @@ export const localCore: LocalCore = {
   onCheckForUpdates:callback=>listen('check-for-updates',callback),
   projectRequest:request=>invoke('project_request',{request}),
   mcpRequest:request=>invoke('mcp_access_request',{request}),
-  createLocalProject: name => invoke('create_local_project', {name}),
+  createLocalProject: name => invoke('project_request', {request:{action:'create',name}}),
   pickRepository: () => invoke('pick_repository'),
   recentRepositories: () => invoke('recent_repositories'),
   openRecentRepository: id => invoke('open_recent_repository', { id }),

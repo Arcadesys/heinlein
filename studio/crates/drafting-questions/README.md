@@ -8,7 +8,21 @@ background requests, filesystem persistence, or automatic retries.
 
 The native host uses the adjacent `heinlein-chatgpt-auth` crate for explicit
 Continue with ChatGPT, account-specific model selection, and protected credentials.
-There is no API-key fallback or environment credential lookup. Tests use fake
+There is no API-key fallback or environment credential lookup for ChatGPT.
+
+Claude is a separate, explicitly chosen provider. `heinlein-claude-auth` keeps
+an author-supplied Anthropic API key in the OS keychain, and
+`Configuration::anthropic` sends it only as `x-api-key`. Requests are still built
+and answers still validated once. `src/anthropic.rs` converts at the wire:
+- **Outgoing:** the request becomes a Messages API body with `system`,
+  `messages`, the same JSON schemas in `output_config.format`, and server-side
+  refusal fallback.
+- **Incoming:** the Messages SSE stream is reduced to the same bounded terminal
+  object the existing validators check.
+- **Answer text:** only `text` blocks become answer text. Reasoning blocks are
+  ignored, and a fallback block discards the declined attempt's partial text.
+- **Errors:** Anthropic errors map to fixed Claude wording, and provider message
+  text is never returned. Tests use fake
 credentials and mocked transport only; they never make real model calls or grants.
 Live consent, account eligibility, and end-to-end inference require native testing.
 
@@ -20,8 +34,11 @@ Live consent, account eligibility, and end-to-end inference require native testi
 - Revision requests require empty history and a nonempty target of at most
   16,000 UTF-8 bytes. Question + optional context + target share the 32,000-byte
   budget; only those exact author-previewed strings enter the provider payload
-- Fixed provider URL: `https://api.openai.com/v1/responses`
-- `store: false`, `stream: true`, no tools, at most 2,000 output tokens
+- Fixed provider URLs: `https://api.openai.com/v1/responses` (ChatGPT) and
+  `https://api.anthropic.com/v1/messages` (Claude)
+- `store: false`, `stream: true`, no tools, at most 2,000 output tokens. Claude
+  requests stream with no tools; Ask/Revise use low effort with an 8,000-token
+  budget that includes Claude's reasoning, and reviews use medium effort
 - HTTPS only, no redirects or proxies, including environment proxies
 - 10-second connect timeout; 60-second total request timeout
 - At most 1,000,000 stream bytes and 256,000 bytes per event/response

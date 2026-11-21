@@ -231,12 +231,34 @@ describe('Studio attributed revision workflow', () => {
     await vi.waitFor(() => expect(bridge.cancelProposalReview).toHaveBeenCalledWith(session.id, 'review')); expect(bridge.applyProposalReview).toHaveBeenCalledTimes(1); expect(bridge.saveDocument).not.toHaveBeenCalled();
   });
   it('shows native-origin proposal rejection and immutable decision receipts without changing the manuscript', async () => {
-    const bridge = await revisionCore(); await start(bridge); button('Revisions').click(); await vi.waitFor(() => expect(document.querySelector('[aria-label="Revisions"]')).not.toBeNull());
-    expect(document.body.textContent).toContain('Native OpenAI suggestion'); button('Keep mine').click(); await vi.waitFor(() => expect(document.body.textContent).toContain('Receipt: receipt'));
-    expect(bridge.rejectProposal).toHaveBeenCalledWith(session.id, 'proposal'); expect(bridge.saveDocument).not.toHaveBeenCalled(); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
-    [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Revisions"] button')].find(node=>node.textContent==='Close')!.click(); bridge.listProposals.mockResolvedValue({pending: [], receipts: [await bridge.rejectProposal()] } as never); button('Revisions').click();
-    await vi.waitFor(() => expect(document.querySelector('.proposal-receipt')?.textContent).toContain('Reject · scene.md · rejected'));
-    expect(document.body.textContent).toContain('Studio explicit rejection'); expect([...document.querySelectorAll('button')].some(node => node.textContent === 'Review revert')).toBe(false);
+    const bridge = await revisionCore();
+    const receipt = await bridge.rejectProposal.getMockImplementation()!();
+    const savedReceipt = structuredClone(receipt); Object.freeze(receipt.origin); Object.freeze(receipt);
+    await start(bridge); const source = view().state.doc.toString();
+    const revisions = () => document.querySelector<HTMLElement>('[aria-label="Revisions"]')!;
+    const assertReceipt = () => {
+      const item = revisions().querySelector('.proposal-receipt')!;
+      expect(item).not.toBeNull();
+      for (const text of ['Reject · scene.md · rejected', 'Studio explicit rejection', 'Receipt: receipt', 'Proposal: proposal',
+        'Native OpenAI suggestion', 'Model: mock-model', 'Request: native-request', 'Provider metadata, not authenticated authorship',
+        `Base: ${receipt.baseHash}`, `Replacement: ${receipt.replacementHash}`, `Diff: ${receipt.diffHash}`]) expect(item.textContent).toContain(text);
+      expect([...item.querySelectorAll('button')].some(node => node.textContent === 'Review revert')).toBe(false);
+      expect(receipt).toEqual(savedReceipt); expect(view().state.doc.toString()).toBe(source);
+      expect(bridge.rejectProposal).toHaveBeenCalledExactlyOnceWith(session.id, 'proposal');
+      expect(bridge.saveDocument).not.toHaveBeenCalled(); expect(bridge.applyProposalReview).not.toHaveBeenCalled();
+    };
+    button('Revisions').click(); await vi.waitFor(() => expect(revisions()).not.toBeNull());
+    expect(revisions().textContent).toContain('Native OpenAI suggestion'); button('Keep mine').click();
+    await vi.waitFor(() => expect(revisions().querySelector('.revision-count')?.textContent).toBe('All decided'));
+    // Deciding keeps To decide selected; the immutable receipt belongs in Done.
+    expect(button('To decide 0').getAttribute('aria-pressed')).toBe('true');
+    expect(revisions().querySelector('.proposal-receipt')).toBeNull();
+    button('Done 1').click(); expect(button('Done 1').getAttribute('aria-pressed')).toBe('true'); assertReceipt();
+    [...revisions().querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === 'Close')!.click();
+    expect(revisions()).toBeNull();
+    bridge.listProposals.mockResolvedValue({pending: [], receipts: [receipt]} as never); button('Revisions').click();
+    await vi.waitFor(() => expect(revisions()?.querySelector('.proposal-receipt')?.textContent).toContain('Receipt: receipt'));
+    expect(button('Done 1').getAttribute('aria-pressed')).toBe('true'); assertReceipt();
   });
 });
 

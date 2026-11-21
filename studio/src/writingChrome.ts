@@ -6,13 +6,13 @@ export function createWritingChrome(root:HTMLElement,hooks:{focusWriting():void;
   const goal=document.createElement('p');goal.className='focus-word-goal';goal.hidden=true;goal.setAttribute('aria-live','off');element.append(showButton,goal);
   let hidden=false,goalEnabled=false,dead=false;
   const previous=new Map<HTMLElement,{inert:boolean;aria:string|null}>();
-  const targets=()=>[...root.querySelectorAll<HTMLElement>('.status-pill,.notice-slot,.document-tabs,.document-command-bar,.split-reading-offer,.reference-pane,.standalone-page > h2,.standalone-page > p,.standalone-toolbar,.selection-ask-action,.selection-ask-extras,.cm-gutters')];
+  const targets=()=>[...root.querySelectorAll<HTMLElement>('.status-pill,.notice-slot,.typing-chrome,.document-tabs,.document-command-bar,.split-reading-offer,.reference-pane,.standalone-page > h2,.standalone-page > p,.standalone-toolbar,.selection-ask-action,.selection-ask-extras,.cm-gutters')];
   function apply(){
     root.classList.toggle('writing-controls-hidden',hidden);hideButton.setAttribute('aria-expanded',String(!hidden));showButton.hidden=!hidden;goal.hidden=!hidden||!goalEnabled;
     if(hidden){for(const node of targets()){if(!previous.has(node))previous.set(node,{inert:node.inert,aria:node.getAttribute('aria-hidden')});node.inert=true;node.setAttribute('aria-hidden','true');}}
     else{for(const [node,state] of previous){node.inert=state.inert;if(state.aria===null)node.removeAttribute('aria-hidden');else node.setAttribute('aria-hidden',state.aria);}previous.clear();root.classList.remove('writing-controls-peek');}
   }
-  function show(focus=false){if(dead||!hidden)return;hidden=false;apply();hooks.changed(false);if(focus)hideButton.focus({preventScroll:true});}
+  function show(focus=false){if(dead||!hidden)return;hidden=false;apply();hooks.changed(false);if(focus)(hideButton.closest('[hidden]')?root.querySelector<HTMLElement>('[aria-label="More actions"]'):hideButton)?.focus({preventScroll:true});}
   function unsafe(){return !hooks.canHide()||!!root.querySelector('dialog[open],.goal-card:not([hidden]),.notice-slot .error,.standalone-page > [role="status"].error');}
   function hide(){if(dead||hidden||unsafe())return;hidden=true;apply();hooks.changed(true);hooks.focusWriting();}
   hideButton.addEventListener('click',hide);showButton.addEventListener('click',()=>show(true));
