@@ -165,4 +165,11 @@ describe('shared frontmatter boundary', () => {
   it.each([['---\nt: 1\n---\nBody', 13], ['---\nt: 1\n---', 12], ['No frontmatter', 0], ['--- not\nthing', 0], ['---\nunfinished', null], ['---\n---\nB', 8]])('finds the body of %j', (text, end) => {
     expect(frontmatterEnd(text)).toBe(end);
   });
+  it('shows author notes as notes while keeping exact text offsets', () => {
+    const text = 'The world was *new* {>>wait, *what*<<} here.\n';
+    const {content} = render(text);
+    const notes = [...content.querySelectorAll('.md-author-comment')];
+    expect(notes.map(node => node.textContent).join('')).toBe('{>>wait, what<<}');
+    expect(content.textContent).toContain('The world was new {>>wait, what<<} here.');
+  });
 });

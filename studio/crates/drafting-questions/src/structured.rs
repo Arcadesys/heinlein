@@ -96,6 +96,7 @@ impl Response {
                 || !valid_text(&edit.reason, 1000)
                 || edit.original.contains('—')
                 || edit.replacement.contains('—')
+                || !crate::edit_preserves_comments(&edit.original, &edit.replacement)
                 || edit
                     .replacement
                     .chars()

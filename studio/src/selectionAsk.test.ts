@@ -77,4 +77,23 @@ describe('contextual Ask Heinlein selection control', () => {
     await start(); document.dispatchEvent(new Event('scroll')); action!.destroy(); await new Promise(resolve => setTimeout(resolve, 30));
     expect(document.querySelector('.selection-ask-action')).toBeNull(); expect(ask).not.toHaveBeenCalled();
   });
+  it('offers Add note beside Suggest revision and refuses a stale selection', async () => {
+    const host = document.createElement('div'); const fallback = document.createElement('button'); document.body.append(host, fallback);
+    editor = createEditor(host, source, text => {source = text; revision++;}, () => {});
+    vi.spyOn(editor.view.dom, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, window.innerWidth, window.innerHeight));
+    vi.spyOn(editor.view, 'coordsAtPos').mockReturnValue({top: 200, bottom: 220, left: 300, right: 301});
+    const note = vi.fn(); const revise = vi.fn();
+    action = createSelectionAskAction(editor.view, {current, ask, stale, fallback, revise, note});
+    editor.view.focus(); editor.view.dispatch({selection: {anchor: 2, head: 12}});
+    const extras = document.querySelector<HTMLElement>('.selection-ask-extras')!;
+    await vi.waitFor(() => expect(extras.hidden).toBe(false));
+    const buttons = [...extras.querySelectorAll('button')].map(b => b.textContent);
+    expect(buttons).toEqual(['Suggest revision', 'Add note']);
+    extras.querySelector<HTMLButtonElement>('.selection-note-action')!.click();
+    expect(note).toHaveBeenCalledOnce(); expect(note.mock.calls[0][0]).toMatchObject({from: 2, to: 12});
+    editor.view.dispatch({selection: {anchor: 2, head: 12}}); await vi.waitFor(() => expect(extras.hidden).toBe(false));
+    editor.view.dispatch({selection: {anchor: 5, head: 5}});
+    extras.querySelector<HTMLButtonElement>('.selection-note-action')!.click();
+    expect(note).toHaveBeenCalledOnce(); expect(stale).toHaveBeenCalled();
+  });
 });

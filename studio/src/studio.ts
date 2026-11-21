@@ -32,7 +32,7 @@ import { createNavigationDrawer } from './navigationDrawer';
 import { assembleChapter, chapterSelection, frontmatterEnd, type AssembledChapter } from './assembledChapter';
 import { createManuscriptSearch, editorOffset, type SearchScope, type SearchMatch } from './manuscriptSearch';
 import {StateEffect} from '@codemirror/state';
-import {EditorView} from '@codemirror/view';
+import {EditorView, keymap} from '@codemirror/view';
 import { createProposalPanel } from './proposalPanel';
 import {createMcpAccessPanel} from './mcpAccess';
 import { createWritingPanel, type WritingSummary } from './writingPanel';
@@ -40,6 +40,8 @@ import { createEditor, rawOffset } from './editor';
 import { captureSelectionQuestion, createSelectionQuestionPanel, selectionQuestionAvailability, selectionQuestionProblem, type SelectionQuestionState } from './selectionQuestion';
 import { createQuestionPanel, questionBytes, QUESTION_LIMITS } from './questionPanel';
 import { createSelectionAskAction } from './selectionAsk';
+import { openNoteDialog } from './noteDialog';
+import { insertNote, noteTarget } from './authorComments';
 import { createDraftingPanel, REPOSITORY_DRAG_TYPE } from './draftingPanel';
 import { openLibraryReviewPicker } from './libraryReviewPicker';
 import { writingEntries } from './writingEntries';
@@ -1252,6 +1254,24 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (selecting || ((structuralBusy || proposalBusy) && !reviewing)) return 'Finish the current local operation before requesting a revision.';
     return null;
   }
+  /** Insert an author note after the selection (or at the cursor) once the author writes it. */
+  function addNote() {
+    const writer = editor; if (!writer || document.querySelector('dialog.note-dialog[open]')) return;
+    const view = writer.view;
+    if (view.state.readOnly) { status.textContent = 'This document is read-only. Notes can be added once it is editable.'; return; }
+    showSourceView();
+    const target = noteTarget(view);
+    openNoteDialog(root, {
+      quote: target.doc.sliceString(target.from, target.to),
+      add: note => {
+        if (disposed || editor !== writer) return 'This document is no longer open. Cancel and try again.';
+        const refused = insertNote(view, target, note); if (refused) return refused;
+        status.textContent = 'Note added. Heinlein reads it when you ask for edits; exports leave it out.';
+        return null;
+      },
+      closed: () => { if (editor === writer) view.focus(); },
+    });
+  }
   function draftingSelectionState(): SelectionQuestionState | null {
     const current = selectionQuestionState();
     // Asking is read-only; an in-flight local save does not block capture.
@@ -1836,6 +1856,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       Boolean(repository&&!standalone?.active&&drafting.state?.revision&&(core.exportManuscript||core.saveMarkdownExport))&&{key:'export-manuscript',label:'Export manuscript…',sub:'PDF, EPUB, Markdown, HTML or DOCX',run:()=>{void markdownExport.open(drafting.state!.project,{kind:'project'});}},
       Boolean(searchScope()) && {key: 'find-manuscript', label: 'Find in manuscript', sub: 'Search scene text locally, including the open buffer', right: formatKeys('⌘⇧F'), run: openManuscriptSearch},
       Boolean(activeWriter()) && {key: 'ask', label: 'Ask Heinlein about selection', sub: 'Opens Questions with the highlighted passage', right: formatKeys('⌘J'), run: () => askShortcut()},
+      Boolean(editor) && {key: 'add-note', label: 'Add note…', sub: 'A note for Heinlein about the highlighted passage, left out of exports', right: formatKeys('⌘⌥M'), run: () => addNote()},
       Boolean(editor) && {key: 'split', label: 'Split scene at cursor', sub: 'Previews before anything moves', right: formatKeys('⌘⇧B'), run: splitAtCursor},
       Boolean(repository && !standalone?.active) && {key: 'new-scene', label: 'New scene', sub: 'Opens Add scene or manuscript setup', run: () => { void newWriting(); }},
       proposals.supported && Boolean(repository||standalone?.active) && {key: 'proposals', label: 'Revisions', sub: 'All external and in-app revisions with before/after diffs', run: () => { void openRevisions(); }},
@@ -2400,10 +2421,13 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       editor.view.dispatch({effects: StateEffect.appendConfig.of(EditorView.updateListener.of(update => {if (update.docChanged) questionMarkerSignature = ''; if (update.docChanged || update.selectionSet) draftingQuestions?.stateChanged();}))});
       selectionAsk = createSelectionAskAction(editor.view, {current: draftingSelectionState, fallback: askDrafting, keys: formatKeys('⌘J'),
         revise: snapshot => { void askDraftingSelection(snapshot).then(() => draftingQuestions?.setMode('revision')); },
+        note: () => addNote(),
         ask: snapshot => {void askDraftingSelection(snapshot);}, stale: () => {status.textContent = 'The selection changed. Highlight the passage again before asking.';}});
       if (recoveryPending && draft) showRecoveryChoice(doc, draft, host);
       if (/\.(md|markdown)$/i.test(doc.path)) {
         const target = editor.view;
+        toolbar.append(button('Add note…', () => addNote(), 'source-only'));
+        target.dispatch({effects: StateEffect.appendConfig.of(keymap.of([{key: 'Mod-Alt-m', run: () => { addNote(); return true; }}]))});
         const roleInSource = documentRole.textContent;
         mountDocumentView(toolbar, host, target, () => {
           const value = target.state.doc.toString();

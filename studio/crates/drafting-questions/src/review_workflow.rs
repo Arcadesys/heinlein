@@ -1992,6 +1992,11 @@ mod tests {
         r.workflow.as_mut().unwrap().context[0].source = "Read-only context".into();
         let body =
             crate::review::workflow_body(&r, "test-model", &definitions()[0].instructions).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(value["instructions"]
+            .as_str()
+            .unwrap()
+            .contains(crate::COMMENT_INSTRUCTION));
         let body = String::from_utf8(body).unwrap();
         assert!(!body.contains("private/notes.md"));
         assert!(!body.contains("private-repo"));
