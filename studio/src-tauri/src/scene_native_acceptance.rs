@@ -9,6 +9,7 @@ use std::{
 use tauri::{utils::config::AppDirectoriesOverride, Listener, WebviewUrl, WebviewWindowBuilder};
 
 const SOURCE: &str = "Exact — e\u{301} 🦊 writing.\r\n";
+const RESTORED: &str = "Exact — e\u{301} 🦊 writing.\r\nNewer writing stays.\r\n";
 const NOTES: &str = "Unlisted notes — preserve.\r\n";
 fn private(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let m = path.symlink_metadata()?;
@@ -32,6 +33,21 @@ fn put(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 fn verify(root: &Path, phase: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if phase.starts_with("history-") {
+        let repo = Repository::open(root.join("source"))?;
+        let store = RecoveryStore::open(root.join("app-data/recovery"))?;
+        let path = "ms/part-two/renamed.md";
+        let versions = store.scene_versions(&repo, path)?;
+        if repo.read(path)?.text != RESTORED || versions.len() != 2 ||
+            store.scene_version(&repo, path, versions[1].saved_at, &versions[1].hash)? != SOURCE ||
+            root.join("source/ms/anchor.md").exists() || root.join("source/ms/renamed.md").exists() {
+            return Err("Native history persistence or exact passage bytes failed".into());
+        }
+        let receipt = serde_json::json!({"phase":phase,"realIPC":true,"exactBytes":true,
+            "historyRenameMove":true,"confirmedPassageRestore":true,"historyPersistence":true});
+        put(&root.join(format!("{phase}-receipt.json")), receipt.to_string().as_bytes())?;
+        return Ok(());
+    }
     let repo = Repository::open(root.join("source"))?;
     let state = repo.load_drafting()?;
     let expected = [
@@ -77,7 +93,7 @@ fn checked() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
     if args.len() != 4
         || args[1] != "--scene-native-acceptance"
-        || !["first", "reopen"].contains(&args[3].as_str())
+        || !["first", "reopen", "history-first", "history-reopen"].contains(&args[3].as_str())
     {
         return Err("Explicit root and phase required".into());
     }
@@ -93,7 +109,7 @@ fn checked() -> Result<(), Box<dyn std::error::Error>> {
         return Err("TMPDIR must be fixture root".into());
     }
     let phase = args[3].clone();
-    if phase == "first" {
+    if phase == "first" || phase == "history-first" {
         if fs::read_dir(&root)?.next().is_some() {
             return Err("First root must be empty".into());
         }
@@ -107,10 +123,9 @@ fn checked() -> Result<(), Box<dyn std::error::Error>> {
             fs::DirBuilder::new().mode(0o700).create(root.join(p))?;
         }
         put(&root.join("source/ms/anchor.md"), SOURCE.as_bytes())?;
-        put(
-            &root.join("source/ms/missing.md"),
-            b"Missing synthetic scene",
-        )?;
+        if phase == "first" {
+            put(&root.join("source/ms/missing.md"), b"Missing synthetic scene")?;
+        }
         let repo = Repository::open(root.join("source"))?;
         let recovery = RecoveryStore::open(root.join("app-data/recovery"))?;
         let plan = repo.preview_drafting(
@@ -122,12 +137,14 @@ fn checked() -> Result<(), Box<dyn std::error::Error>> {
             &recovery,
         )?;
         repo.apply_drafting(&plan, &recovery)?;
-        fs::remove_file(root.join("source/ms/missing.md"))?;
-        put(&root.join("source/ms/notes.md"), NOTES.as_bytes())?;
+        if phase == "first" {
+            fs::remove_file(root.join("source/ms/missing.md"))?;
+            put(&root.join("source/ms/notes.md"), NOTES.as_bytes())?;
+        }
     } else {
         // The first-phase native verifier owns this receipt; no real project can qualify.
         let receipt: serde_json::Value =
-            serde_json::from_slice(&fs::read(root.join("first-receipt.json"))?)?;
+            serde_json::from_slice(&fs::read(root.join(if phase == "history-reopen" {"history-first-receipt.json"} else {"first-receipt.json"}))?)?;
         if receipt["realIPC"] != true || receipt["exactBytes"] != true {
             return Err("Missing first receipt".into());
         }
@@ -143,7 +160,10 @@ fn checked() -> Result<(), Box<dyn std::error::Error>> {
         drafting::load_drafting,
         drafting::preview_drafting_change,
         drafting::apply_drafting_change,
-        read_document
+        read_document,
+        save_document,
+        scene_versions,
+        read_scene_version
     ];
     let app = tauri::Builder::default()
         .manage(BrowserState::default())
@@ -153,6 +173,9 @@ fn checked() -> Result<(), Box<dyn std::error::Error>> {
                 "preview_drafting_change",
                 "apply_drafting_change",
                 "read_document",
+                "save_document",
+                "scene_versions",
+                "read_scene_version",
             ]
             .contains(&invoke.message.command())
             {

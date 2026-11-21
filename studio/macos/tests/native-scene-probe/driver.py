@@ -15,6 +15,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--receipt', type=Path, required=True)
+    parser.add_argument('--history', action='store_true')
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
     root = Path('/private/tmp') / ('heinlein-native-scene-' + str(uuid.uuid4()))
@@ -32,7 +33,7 @@ def main():
     subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', '--identifier', identity, str(bundle)], check=True)
     subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(bundle)], check=True)
     results = []
-    for phase in ['first', 'reopen']:
+    for phase in (['history-first', 'history-reopen'] if args.history else ['first', 'reopen']):
         child = subprocess.Popen([str(executable), '--scene-native-acceptance', str(root), phase],
                                  env=dict(os.environ, TMPDIR=str(root)), stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, text=True, start_new_session=True)
@@ -46,7 +47,8 @@ def main():
         if child.returncode != 0:
             raise RuntimeError(f'Native {phase} failed exit={child.returncode}; root={root}')
         receipt = json.loads((root / f'{phase}-receipt.json').read_text())
-        if receipt['phase'] != phase or not all(receipt[k] is True for k in ['realIPC', 'exactBytes', 'unlistedPreserved', 'missingPreserved', 'repeated', 'canceled']):
+        checks = ['realIPC', 'exactBytes', 'historyRenameMove', 'confirmedPassageRestore', 'historyPersistence'] if args.history else ['realIPC', 'exactBytes', 'unlistedPreserved', 'missingPreserved', 'repeated', 'canceled']
+        if receipt['phase'] != phase or not all(receipt[k] is True for k in checks):
             raise ValueError('Incomplete native receipt')
         results.append({'pid': child.pid, 'exit': child.returncode, 'receipt': receipt})
     result = {'root': str(root), 'binarySHA256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'results': results}
