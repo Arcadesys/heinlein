@@ -105,6 +105,8 @@ export interface ReviewResult { readingFeedback?: ReadingFeedbackView[]; reviewI
 export interface LocalCore {
   fullscreen?:FullScreenHost;
   exportManuscript?(repositoryId:string,filename:string,spec:ManuscriptExportSpec):Promise<boolean>;
+  /** Opens the project's folder in Finder. Native resolves the root; no path is returned. */
+  revealRepository?(repositoryId:string):Promise<void>;
   preferencesRequest?(request:PreferenceRequest):Promise<PreferenceSnapshot>;
   saveMarkdownExport?(repositoryId: string, filename: string, text: string): Promise<boolean>;
   projectRequest?(request:ProjectRequest):Promise<ProjectResponse>;
@@ -188,6 +190,7 @@ export const localCore: LocalCore = {
   fullscreen:isTauri()?windowFullscreen:undefined,
   available: isTauri,
   exportManuscript:(repositoryId,filename,spec)=>invoke('export_manuscript',{repositoryId,filename,spec}),
+  revealRepository:repositoryId=>invoke('reveal_repository',{repositoryId}),
   preferencesRequest:request=>invoke('preferences_request',{request}),
   saveMarkdownExport: (repositoryId, filename, text) => invoke('save_markdown_export', {repositoryId, filename, text}),
   updateRequest: action=>invoke('update_request',{action}),

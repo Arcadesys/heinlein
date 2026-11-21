@@ -703,6 +703,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (repository?.projectId) items.push(button('Project settings', () => { void projectLibrary.settings(repository!.projectId!); }));
     if(repository&&mcpAccess.supported){const connect=button('AI connections…',()=>{projectMenu.querySelector<HTMLElement>('summary')?.focus();void mcpAccess.open();});connect.setAttribute('aria-haspopup','dialog');items.push(connect);}
     if (repository) items.push(searchManuscript, button('Source files', () => showNavView('files', true)));
+    if (repository&&!standalone?.active&&core.revealRepository) items.push(button('Open source folder in Finder', () => { void revealSourceFolder(); }));
     if(projectEntries.childElementCount)items.push(el('hr'),el('p','Switch project','menu-label'),projectEntries);
     const libraryItems = drafting.menuItems(); if (libraryItems.length) items.push(el('hr'), ...libraryItems);
     return items;
@@ -719,6 +720,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if(await showDocument(chapter.source,false,()=>drafting.state?.revision===state.revision,chapter)){
       threadScopeOverride=scope;void threadSidebar.refresh();chatRail.refresh();
     }
+  }
+  async function revealSourceFolder() {
+    if (!repository || !core.revealRepository) return;
+    try { await core.revealRepository(repository.id); status.classList.remove('error'); status.textContent = `Opened ${repository.name} in Finder.`; }
+    catch (error) { status.textContent = error instanceof Error ? error.message : String(error); status.classList.add('error'); }
   }
   function activeWriter(){return standalone?.active?standalone.editor:chapterEditor??editor;}
   function reviewRepository():RepositorySession|null {
@@ -1854,6 +1860,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       Boolean(fullScreenControl) && {key:'fullscreen',label:fullScreenControl?.active?'Exit full screen':'Full screen focus mode',run:()=>{void fullScreenControl?.toggle();}},
       Boolean(newDraftButton) && {key: 'new-draft', label: 'New Markdown draft', right: formatKeys('⌘N'), run: () => newDraftButton?.click()},
       Boolean(repository&&!standalone?.active&&drafting.state?.revision&&(core.exportManuscript||core.saveMarkdownExport))&&{key:'export-manuscript',label:'Export manuscript…',sub:'PDF, EPUB, Markdown, HTML or DOCX',run:()=>{void markdownExport.open(drafting.state!.project,{kind:'project'});}},
+      Boolean(repository&&!standalone?.active&&core.revealRepository) && {key: 'reveal-source-folder', label: 'Open source folder in Finder', sub: 'Show this project\'s Markdown files on your Mac', run: () => { void revealSourceFolder(); }},
       Boolean(searchScope()) && {key: 'find-manuscript', label: 'Find in manuscript', sub: 'Search scene text locally, including the open buffer', right: formatKeys('⌘⇧F'), run: openManuscriptSearch},
       Boolean(activeWriter()) && {key: 'ask', label: 'Ask Heinlein about selection', sub: 'Opens Questions with the highlighted passage', right: formatKeys('⌘J'), run: () => askShortcut()},
       Boolean(editor) && {key: 'add-note', label: 'Add note…', sub: 'A note for Heinlein about the highlighted passage, left out of exports', right: formatKeys('⌘⌥M'), run: () => addNote()},
