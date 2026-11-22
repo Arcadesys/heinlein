@@ -36,6 +36,7 @@ mod scene_native_acceptance;
     )
 ))]
 compile_error!("Select exactly one native acceptance fixture");
+mod book_publish;
 mod custom_reviewers;
 mod drafting;
 mod export_pipeline;
@@ -951,6 +952,7 @@ fn production_main() {
         .invoke_handler(tauri::generate_handler![
             manuscript_export::export_manuscript,
             reveal_repository,
+            book_publish::publish_book,
             preferences::preferences_request,
             markdown_export::save_markdown_export,
             projects::project_request,

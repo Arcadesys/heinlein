@@ -82,6 +82,7 @@ fn main() {
             "illustration_request",
             "scene_versions",
             "read_scene_version",
+            "publish_book",
             "save_document",
             "read_recovery",
             "stage_recovery",

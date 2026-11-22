@@ -48,6 +48,12 @@ if (new URLSearchParams(location.search).has('unified')) {
  core.exportManuscript=async(repositoryId,filename,spec)=>{if(outcome==='failed'){outcome='saved';throw Error('Pandoc is missing (synthetic)');}calls.push({repositoryId,filename,...spec});if(outcome==='canceled'){outcome='saved';return false;}return true;};
  (window as any).exportFixture={calls,setOutcome:(value:string)=>{outcome=value;}};
 }
+if (new URLSearchParams(location.search).has('publish')) {
+ // Synthetic Publish host: records the request only. No publisher, files or folder picker.
+ const publishes:any[]=[];
+ core.publishBook=async(repositoryId,spec)=>{publishes.push({repositoryId,...spec});return {folder:spec.folderName,files:spec.formats.map(f=>`synthetic-book.${f==='text'?'txt':f}`)};};
+ (window as any).publishFixture={publishes};
+}
 if (new URLSearchParams(location.search).has('reviewers')) {
   const key = 'synthetic-review-agents';
   core.listCustomReviewers = async () => JSON.parse(localStorage.getItem(key) ?? '[]');
