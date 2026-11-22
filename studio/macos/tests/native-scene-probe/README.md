@@ -10,7 +10,13 @@ must leave native state unchanged and send no preview/apply calls. Four repeated
 Add above/below actions must each preview/apply once. A second process reopens the
 same manuscript. Native verification independently checks persisted order, empty
 new files, exact Unicode/CRLF source bytes, retained unlisted notes and retained
-missing metadata.
+missing metadata. With `--history`, separate clean disposable phases save a
+changed anchor, rename and move it,
+then opens the production Scene history dialog using real version IPC. It selects
+only the earlier combining-character passage, reviews and cancels once, confirms
+the replacement, saves, and checks exact CRLF/Unicode bytes while retaining newer
+writing. The reopened process checks those saved bytes and both historical
+versions.
 
 ```sh
 cd studio
@@ -18,11 +24,13 @@ npx vite build --config macos/tests/native-scene-probe/vite.config.ts
 cargo build --locked --manifest-path src-tauri/Cargo.toml --features scene-native-acceptance
 python3 macos/tests/native-scene-probe/driver.py \
   --binary target/debug/heinlein-studio --receipt /tmp/native-scene-result.json
+python3 macos/tests/native-scene-probe/driver.py --history \
+  --binary target/debug/heinlein-studio --receipt /tmp/native-history-result.json
 ```
 
 The driver signs and starts only a separately named disposable app bundle.
 `TMPDIR` and all Tauri application directories are confined to the private root;
-the webview is incognito. Only the four listed production IPC commands are
+the webview is incognito. Only drafting, document read/save, and scene-version IPC commands are
 registered. No provider, account, installed app, repository picker, or manuscript
 outside that root is used. Fixture builds refuse production startup, and normal
 builds refuse the fixture flag. A watchdog exits its own fixture on failure; the
