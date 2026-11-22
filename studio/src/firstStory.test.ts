@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import {afterEach, beforeEach, expect, it, vi} from 'vitest';
-import {createFirstStory, emptyFirstStory, invalidateFirstStory, type FirstStoryState, type PublishingCopy} from './firstStory';
+import {createFirstStory, defaultBookDesign, emptyFirstStory, invalidateFirstStory, type FirstStoryState, type PublishingCopy} from './firstStory';
 import type {LocalCore} from './localCore';
 let controllers: ReturnType<typeof createFirstStory>[] = [];
 beforeEach(() => {
@@ -52,9 +52,9 @@ it('publishing metadata and checklist changes after explicit save persist on clo
   title.value='First title';title.dispatchEvent(new Event('input'));await f.click('Save guide progress');
   title.value='Later title';title.dispatchEvent(new Event('input'));
   const check=(label:string)=>{const input=[...f.c.element.querySelectorAll('label')].find(el=>el.textContent===label)!.querySelector<HTMLInputElement>('input')!;input.checked=true;input.dispatchEvent(new Event('change'));};
-  check('I choose no cover for this text-only copy');check('Rights and permissions are mine or cleared');
+  check('Large print (bigger body text)');check('Rights and permissions are mine or cleared');
   await f.click('Save guide progress');await f.click('Close guide');await f.c.open();
-  expect(f.stored().publishing?.title).toBe('Later title');expect(f.stored().publishing?.noCoverApproved).toBe(true);expect(f.stored().releaseChecks[0]).toBe(true);
+  expect(f.stored().publishing?.title).toBe('Later title');expect(f.stored().publishing?.design?.largePrint).toBe(true);expect(f.stored().releaseChecks[0]).toBe(true);
   expect(f.c.element.querySelector<HTMLInputElement>('label input')!.value).toBe('Later title');
 });
 it.each([0,5])('edits during a pending save survive close and reopen at stage %s', async stage => {
@@ -126,9 +126,21 @@ it.each(['title','imprint','cover','source','reopen','clear'])('a deferred publi
   else if(change==='reopen')await f.c.open();
   else if(change==='clear')f.c.clear();
   else if(change==='title'){const input=f.c.element.querySelector<HTMLInputElement>('label input')!;input.value='New title';input.dispatchEvent(new Event('input'));}
-  else {const label=change==='imprint'?'I approve the existing FREE PLAY Publishing branding for this copy':'I choose no cover for this text-only copy';const input=[...f.c.element.querySelectorAll('label')].find(el=>el.textContent===label)!.querySelector<HTMLInputElement>('input')!;input.checked=false;input.dispatchEvent(new Event('change'));}
+  else {const [label,value]=change==='imprint'?['Style','free-play']:['Cover','none'];choose(f,label,value);}
   finish();await tick();expect(f.c.element.querySelector('[aria-label="Publishing copy preview"]')).toBeNull();
   expect(f.c.element.textContent).not.toContain('Preview ready.');expect(f.core.confirmPublishingCopy).not.toHaveBeenCalled();
+});
+function choose(f:{c:{element:HTMLElement}},label:string,value:string){const select=[...f.c.element.querySelectorAll('label')].find(el=>el.firstChild?.textContent===label)!.querySelector('select')!;select.value=value;select.dispatchEvent(new Event('change'));}
+it('book design choices reach the native preview, and FREE PLAY approval appears only for that style',async()=>{
+  const state=emptyFirstStory();state.enabled=true;state.stage=5;state.publishing={title:'Book',author:'Example Author',rights:'Example rights',language:'en-US',formats:['pdf'],folderName:'new-copy',freePlayApproved:false,noCoverApproved:false};const f=fixture(state);await f.c.open();
+  const approval=[...f.c.element.querySelectorAll('label')].find(el=>el.textContent==='I approve the FREE PLAY Publishing branding for this copy')!;
+  expect(approval.hidden).toBe(true);
+  choose(f,'Style','free-play');expect(approval.hidden).toBe(false);choose(f,'Style','plain');expect(approval.hidden).toBe(true);
+  choose(f,'Page size','trade');choose(f,'Body text font','EB Garamond');choose(f,'Heading font','Source Serif 4');choose(f,'Cover','none');
+  const subtitle=[...f.c.element.querySelectorAll('label')].find(el=>el.firstChild?.textContent==='Subtitle (optional)')!.querySelector('input')!;subtitle.value='A novella';subtitle.dispatchEvent(new Event('input'));
+  await f.click('Preview publishing copy…');
+  const sent=vi.mocked(f.core.previewPublishingCopy!).mock.calls.at(-1)![1];
+  expect(sent.design).toEqual({...defaultBookDesign(),pageSize:'trade',bodyFont:'EB Garamond',displayFont:'Source Serif 4',cover:'none',subtitle:'A novella'});
 });
 it('stale settling cannot start a publishing preview for a different view',async()=>{
   const state=emptyFirstStory();state.enabled=true;state.stage=5;const f=fixture(state);await f.c.open();let finish!:()=>void;

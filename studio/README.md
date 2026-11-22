@@ -4,6 +4,33 @@ An additive native desktop editor with local autosave and explicit recovery deci
 folder, browse its files, and use a scene manifest to navigate the manuscript.
 The existing Python publisher and its CLI remain unchanged.
 
+## Illustrations
+
+In a project scene, choose **Document actions → Editing actions → Insert image…**.
+Choose a PNG or JPEG and review the filename, dimensions, scene and insertion point.
+Type the image description or mark it decorative. **Draft description with AI** sends a
+metadata-free, resized copy of the selected image to OpenAI using the connected
+account. Review its wording before inserting. Manual insertion works offline.
+
+**Insert image** copies the original into the project's `assets/images/` folder
+and inserts a standard relative Markdown image link at the cursor or after selected
+writing. Undo removes the insertion. Reading displays local illustrations, and
+Studio previews link changes before a cross-folder move. EPUB and print PDF
+exports include the images from each source scene. PNG and JPEG files may be up to
+16 MiB and 24 megapixels each. GitHub's text-sharing controls do not upload them.
+
+## Scene history
+
+Open a project scene, then choose **Document actions → Editing actions → Scene history…**.
+Compare an earlier version with the current scene (including unsaved writing) or with
+another saved version. Choose a changed passage to read both texts. **Restore this
+passage** restores only the displayed change. **Choose a smaller selection** lets you
+select exact words and a destination. Choose **Review selected restore…** to read the current and replacement text, or the insertion position and surrounding text. **Confirm replacement** or **Confirm insertion** applies the selection. **Back to selection** or Escape lets you revise it. Undo reverses a restore in one step.
+
+Studio starts collecting history when it saves changes to a project Markdown file.
+Versions stay in private local storage and follow the scene through renames and moves made in Studio. A new scene at the old filename starts its own history.
+Each file retains its 20 most recent previous versions plus a daily version for up
+to 30 earlier writing days. Standalone drafts use their existing recovery workflow.
 ## Text-only writing and sound
 
 **Full screen** opens to the manuscript with the application bars and editor panels
@@ -29,7 +56,7 @@ or standalone drafts. Reading includes your current unsaved text; returning to
 Source keeps your selection and undo history. Switching views does not save or
 change the manuscript. Headings, emphasis, lists, quotes, links and code are
 rendered with your writing appearance settings. Link destinations appear as text,
-embedded images are not loaded, and raw HTML stays literal. Frontmatter remains
+local PNG and JPEG illustrations render with their descriptions, and raw HTML stays literal. Frontmatter remains
 available in Source. Resolve any pending recovery in Source first.
 
 Reading is not a line-for-line copy of Source. Source keeps a gutter on its right
@@ -91,7 +118,7 @@ Native builds require Rust 1.89 or newer for OS-backed file locking.
 
 ## 1.10 release packaging
 
-Heinlein Studio is version **1.10.0**. The independent Python
+Heinlein Studio is version **1.11.0**. The independent Python
 publisher remains at **0.1.0**.
 
 On an Apple Silicon Mac, build the version-pinned app with:
@@ -214,10 +241,14 @@ style has no score or gate to pass.
 manuscript. Review all included scenes in order, metadata and text treatment.
 Scene frontmatter, links, images and include directives require a separately
 configured publishing project; the guide reports them rather than dropping them.
-Groups stay organizational. Supply your own author/rights information and
-explicitly approve the no-cover choice and the existing FREE PLAY / The Arcades
-branding (including its preset colophon). If you do not want that branding, use a
-separate manual publisher configuration; there is no generic unbranded preset.
+Groups stay organizational. Supply your own author/rights information, then set
+the **Book design**: style (Plain, with no imprint branding, or FREE PLAY
+Publishing), page size, body and heading fonts, large print, cover (typographic,
+an image file you pick at preview, or none), copyright and title pages, subtitle
+and dedication. FREE PLAY needs an explicit approval of its The Arcades branding
+and preset colophon. A chosen cover image (JPEG or PNG, up to 25 MB) is copied
+into the new folder; the story folder is never changed. These choices are
+written into the copy's `heinlein.yaml`, so `heinlein build` follows them.
 
 Choose an existing parent folder with the native picker. Only an additional
 native confirmation creates a **new** folder with `manuscript.md`, `heinlein.yaml`

@@ -21,14 +21,15 @@ pub const MAX_REVISION_INPUT_BYTES: usize = 32_000;
 pub const MAX_ANSWER_BYTES: usize = 32_000;
 pub const MAX_OUTPUT_TOKENS: u32 = 2_000;
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+#[macro_use]
+mod comments;
+pub use comments::{comments, edit_preserves_comments, stray_delimiters, COMMENT_INSTRUCTION};
+
 const MAX_RESPONSE_BYTES: usize = 256_000;
 const MAX_STREAM_BYTES: usize = 1_000_000;
 const MAX_ERROR_BYTES: usize = 16_000;
 const MAX_REQUEST_BODY_BYTES: usize = 200_000;
 const RECENT_REQUESTS: usize = 64;
-#[macro_use]
-mod comments;
-pub use comments::{comments, edit_preserves_comments, stray_delimiters, COMMENT_INSTRUCTION};
 
 const ENDPOINT: &str = "https://api.openai.com/v1/responses";
 const INSTRUCTIONS: &str = concat!(
@@ -1315,6 +1316,17 @@ impl ResponseBody {
     }
 }
 
+/// Only a native, metadata-free PNG is accepted; there is no manuscript or conversation input.
+pub async fn describe_illustration(config: Configuration, png_base64: String) -> Result<String, QuestionError> {
+    let body = serde_json::to_vec(&serde_json::json!({
+        "model": config.model(), "store": false, "stream": true, "max_output_tokens": 300,
+        "instructions": "Draft concise, factual alt text for this book illustration. Return only the description. Describe visible content and readable labels. Avoid guessing identities or intent.",
+        "input": [{"role":"user","content":[{"type":"input_image","image_url":format!("data:image/png;base64,{png_base64}")}]}]
+    })).map_err(|_|QuestionError::invalid_request())?;
+    let bytes = send_request(config, body).await?;
+    Ok(parse_response("illustration", &bytes)?.text)
+}
+
 async fn send_request(config: Configuration, body: Vec<u8>) -> Result<Vec<u8>, QuestionError> {
     send_decoded_request(config, body, false).await
 }
@@ -1642,6 +1654,9 @@ fn apply_revision_diffs(selected: &str, edits: &[RevisionDiff]) -> Result<String
     }
     if result.len() > MAX_ANSWER_BYTES {
         return Err(QuestionError::response_too_large());
+    }
+    if !edit_preserves_comments(selected, &result) {
+        return Err(QuestionError::invalid_revision());
     }
     Ok(result)
 }

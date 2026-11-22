@@ -10,6 +10,22 @@ const paths=titled?['ms/sheet-e639a476-5de0-4c85-90f8-9b9638baf869.md','ms/sheet
 if(titled){const scenes=fixture.manuscripts['local-a'].scenes;for(const [i,id] of ['scene-arrival','scene-meeting'].entries()){const scene=scenes.find(scene=>scene.id===id)!;scene.path=paths[i];scene.title=i?'The morning after':'Harvest Moon';}}
 const raw=(name:string)=>`---\r\ntitle: Synthetic ${name}\r\n---\r\n`+Array.from({length:48},(_,i)=>`Paragraph ${i+1}: Invented foxes read a map — 星 🦊. This synthetic passage keeps deliberate fragments, long wrapped lines and mixed newlines. No real writing is used.\r\n`).join('\n');
 paths.forEach((p,i)=>fixture.documents['local-a'][p]=raw(i?'Meeting':'Arrival'));
+if (new URLSearchParams(location.search).has('history')) {
+  fixture.documents['local-a'][paths[0]] = 'Opening.\r\nAn unchanged bridge.\nA newer ending.';
+  fixture.core.sceneVersions = async () => [{savedAt: 1000, hash: 'old'}];
+  fixture.core.readSceneVersion = async () => 'Opening.\r\nA lost passage — intact.\r\nAn unchanged bridge.\nFirst ending.';
+}
+if (new URLSearchParams(location.search).has('illustrations')) {
+  const probe={sends:0,commits:0,discards:0,failure:false,cancelPick:false,delay:0};
+  Object.assign(window,{imageProbe:probe});
+  fixture.core.images={
+    pick:async()=>probe.cancelPick?null:{id:'test',name:'map.png',width:240,height:160},
+    commit:async()=>{probe.commits++;return '../assets/images/example.png';},
+    describe:async()=>{probe.sends++;await new Promise(r=>setTimeout(r,probe.delay));if(probe.failure)throw Error('Offline');return 'A river west of the town.';},
+    discard:async()=>{probe.discards++;},
+    read:async()=> 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGPQivwPAAIzAYPk3YcvAAAAAElFTkSuQmCC',
+  };
+}
 const notice=document.createElement('p');notice.className='synthetic-project-notice';notice.textContent='Synthetic sample';notice.hidden=true; document.title='Synthetic document workspace';notice.style.padding='.25rem';notice.style.border='1px solid currentColor';
 const app=mountStudio(document.querySelector<HTMLElement>('#app')!,fixture.core);
 Object.assign(window,{documentFixture:{fixture,app,paths,theme:(high:boolean)=>applyAppearance({...loadAppearance(),theme:high?'contrast':loadAppearance().theme}),view:()=>EditorView.findFromDOM(document.querySelector('.active-document-pane .cm-editor') as HTMLElement)}});

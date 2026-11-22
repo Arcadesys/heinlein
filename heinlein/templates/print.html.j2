@@ -7,10 +7,16 @@
 {%- else %}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap" rel="stylesheet">
+<link href="{{ google_fonts_href }}" rel="stylesheet">
 {%- endif %}
 <style>
 {{ tokens_css | safe }}
+
+/* -------- Type: author-chosen families -------- */
+:root {
+  --font-body: {{ font_body_stack | safe }};
+  --font-display: {{ font_display_stack | safe }};
+}
 
 /* -------- Page geometry --------
    Sheet = trim + bleed on every side. Text margins are measured from the
@@ -40,7 +46,7 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
-  font-family: 'Lora', Georgia, serif;
+  font-family: var(--font-body);
   color: var(--ink);
   background: var(--paper);
   font-size: {{ body_font_size }}pt;
@@ -95,7 +101,7 @@ body {
   width: 100%;
 }
 .cover-title {
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-display);
   font-weight: 300;
   font-size: 40pt;
   letter-spacing: 0.04em;
@@ -104,7 +110,7 @@ body {
   margin: 0;
 }
 .cover-sub {
-  font-family: 'Lora', serif;
+  font-family: var(--font-body);
   font-style: italic;
   font-size: 13pt;
   color: var(--gold-d);
@@ -112,7 +118,7 @@ body {
   margin: 12pt 0 0;
 }
 .cover-author {
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-display);
   font-weight: 400;
   font-size: 13pt;
   letter-spacing: 0.18em;
@@ -139,7 +145,7 @@ body {
   flex-direction: column;
   justify-content: space-between;
   height: {{ sheet_h }}in;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-display);
   font-size: 8.5pt;
   line-height: 1.55;
   color: var(--ink);
@@ -154,7 +160,7 @@ body {
   margin: 0 0 14pt;
 }
 .colophon .intro {
-  font-family: 'Lora', serif;
+  font-family: var(--font-body);
   font-style: italic;
   font-size: 11pt;
   line-height: 1.55;
@@ -184,7 +190,7 @@ body {
 }
 .colophon .url {
   margin: 10pt 0 0;
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-display);
   font-size: 8.5pt;
   color: var(--ink);
 }
@@ -224,7 +230,7 @@ body {
   margin: 0 0 20pt;
 }
 .title-page h1 {
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-display);
   font-weight: 300;
   font-size: 28pt;
   letter-spacing: 0.04em;
@@ -233,7 +239,7 @@ body {
   margin: 0 0 14pt;
 }
 .title-page .by {
-  font-family: 'Lora', serif;
+  font-family: var(--font-body);
   font-style: italic;
   font-size: 12pt;
   color: var(--ink-muted);
@@ -258,7 +264,7 @@ body {
   height: {{ sheet_h }}in;
 }
 .dedication p {
-  font-family: 'Lora', serif;
+  font-family: var(--font-body);
   font-style: italic;
   font-size: 13pt;
   line-height: 1.6;
@@ -274,7 +280,7 @@ body {
   color: var(--ink);
 }
 .body-section p {
-  font-family: 'Lora', Georgia, serif;
+  font-family: var(--font-body);
   font-size: {{ prose_font_size }}pt;
   line-height: {{ prose_line_height }};
   margin: 0;
@@ -286,7 +292,7 @@ body {
 .body-section p + p { margin-top: 0; }
 .body-section p.first { text-indent: 0; }
 .body-section p.first::first-letter {
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-display);
   font-weight: 400;
   font-size: 44pt;
   line-height: 0.9;
@@ -326,7 +332,7 @@ body {
   padding: 0;
 }
 .body-section h2 {
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-display);
   font-weight: 300;
   font-size: 22pt;
   letter-spacing: 0.04em;
@@ -358,7 +364,7 @@ body {
   border-radius: 4pt;
   padding: 10pt 12pt;
   color: var(--ink);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-display);
   font-weight: 700;
   text-decoration: underline;
 }
@@ -396,7 +402,7 @@ body {
   margin: 0 0 22pt;
 }
 .end .mark {
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-display);
   font-weight: 300;
   font-size: 24pt;
   letter-spacing: 0.18em;
@@ -405,7 +411,7 @@ body {
   text-shadow: 0 0 12pt rgba(232,199,119,0.45), 0 0 28pt rgba(255,138,0,0.30);
 }
 .end .mark-sub {
-  font-family: 'Lora', serif;
+  font-family: var(--font-body);
   font-style: italic;
   font-size: 11pt;
   color: var(--gold-d);
@@ -432,6 +438,7 @@ body {
 </head>
 <body>
 
+{%- if show_cover %}
 <!-- COVER -->
 {%- if cover_uri %}
 <section class="page cover-image">
@@ -440,7 +447,9 @@ body {
 {%- else %}
 <section class="page cover">
   <div>
+    {%- if cover_eyebrow %}
     <div class="cover-top">{{ cover_eyebrow }}</div>
+    {%- endif %}
     <div class="cover-rule"></div>
   </div>
   <div>
@@ -451,17 +460,23 @@ body {
   </div>
   <div>
     <div class="cover-author">{{ author }}</div>
+    {%- if imprint_name %}
     <div style="margin-top: 22pt" class="cover-imprint"><strong>{{ imprint_name }}</strong> · {{ imprint_tagline }}</div>
+    {%- endif %}
   </div>
 </section>
 {%- endif %}
+{%- endif %}
 
+{%- if show_copyright %}
 <!-- COLOPHON -->
 <section class="page colophon">
   <div class="top">
     <p class="eyebrow">Colophon</p>
+    {%- if colophon_intro %}
     <p class="intro">{{ colophon_intro | safe }}</p>
     <hr class="divider">
+    {%- endif %}
     <div class="rights">
       {%- for line in colophon_lines %}
       <p>{{ line }}</p>
@@ -477,8 +492,11 @@ body {
       {%- endfor %}
     </div>
     {%- endif %}
+    {%- if imprint_url %}
     <p class="url">{{ imprint_url }}</p>
+    {%- endif %}
   </div>
+  {%- if branded %}
   <div class="foot">
     <span class="mark">
       <svg viewBox="0 0 130 100" width="28" height="22" aria-hidden="true" style="color: var(--ink-muted); display: block;">
@@ -490,8 +508,11 @@ body {
     </span>
     <span class="tag">{{ issue_tag }}</span>
   </div>
+  {%- endif %}
 </section>
+{%- endif %}
 
+{%- if show_title_page %}
 <!-- TITLE PAGE -->
 <section class="page title-page">
   {%- if subtitle %}
@@ -501,6 +522,7 @@ body {
   <p class="by">by {{ author }}</p>
   <div class="rule"></div>
 </section>
+{%- endif %}
 
 {%- if dedication_lines %}
 <!-- DEDICATION -->
@@ -518,6 +540,7 @@ body {
 {{ body_html | safe }}
 </section>
 
+{%- if show_end_page %}
 <!-- END -->
 <section class="page end">
   <span class="coin">
@@ -551,5 +574,6 @@ body {
     <span class="url">{{ imprint_url }}</span>
   </div>
 </section>
+{%- endif %}
 
 </body></html>

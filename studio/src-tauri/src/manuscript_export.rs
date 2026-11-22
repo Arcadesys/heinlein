@@ -98,7 +98,7 @@ pub async fn export_manuscript(
                     .map_err(|_| "Home directory unavailable.")?,
             )?
         };
-        let bytes = export_pipeline::convert(&root, &python, &spec)?;
+        let bytes = export_pipeline::convert_with_images(&root, &python, &spec, |scene,url|with_repository(&app,&repository_id,|r|r.read_image(scene,url).map_err(|e|e.to_string())))?;
         check_window(&window)?;
         with_repository(&app, &repository_id, |_| Ok(()))?;
         let Some(destination) = app

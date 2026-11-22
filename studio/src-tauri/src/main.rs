@@ -43,6 +43,7 @@ mod export_pipeline;
 mod first_story;
 mod github;
 mod manuscript_export;
+mod illustrations;
 mod markdown_export;
 mod mcp_access;
 mod mcp_cli;
@@ -51,6 +52,7 @@ mod mcp_setup;
 mod persistence_tests;
 mod preferences;
 mod preferences_store;
+mod project_shortcuts;
 mod project_creation;
 mod projects;
 mod proposals;
@@ -155,6 +157,30 @@ fn check_window(window: &tauri::WebviewWindow) -> Result<(), String> {
     }
     Ok(())
 }
+fn writing_home(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let documents = app.path().document_dir().map_err(|_| "Documents folder unavailable")?;
+    Ok(resolved_future_path(&documents)?.join("Heinlein"))
+}
+fn ensure_writing_home(path: &Path) -> Result<(), String> {
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let existing = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+            if existing.is_dir() {
+                Ok(())
+            } else {
+                Err("Documents/Heinlein must be a folder".into())
+            }
+        }
+        Err(e) => Err(format!("Could not create Documents/Heinlein: {e}")),
+    }
+}
 fn recent_file(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(app
         .path()
@@ -257,7 +283,13 @@ fn select_repository_with_origin(
         return Err("Heinlein is quitting".into());
     }
     state.mutation_gate.note_activity();
-    let repo = Repository::open(&path).map_err(project_creation::open_error)?;
+    let legacy_identity = workspace
+        .as_ref()
+        .and_then(|managed| private_storage.parent().map(|data| (data, &managed.id)))
+        .map(|(data, id)| resolved_future_path(data).map(|data| github::legacy_sources(&data).join(id)))
+        .transpose()?;
+    let repo = Repository::open_with_identity(&path, legacy_identity.as_deref())
+        .map_err(project_creation::open_error)?;
     guard_auth_repository_separation(repo.root(), private_storage)?;
     if let Some(parent) = private_storage.parent() {
         guard_auth_repository_separation(repo.root(), &parent.join("standalone-drafts-v1"))?;
@@ -476,6 +508,33 @@ fn with_repository<T>(
     let _workspace = github::edit_lock(app, repo.root())?;
     operation(&repo)
 }
+/// Opens the selected project's folder in Finder. The renderer sends only the
+/// opaque repository ID; the root path never leaves the native host. Nothing is
+/// read or written, so the workspace edit lock is not taken.
+#[tauri::command]
+fn reveal_repository(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+) -> Result<(), String> {
+    check_window(&window)?;
+    let root = {
+        let state = app.state::<BrowserState>();
+        let guard = state
+            .selected
+            .lock()
+            .map_err(|_| "Repository unavailable")?;
+        let selected = guard.as_ref().ok_or("Open a repository first")?;
+        if selected.id != repository_id {
+            return Err("Repository changed; refresh the view".into());
+        }
+        selected.repo.root().to_path_buf()
+    };
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(root.to_string_lossy(), None::<&str>)
+        .map_err(|_| "Could not open the project folder in Finder".to_string())
+}
 #[tauri::command]
 async fn list_directory(
     app: tauri::AppHandle,
@@ -503,6 +562,42 @@ async fn read_document(
     tauri::async_runtime::spawn_blocking(move || {
         with_repository(&app, &repository_id, |r| {
             r.read(&relative_path).map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn scene_versions(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    relative_path: String,
+) -> Result<Vec<repository_core::SceneVersion>, String> {
+    check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        with_repository(&app, &repository_id, |repo| {
+            with_recovery(&app, |store| store.scene_versions(repo, &relative_path))
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn read_scene_version(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    relative_path: String,
+    saved_at: u64,
+    hash: String,
+) -> Result<String, String> {
+    check_window(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        with_repository(&app, &repository_id, |repo| {
+            with_recovery(&app, |store| {
+                store.scene_version(repo, &relative_path, saved_at, &hash)
+            })
         })
     })
     .await
@@ -801,6 +896,7 @@ fn production_main() {
         .plugin(tauri_plugin_opener::init())
         .manage(runtime)
         .manage(BrowserState::default())
+        .manage(illustrations::ImageHost::default())
         .manage(questions::QuestionHost::default())
         .setup(|app| {
             let _ = custom_reviewers::refresh(app.handle());
@@ -856,6 +952,7 @@ fn production_main() {
         .invoke_handler(tauri::generate_handler![
             manuscript_export::export_manuscript,
             book_publish::publish_book,
+            reveal_repository,
             preferences::preferences_request,
             markdown_export::save_markdown_export,
             projects::project_request,
@@ -875,6 +972,7 @@ fn production_main() {
             questions::preview_review,
             questions::continue_review,
             questions::list_reviews,
+            questions::discard_review,
             questions::choose_review_edit,
             questions::approve_review_edit,
             questions::ask_question,
@@ -916,6 +1014,9 @@ fn production_main() {
             open_recent_repository,
             list_directory,
             read_document,
+            illustrations::illustration_request,
+            scene_versions,
+            read_scene_version,
             save_document,
             read_recovery,
             stage_recovery,

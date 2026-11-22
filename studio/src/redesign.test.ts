@@ -153,6 +153,27 @@ describe('Studio chrome', () => {
     expect(sources.querySelector('.file-entry')?.textContent).toContain('casino.md');
     document.querySelector<HTMLButtonElement>('.nav-back')!.click(); expect(project.hidden).toBe(false);
   });
+  it('opens the source folder in Finder from the project menu by opaque repository id', async () => {
+    const host = core(); const reveal = vi.fn(async () => {}); host.revealRepository = reveal;
+    const app = mount(document.body.firstElementChild as HTMLElement, host); apps.push(app);
+    await app.selectRepository(async () => session); await settle();
+    const menu = document.querySelector<HTMLDetailsElement>('details.project-menu')!; menu.open = true; menu.dispatchEvent(new Event('toggle'));
+    [...document.querySelectorAll<HTMLButtonElement>('.row-menu-items[aria-label="Project actions"] button')].find(node => node.textContent === 'Open source folder in Finder')!.click(); await settle();
+    expect(reveal).toHaveBeenCalledWith('session');
+    expect(document.querySelector('.status')!.textContent).toBe('Opened La Ligne du Marais in Finder.');
+    reveal.mockRejectedValueOnce(new Error('Could not open the project folder in Finder'));
+    press('p', {ctrlKey: true, shiftKey: true}); await settle();
+    const input = document.querySelector<HTMLInputElement>('.palette-input')!; input.value = '>source folder'; input.dispatchEvent(new Event('input', {bubbles: true})); await settle();
+    input.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})); await settle();
+    expect(reveal).toHaveBeenCalledTimes(2);
+    expect(document.querySelector('.status')!.textContent).toBe('Could not open the project folder in Finder');
+    expect(document.querySelector('.status')!.classList.contains('error')).toBe(true);
+  });
+  it('hides the source folder action when the host cannot open folders', async () => {
+    await start();
+    const menu = document.querySelector<HTMLDetailsElement>('details.project-menu')!; menu.open = true; menu.dispatchEvent(new Event('toggle'));
+    expect([...document.querySelectorAll('.row-menu-items[aria-label="Project actions"] button')].some(node => node.textContent === 'Open source folder in Finder')).toBe(false);
+  });
   it('closes the command palette before focusing the navigation drawer', async () => {
     await start();
     press('p', {ctrlKey: true, shiftKey: true}); expect(document.querySelector('.palette')).not.toBeNull();

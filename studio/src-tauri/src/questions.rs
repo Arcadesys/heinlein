@@ -603,6 +603,27 @@ pub(crate) fn question_status(
     host.view(&app, host.auth(&app)?.status()?)
 }
 
+pub(crate) async fn draft_image_description(app: &tauri::AppHandle, png: String) -> Result<String,String> {
+    let host = app.state::<QuestionHost>();
+    let auth = host.auth(app).map_err(|_| "Connect OpenAI in Studio to draft a description.")?;
+    let status = auth.status().map_err(|e|e.to_string())?;
+    let credentials = auth.credentials(status.generation).await.map_err(|e| e.to_string())?;
+    if host.questions.is_usage_limited(&credentials.account_id).map_err(|e|e.to_string())? {
+        return Err("OpenAI usage is currently limited.".into());
+    }
+    let config = Configuration::new(&credentials.access_token, &credentials.model)
+        .and_then(|c|c.with_account(&credentials.account_id)).map_err(|e|e.to_string())?;
+    let mut cancelled=credentials.cancelled;
+    if *cancelled.borrow() {return Err("The OpenAI connection changed.".into());}
+    tokio::select! {
+        _ = cancelled.changed() => Err("The OpenAI connection changed.".into()),
+        result = drafting_questions::describe_illustration(config,png) => {
+            if !auth.is_current(status.generation) {return Err("The OpenAI connection changed.".into());}
+            result.map_err(|e|e.to_string())
+        }
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn ask_question(
     app: tauri::AppHandle,
@@ -1927,6 +1948,29 @@ async fn request_review_workflow_inner(
         Ok(session.view())
     })
     .map_err(NativeError::revision)
+}
+#[tauri::command]
+pub(crate) fn discard_review(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    repository_id: String,
+    review_id: String,
+    revision: u64,
+) -> Result<(), String> {
+    super::check_window(&window)?;
+    if !selected_revision_session(&app.state::<super::BrowserState>(), &repository_id) {
+        return Err("Repository changed".into());
+    }
+    let host = app.state::<QuestionHost>();
+    let mut slot = host.review.lock().map_err(|_| "Review unavailable")?;
+    if host.review_active.load(Ordering::SeqCst) {
+        return Err("Wait for the active reviewer batch before discarding a review".into());
+    }
+    super::with_repository(&app, &repository_id, |repo| {
+        review_records(&app)?.discard(repo, &review_id, revision).map_err(|e| e.to_string())?;
+        if slot.as_ref().is_some_and(|s| s.matches(&repository_id, &review_id)) { *slot = None; }
+        Ok(())
+    })
 }
 #[tauri::command]
 pub(crate) fn list_reviews(

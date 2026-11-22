@@ -302,3 +302,7 @@
 .stage-strip li[aria-current="step"] { color: var(--fg); font-weight: 700; border-bottom-color: var(--fg); }
 .stage-strip li[aria-current="step"] .stage-mark { border-width: 2px; }
 .revisions-dialog .stage-strip { padding-inline: 0; }
+
+.review-recovery-actions { display: flex; flex-wrap: wrap; gap: .75rem; padding: 1rem; border: 2px solid var(--warn); border-radius: .5rem; margin-block: .75rem; font-size: 1rem; }
+.review-recovery-actions > p, .review-recovery-actions > div { flex-basis: 100%; margin: 0; }
+.review-recovery-actions button { white-space: normal; }

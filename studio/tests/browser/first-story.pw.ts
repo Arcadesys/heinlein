@@ -88,7 +88,7 @@ test('proof goes stale after saved edits; preview cancel and synthetic native co
   await openGuide(page);await stage(page,5);await expect(page.getByText('No current proof recorded.',{exact:false})).toBeVisible();
   await stage(page,6);
   await page.getByLabel('Story title',{exact:true}).fill('Synthetic story');await page.getByLabel('Author name to print',{exact:true}).fill('Example Author');await page.getByLabel('Rights statement (your choice)',{exact:true}).fill('Example Author retains rights.');
-  await page.getByLabel('I choose no cover for this text-only copy',{exact:true}).check();await page.getByLabel('I approve the existing FREE PLAY Publishing branding for this copy',{exact:true}).check();
+  await page.getByLabel('Style',{exact:true}).selectOption('free-play');await page.getByLabel('I approve the FREE PLAY Publishing branding for this copy',{exact:true}).check();await page.getByLabel('Page size',{exact:true}).selectOption('trade');
   await page.getByRole('button',{name:'Preview publishing copy…'}).click();await expect(page.getByRole('heading',{name:'Publishing copy preview'})).toBeVisible();
   await page.getByRole('button',{name:'Cancel copy preview'}).click();await expect(page.getByRole('heading',{name:'Publishing copy preview'})).toHaveCount(0);
   await page.getByRole('button',{name:'Preview publishing copy…'}).click();page.once('dialog',d=>d.dismiss());await page.getByRole('button',{name:'Create this new copy…'}).click();await expect(page.getByText('Creation canceled. No publishing files written.',{exact:true})).toBeVisible();

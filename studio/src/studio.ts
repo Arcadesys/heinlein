@@ -1,3 +1,5 @@
+import {insertIllustration} from './illustrations';
+import {openSceneHistory} from './sceneHistory';
 import {createWritingChrome} from './writingChrome';
 import {createFullScreenControl} from './fullScreenControl';
 import {bindPreferenceStatus,flushPreferences} from './preferences';
@@ -707,6 +709,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if (repository?.projectId) items.push(button('Project settings', () => { void projectLibrary.settings(repository!.projectId!); }));
     if(repository&&mcpAccess.supported){const connect=button('AI connections…',()=>{projectMenu.querySelector<HTMLElement>('summary')?.focus();void mcpAccess.open();});connect.setAttribute('aria-haspopup','dialog');items.push(connect);}
     if (repository) items.push(searchManuscript, button('Source files', () => showNavView('files', true)));
+    if (repository&&!standalone?.active&&core.revealRepository) items.push(button('Open source folder in Finder', () => { void revealSourceFolder(); }));
     if(projectEntries.childElementCount)items.push(el('hr'),el('p','Switch project','menu-label'),projectEntries);
     const libraryItems = drafting.menuItems(); if (libraryItems.length) items.push(el('hr'), ...libraryItems);
     return items;
@@ -724,6 +727,11 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     if(await showDocument(chapter.source,false,()=>drafting.state?.revision===state.revision,chapter)){
       threadScopeOverride=scope;void threadSidebar.refresh();chatRail.refresh();
     }
+  }
+  async function revealSourceFolder() {
+    if (!repository || !core.revealRepository) return;
+    try { await core.revealRepository(repository.id); status.classList.remove('error'); status.textContent = `Opened ${repository.name} in Finder.`; }
+    catch (error) { status.textContent = error instanceof Error ? error.message : String(error); status.classList.add('error'); }
   }
   function activeWriter(){return standalone?.active?standalone.editor:chapterEditor??editor;}
   function reviewRepository():RepositorySession|null {
@@ -843,7 +851,8 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     scheduleProjectPosition();
   }
   function mountDocumentView(toolbar:HTMLElement,host:HTMLElement,target:EditorView,content:()=>Omit<ReaderContent,'marks'>,modeChanged?:(mode:'source'|'reading')=>void){
-    const reader=createMarkdownReader({label:'Reading view',content:()=>({...content(),marks:reviewMarksIn(target.state)}),open:id=>{reviewPanel?.openSuggestion(id);},showSource:()=>{setDocumentView('source');focusWriterView();}});
+    const imageSession=repository?.id;
+    const reader=createMarkdownReader({label:'Reading view',image: core.images && imageSession && !standalone?.active ? (path,url)=>core.images!.read(imageSession,path,url) : undefined,content:()=>({...content(),marks:reviewMarksIn(target.state)}),open:id=>{reviewPanel?.openSuggestion(id);},showSource:()=>{setDocumentView('source');focusWriterView();}});
     host.after(reader.element);
     const group=el('div','','md-view-toggle');group.setAttribute('role','group');group.setAttribute('aria-label','Document view');
     const source=button('Source',()=>{setDocumentView('source');focusWriterView();}),reading=button('Reading',()=>setDocumentView('reading'));
@@ -1864,6 +1873,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
       Boolean(newDraftButton) && {key: 'new-draft', label: 'New Markdown draft', right: formatKeys('⌘N'), run: () => newDraftButton?.click()},
       canPublish()&&{key:'publish-book',label:'Publish book…',sub:'Designed PDF, EPUB and DOCX from your current text',run:()=>{bookPublish.open(drafting.state!.project);}},
       Boolean(repository&&!standalone?.active&&drafting.state?.revision&&(core.exportManuscript||core.saveMarkdownExport))&&{key:'export-manuscript',label:'Export manuscript…',sub:'PDF, EPUB, Markdown, HTML or DOCX',run:()=>{void markdownExport.open(drafting.state!.project,{kind:'project'});}},
+      Boolean(repository&&!standalone?.active&&core.revealRepository) && {key: 'reveal-source-folder', label: 'Open source folder in Finder', sub: 'Show this project\'s Markdown files on your Mac', run: () => { void revealSourceFolder(); }},
       Boolean(searchScope()) && {key: 'find-manuscript', label: 'Find in manuscript', sub: 'Search scene text locally, including the open buffer', right: formatKeys('⌘⇧F'), run: openManuscriptSearch},
       Boolean(activeWriter()) && {key: 'ask', label: 'Ask Heinlein about selection', sub: 'Opens Questions with the highlighted passage', right: formatKeys('⌘J'), run: () => askShortcut()},
       Boolean(editor) && {key: 'add-note', label: 'Add note…', sub: 'A note for Heinlein about the highlighted passage, left out of exports', right: formatKeys('⌘⌥M'), run: () => addNote()},
@@ -2439,11 +2449,39 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
         const target = editor.view;
         toolbar.append(button('Add note…', () => addNote(), 'source-only'));
         target.dispatch({effects: StateEffect.appendConfig.of(keymap.of([{key: 'Mod-Alt-m', run: () => { addNote(); return true; }}]))});
+        if (core.images && repository && !standalone?.active && !doc.generatedCompatibility) {
+          const session=repository.id, writer=editor;
+          toolbar.append(button('Insert image…', () => {
+            showSourceView();
+            const editable=()=>!disposed && editor===writer && repository?.id===session && !repositoryDetached &&
+              !recoveryPending && !selecting && !guardPending && !structuralBusy && !proposalBusy && !writePaused && !writer.view.state.readOnly;
+            void insertIllustration(root,core,session,doc.path,writer.view,editable,message=>{status.textContent=message;});
+          },'source-only'));
+        }
+        if (core.sceneVersions && core.readSceneVersion && repository && !standalone?.active && !doc.generatedCompatibility) {
+          const session = repository.id, writer = editor;
+          toolbar.append(button('Scene history…', () => {
+            const current = writer.text();
+            openSceneHistory({
+              root, title: doc.path, current,
+              list: () => core.sceneVersions!(session, doc.path),
+              read: version => core.readSceneVersion!(session, doc.path, version),
+              restore: (from, to, passage) => {
+                if (disposed || editor !== writer || repository?.id !== session || repositoryDetached || recoveryPending ||
+                    selecting || guardPending || structuralBusy || proposalBusy || writePaused || writer.view.state.readOnly || writer.text() !== current) return false;
+                showSourceView();
+                writer.restorePassage(from, to, passage);
+                return true;
+              },
+              focus: focusWriterView,
+            });
+          }));
+        }
         const roleInSource = documentRole.textContent;
         mountDocumentView(toolbar, host, target, () => {
           const value = target.state.doc.toString();
           const body = frontmatterEnd(value) ?? 0;
-          return {text: value, ranges: [{from: body, to: value.length}], note: body ? 'Frontmatter is not shown in Reading. See Document details or Source.' : undefined};
+          return {text: value, ranges: [{from: body, to: value.length, path:doc.path}], note: body ? 'Frontmatter is not shown in Reading. See Document details or Source.' : undefined};
         }, mode => { documentRole.textContent = mode === 'reading' ? 'Reading' : roleInSource; });
       }
       updateSaveState();
@@ -2479,7 +2517,7 @@ export function mountStudio(root: HTMLElement, core: LocalCore) {
     },message=>{status.textContent=message;}))});
     else for(const issue of assembled.recoveryNotices??[])explanation.after(button(`${issue.message} Open ${issue.path}`,()=>{void showDocument(issue.path);}));
     reader.view.dispatch({effects: StateEffect.appendConfig.of([reviewMarks(),typingChrome.extension])});
-    mountDocumentView(toolbar, host, reader.view, () => ({text: reader.text(), ranges: (currentChapter??assembled).parts.map((part,index,parts) => ({from:index?parts[index-1].to:part.from,to:part.to}))}), mode => { explanation.textContent = mode === 'reading' ? 'Reading the current chapter. Switch to Source to edit its sheets together.' : sourceHint; });
+    mountDocumentView(toolbar, host, reader.view, () => ({text: reader.text(), ranges: (currentChapter??assembled).parts.map((part,index,parts) => ({from:index?parts[index-1].to:part.from,to:part.to,path:part.document.path}))}), mode => { explanation.textContent = mode === 'reading' ? 'Reading the current chapter. Switch to Source to edit its sheets together.' : sourceHint; });
     reader.view.contentDOM.setAttribute('aria-label', 'Chapter manuscript');
     reader.view.contentDOM.setAttribute('aria-readonly', String(!writer));
     reader.view.contentDOM.tabIndex = 0;

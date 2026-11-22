@@ -60,8 +60,9 @@ const core:LocalCore={available:()=>true,pickRepository:forbidden,recentReposito
 function button(label:string,root:ParentNode=document){const b=[...root.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent===label);assert(b,`Missing button ${label}`);return b!;}
 const panel=()=>document.querySelector<HTMLDialogElement>('.update-panel')!;
 const status=()=>panel().querySelector('[role=status]')?.textContent??'';
-const ready=(label:string)=>controlReady(panel().open,panel().getAttribute('aria-busy')==='true',!button(label).disabled);
-async function openUpdates(){const before=statusReturns(backendEvents);button('Updates…').click();await waitFor(()=>freshStatusCycle(before,backendEvents,panel().open,panel().getAttribute('aria-busy')==='true',ready('Check for updates')),'fresh native status/render cycle');}
+const panelBusy=()=>panel().querySelector('[aria-busy="true"]')!==null;
+const ready=(label:string)=>controlReady(panel().open,panelBusy(),!button(label).disabled);
+async function openUpdates(){const before=statusReturns(backendEvents);button('Updates…').click();await waitFor(()=>freshStatusCycle(before,backendEvents,panel().open,panelBusy(),ready('Check for updates')),'fresh native status/render cycle');}
 function entered(index:number){return backendEvents.some(e=>e.stage==='entered'&&e.action==='check'&&e.index===index);}
 async function main(){
   await listen<typeof backendEvents[number]>('native42-backend',event=>backendEvents.push(event.payload));
@@ -72,7 +73,7 @@ async function main(){
   await waitFor(()=>view.hasFocus&&document.activeElement===view.contentDOM&&document.hasFocus());stage('fixture-editor-focused',{editorHasFocus:view.hasFocus,activeElement:document.activeElement===view.contentDOM});await barrier();
   await openUpdates();assert(status().includes('No update check yet'),'Initial native status');assert(panel().textContent?.includes('Installed 111111111111')&&panel().textContent?.includes('Install 7'),'Source labels');stage('updates-initial-status');
   button('Check for updates').click();await waitFor(()=>entered(1));
-  assert(button('Check for updates').disabled&&panel().getAttribute('aria-busy')==='true','Busy UI');button('Check for updates').click();stage('check-busy-duplicate-suppressed');
+  assert(button('Check for updates').disabled&&panelBusy(),'Busy UI');button('Check for updates').click();stage('check-busy-duplicate-suppressed');
   await emit('native42-control',{action:'native-quit'});await waitFor(()=>closeCalls===1&&quitFinished>0);await barrier();
   assert(panel().open&&!document.querySelector<HTMLElement>('#app')!.inert,'Refused native Quit keeps app usable');
   await emit('native42-control',{action:'release-check',index:1});await waitFor(()=>status().includes('could not be checked')&&ready('Check for updates'),'failed check rendered and action idle');stage('check-failed-visible');
@@ -80,7 +81,7 @@ async function main(){
   button('Close updates').click();assert(!panel().open,'Close updates closes dialog');assert(view.state.doc.toString()===visibleSeed,'Defer retains editor text');assert(!backendEvents.some(e=>e.action==='schedule'),'No schedule on defer');stage('deferred-writing-retained');
   await openUpdates();button('Check for updates').click();await waitFor(()=>entered(3),'third native check entered');button('Close updates').click();
   const lateStatusBefore=statusReturns(backendEvents);const observed:string[]=[];const observer=new MutationObserver(()=>observed.push(status()));observer.observe(panel().querySelector('[role=status]')!,{childList:true,subtree:true,characterData:true});
-  button('Updates…').click();await emit('native42-control',{action:'release-check',index:3});await waitFor(()=>freshStatusCycle(lateStatusBefore,backendEvents,panel().open,panel().getAttribute('aria-busy')==='true',!button('Check for updates').disabled)&&status().includes('newer main-source'),'new dialog native status after stale check');observer.disconnect();
+  button('Updates…').click();await emit('native42-control',{action:'release-check',index:3});await waitFor(()=>freshStatusCycle(lateStatusBefore,backendEvents,panel().open,panelBusy(),!button('Check for updates').disabled)&&status().includes('newer main-source'),'new dialog native status after stale check');observer.disconnect();
   assert(!observed.some(v=>v.includes('could not be checked')),'Old dialog result must not overwrite new session');stage('late-response-ignored');
   button('Update on next launch').click();await waitFor(()=>status().includes('Update requested')&&ready('Save and quit when ready'),'memory schedule rendered and action idle');stage('in-memory-scheduled');
   // Production editor transaction. This is synthetic input, never physical keyboard proof.
