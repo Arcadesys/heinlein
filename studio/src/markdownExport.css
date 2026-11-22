@@ -22,3 +22,9 @@
 .tree-project > h2 {order:0;flex:1 1 0;min-inline-size:0;}
 .tree-project > .project-menu {order:1;flex:none;}
 .tree-project > .project-export {order:2;flex:1 1 100%;min-block-size:48px;max-inline-size:100%;font-size:1rem;}
+.tree-project > .project-publish {order:2;flex:1 1 100%;min-block-size:48px;max-inline-size:100%;font-size:1rem;font-weight:600;}
+.book-publish-dialog fieldset {border:2px solid currentColor;border-radius:8px;padding:.5rem .9rem;margin-block:.7rem;}
+.book-publish-dialog fieldset > legend {font-weight:600;padding-inline:.3rem;}
+.book-publish-dialog .book-publish-check {display:flex;flex-wrap:nowrap;align-items:flex-start;gap:.6rem;margin-block:.5rem;}
+.book-publish-dialog .book-publish-check > span {flex:1 1 0;min-inline-size:0;}
+.book-publish-dialog input[type=text] {flex:1 1 16rem;}

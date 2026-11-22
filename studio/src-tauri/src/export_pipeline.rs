@@ -140,20 +140,69 @@ pub fn convert_with_images(
     }
     let input = work.path().join("snapshot.md");
     let output = work.path().join("output");
-    let errors = work.path().join("conversion.log");
     fs::write(&input, &spec.text).map_err(|_| "Could not stage the manuscript snapshot.")?;
+    let mut args: Vec<std::ffi::OsString> = vec![
+        "--input".into(),
+        input.into_os_string(),
+        "--output-dir".into(),
+        output.clone().into_os_string(),
+    ];
+    args.extend(
+        [
+            "--format",
+            spec.format.extension(),
+            "--title",
+            spec.title.as_str(),
+            "--author",
+            spec.author.as_str(),
+        ]
+        .map(Into::into),
+    );
+    run_publisher(
+        root,
+        python,
+        "heinlein.studio_export",
+        &args,
+        work.path(),
+        spec.format.label(),
+    )?;
+    let files: Vec<_> = fs::read_dir(&output)
+        .map_err(|_| "The converter produced no output.")?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == spec.format.extension()))
+        .collect();
+    if files.len() != 1 {
+        return Err("The converter did not produce exactly one output file.".into());
+    }
+    let path = &files[0];
+    let meta = fs::symlink_metadata(path).map_err(|_| "Converted output is unavailable.")?;
+    if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_OUTPUT {
+        return Err("Converted output is empty, unavailable or exceeds 128 MiB.".into());
+    }
+    let bytes = fs::read(path).map_err(|_| "Could not read converted output.")?;
+    let valid = looks_like(spec.format, &bytes);
+    if !valid {
+        return Err("The converter returned an invalid file for the selected format.".into());
+    }
+    Ok(bytes)
+}
+
+/// Run one bounded `python -m heinlein.<module>` in `work`. Never invokes a shell.
+pub(crate) fn run_publisher(
+    root: &Path,
+    python: &Path,
+    module: &str,
+    args: &[std::ffi::OsString],
+    work: &Path,
+    label: &str,
+) -> Result<(), String> {
+    let errors = work.join("conversion.log");
     let log = File::create(&errors).map_err(|_| "Could not create the conversion log.")?;
     let mut cmd = Command::new(python);
-    cmd.args(["-m", "heinlein.studio_export", "--input"])
-        .arg(&input)
-        .arg("--output-dir")
-        .arg(&output)
-        .arg("--format")
-        .arg(spec.format.extension())
-        .arg("--title")
-        .arg(&spec.title)
-        .arg("--author")
-        .arg(&spec.author)
+    cmd.arg("-m")
+        .arg(module)
+        .args(args)
         .env("PYTHONPATH", root)
         .env("PYTHONDONTWRITEBYTECODE", "1")
         .env(
@@ -163,7 +212,7 @@ pub fn convert_with_images(
                 std::env::var("PATH").unwrap_or_default()
             ),
         )
-        .current_dir(work.path())
+        .current_dir(work)
         .stdout(Stdio::null())
         .stderr(Stdio::from(log));
     #[cfg(unix)]
@@ -200,35 +249,20 @@ pub fn convert_with_images(
         if let Ok(file) = File::open(&errors) {
             let _ = file.take(4096).read_to_string(&mut reason);
         }
-        return Err(format!("{} conversion failed. Check the Heinlein Python dependencies, Pandoc, and (for PDF) Chrome. No destination file was written. {}",spec.format.label(),reason.trim()));
+        return Err(format!("{label} conversion failed. Check the Heinlein Python dependencies, Pandoc, and (for PDF) Chrome. No destination file was written. {}",reason.trim()));
     }
-    let files: Vec<_> = fs::read_dir(&output)
-        .map_err(|_| "The converter produced no output.")?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == spec.format.extension()))
-        .collect();
-    if files.len() != 1 {
-        return Err("The converter did not produce exactly one output file.".into());
-    }
-    let path = &files[0];
-    let meta = fs::symlink_metadata(path).map_err(|_| "Converted output is unavailable.")?;
-    if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_OUTPUT {
-        return Err("Converted output is empty, unavailable or exceeds 128 MiB.".into());
-    }
-    let bytes = fs::read(path).map_err(|_| "Could not read converted output.")?;
-    let valid = match spec.format {
+    Ok(())
+}
+/// Whether converted bytes look like the declared format. Cheap structural sniff.
+pub(crate) fn looks_like(format: Format, bytes: &[u8]) -> bool {
+    match format {
         Format::Pdf => bytes.starts_with(b"%PDF-"),
         Format::Epub | Format::Docx => bytes.starts_with(b"PK"),
         Format::Html => String::from_utf8_lossy(&bytes[..bytes.len().min(1024)])
             .to_lowercase()
             .contains("<html"),
         Format::Markdown => true,
-    };
-    if !valid {
-        return Err("The converter returned an invalid file for the selected format.".into());
     }
-    Ok(bytes)
 }
 
 #[cfg(test)]
