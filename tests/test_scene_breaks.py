@@ -15,3 +15,12 @@ def test_scene_breaks_are_ink_rules_in_every_screen_and_print_template() -> None
         assert 'content: ""' in stylesheet
         assert "linear-gradient" in stylesheet
         assert "·  ·  ·" not in stylesheet
+
+
+def test_print_body_paragraphs_wrap_overlong_tokens() -> None:
+    # Without overflow-wrap, a URL or code token wider than the text block is
+    # clipped at the page edge and its tail vanishes from the PDF.
+    template = Path(__file__).resolve().parents[1] / "heinlein" / "templates" / "print.html.j2"
+    stylesheet = template.read_text(encoding="utf-8")
+    rule = stylesheet.split(".body-section p {\n", 1)[1].split("\n}", 1)[0]
+    assert "overflow-wrap: anywhere;" in rule
